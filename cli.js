@@ -59,7 +59,7 @@ async function main() {
 
   console.log("\nInstalling dependencies...");
   try {
-    execSync("npm install --production", { cwd: EXT_DIR, stdio: "inherit" });
+    execSync("npm install --omit=dev", { cwd: EXT_DIR, stdio: "inherit" });
   } catch {
     console.error("Warning: npm install failed. You may need to run it manually.");
   }
