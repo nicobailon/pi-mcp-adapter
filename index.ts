@@ -24,6 +24,27 @@ interface McpExtensionState {
   config: McpConfig;
 }
 
+/** Run async tasks with concurrency limit */
+async function parallelLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  let index = 0;
+  
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  
+  const workers = Array(Math.min(limit, items.length)).fill(null).map(() => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
@@ -586,78 +607,92 @@ async function initializeMcp(
     return { manager, lifecycle, registeredTools, toolMetadata, config };
   }
   
-  for (const [name, definition] of serverEntries) {
+  if (ctx.hasUI) {
+    ctx.ui.setStatus("mcp", `Connecting to ${serverEntries.length} servers...`);
+  }
+  
+  // Connect to all servers in parallel (max 10 concurrent)
+  const results = await parallelLimit(serverEntries, 10, async ([name, definition]) => {
     try {
-      if (ctx.hasUI) {
-        ctx.ui.setStatus("mcp", `Connecting to ${name}...`);
-      }
-      
       const connection = await manager.connect(name, definition);
-      const prefix = config.settings?.toolPrefix ?? "server";
-      
-      // Collect tool names (NOT registered with Pi - only mcp proxy is registered)
-      const { collected: toolNames, failed: failedTools } = collectToolNames(
-        connection.tools,
-        { serverName: name, prefix }
-      );
-      
-      // Collect resource tool names (if enabled)
-      if (definition.exposeResources !== false && connection.resources.length > 0) {
-        const resourceToolNames = collectResourceToolNames(
-          connection.resources,
-          { serverName: name, prefix }
-        );
-        toolNames.push(...resourceToolNames);
-      }
-      
-      registeredTools.set(name, toolNames);
-      
-      // Build tool metadata for searching (include inputSchema for describe/errors)
-      const metadata: ToolMetadata[] = connection.tools.map(tool => ({
-        name: formatToolName(tool.name, name, prefix),
-        originalName: tool.name,
-        description: tool.description ?? "",
-        inputSchema: tool.inputSchema,
-      }));
-      // Add resource tools to metadata
-      for (const resource of connection.resources) {
-        if (definition.exposeResources !== false) {
-          const baseName = `get_${resourceNameToToolName(resource.name)}`;
-          metadata.push({
-            name: formatToolName(baseName, name, prefix),
-            originalName: baseName,
-            description: resource.description ?? `Read resource: ${resource.uri}`,
-            resourceUri: resource.uri,
-          });
-        }
-      }
-      toolMetadata.set(name, metadata);
-      
-      // Mark keep-alive servers
-      if (definition.lifecycle === "keep-alive") {
-        lifecycle.markKeepAlive(name, definition);
-      }
-      
-      if (failedTools.length > 0 && ctx.hasUI) {
-        ctx.ui.notify(
-          `MCP: ${name} - ${failedTools.length} tools skipped`,
-          "warning"
-        );
-      }
-      
-      if (ctx.hasUI) {
-        ctx.ui.notify(
-          `MCP: ${name} connected (${connection.tools.length} tools, ${connection.resources.length} resources)`,
-          "info"
-        );
-      }
+      return { name, definition, connection, error: null };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (ctx.hasUI) {
-        ctx.ui.notify(`MCP: Failed to connect to ${name}: ${message}`, "error");
-      }
-      console.error(`MCP: Failed to connect to ${name}: ${message}`);
+      return { name, definition, connection: null, error: message };
     }
+  });
+  const prefix = config.settings?.toolPrefix ?? "server";
+  
+  // Process results
+  for (const { name, definition, connection, error } of results) {
+    if (error || !connection) {
+      if (ctx.hasUI) {
+        ctx.ui.notify(`MCP: Failed to connect to ${name}: ${error}`, "error");
+      }
+      console.error(`MCP: Failed to connect to ${name}: ${error}`);
+      continue;
+    }
+    
+    // Collect tool names (NOT registered with Pi - only mcp proxy is registered)
+    const { collected: toolNames, failed: failedTools } = collectToolNames(
+      connection.tools,
+      { serverName: name, prefix }
+    );
+    
+    // Collect resource tool names (if enabled)
+    if (definition.exposeResources !== false && connection.resources.length > 0) {
+      const resourceToolNames = collectResourceToolNames(
+        connection.resources,
+        { serverName: name, prefix }
+      );
+      toolNames.push(...resourceToolNames);
+    }
+    
+    registeredTools.set(name, toolNames);
+    
+    // Build tool metadata for searching (include inputSchema for describe/errors)
+    const metadata: ToolMetadata[] = connection.tools.map(tool => ({
+      name: formatToolName(tool.name, name, prefix),
+      originalName: tool.name,
+      description: tool.description ?? "",
+      inputSchema: tool.inputSchema,
+    }));
+    // Add resource tools to metadata
+    for (const resource of connection.resources) {
+      if (definition.exposeResources !== false) {
+        const baseName = `get_${resourceNameToToolName(resource.name)}`;
+        metadata.push({
+          name: formatToolName(baseName, name, prefix),
+          originalName: baseName,
+          description: resource.description ?? `Read resource: ${resource.uri}`,
+          resourceUri: resource.uri,
+        });
+      }
+    }
+    toolMetadata.set(name, metadata);
+    
+    // Mark keep-alive servers
+    if (definition.lifecycle === "keep-alive") {
+      lifecycle.markKeepAlive(name, definition);
+    }
+    
+    if (failedTools.length > 0 && ctx.hasUI) {
+      ctx.ui.notify(
+        `MCP: ${name} - ${failedTools.length} tools skipped`,
+        "warning"
+      );
+    }
+  }
+  
+  // Summary notification
+  const connectedCount = results.filter(r => r.connection).length;
+  const failedCount = results.filter(r => r.error).length;
+  if (ctx.hasUI && connectedCount > 0) {
+    const totalTools = [...registeredTools.values()].flat().length;
+    const msg = failedCount > 0 
+      ? `MCP: ${connectedCount}/${serverEntries.length} servers connected (${totalTools} tools)`
+      : `MCP: ${connectedCount} servers connected (${totalTools} tools)`;
+    ctx.ui.notify(msg, "info");
   }
   
   // Start health checks for keep-alive servers

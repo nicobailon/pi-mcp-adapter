@@ -129,4 +129,3 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for details. Short version:
 
 - OAuth tokens obtained externally (no browser flow)
 - No automatic token refresh
-- Servers connect sequentially on startup
