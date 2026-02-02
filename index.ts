@@ -212,7 +212,7 @@ Mode: tool (call) > connect > describe > search > server (list) > nothing (statu
       regex?: boolean;
       includeSchemas?: boolean;
       server?: string;
-    }) {
+    }, _signal, _onUpdate, _ctx) {
       // Parse args from JSON string if provided
       let parsedArgs: Record<string, unknown> | undefined;
       if (params.args) {
