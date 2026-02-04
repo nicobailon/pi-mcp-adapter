@@ -88,6 +88,7 @@ Two calls instead of 26 tools cluttering the context.
 | `bearerToken` / `bearerTokenEnv` | Token or env var name |
 | `lifecycle` | `"lazy"` (default), `"eager"`, or `"keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
+| `requestTimeout` | Milliseconds before tool/resource requests timeout (default: 60000) |
 | `exposeResources` | Expose MCP resources as tools (default: true) |
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
 | `debug` | Show server stderr (default: false) |
@@ -104,7 +105,8 @@ Two calls instead of 26 tools cluttering the context.
 {
   "settings": {
     "toolPrefix": "server",
-    "idleTimeout": 10
+    "idleTimeout": 10,
+    "requestTimeout": 120000
   },
   "mcpServers": { }
 }
@@ -114,9 +116,10 @@ Two calls instead of 26 tools cluttering the context.
 |---------|-------------|
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), or `"none"` |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
+| `requestTimeout` | Global request timeout in milliseconds (default: 60000) |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 
-Per-server `idleTimeout` overrides the global setting.
+Per-server `idleTimeout` and `requestTimeout` override the global settings.
 
 ### Direct Tools
 

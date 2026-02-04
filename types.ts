@@ -68,6 +68,7 @@ export interface ServerEntry {
   bearerTokenEnv?: string;
   lifecycle?: "keep-alive" | "lazy" | "eager";
   idleTimeout?: number; // minutes, overrides global setting
+  requestTimeout?: number; // milliseconds, timeout for tool/resource requests
   // Resource handling
   exposeResources?: boolean;
   // Direct tool registration
@@ -80,6 +81,7 @@ export interface ServerEntry {
 export interface McpSettings {
   toolPrefix?: "server" | "none" | "short";
   idleTimeout?: number; // minutes, default 10, 0 to disable
+  requestTimeout?: number; // milliseconds, default 60000 (MCP SDK default)
   directTools?: boolean;
 }
 
