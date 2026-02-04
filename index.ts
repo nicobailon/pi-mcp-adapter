@@ -293,8 +293,11 @@ export default function mcpAdapter(pi: ExtensionAPI) {
           s.manager.touch(spec.serverName);
           s.manager.incrementInFlight(spec.serverName);
 
+          const requestTimeout = getEffectiveRequestTimeoutMs(s, spec.serverName);
+          const requestOptions = typeof requestTimeout === "number" ? { timeout: requestTimeout } : undefined;
+
           if (spec.resourceUri) {
-            const result = await connection.client.readResource({ uri: spec.resourceUri });
+            const result = await connection.client.readResource({ uri: spec.resourceUri }, requestOptions);
             const content = (result.contents ?? []).map(c => ({
               type: "text" as const,
               text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
@@ -308,7 +311,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
           const result = await connection.client.callTool({
             name: spec.originalName,
             arguments: params ?? {},
-          });
+          }, undefined, requestOptions);
 
           const mcpContent = (result.content ?? []) as McpContent[];
           const content = transformMcpContent(mcpContent);
@@ -1084,9 +1087,13 @@ async function executeCall(
     state.manager.touch(serverName);
     state.manager.incrementInFlight(serverName);
 
+    // Get timeout: server-specific > global settings > SDK default (60s)
+    const requestTimeout = getEffectiveRequestTimeoutMs(state, serverName);
+    const requestOptions = typeof requestTimeout === "number" ? { timeout: requestTimeout } : undefined;
+
     // Resource tools use readResource, regular tools use callTool
     if (toolMeta.resourceUri) {
-      const result = await connection.client.readResource({ uri: toolMeta.resourceUri });
+      const result = await connection.client.readResource({ uri: toolMeta.resourceUri }, requestOptions);
       const content = (result.contents ?? []).map(c => ({
         type: "text" as const,
         text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
@@ -1101,7 +1108,7 @@ async function executeCall(
     const result = await connection.client.callTool({
       name: toolMeta.originalName,
       arguments: args ?? {},
-    });
+    }, undefined, requestOptions);
 
     const mcpContent = (result.content ?? []) as McpContent[];
     const content = transformMcpContent(mcpContent);
@@ -1559,6 +1566,13 @@ function getEffectiveIdleTimeoutMinutes(state: McpExtensionState, serverName: st
   const mode = definition.lifecycle ?? "lazy";
   if (mode === "eager") return 0;
   return typeof state.config.settings?.idleTimeout === "number" ? state.config.settings.idleTimeout : 10;
+}
+
+function getEffectiveRequestTimeoutMs(state: McpExtensionState, serverName: string): number | undefined {
+  const definition = state.config.mcpServers[serverName];
+  if (definition && typeof definition.requestTimeout === "number") return definition.requestTimeout;
+  if (typeof state.config.settings?.requestTimeout === "number") return state.config.settings.requestTimeout;
+  return undefined;
 }
 
 async function lazyConnect(state: McpExtensionState, serverName: string): Promise<boolean> {
