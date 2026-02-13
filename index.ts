@@ -1,5 +1,6 @@
 // index.ts - Full extension entry point with commands
-import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@mariozechner/pi-coding-agent";
+import { keyHint, type ExtensionAPI, type ExtensionContext, type Theme, type ToolInfo } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { existsSync } from "node:fs";
 import { loadMcpConfig, getServerProvenance, writeDirectToolsConfig } from "./config.js";
@@ -255,6 +256,53 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema || { type: "object", properties: {} }),
+      
+      renderCall(args, theme: Theme) {
+        const text = theme.fg("toolTitle", theme.bold(`${spec.serverName}: `))
+          + theme.fg("accent", spec.originalName)
+          + (spec.resourceUri ? theme.fg("dim", " (resource)") : "");
+        return new Text(text, 0, 0);
+      },
+
+      renderResult(result, { expanded }, theme: Theme) {
+        const details = result.details as { error?: string } | undefined;
+        const textContent = result.content.find(c => c.type === "text") as { type: string; text?: string } | undefined;
+
+        // Handle errors
+        if (details?.error) {
+          const msg = textContent?.text ?? String(details.error);
+          return new Text(theme.fg("error", `Error: ${msg}`), 0, 0);
+        }
+
+        const isEmpty = !textContent?.text || textContent.text.trim().length === 0
+          || textContent.text === "(empty result)" || textContent.text === "(empty resource)";
+
+        // Collapsed view
+        if (!expanded) {
+          if (isEmpty) return new Text(theme.fg("dim", "(empty)"), 0, 0);
+          const firstLine = textContent.text.split("\n")[0] || "";
+          const preview = firstLine.length > 60 ? firstLine.slice(0, 57) + "..." : firstLine;
+          return new Text(theme.fg("muted", preview), 0, 0);
+        }
+
+        // Expanded view
+        if (isEmpty) return new Text(theme.fg("dim", "(no output)"), 0, 0);
+
+        const lines = textContent.text.split("\n");
+        const maxLines = expanded ? lines.length : 10;
+        const displayLines = lines.slice(0, maxLines);
+        const remaining = Math.max(0, lines.length - maxLines);
+
+        const output = displayLines.map(line => theme.fg("toolOutput", line));
+        if (remaining > 0) {
+          output.push(
+            "",
+            `${theme.fg("muted", `... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")}${theme.fg("muted", ")")}`,
+          );
+        }
+        return new Text(output.join("\n"), 0, 0);
+      },
+
       async execute(_toolCallId, params) {
         if (!state && initPromise) {
           try { state = await initPromise; } catch {
@@ -473,6 +521,51 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       // Filter (works with search or list)
       server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
     }),
+
+    renderCall(args, theme: Theme) {
+      const base = theme.fg("toolTitle", theme.bold("mcp"));
+      let suffix: string;
+
+      if (args.tool) suffix = theme.fg("accent", args.tool);
+      else if (args.connect) suffix = theme.fg("muted", `connect ${args.connect}`);
+      else if (args.describe) suffix = theme.fg("muted", `describe ${args.describe}`);
+      else if (args.search) suffix = theme.fg("muted", `search "${args.search}"`);
+      else if (args.server) suffix = theme.fg("muted", `server ${args.server}`);
+      else suffix = theme.fg("muted", "status");
+
+      return new Text(base + " " + suffix, 0, 0);
+    },
+
+    renderResult(result, { expanded }, theme: Theme) {
+      const details = result.details as { error?: string } | undefined;
+      const content = result.content[0];
+
+      // Handle errors
+      if (details?.error) {
+        const msg = content?.type === "text" ? content.text : String(details.error);
+        return new Text(theme.fg("error", msg), 0, 0);
+      }
+
+      // Handle empty or non-text content
+      if (!content || content.type !== "text" || !content.text) {
+        return new Text(theme.fg("dim", "(no output)"), 0, 0);
+      }
+
+      const lines = content.text.split("\n");
+      const maxLines = expanded ? lines.length : 10;
+      const displayLines = lines.slice(0, maxLines);
+      const remaining = Math.max(0, lines.length - maxLines);
+
+      const output = displayLines.map(line => theme.fg("toolOutput", line));
+      if (remaining > 0) {
+        output.push(
+          "",
+          `${theme.fg("muted", `... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")}${theme.fg("muted", ")")}`,
+        );
+      }
+      return new Text(output.join("\n"), 0, 0);
+    },
+
     async execute(_toolCallId, params: {
       tool?: string;
       args?: string;
