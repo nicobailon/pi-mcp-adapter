@@ -280,26 +280,22 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         // Collapsed view
         if (!expanded) {
           if (isEmpty) return new Text(theme.fg("dim", "(empty)"), 0, 0);
-          const firstLine = textContent.text.split("\n")[0] || "";
-          const preview = firstLine.length > 60 ? firstLine.slice(0, 57) + "..." : firstLine;
-          return new Text(theme.fg("muted", preview), 0, 0);
+          const lines = textContent.text.split("\n");
+          const remaining = lines.length - 1;
+          if (remaining > 0) {
+            return new Text(
+              `${theme.fg("muted", `... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")}${theme.fg("muted", ")")}`,
+              0, 0
+            );
+          }
+          return new Text(theme.fg("dim", "(empty)"), 0, 0);
         }
 
         // Expanded view
         if (isEmpty) return new Text(theme.fg("dim", "(no output)"), 0, 0);
 
         const lines = textContent.text.split("\n");
-        const maxLines = expanded ? lines.length : 10;
-        const displayLines = lines.slice(0, maxLines);
-        const remaining = Math.max(0, lines.length - maxLines);
-
-        const output = displayLines.map(line => theme.fg("toolOutput", line));
-        if (remaining > 0) {
-          output.push(
-            "",
-            `${theme.fg("muted", `... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")}${theme.fg("muted", ")")}`,
-          );
-        }
+        const output = lines.map(line => theme.fg("toolOutput", line));
         return new Text(output.join("\n"), 0, 0);
       },
 
@@ -538,31 +534,31 @@ export default function mcpAdapter(pi: ExtensionAPI) {
 
     renderResult(result, { expanded }, theme: Theme) {
       const details = result.details as { error?: string } | undefined;
-      const content = result.content[0];
+      const content = result.content[0] as { type?: string; text?: string } | undefined;
 
-      // Handle errors
       if (details?.error) {
         const msg = content?.type === "text" ? content.text : String(details.error);
         return new Text(theme.fg("error", msg), 0, 0);
       }
 
-      // Handle empty or non-text content
       if (!content || content.type !== "text" || !content.text) {
         return new Text(theme.fg("dim", "(no output)"), 0, 0);
       }
 
-      const lines = content.text.split("\n");
-      const maxLines = expanded ? lines.length : 10;
-      const displayLines = lines.slice(0, maxLines);
-      const remaining = Math.max(0, lines.length - maxLines);
-
-      const output = displayLines.map(line => theme.fg("toolOutput", line));
-      if (remaining > 0) {
-        output.push(
-          "",
-          `${theme.fg("muted", `... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")}${theme.fg("muted", ")")}`,
-        );
+      if (!expanded) {
+        const lines = content.text.split("\n");
+        const remaining = lines.length - 1;
+        if (remaining > 0) {
+          return new Text(
+            `${theme.fg("muted", `... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")}${theme.fg("muted", ")")}`,
+            0, 0
+          );
+        }
+        return new Text(theme.fg("dim", "(empty)"), 0, 0);
       }
+
+      const lines = content.text.split("\n");
+      const output = lines.map(line => theme.fg("toolOutput", line));
       return new Text(output.join("\n"), 0, 0);
     },
 
