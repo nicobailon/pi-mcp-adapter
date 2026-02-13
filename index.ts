@@ -1,6 +1,7 @@
 // index.ts - Full extension entry point with commands
 import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { Text } from "@mariozechner/pi-tui";
 import { existsSync } from "node:fs";
 import { loadMcpConfig, getServerProvenance, writeDirectToolsConfig } from "./config.js";
 import { formatToolName, getServerPrefix, type McpConfig, type McpContent, type ToolMetadata, type McpTool, type McpResource, type ServerEntry, type DirectToolSpec, type McpPanelCallbacks, type McpPanelResult } from "./types.js";
@@ -69,6 +70,107 @@ async function parallelLimit<T, R>(
 }
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
+
+// --- Compact renderers for MCP tools ---
+
+function renderMcpToolCall(toolLabel: string, args: Record<string, unknown>, theme: any): any {
+  let text = theme.fg("toolTitle", theme.bold(toolLabel + " "));
+  const keys = Object.keys(args).filter(k => args[k] !== undefined);
+  if (keys.length === 0) {
+    text += theme.fg("dim", "(no args)");
+  } else {
+    const parts: string[] = [];
+    for (const key of keys.slice(0, 4)) {
+      const val = args[key];
+      let valStr = typeof val === "string" ? val : JSON.stringify(val);
+      if (valStr.length > 60) valStr = valStr.slice(0, 57) + "...";
+      parts.push(theme.fg("muted", key + "=") + theme.fg("accent", valStr));
+    }
+    if (keys.length > 4) parts.push(theme.fg("dim", `+${keys.length - 4} more`));
+    text += parts.join(" ");
+  }
+  return new Text(text, 0, 0);
+}
+
+function renderMcpToolResult(result: any, options: { expanded: boolean; isPartial: boolean }, theme: any): any {
+  if (options.isPartial) {
+    return new Text(theme.fg("warning", "⏳ running..."), 0, 0);
+  }
+
+  const content = result.content ?? [];
+  const details = result.details ?? {};
+  const isError = result.isError || details.error;
+
+  // Gather all text
+  const textParts = content
+    .filter((c: any) => c.type === "text")
+    .map((c: any) => c.text);
+  const fullText = textParts.join("\n");
+  const lines = fullText.split("\n");
+  const lineCount = lines.length;
+  const hasImages = content.some((c: any) => c.type === "image");
+
+  if (isError) {
+    const errPreview = lines[0]?.slice(0, 120) || "Error";
+    let text = theme.fg("error", "✗ " + errPreview);
+    if (options.expanded && lineCount > 1) {
+      text += "\n" + theme.fg("dim", fullText);
+    }
+    return new Text(text, 0, 0);
+  }
+
+  // Collapsed view: first few lines + stats
+  if (!options.expanded) {
+    const PREVIEW_LINES = 5;
+    const preview = lines.slice(0, PREVIEW_LINES).join("\n");
+    let text = theme.fg("success", "✓ ");
+    text += preview;
+    if (lineCount > PREVIEW_LINES) {
+      text += "\n" + theme.fg("dim", `... ${lineCount - PREVIEW_LINES} more lines`);
+    }
+    if (hasImages) {
+      text += theme.fg("dim", " +image");
+    }
+    return new Text(text, 0, 0);
+  }
+
+  // Expanded view: show full output (capped at 50 lines)
+  const MAX_LINES = 50;
+  let text = "";
+  if (lineCount <= MAX_LINES) {
+    text = fullText;
+  } else {
+    text = lines.slice(0, MAX_LINES).join("\n");
+    text += "\n" + theme.fg("dim", `... ${lineCount - MAX_LINES} more lines`);
+  }
+  return new Text(text, 0, 0);
+}
+
+function renderProxyCall(args: Record<string, unknown>, theme: any): any {
+  let text = theme.fg("toolTitle", theme.bold("mcp "));
+
+  if (args.tool) {
+    text += theme.fg("accent", String(args.tool));
+    if (args.args) {
+      let argsStr = String(args.args);
+      if (argsStr.length > 80) argsStr = argsStr.slice(0, 77) + "...";
+      text += " " + theme.fg("dim", argsStr);
+    }
+    if (args.server) text += theme.fg("muted", ` @${args.server}`);
+  } else if (args.connect) {
+    text += theme.fg("muted", "connect ") + theme.fg("accent", String(args.connect));
+  } else if (args.describe) {
+    text += theme.fg("muted", "describe ") + theme.fg("accent", String(args.describe));
+  } else if (args.search) {
+    text += theme.fg("muted", "search ") + theme.fg("accent", `"${args.search}"`);
+  } else if (args.server) {
+    text += theme.fg("muted", "list ") + theme.fg("accent", String(args.server));
+  } else {
+    text += theme.fg("muted", "status");
+  }
+
+  return new Text(text, 0, 0);
+}
 
 function getConfigPathFromArgv(): string | undefined {
   const idx = process.argv.indexOf("--mcp-config");
@@ -255,6 +357,12 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema || { type: "object", properties: {} }),
+      renderCall(args: Record<string, unknown>, theme: any) {
+        return renderMcpToolCall(spec.originalName, args, theme);
+      },
+      renderResult(result: any, options: { expanded: boolean; isPartial: boolean }, theme: any) {
+        return renderMcpToolResult(result, options, theme);
+      },
       async execute(_toolCallId, params) {
         if (!state && initPromise) {
           try { state = await initPromise; } catch {
@@ -387,6 +495,26 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   // /mcp command
   pi.registerCommand("mcp", {
     description: "Show MCP server status",
+    getArgumentCompletions: (prefix: string) => {
+      const subcommands = [
+        { value: "reconnect", label: "reconnect — Reconnect servers" },
+        { value: "tools", label: "tools — List all tools" },
+        { value: "status", label: "status — Show status" },
+      ];
+      const parts = prefix.trim().split(/\s+/);
+      if (parts.length <= 1) {
+        const filtered = subcommands.filter(s => s.value.startsWith(parts[0] ?? ""));
+        return filtered.length > 0 ? filtered : null;
+      }
+      // After "reconnect", complete with server names
+      if (parts[0] === "reconnect" && state) {
+        const servers = Object.keys(state.config.mcpServers)
+          .map(s => ({ value: `reconnect ${s}`, label: s }))
+          .filter(s => s.label.startsWith(parts[1] ?? ""));
+        return servers.length > 0 ? servers : null;
+      }
+      return null;
+    },
     handler: async (args, ctx) => {
       // Wait for init if still in progress
       if (!state && initPromise) {
@@ -426,6 +554,31 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     },
   });
   
+  // /mcp-reconnect command
+  pi.registerCommand("mcp-reconnect", {
+    description: "Reconnect MCP servers",
+    getArgumentCompletions: (prefix: string) => {
+      if (!state) return null;
+      const servers = Object.keys(state.config.mcpServers)
+        .map(s => ({ value: s, label: s }))
+        .filter(s => s.value.startsWith(prefix.trim()));
+      return servers.length > 0 ? servers : null;
+    },
+    handler: async (args, ctx) => {
+      if (!state && initPromise) {
+        try { state = await initPromise; } catch {
+          if (ctx.hasUI) ctx.ui.notify("MCP initialization failed", "error");
+          return;
+        }
+      }
+      if (!state) {
+        if (ctx.hasUI) ctx.ui.notify("MCP not initialized", "error");
+        return;
+      }
+      await reconnectServers(state, ctx, args?.trim() || undefined);
+    },
+  });
+
   // /mcp-auth command
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",
@@ -473,6 +626,12 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       // Filter (works with search or list)
       server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
     }),
+    renderCall(args: Record<string, unknown>, theme: any) {
+      return renderProxyCall(args, theme);
+    },
+    renderResult(result: any, options: { expanded: boolean; isPartial: boolean }, theme: any) {
+      return renderMcpToolResult(result, options, theme);
+    },
     async execute(_toolCallId, params: {
       tool?: string;
       args?: string;
