@@ -70,6 +70,13 @@ async function parallelLimit<T, R>(
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 
+/** Strip $schema so pi's Ajv instance doesn't choke on unrecognised drafts (e.g. 2020-12). */
+function sanitizeSchema(schema: unknown): Record<string, unknown> | undefined {
+  if (!schema || typeof schema !== "object") return undefined;
+  const { $schema, ...rest } = schema as Record<string, unknown>;
+  return rest;
+}
+
 function getConfigPathFromArgv(): string | undefined {
   const idx = process.argv.indexOf("--mcp-config");
   if (idx >= 0 && idx + 1 < process.argv.length) {
@@ -254,7 +261,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       name: spec.prefixedName,
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
-      parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema || { type: "object", properties: {} }),
+      parameters: Type.Unsafe<Record<string, unknown>>(sanitizeSchema(spec.inputSchema) || { type: "object", properties: {} }),
       async execute(_toolCallId, params) {
         if (!state && initPromise) {
           try { state = await initPromise; } catch {
