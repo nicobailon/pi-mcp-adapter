@@ -54,6 +54,16 @@ export interface McpContent {
 // Pi content block type
 export type ContentBlock = TextContent | ImageContent;
 
+// OAuth configuration (SDK handles auto-discovery and dynamic registration)
+export interface OAuthConfig {
+  /** Pre-registered client ID (optional, dynamic registration used if not provided) */
+  clientId?: string;
+  /** Client secret for confidential clients */
+  clientSecret?: string;
+  /** Requested OAuth scopes */
+  scope?: string;
+}
+
 // Server configuration
 export interface ServerEntry {
   command?: string;
@@ -63,9 +73,22 @@ export interface ServerEntry {
   // HTTP fields
   url?: string;
   headers?: Record<string, string>;
-  auth?: "oauth" | "bearer";
+  /** 
+   * Authentication type:
+   * - 'oauth' - Use OAuth 2.1 (auto-discovers endpoints, supports dynamic client registration)
+   * - 'bearer' - Use static Bearer token
+   * - false - Disable authentication
+   * If not specified and url is present, OAuth will be auto-detected
+   */
+  auth?: "oauth" | "bearer" | false;
   bearerToken?: string;
   bearerTokenEnv?: string;
+  /** 
+   * OAuth configuration (optional).
+   * If not provided, the SDK will attempt dynamic client registration.
+   * Set to false to explicitly disable OAuth for this server.
+   */
+  oauth?: OAuthConfig | false;
   lifecycle?: "keep-alive" | "lazy" | "eager";
   idleTimeout?: number; // minutes, overrides global setting
   // Resource handling

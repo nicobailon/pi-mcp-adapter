@@ -8,7 +8,7 @@ import { McpServerManager } from "./server-manager.js";
 import { McpLifecycleManager } from "./lifecycle.js";
 import { transformMcpContent } from "./tool-registrar.js";
 import { resourceNameToToolName } from "./resource-tools.js";
-import { getStoredTokens } from "./oauth-handler.js";
+import { hasStoredTokens } from "./mcp-auth.js";
 import {
   computeServerHash,
   getMetadataCachePath,
@@ -21,6 +21,14 @@ import {
   serializeTools,
   type ServerCacheEntry,
 } from "./metadata-cache.js";
+import {
+  authenticate,
+  getAuthStatus,
+  removeAuth,
+  supportsOAuth,
+  initializeOAuth,
+  type AuthStatus,
+} from "./mcp-auth-flow.js";
 
 interface McpExtensionState {
   manager: McpServerManager;
@@ -355,6 +363,11 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   });
   
   pi.on("session_start", async (_event, ctx) => {
+    // Initialize OAuth callback server
+    await initializeOAuth().catch(err => {
+      console.error("MCP OAuth initialization failed:", err);
+    });
+    
     // Non-blocking init - Pi starts immediately, MCP connects in background
     initPromise = initializeMcp(pi, ctx);
     
@@ -451,6 +464,20 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       }
       
       await authenticateServer(serverName, state.config, ctx);
+    },
+  });
+  
+  // /mcp-auth-callback command (deprecated - now automatic)
+  pi.registerCommand("mcp-auth-callback", {
+    description: "[Deprecated] OAuth is now automatic - use /mcp-auth <server> instead",
+    handler: async (_args, ctx) => {
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          "OAuth authentication is now automatic!\n" +
+          "Use /mcp-auth <server-name> to authenticate. The callback is handled automatically.",
+          "info"
+        );
+      }
     },
   });
   
@@ -1604,10 +1631,10 @@ async function authenticateServer(
     return;
   }
   
-  if (definition.auth !== "oauth") {
+  if (!supportsOAuth(definition)) {
     ctx.ui.notify(
       `Server "${serverName}" does not use OAuth authentication.\n` +
-      `Current auth mode: ${definition.auth ?? "none"}`,
+      `Set "auth": "oauth" or omit auth for auto-detection.`,
       "error"
     );
     return;
@@ -1621,22 +1648,46 @@ async function authenticateServer(
     return;
   }
   
-  // Show instructions for obtaining OAuth tokens
-  const tokenPath = `~/.pi/agent/mcp-oauth/${serverName}/tokens.json`;
-  
-  ctx.ui.notify(
-    `OAuth setup for "${serverName}":\n\n` +
-    `1. Obtain an access token from your OAuth provider\n` +
-    `2. Create the token file:\n` +
-    `   ${tokenPath}\n\n` +
-    `3. Add your token:\n` +
-    `   {\n` +
-    `     "access_token": "your-token-here",\n` +
-    `     "token_type": "bearer"\n` +
-    `   }\n\n` +
-    `4. Run /mcp reconnect to connect with the token`,
-    "info"
-  );
+  // Full automatic OAuth flow using SDK
+  try {
+    ctx.ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
+    
+    // This opens the browser, waits for callback, and completes the flow
+    const status = await authenticate(serverName, definition.url, definition);
+    
+    if (status === "authenticated") {
+      ctx.ui.notify(
+        `OAuth authentication successful for "${serverName}"!\n` +
+        `Run /mcp reconnect ${serverName} to connect with the new token.`,
+        "success"
+      );
+    } else {
+      ctx.ui.notify(
+        `OAuth authentication failed for "${serverName}".`,
+        "error"
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.ui.notify(`Failed to authenticate "${serverName}": ${message}`, "error");
+  } finally {
+    ctx.ui.setStatus("mcp-auth", undefined);
+  }
+}
+
+async function completeOAuthCallback(
+  _serverName: string,
+  _callbackUrl: string,
+  ctx: ExtensionContext
+): Promise<void> {
+  // Deprecated - OAuth is now automatic
+  if (ctx.hasUI) {
+    ctx.ui.notify(
+      "OAuth authentication is now automatic!\n" +
+      "Use /mcp-auth <server-name> to authenticate. The callback is handled automatically.",
+      "info"
+    );
+  }
 }
 
 async function openMcpPanel(
@@ -1655,7 +1706,7 @@ async function openMcpPanel(
     },
     getConnectionStatus: (serverName: string) => {
       const definition = config.mcpServers[serverName];
-      if (definition?.auth === "oauth" && getStoredTokens(serverName) === undefined) {
+      if (definition?.auth === "oauth" && !hasStoredTokens(serverName)) {
         return "needs-auth";
       }
       const connection = state.manager.getConnection(serverName);

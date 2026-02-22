@@ -8,6 +8,9 @@
   "bin": {
     "pi-mcp-adapter": "./cli.js"
   },
+  "scripts": {
+    "test": "node --import tsx --test *.test.ts"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/nicobailon/pi-mcp-adapter"
@@ -40,7 +43,10 @@
     "lifecycle.ts",
     "metadata-cache.ts",
     "npx-resolver.ts",
-    "oauth-handler.ts",
+    "mcp-auth.ts",
+    "mcp-oauth-provider.ts",
+    "mcp-callback-server.ts",
+    "mcp-auth-flow.ts",
     "mcp-panel.ts",
     "README.md",
     "CHANGELOG.md",
@@ -48,13 +54,17 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1",
-    "@sinclair/typebox": "^0.32.0"
+    "@sinclair/typebox": "^0.32.0",
+    "open": "^10.2.0"
   },
   "peerDependencies": {
     "zod": "^3.25.0 || ^4.0.0"
   },
   "devDependencies": {
+    "@types/bun": "^1.0.0",
     "@types/node": "^20.0.0",
+    "@types/open": "^6.2.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.0.0",
     "zod": "^3.25.0"
   }
