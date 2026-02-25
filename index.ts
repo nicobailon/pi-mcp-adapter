@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ToolInfo } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import type { McpExtensionState } from "./state.js";
 import { Type } from "@sinclair/typebox";
 import { showStatus, showTools, reconnectServers, authenticateServer, openMcpPanel } from "./commands.js";
@@ -72,6 +73,12 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema || { type: "object", properties: {} }),
+      renderCall(args, theme) {
+        let line = theme.fg("toolTitle", theme.bold(spec.prefixedName));
+        const argStr = formatArgsCompact(args as Record<string, unknown>);
+        if (argStr) line += " " + theme.fg("accent", argStr);
+        return new Text(line, 0, 0);
+      },
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
     });
   }
@@ -235,6 +242,28 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages' to retrieve prompts/intents from UI sessions" })),
       }),
+      renderCall(args, theme) {
+        let line = theme.fg("toolTitle", theme.bold("mcp"));
+        const a = args as { tool?: string; args?: string; search?: string; connect?: string; describe?: string; server?: string; action?: string };
+        if (a.tool) {
+          line += " " + theme.fg("accent", a.tool);
+          if (a.args) {
+            const truncated = a.args.length > 60 ? a.args.slice(0, 57) + "..." : a.args;
+            line += " " + theme.fg("muted", truncated);
+          }
+        } else if (a.search) {
+          line += theme.fg("muted", " search:") + " " + theme.fg("accent", `"${a.search}"`);
+        } else if (a.connect) {
+          line += theme.fg("muted", " connect:") + " " + theme.fg("accent", a.connect);
+        } else if (a.describe) {
+          line += theme.fg("muted", " describe:") + " " + theme.fg("accent", a.describe);
+        } else if (a.server) {
+          line += theme.fg("muted", " server:") + " " + theme.fg("accent", a.server);
+        } else if (a.action) {
+          line += theme.fg("muted", " action:") + " " + theme.fg("accent", a.action);
+        }
+        return new Text(line, 0, 0);
+      },
       async execute(_toolCallId, params: {
         tool?: string;
         args?: string;
@@ -302,4 +331,15 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       },
     });
   }
+}
+
+function formatArgsCompact(args: Record<string, unknown>, maxLen = 80): string {
+  if (!args || Object.keys(args).length === 0) return "";
+  const parts = Object.entries(args).map(([k, v]) => {
+    if (typeof v === "string") return `${k}=${v}`;
+    if (typeof v === "number" || typeof v === "boolean") return `${k}=${v}`;
+    return `${k}=${JSON.stringify(v)}`;
+  });
+  const str = parts.join(" ");
+  return str.length <= maxLen ? str : str.slice(0, maxLen - 3) + "...";
 }
