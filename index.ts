@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ToolInfo } from "@mariozechner/pi-coding-agent";
+import { keyHint, type ExtensionAPI, type ToolInfo } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import type { McpExtensionState } from "./state.js";
 import { Type } from "@sinclair/typebox";
@@ -78,6 +78,9 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         const argStr = formatArgsCompact(args as Record<string, unknown>);
         if (argStr) line += " " + theme.fg("accent", argStr);
         return new Text(line, 0, 0);
+      },
+      renderResult(result, { expanded, isPartial }, theme) {
+        return renderMcpResult(result.content, expanded, isPartial, theme);
       },
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
     });
@@ -264,6 +267,9 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         }
         return new Text(line, 0, 0);
       },
+      renderResult(result, { expanded, isPartial }, theme) {
+        return renderMcpResult(result.content, expanded, isPartial, theme);
+      },
       async execute(_toolCallId, params: {
         tool?: string;
         args?: string;
@@ -331,6 +337,39 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       },
     });
   }
+}
+
+const PREVIEW_LINES = 10;
+
+function renderMcpResult(
+  content: Array<{ type: string; text?: string }> | undefined,
+  expanded: boolean,
+  isPartial: boolean,
+  theme: { fg: (color: string, text: string) => string },
+): Text {
+  if (isPartial) {
+    return new Text(theme.fg("muted", "Loading..."), 0, 0);
+  }
+
+  const text = (content ?? [])
+    .filter((c) => c.type === "text")
+    .map((c) => c.text ?? "")
+    .join("\n");
+
+  if (!text) {
+    return new Text(theme.fg("muted", "(empty result)"), 0, 0);
+  }
+
+  const lines = text.split("\n");
+
+  if (expanded || lines.length <= PREVIEW_LINES) {
+    return new Text(text, 0, 0);
+  }
+
+  const preview = lines.slice(0, PREVIEW_LINES).join("\n");
+  const remaining = lines.length - PREVIEW_LINES;
+  const hint = `${theme.fg("muted", `\n... (${remaining} more line${remaining === 1 ? "" : "s"},`)} ${keyHint("expandTools", "to expand")})`;
+  return new Text(preview + hint, 0, 0);
 }
 
 function formatArgsCompact(args: Record<string, unknown>, maxLen = 80): string {
