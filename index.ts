@@ -1,5 +1,7 @@
 // index.ts - Full extension entry point with commands
 import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@mariozechner/pi-coding-agent";
+import { keyHint } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { existsSync } from "node:fs";
 import { loadMcpConfig, getServerProvenance, writeDirectToolsConfig } from "./config.js";
@@ -255,6 +257,15 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema || { type: "object", properties: {} }),
+      renderCall(args, theme) {
+        let line = theme.fg("toolTitle", theme.bold(spec.prefixedName));
+        const argStr = formatArgsCompact(args as Record<string, unknown>);
+        if (argStr) line += " " + theme.fg("accent", argStr);
+        return new Text(line, 0, 0);
+      },
+      renderResult(result, { expanded, isPartial }, theme) {
+        return renderMcpResult(result.content, expanded, isPartial, theme);
+      },
       async execute(_toolCallId, params) {
         if (!state && initPromise) {
           try { state = await initPromise; } catch {
@@ -473,6 +484,29 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       // Filter (works with search or list)
       server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
     }),
+    renderCall(args, theme) {
+      let line = theme.fg("toolTitle", theme.bold("mcp"));
+      const a = args as { tool?: string; args?: string; search?: string; connect?: string; describe?: string; server?: string };
+      if (a.tool) {
+        line += " " + theme.fg("accent", a.tool);
+        if (a.args) {
+          const truncated = a.args.length > 60 ? a.args.slice(0, 57) + "..." : a.args;
+          line += " " + theme.fg("muted", truncated);
+        }
+      } else if (a.search) {
+        line += theme.fg("muted", " search:") + " " + theme.fg("accent", `"${a.search}"`);
+      } else if (a.connect) {
+        line += theme.fg("muted", " connect:") + " " + theme.fg("accent", a.connect);
+      } else if (a.describe) {
+        line += theme.fg("muted", " describe:") + " " + theme.fg("accent", a.describe);
+      } else if (a.server) {
+        line += theme.fg("muted", " server:") + " " + theme.fg("accent", a.server);
+      }
+      return new Text(line, 0, 0);
+    },
+    renderResult(result, { expanded, isPartial }, theme) {
+      return renderMcpResult(result.content, expanded, isPartial, theme);
+    },
     async execute(_toolCallId, params: {
       tool?: string;
       args?: string;
@@ -1306,7 +1340,6 @@ async function initializeMcp(
 
   lifecycle.setIdleShutdownCallback((serverName) => {
     const idleMinutes = getEffectiveIdleTimeoutMinutes(state, serverName);
-    console.log(`MCP: ${serverName} shut down (idle ${idleMinutes}m)`);
     updateStatusBar(state);
   });
 
@@ -1686,6 +1719,58 @@ async function openMcpPanel(
       { overlay: true, overlayOptions: { anchor: "center", width: 82 } },
     );
   });
+}
+
+const PREVIEW_LINES = 10;
+
+/**
+ * Shared renderResult for MCP tool calls.
+ * Compact by default (10 lines), full content when expanded (Ctrl+O).
+ */
+function renderMcpResult(
+  content: Array<{ type: string; text?: string }> | undefined,
+  expanded: boolean,
+  isPartial: boolean,
+  theme: Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0]["renderResult"]>>[2],
+): Text {
+  if (isPartial) {
+    return new Text(theme.fg("muted", "Loading..."), 0, 0);
+  }
+
+  const text = (content ?? [])
+    .filter((c) => c.type === "text")
+    .map((c) => c.text ?? "")
+    .join("\n");
+
+  if (!text) {
+    return new Text(theme.fg("muted", "(empty result)"), 0, 0);
+  }
+
+  const lines = text.split("\n");
+
+  if (expanded || lines.length <= PREVIEW_LINES) {
+    return new Text(text, 0, 0);
+  }
+
+  const preview = lines.slice(0, PREVIEW_LINES).join("\n");
+  const remaining = lines.length - PREVIEW_LINES;
+  const hint = `${theme.fg("muted", `\n... (${remaining} more line${remaining === 1 ? "" : "s"},`)} ${keyHint("expandTools", "to expand")})`;
+  return new Text(preview + hint, 0, 0);
+}
+
+/**
+ * Format tool args as a compact string for renderCall display.
+ * Shows key=value pairs for simple values, truncates to maxLen.
+ */
+function formatArgsCompact(args: Record<string, unknown>, maxLen = 80): string {
+  if (!args || Object.keys(args).length === 0) return "";
+  const parts = Object.entries(args).map(([k, v]) => {
+    if (typeof v === "string") return `${k}=${v}`;
+    if (typeof v === "number" || typeof v === "boolean") return `${k}=${v}`;
+    return `${k}=${JSON.stringify(v)}`;
+  });
+  const str = parts.join(" ");
+  return str.length <= maxLen ? str : str.slice(0, maxLen - 3) + "...";
 }
 
 /**
