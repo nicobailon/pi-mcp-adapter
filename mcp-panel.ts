@@ -34,6 +34,18 @@ function fg(code: string, text: string): string {
   return `\x1b[${code}m${text}\x1b[0m`;
 }
 
+function sanitizeDisplayText(text: string): string {
+  return text
+    // Strip ANSI escape sequences from external content.
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    // Keep rendering to one terminal row.
+    .replace(/[\r\n\t]+/g, " ")
+    // Drop other C0 control chars (except ESC already handled above).
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const RAINBOW_COLORS = [
   "38;2;178;129;214",
   "38;2;215;135;175",
@@ -452,7 +464,9 @@ class McpPanel {
         this.cleanup();
         this.done({ cancelled: true, changes: new Map() });
       } else {
-        this.confirmingDiscard = false;
+        // Keep changes and close the panel.
+        this.cleanup();
+        this.done(this.buildResult());
       }
       return;
     }
@@ -515,8 +529,10 @@ class McpPanel {
     const italic = (s: string) => `\x1b[3m${s}\x1b[23m`;
     const inverse = (s: string) => `\x1b[7m${s}\x1b[27m`;
 
-    const row = (content: string) =>
-      fg(t.border, "│") + truncateToWidth(" " + content, innerW, "…", true) + fg(t.border, "│");
+    const row = (content: string) => {
+      const singleLine = content.replace(/[\r\n\t]+/g, " ");
+      return fg(t.border, "│") + truncateToWidth(" " + singleLine, innerW, "…", true) + fg(t.border, "│");
+    };
     const emptyRow = () => fg(t.border, "│") + " ".repeat(innerW) + fg(t.border, "│");
     const divider = () => fg(t.border, "├" + "─".repeat(innerW) + "┤");
 
@@ -591,8 +607,8 @@ class McpPanel {
         ? inverse(bold(fg(t.cancel, "  Discard  ")))
         : fg(t.hint, "  Discard  ");
       const keepBtn = this.discardSelected === 1
-        ? inverse(bold(fg(t.confirm, "  Keep  ")))
-        : fg(t.hint, "  Keep  ");
+        ? inverse(bold(fg(t.confirm, "  Keep & Close  ")))
+        : fg(t.hint, "  Keep & Close  ");
       lines.push(row(`Discard unsaved changes?  ${discardBtn}   ${keepBtn}`));
     } else {
       const directCount = this.servers.reduce((sum, s) => sum + s.tools.filter((t) => t.isDirect).length, 0);
@@ -647,8 +663,10 @@ class McpPanel {
     const expandIcon = server.expanded ? "▾" : "▸";
     const prefix = isCursor ? fg(t.selected, expandIcon) : fg(t.border, server.expanded ? expandIcon : "·");
 
-    const nameStr = isCursor ? bold(fg(t.selected, server.name)) : server.name;
-    const importLabel = server.source === "import" ? fg(t.description, ` (${server.importKind ?? "import"})`) : "";
+    const safeServerName = sanitizeDisplayText(server.name);
+    const safeImportKind = sanitizeDisplayText(server.importKind ?? "import");
+    const nameStr = isCursor ? bold(fg(t.selected, safeServerName)) : safeServerName;
+    const importLabel = server.source === "import" ? fg(t.description, ` (${safeImportKind})`) : "";
 
     if (!server.hasCachedData) {
       return `${prefix}   ${nameStr}${importLabel}  ${fg(t.description, "(not cached)")}`;
@@ -680,15 +698,18 @@ class McpPanel {
     const t = this.t;
     const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
 
+    const safeToolName = sanitizeDisplayText(tool.name);
+    const safeDescription = sanitizeDisplayText(tool.description ?? "");
+
     const toggleIcon = tool.isDirect ? fg(t.direct, "●") : fg(t.description, "○");
     const cursor = isCursor ? fg(t.selected, "▸") : " ";
-    const nameStr = isCursor ? bold(fg(t.selected, tool.name)) : tool.name;
+    const nameStr = isCursor ? bold(fg(t.selected, safeToolName)) : safeToolName;
 
-    const prefixLen = 7 + visibleWidth(tool.name);
+    const prefixLen = 7 + visibleWidth(safeToolName);
     const maxDescLen = Math.max(0, innerW - prefixLen - 8);
     const descStr =
-      maxDescLen > 5 && tool.description
-        ? fg(t.description, "— " + truncateToWidth(tool.description, maxDescLen, "…"))
+      maxDescLen > 5 && safeDescription
+        ? fg(t.description, "— " + truncateToWidth(safeDescription, maxDescLen, "…"))
         : "";
 
     return `  ${cursor} ${toggleIcon} ${nameStr} ${descStr}`;
