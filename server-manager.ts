@@ -21,10 +21,10 @@ interface ServerConnection {
 export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
-  private lifecycleLogsEnabled = true;
+  private onNpxResolved?: (serverName: string, binPath: string) => void;
 
-  setLifecycleLogsEnabled(enabled: boolean): void {
-    this.lifecycleLogsEnabled = enabled;
+  setNpxResolvedCallback(callback: (serverName: string, binPath: string) => void): void {
+    this.onNpxResolved = callback;
   }
   
   async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
@@ -69,9 +69,7 @@ export class McpServerManager {
         if (resolved) {
           command = resolved.isJs ? "node" : resolved.binPath;
           args = resolved.isJs ? [resolved.binPath, ...resolved.extraArgs] : resolved.extraArgs;
-          if (this.lifecycleLogsEnabled) {
-            console.log(`MCP: ${name} resolved to ${resolved.binPath} (skipping npm parent)`);
-          }
+          this.onNpxResolved?.(name, resolved.binPath);
         }
       }
 

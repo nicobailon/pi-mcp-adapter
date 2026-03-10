@@ -12,15 +12,11 @@ export class McpLifecycleManager {
   private globalIdleTimeout: number = 10 * 60 * 1000;
   private healthCheckInterval?: NodeJS.Timeout;
   private onReconnect?: ReconnectCallback;
+  private onReconnectError?: (serverName: string, error: unknown) => void;
   private onIdleShutdown?: (serverName: string) => void;
-  private lifecycleLogsEnabled = true;
   
   constructor(manager: McpServerManager) {
     this.manager = manager;
-  }
-
-  setLifecycleLogsEnabled(enabled: boolean): void {
-    this.lifecycleLogsEnabled = enabled;
   }
   
   /**
@@ -29,6 +25,10 @@ export class McpLifecycleManager {
    */
   setReconnectCallback(callback: ReconnectCallback): void {
     this.onReconnect = callback;
+  }
+
+  setReconnectErrorCallback(callback: (serverName: string, error: unknown) => void): void {
+    this.onReconnectError = callback;
   }
   
   markKeepAlive(name: string, definition: ServerDefinition): void {
@@ -64,13 +64,10 @@ export class McpLifecycleManager {
       if (!connection || connection.status !== "connected") {
         try {
           await this.manager.connect(name, definition);
-          if (this.lifecycleLogsEnabled) {
-            console.log(`MCP: Reconnected to ${name}`);
-          }
           // Notify extension to update metadata
           this.onReconnect?.(name);
         } catch (error) {
-          console.error(`MCP: Failed to reconnect to ${name}:`, error);
+          this.onReconnectError?.(name, error);
         }
       }
     }

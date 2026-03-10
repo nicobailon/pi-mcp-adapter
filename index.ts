@@ -363,7 +363,10 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       initPromise = null;
       updateStatusBar(s);
     }).catch(err => {
-      console.error("MCP initialization failed:", err);
+      if (ctx.hasUI) {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(`MCP initialization failed: ${message}`, "error");
+      }
       initPromise = null;
     });
   });
@@ -1156,9 +1159,6 @@ async function initializeMcp(
   
   const manager = new McpServerManager();
   const lifecycle = new McpLifecycleManager(manager);
-  const lifecycleLogsEnabled = config.settings?.lifecycleLogs !== false;
-  manager.setLifecycleLogsEnabled(lifecycleLogsEnabled);
-  lifecycle.setLifecycleLogsEnabled(lifecycleLogsEnabled);
   const toolMetadata = new Map<string, ToolMetadata[]>();
   const failureTracker = new Map<string, number>();
   const ui = ctx.hasUI ? ctx.ui : undefined;
@@ -1234,7 +1234,6 @@ async function initializeMcp(
       if (ctx.hasUI) {
         ctx.ui.notify(`MCP: Failed to connect to ${name}: ${error}`, "error");
       }
-      console.error(`MCP: Failed to connect to ${name}: ${error}`);
       continue;
     }
 
@@ -1300,18 +1299,30 @@ async function initializeMcp(
     }
   }
 
+  manager.setNpxResolvedCallback(() => {
+    // Intentionally silent: npx resolution is internal adapter detail.
+  });
+
   lifecycle.setReconnectCallback((serverName) => {
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
     state.failureTracker.delete(serverName);
+    if (state.ui) {
+      state.ui.setStatus("mcp", `MCP: reconnected to ${serverName}`);
+    }
     updateStatusBar(state);
   });
 
-  lifecycle.setIdleShutdownCallback((serverName) => {
-    const idleMinutes = getEffectiveIdleTimeoutMinutes(state, serverName);
-    if (state.config.settings?.lifecycleLogs !== false) {
-      console.log(`MCP: ${serverName} shut down (idle ${idleMinutes}m)`);
+  lifecycle.setReconnectErrorCallback((serverName, error) => {
+    state.failureTracker.set(serverName, Date.now());
+    const message = error instanceof Error ? error.message : String(error);
+    if (state.ui) {
+      state.ui.notify(`MCP: Failed to reconnect to ${serverName}: ${message}`, "error");
     }
+    updateStatusBar(state);
+  });
+
+  lifecycle.setIdleShutdownCallback((_serverName) => {
     updateStatusBar(state);
   });
 

@@ -105,7 +105,6 @@ Two calls instead of 26 tools cluttering the context.
   "settings": {
     "toolPrefix": "server",
     "idleTimeout": 10,
-    "lifecycleLogs": true
   },
   "mcpServers": { }
 }
@@ -116,9 +115,7 @@ Two calls instead of 26 tools cluttering the context.
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), or `"none"` |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
-| `lifecycleLogs` | Log non-error MCP lifecycle messages to stdout, including npx resolution, keep-alive reconnects, and idle disconnects (default: true) |
-
-Per-server `idleTimeout` overrides the global setting. Set `lifecycleLogs: false` to suppress those informational log lines.
+Per-server `idleTimeout` overrides the global setting.
 
 ### Direct Tools
 

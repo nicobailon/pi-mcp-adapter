@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `settings.lifecycleLogs` to disable non-error MCP lifecycle logs in the Pi input area
 
 ## [2.1.2] - 2026-02-03
 
