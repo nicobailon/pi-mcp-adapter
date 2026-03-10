@@ -21,6 +21,11 @@ interface ServerConnection {
 export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
+  private lifecycleLogsEnabled = true;
+
+  setLifecycleLogsEnabled(enabled: boolean): void {
+    this.lifecycleLogsEnabled = enabled;
+  }
   
   async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
     // Dedupe concurrent connection attempts
@@ -64,7 +69,9 @@ export class McpServerManager {
         if (resolved) {
           command = resolved.isJs ? "node" : resolved.binPath;
           args = resolved.isJs ? [resolved.binPath, ...resolved.extraArgs] : resolved.extraArgs;
-          console.log(`MCP: ${name} resolved to ${resolved.binPath} (skipping npm parent)`);
+          if (this.lifecycleLogsEnabled) {
+            console.log(`MCP: ${name} resolved to ${resolved.binPath} (skipping npm parent)`);
+          }
         }
       }
 

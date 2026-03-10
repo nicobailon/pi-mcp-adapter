@@ -1156,6 +1156,9 @@ async function initializeMcp(
   
   const manager = new McpServerManager();
   const lifecycle = new McpLifecycleManager(manager);
+  const lifecycleLogsEnabled = config.settings?.lifecycleLogs !== false;
+  manager.setLifecycleLogsEnabled(lifecycleLogsEnabled);
+  lifecycle.setLifecycleLogsEnabled(lifecycleLogsEnabled);
   const toolMetadata = new Map<string, ToolMetadata[]>();
   const failureTracker = new Map<string, number>();
   const ui = ctx.hasUI ? ctx.ui : undefined;
@@ -1306,7 +1309,9 @@ async function initializeMcp(
 
   lifecycle.setIdleShutdownCallback((serverName) => {
     const idleMinutes = getEffectiveIdleTimeoutMinutes(state, serverName);
-    console.log(`MCP: ${serverName} shut down (idle ${idleMinutes}m)`);
+    if (state.config.settings?.lifecycleLogs !== false) {
+      console.log(`MCP: ${serverName} shut down (idle ${idleMinutes}m)`);
+    }
     updateStatusBar(state);
   });
 

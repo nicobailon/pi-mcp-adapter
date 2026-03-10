@@ -13,9 +13,14 @@ export class McpLifecycleManager {
   private healthCheckInterval?: NodeJS.Timeout;
   private onReconnect?: ReconnectCallback;
   private onIdleShutdown?: (serverName: string) => void;
+  private lifecycleLogsEnabled = true;
   
   constructor(manager: McpServerManager) {
     this.manager = manager;
+  }
+
+  setLifecycleLogsEnabled(enabled: boolean): void {
+    this.lifecycleLogsEnabled = enabled;
   }
   
   /**
@@ -59,7 +64,9 @@ export class McpLifecycleManager {
       if (!connection || connection.status !== "connected") {
         try {
           await this.manager.connect(name, definition);
-          console.log(`MCP: Reconnected to ${name}`);
+          if (this.lifecycleLogsEnabled) {
+            console.log(`MCP: Reconnected to ${name}`);
+          }
           // Notify extension to update metadata
           this.onReconnect?.(name);
         } catch (error) {

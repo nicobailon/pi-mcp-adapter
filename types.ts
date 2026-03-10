@@ -81,6 +81,7 @@ export interface McpSettings {
   toolPrefix?: "server" | "none" | "short";
   idleTimeout?: number; // minutes, default 10, 0 to disable
   directTools?: boolean;
+  lifecycleLogs?: boolean; // log non-error MCP lifecycle events to stdout (default: true)
 }
 
 // Root config
