@@ -10,7 +10,7 @@ describe("multi-config call-site wiring", () => {
   it("index.ts imports getConfigPathsFromArgv instead of getConfigPathFromArgv", () => {
     const source = readSource("index.ts");
 
-    expect(source).toContain('import { getConfigPathsFromArgv } from "./utils.js";');
+    expect(source).toMatch(/import\s+\{[^}]*getConfigPathsFromArgv[^}]*\}\s+from\s+"\.\/utils\.js";/);
     expect(source).not.toContain('import { getConfigPathFromArgv } from "./utils.js";');
   });
 
@@ -42,8 +42,9 @@ describe("multi-config call-site wiring", () => {
     const source = readSource("commands.ts");
 
     expect(source).toMatch(/import\s+\{[^}]*getConfigPathsFromArgv[^}]*\}\s+from\s+"\.\/utils\.js";/);
-    expect(source).toContain('const configPaths = getConfigPathsFromArgv() ?? (configOverridePath ? [configOverridePath] : undefined);');
+    expect(source).toContain('const configPaths = getConfigPathsFromArgv();');
     expect(source).toContain('const provenanceMap = getServerProvenance(configPaths);');
     expect(source).not.toContain('parseConfigFlag(pi.getFlag("mcp-config"))');
+    expect(source).not.toContain('configOverridePath');
   });
 });

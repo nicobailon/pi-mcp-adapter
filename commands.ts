@@ -165,11 +165,10 @@ export async function openMcpPanel(
   state: McpExtensionState,
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-  configOverridePath?: string,
 ): Promise<void> {
   const config = state.config;
   const cache = loadMetadataCache();
-  const configPaths = getConfigPathsFromArgv() ?? (configOverridePath ? [configOverridePath] : undefined);
+  const configPaths = getConfigPathsFromArgv();
   const provenanceMap = getServerProvenance(configPaths);
 
   const callbacks: McpPanelCallbacks = {
