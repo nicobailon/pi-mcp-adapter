@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { platform } from "node:os";
+import { homedir, platform } from "node:os";
 
 export async function openUrl(pi: ExtensionAPI, url: string, browser?: string): Promise<void> {
   const os = platform();
@@ -40,12 +40,43 @@ export async function parallelLimit<T, R>(
   return results;
 }
 
-export function getConfigPathFromArgv(): string | undefined {
-  const idx = process.argv.indexOf("--mcp-config");
-  if (idx >= 0 && idx + 1 < process.argv.length) {
-    return process.argv[idx + 1];
+function expandHome(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return `${homedir()}${path.slice(1)}`;
+  return path;
+}
+
+export function parseConfigFlag(flag: unknown): string[] | undefined {
+  if (typeof flag !== "string") return undefined;
+
+  const path = flag.trim();
+  if (!path) return undefined;
+
+  return [expandHome(path)];
+}
+
+export function getConfigPathsFromArgv(): string[] | undefined {
+  const paths: string[] = [];
+
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] !== "--mcp-config") continue;
+
+    for (let j = i + 1; j < process.argv.length; j++) {
+      const value = process.argv[j];
+      if (value.startsWith("--")) {
+        i = j - 1;
+        break;
+      }
+      paths.push(expandHome(value));
+      i = j;
+    }
   }
-  return undefined;
+
+  return paths.length > 0 ? paths : undefined;
+}
+
+export function getConfigPathFromArgv(): string | undefined {
+  return getConfigPathsFromArgv()?.[0];
 }
 
 export function truncateAtWord(text: string, target: number): string {

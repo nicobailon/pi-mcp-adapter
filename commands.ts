@@ -6,6 +6,7 @@ import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds
 import { loadMetadataCache } from "./metadata-cache.js";
 import { getStoredTokens } from "./oauth-handler.js";
 import { buildToolMetadata } from "./tool-metadata.js";
+import { getConfigPathsFromArgv } from "./utils.js";
 
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return;
@@ -168,7 +169,8 @@ export async function openMcpPanel(
 ): Promise<void> {
   const config = state.config;
   const cache = loadMetadataCache();
-  const provenanceMap = getServerProvenance(pi.getFlag("mcp-config") as string | undefined ?? configOverridePath);
+  const configPaths = getConfigPathsFromArgv() ?? (configOverridePath ? [configOverridePath] : undefined);
+  const provenanceMap = getServerProvenance(configPaths);
 
   const callbacks: McpPanelCallbacks = {
     reconnect: async (serverName: string) => {
