@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { captureEnv } from "./test-env.js";
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -9,15 +10,16 @@ function writeJson(path: string, value: unknown): void {
 }
 
 describe("config discovery", () => {
-  const originalHome = process.env.HOME;
+  const restoreEnv = captureEnv(["HOME", "PI_CODING_AGENT_DIR"]);
   const originalCwd = process.cwd();
 
   beforeEach(() => {
+    delete process.env.PI_CODING_AGENT_DIR;
     vi.resetModules();
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
+    restoreEnv();
     process.chdir(originalCwd);
   });
 

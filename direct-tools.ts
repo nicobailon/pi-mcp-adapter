@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
 import type { DirectToolSpec, McpConfig, McpContent } from "./types.js";
 import type { MetadataCache } from "./metadata-cache.js";
@@ -48,7 +48,7 @@ async function attemptDirectAutoAuth(
     return { status: "skipped" };
   }
 
-  const grantType = definition.oauth?.grantType ?? "authorization_code";
+  const grantType = definition.oauth !== false ? definition.oauth?.grantType ?? "authorization_code" : "authorization_code";
   if (!state.ui && grantType !== "client_credentials") {
     return {
       status: "failed",
@@ -260,7 +260,13 @@ export function buildProxyDescription(
   return desc;
 }
 
-type DirectToolExecute = ToolDefinition["execute"];
+type DirectToolExecute = (toolCallId: string, params: Record<string, unknown>) => Promise<AgentToolResult<unknown>>;
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
 
 export function createDirectToolExecutor(
   getState: () => McpExtensionState | null,
@@ -355,7 +361,7 @@ export function createDirectToolExecutor(
         ? await maybeStartUiSession(state, {
             serverName: spec.serverName,
             toolName: spec.originalName,
-            toolArgs: params ?? {},
+            toolArgs: toRecord(params),
             uiResourceUri: spec.uiResourceUri!,
             streamMode: spec.uiStreamMode,
           })
@@ -363,7 +369,7 @@ export function createDirectToolExecutor(
 
       const resultPromise = connection.client.callTool({
         name: spec.originalName,
-        arguments: params ?? {},
+        arguments: toRecord(params),
         _meta: uiSession?.requestMeta,
       });
 

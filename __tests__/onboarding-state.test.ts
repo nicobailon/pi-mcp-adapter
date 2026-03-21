@@ -2,16 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { captureEnv } from "./test-env.js";
 
 describe("onboarding state", () => {
-  const originalHome = process.env.HOME;
+  const restoreEnv = captureEnv(["HOME", "PI_CODING_AGENT_DIR"]);
 
   beforeEach(() => {
+    delete process.env.PI_CODING_AGENT_DIR;
     vi.resetModules();
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
+    restoreEnv();
   });
 
   it("returns the default state when no file exists", async () => {

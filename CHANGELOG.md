@@ -181,8 +181,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/mcp reconnect` accepts an optional server name to connect or reconnect a single server
 
 ### Added
-- **Metadata cache** - Tool and resource metadata persisted to `~/.pi/agent/mcp-cache.json`. Enables search/list/describe without live connections. Per-server config hashing with 7-day staleness. Multi-session safe via read-merge-write with per-process tmp files.
-- **npx binary resolution** - Resolves npx package binaries to direct paths, eliminating the ~143 MB npm parent process per server. Persistent cache at `~/.pi/agent/mcp-npx-cache.json` with 24h TTL.
+- **Metadata cache** - Tool and resource metadata persisted to `mcp-cache.json` in the Pi agent dir (`~/.pi/agent` by default; `PI_CODING_AGENT_DIR` overrides the base dir). Enables search/list/describe without live connections. Per-server config hashing with 7-day staleness. Multi-session safe via read-merge-write with per-process tmp files.
+- **npx binary resolution** - Resolves npx package binaries to direct paths, eliminating the ~143 MB npm parent process per server. Persistent cache at `mcp-npx-cache.json` in the Pi agent dir (`~/.pi/agent` by default; `PI_CODING_AGENT_DIR` overrides the base dir) with 24h TTL.
 - **`mcp({ connect: "server-name" })` mode** - Explicitly trigger connection and metadata refresh for a named server
 - **Failure backoff** - Servers that fail to connect are skipped for 60 seconds to avoid repeated connection storms
 - **In-flight tracking** - Active tool calls prevent idle timeout from shutting down a server mid-request

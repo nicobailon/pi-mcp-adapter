@@ -169,6 +169,7 @@ describe("McpOAuthProvider", () => {
       const provider = createProvider()
       const futureTime = Math.floor(Date.now() / 1000) + 3600
       const info: OAuthClientInformationFull = {
+        redirect_uris: [],
         client_id: "new-client",
         client_secret: "new-secret",
         client_id_issued_at: Math.floor(Date.now() / 1000),

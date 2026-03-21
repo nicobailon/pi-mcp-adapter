@@ -132,7 +132,7 @@ async function resolveSamplingModel(options: SamplingHandlerOptions): Promise<{
   const errors: string[] = [];
   for (const model of candidates) {
     const auth = await options.modelRegistry.getApiKeyAndHeaders(model);
-    if (auth.ok) {
+    if (auth.ok === true) {
       return { model, apiKey: auth.apiKey, headers: auth.headers };
     }
     errors.push(`${model.provider}/${model.id}: ${auth.error}`);

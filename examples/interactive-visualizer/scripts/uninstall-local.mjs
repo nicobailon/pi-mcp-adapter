@@ -1,11 +1,12 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getAgentDir } from "@mariozechner/pi-coding-agent";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const distServer = path.join(root, "dist", "server.js");
-const configPath = path.join(process.env.HOME ?? process.cwd(), ".pi", "agent", "mcp.json");
+const configPath = path.join(getAgentDir(), "mcp.json");
 const serverName = "interactive-visualizer";
 
 function isInstalledExample(entry) {

@@ -34,11 +34,15 @@ The adapter reads standard MCP files automatically. No extra setup needed if you
 | Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
 | Nothing configured yet | Run `/mcp setup` to scaffold a minimal `.mcp.json`, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
 
-If you prefer the terminal, you can also run `pi-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to `~/.pi/agent/mcp.json`.
+If you prefer the terminal, you can also run `pi-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to the Pi global override (`<agent-dir>/mcp.json`; default `~/.pi/agent/mcp.json`).
 
 ## Quick Start
 
 Preferred project config: `.mcp.json`
+
+For Pi-specific global overrides, create `<agent-dir>/mcp.json`.
+Default: `~/.pi/agent/mcp.json`.
+If `PI_CODING_AGENT_DIR` is set, use `<PI_CODING_AGENT_DIR>/mcp.json` instead.
 
 ```json
 {
@@ -55,13 +59,13 @@ Preferred user-global shared config: `~/.config/mcp/mcp.json`
 
 Pi also reads Pi-owned override files for settings and host-specific compatibility:
 
-- `~/.pi/agent/mcp.json` — Pi global override
+- `<agent-dir>/mcp.json` — Pi global override (default `~/.pi/agent/mcp.json`; `PI_CODING_AGENT_DIR` overrides `<agent-dir>`)
 - `.pi/mcp.json` — Pi project override
 
 Precedence is:
 
 1. `~/.config/mcp/mcp.json`
-2. `~/.pi/agent/mcp.json`
+2. `<agent-dir>/mcp.json` (default `~/.pi/agent/mcp.json`)
 3. `.mcp.json`
 4. `.pi/mcp.json`
 
@@ -96,7 +100,7 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 |------|---------|
 | `~/.config/mcp/mcp.json` | User-global shared MCP config |
 | `.mcp.json` | Project-local shared MCP config |
-| `~/.pi/agent/mcp.json` | Pi global override and compatibility imports |
+| `<agent-dir>/mcp.json` | Pi global override and compatibility imports (default `~/.pi/agent/mcp.json`) |
 | `.pi/mcp.json` | Pi project override |
 
 Pi-specific files are the write targets for imported or shared global servers when Pi needs to persist adapter-only settings such as `directTools`.
@@ -231,7 +235,7 @@ To exclude specific tools while still using `directTools: true`, add `excludeToo
 
 Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`.
 
-Direct tools register from the metadata cache (`~/.pi/agent/mcp-cache.json`), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. To force it: `/mcp reconnect <server>`.
+Direct tools register from the metadata cache in the Pi agent dir (`mcp-cache.json` under `~/.pi/agent` by default; if `PI_CODING_AGENT_DIR` is set, use that directory instead), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. To force it: `/mcp reconnect <server>`.
 
 When you change direct-tool toggles in `/mcp` or write new config through `/mcp setup`, the extension triggers Pi's normal reload flow automatically. That refreshes extensions, prompts, skills, and MCP tool registration in one shot, so newly configured direct tools can appear without a manual restart.
 
@@ -313,7 +317,7 @@ Shared MCP files are loaded automatically. Use `imports` only for host-specific 
 
 Supported compatibility imports: `cursor`, `claude-code`, `claude-desktop`, `vscode`, `windsurf`, `codex`
 
-`pi-mcp-adapter init` detects these host-specific configs and adds missing imports to `~/.pi/agent/mcp.json` for you.
+`pi-mcp-adapter init` detects these host-specific configs and adds missing imports to the Pi global override (`<agent-dir>/mcp.json`; default `~/.pi/agent/mcp.json`) for you.
 
 ### Project Config
 

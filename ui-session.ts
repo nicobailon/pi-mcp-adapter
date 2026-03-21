@@ -222,7 +222,7 @@ export async function maybeStartUiSession(
               {
                 customType: "mcp-ui-prompt",
                 content: [{ type: "text", text: `User sent prompt from ${request.serverName} UI: "${prompt}"` }],
-                display: `💬 UI Prompt: ${prompt}`,
+                display: true,
                 details: { server: request.serverName, tool: request.toolName, prompt },
               },
               { triggerTurn: true },
@@ -238,7 +238,7 @@ export async function maybeStartUiSession(
               {
                 customType: "mcp-ui-intent",
                 content: [{ type: "text", text: `User triggered intent from ${request.serverName} UI: ${intent}${paramsStr}` }],
-                display: `🎯 UI Intent: ${intent}`,
+                display: true,
                 details: { server: request.serverName, tool: request.toolName, intent, params: intentParams },
               },
               { triggerTurn: true },

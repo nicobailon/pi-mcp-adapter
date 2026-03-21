@@ -19,7 +19,7 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 - ✅ **Auto-Discovery** - Discovers OAuth endpoints from server metadata
 - ✅ **Automatic Token Refresh** - SDK handles expired tokens automatically
 - ✅ **State Parameter Validation** - CSRF protection
-- ✅ **Secure Token Storage** - Stored in `~/.pi/agent/mcp-oauth/<server>/tokens.json`
+- ✅ **Secure Token Storage** - Stored in `<agent-dir>/mcp-oauth/<server>/tokens.json` (default `~/.pi/agent`; `PI_CODING_AGENT_DIR` overrides the agent dir; `MCP_OAUTH_DIR` overrides only OAuth storage)
 
 ## Configuration
 
@@ -188,7 +188,12 @@ A Node.js HTTP server runs on `localhost` at path `/callback`:
 
 ## Token Storage
 
-Tokens are stored per-server in `~/.pi/agent/mcp-oauth/<server>/tokens.json`:
+Tokens are stored per-server under the OAuth storage directory:
+
+- Default: `~/.pi/agent/mcp-oauth/<server>/tokens.json`
+- With `PI_CODING_AGENT_DIR`: `<PI_CODING_AGENT_DIR>/mcp-oauth/<server>/tokens.json`
+- With `MCP_OAUTH_DIR`: `<MCP_OAUTH_DIR>/<server>/tokens.json`
+
 
 ```json
 {
@@ -208,7 +213,7 @@ Tokens are stored per-server in `~/.pi/agent/mcp-oauth/<server>/tokens.json`:
 
 Example directory structure:
 ```
-~/.pi/agent/mcp-oauth/
+<oauth-storage-dir>/
 ├── linear/
 │   └── tokens.json
 ├── github/

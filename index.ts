@@ -66,14 +66,15 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     || missingConfiguredDirectToolServers.length > 0;
 
   for (const spec of directSpecs) {
-    pi.registerTool({
+    const tool = {
       name: spec.prefixedName,
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema || { type: "object", properties: {} }),
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
-    });
+    };
+    pi.registerTool(tool as any);
   }
 
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
@@ -231,7 +232,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   });
 
   if (shouldRegisterProxyTool) {
-    pi.registerTool({
+    const proxyTool = {
       name: "mcp",
       label: "MCP",
       description: buildProxyDescription(earlyConfig, earlyCache, directSpecs),
@@ -312,6 +313,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         }
         return executeStatus(state);
       },
-    });
+    };
+    pi.registerTool(proxyTool as any);
   }
 }

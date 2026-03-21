@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { TextContent } from "@mariozechner/pi-ai";
 import type { ConsentManager } from "./consent-manager.js";
 import type { McpLifecycleManager } from "./lifecycle.js";
 import type { McpServerManager } from "./server-manager.js";
@@ -18,8 +19,8 @@ export interface CompletedUiSession {
 export type SendMessageFn = (
   message: {
     customType: string;
-    content: Array<{ type: string; text: string }>;
-    display?: string;
+    content: TextContent[];
+    display: boolean;
     details?: unknown;
   },
   options?: { triggerTurn?: boolean }

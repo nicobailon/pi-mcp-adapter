@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { captureEnv } from "./test-env.js";
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -9,7 +10,7 @@ function writeJson(path: string, value: unknown): void {
 }
 
 describe("cli init helper", () => {
-  const originalHome = process.env.HOME;
+  const restoreEnv = captureEnv(["HOME", "PI_CODING_AGENT_DIR"]);
   const originalCwd = process.cwd();
 
   beforeEach(() => {
@@ -17,7 +18,7 @@ describe("cli init helper", () => {
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
+    restoreEnv();
     process.chdir(originalCwd);
   });
 
@@ -25,6 +26,7 @@ describe("cli init helper", () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-project-"));
     process.env.HOME = home;
+    delete process.env.PI_CODING_AGENT_DIR;
     process.chdir(project);
 
     writeJson(join(home, ".claude", "mcp.json"), {

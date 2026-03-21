@@ -6,7 +6,6 @@ import os from "node:os";
 import { pathToFileURL } from "node:url";
 
 const HOME = os.homedir();
-const PI_CONFIG_PATH = path.join(HOME, ".pi", "agent", "mcp.json");
 const GENERIC_GLOBAL_CONFIG_PATH = path.join(HOME, ".config", "mcp", "mcp.json");
 const PROJECT_CONFIG_PATH = path.resolve(process.cwd(), ".mcp.json");
 const PROJECT_PI_CONFIG_PATH = path.resolve(process.cwd(), ".pi", "mcp.json");
@@ -37,15 +36,32 @@ function readJsonFile(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf-8"));
 }
 
-function loadPiConfig() {
-  if (!fs.existsSync(PI_CONFIG_PATH)) {
+async function getPiConfigPath() {
+  try {
+    const pi = await import("@mariozechner/pi-coding-agent");
+    return path.join(pi.getAgentDir(), "mcp.json");
+  } catch {
+    return path.join(getFallbackAgentDir(), "mcp.json");
+  }
+}
+
+function getFallbackAgentDir() {
+  const envDir = process.env.PI_CODING_AGENT_DIR;
+  if (!envDir) return path.join(HOME, ".pi", "agent");
+  if (envDir === "~") return HOME;
+  if (envDir.startsWith("~/")) return path.join(HOME, envDir.slice(2));
+  return envDir;
+}
+
+function loadPiConfig(piConfigPath) {
+  if (!fs.existsSync(piConfigPath)) {
     return { mcpServers: {} };
   }
 
-  const raw = readJsonFile(PI_CONFIG_PATH);
+  const raw = readJsonFile(piConfigPath);
   const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
   if (!mcpServers || typeof mcpServers !== "object" || Array.isArray(mcpServers)) {
-    throw new Error(`Invalid MCP config at ${PI_CONFIG_PATH}: expected \"mcpServers\" to be an object`);
+    throw new Error(`Invalid MCP config at ${piConfigPath}: expected \"mcpServers\" to be an object`);
   }
 
   const normalized = { ...raw };
@@ -72,12 +88,12 @@ function findAvailableImports() {
   return found;
 }
 
-function printDiscovery(log, imports) {
+function printDiscovery(log, imports, piConfigPath) {
   log("Config discovery:\n");
 
   const paths = [
     ["User-global standard MCP", GENERIC_GLOBAL_CONFIG_PATH],
-    ["Pi global override", PI_CONFIG_PATH],
+    ["Pi global override", piConfigPath],
     ["Project standard MCP", PROJECT_CONFIG_PATH],
     ["Project Pi override", PROJECT_PI_CONFIG_PATH],
   ];
@@ -98,21 +114,22 @@ function printDiscovery(log, imports) {
   }
 }
 
-function writePiConfig(config) {
-  fs.mkdirSync(path.dirname(PI_CONFIG_PATH), { recursive: true });
-  fs.writeFileSync(PI_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+function writePiConfig(piConfigPath, config) {
+  fs.mkdirSync(path.dirname(piConfigPath), { recursive: true });
+  fs.writeFileSync(piConfigPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
 }
 
 async function runInit(argv, log = console.log) {
   const dryRun = argv.includes("--dry-run");
+  const piConfigPath = await getPiConfigPath();
   const foundImports = findAvailableImports();
-  const existingConfig = loadPiConfig();
+  const existingConfig = loadPiConfig(piConfigPath);
   const existingImports = new Set(existingConfig.imports ?? []);
   const importsToAdd = foundImports
     .map((entry) => entry.kind)
     .filter((kind) => !existingImports.has(kind));
 
-  printDiscovery(log, foundImports);
+  printDiscovery(log, foundImports, piConfigPath);
 
   if (importsToAdd.length === 0) {
     log("\nNo Pi config changes needed.");
@@ -129,12 +146,12 @@ async function runInit(argv, log = console.log) {
   log(`\nDetected host configs to import into Pi: ${importsToAdd.join(", ")}`);
 
   if (dryRun) {
-    log(`Dry run: would update ${PI_CONFIG_PATH}`);
+    log(`Dry run: would update ${piConfigPath}`);
     return 0;
   }
 
-  writePiConfig(nextConfig);
-  log(`Updated ${PI_CONFIG_PATH}`);
+  writePiConfig(piConfigPath, nextConfig);
+  log(`Updated ${piConfigPath}`);
   log("Pi will now keep reading standard MCP configs automatically, while these imports cover host-specific config formats.");
   return 0;
 }
