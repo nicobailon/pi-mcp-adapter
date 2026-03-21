@@ -2,9 +2,9 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
+import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import type { McpConfig, ServerEntry, McpSettings, ImportKind, ServerProvenance } from "./types.js";
 
-const DEFAULT_CONFIG_PATH = join(homedir(), ".pi", "agent", "mcp.json");
 const PROJECT_CONFIG_NAME = ".pi/mcp.json";
 
 // Import source paths for other tools
@@ -17,8 +17,16 @@ const IMPORT_PATHS: Record<ImportKind, string> = {
   "vscode": ".vscode/mcp.json", // Relative to project
 };
 
+export function getDefaultConfigPath(): string {
+  return join(getAgentDir(), "mcp.json");
+}
+
+export function getOAuthTokensPath(serverName: string): string {
+  return join(getAgentDir(), "mcp-oauth", serverName, "tokens.json");
+}
+
 export function loadMcpConfig(overridePath?: string): McpConfig {
-  const configPath = overridePath ? resolve(overridePath) : DEFAULT_CONFIG_PATH;
+  const configPath = overridePath ? resolve(overridePath) : getDefaultConfigPath();
   
   // Load base config
   let config: McpConfig = { mcpServers: {} };
@@ -130,7 +138,7 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
 
 export function getServerProvenance(overridePath?: string): Map<string, ServerProvenance> {
   const provenance = new Map<string, ServerProvenance>();
-  const userPath = overridePath ? resolve(overridePath) : DEFAULT_CONFIG_PATH;
+  const userPath = overridePath ? resolve(overridePath) : getDefaultConfigPath();
 
   let userConfig: McpConfig = { mcpServers: {} };
   if (existsSync(userPath)) {

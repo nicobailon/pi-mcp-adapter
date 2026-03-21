@@ -26,7 +26,9 @@ Restart Pi after installation.
 
 ## Quick Start
 
-Create `~/.pi/agent/mcp.json`:
+Create `<agent-dir>/mcp.json`.
+Default: `~/.pi/agent/mcp.json`.
+If `PI_CODING_AGENT_DIR` is set, use `<PI_CODING_AGENT_DIR>/mcp.json` instead.
 
 ```json
 {
@@ -190,7 +192,7 @@ To exclude specific tools while still using `directTools: true`, add `excludeToo
 
 Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`.
 
-Direct tools register from the metadata cache (`~/.pi/agent/mcp-cache.json`), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. Restart Pi and they'll be available. To force it: `/mcp reconnect <server>` then restart.
+Direct tools register from the metadata cache in the Pi agent dir (`mcp-cache.json` under `~/.pi/agent` by default; if `PI_CODING_AGENT_DIR` is set, use that directory instead), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. Restart Pi and they'll be available. To force it: `/mcp reconnect <server>` then restart.
 
 **Interactive configuration:** Run `/mcp` to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. You can reconnect servers, initiate OAuth, and toggle tools between direct and proxy — all from one overlay. Changes are written to your config file; restart Pi to apply.
 
