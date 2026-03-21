@@ -1,11 +1,19 @@
 // config.ts - Config loading with import support
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, parse } from "node:path";
 import type { McpConfig, ServerEntry, McpSettings, ImportKind, ServerProvenance } from "./types.js";
 
 const DEFAULT_CONFIG_PATH = join(homedir(), ".pi", "agent", "mcp.json");
-const PROJECT_CONFIG_NAME = ".pi/mcp.json";
+const PROJECT_LOCAL_CONFIGS: Array<{ kind: ImportKind | "pi" | "generic"; path: string }> = [
+  { kind: "generic", path: ".mcp.json" },
+  { kind: "pi", path: ".pi/mcp.json" },
+  { kind: "cursor", path: ".cursor/mcp.json" },
+  { kind: "windsurf", path: ".windsurf/mcp.json" },
+  { kind: "vscode", path: ".vscode/mcp.json" },
+  { kind: "claude-code", path: ".claude/mcp.json" },
+  { kind: "codex", path: ".codex/config.json" },
+];
 
 // Import source paths for other tools
 const IMPORT_PATHS: Record<ImportKind, string> = {
@@ -60,20 +68,21 @@ export function loadMcpConfig(overridePath?: string): McpConfig {
     }
   }
   
-  // Check for project-local config (skip if it's the same as the main config)
-  const projectPath = resolve(process.cwd(), PROJECT_CONFIG_NAME);
-  if (existsSync(projectPath) && projectPath !== configPath) {
+  // Check for project-local configs (skip files already used as the main config)
+  for (const projectConfig of findProjectLocalConfigs(process.cwd())) {
+    if (projectConfig.path === configPath) continue;
+
     try {
-      const projectConfig = JSON.parse(readFileSync(projectPath, "utf-8"));
-      const validated = validateConfig(projectConfig);
-      
-      // Project config overrides everything
+      const projectRaw = JSON.parse(readFileSync(projectConfig.path, "utf-8"));
+      const validated = validateProjectConfig(projectRaw, projectConfig.kind);
+
+      // Project config overrides everything. Later entries are closer to cwd and win.
       config.mcpServers = { ...config.mcpServers, ...validated.mcpServers };
       if (validated.settings) {
         config.settings = { ...config.settings, ...validated.settings };
       }
     } catch (error) {
-      console.warn(`Failed to load project MCP config:`, error);
+      console.warn(`Failed to load project MCP config from ${projectConfig.path}:`, error);
     }
   }
   
@@ -98,6 +107,14 @@ function validateConfig(raw: unknown): McpConfig {
     imports: Array.isArray(obj.imports) ? obj.imports as ImportKind[] : undefined,
     settings: obj.settings as McpSettings | undefined,
   };
+}
+
+function validateProjectConfig(raw: unknown, kind: ImportKind | "pi" | "generic"): McpConfig {
+  if (kind === "pi" || kind === "generic") {
+    return validateConfig(raw);
+  }
+
+  return { mcpServers: extractServers(raw, kind) };
 }
 
 function extractServers(config: unknown, kind: ImportKind): Record<string, ServerEntry> {
@@ -126,6 +143,30 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
   }
   
   return servers as Record<string, ServerEntry>;
+}
+
+function findProjectLocalConfigs(startDir: string): Array<{ kind: ImportKind | "pi" | "generic"; path: string }> {
+  const roots: string[] = [];
+  let current = resolve(startDir);
+
+  while (true) {
+    roots.push(current);
+    const parent = dirname(current);
+    if (parent === current || current === parse(current).root) break;
+    current = parent;
+  }
+
+  const discovered: Array<{ kind: ImportKind | "pi" | "generic"; path: string }> = [];
+  for (const root of roots.reverse()) {
+    for (const config of PROJECT_LOCAL_CONFIGS) {
+      const fullPath = resolve(root, config.path);
+      if (existsSync(fullPath)) {
+        discovered.push({ kind: config.kind, path: fullPath });
+      }
+    }
+  }
+
+  return discovered;
 }
 
 export function getServerProvenance(overridePath?: string): Map<string, ServerProvenance> {
@@ -162,12 +203,13 @@ export function getServerProvenance(overridePath?: string): Map<string, ServerPr
     }
   }
 
-  const projectPath = resolve(process.cwd(), PROJECT_CONFIG_NAME);
-  if (existsSync(projectPath) && projectPath !== userPath) {
+  for (const projectConfig of findProjectLocalConfigs(process.cwd())) {
+    if (projectConfig.path === userPath) continue;
+
     try {
-      const projectConfig = validateConfig(JSON.parse(readFileSync(projectPath, "utf-8")));
-      for (const name of Object.keys(projectConfig.mcpServers)) {
-        provenance.set(name, { path: projectPath, kind: "project" });
+      const validated = validateProjectConfig(JSON.parse(readFileSync(projectConfig.path, "utf-8")), projectConfig.kind);
+      for (const name of Object.keys(validated.mcpServers)) {
+        provenance.set(name, { path: projectConfig.path, kind: "project" });
       }
     } catch {}
   }
