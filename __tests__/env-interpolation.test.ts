@@ -1,5 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveEnv, resolveHeaders } from "../utils.ts";
+import { resolveEnv, resolveHeaders, toStringRecord } from "../utils.ts";
+
+describe("toStringRecord", () => {
+  it("returns undefined for null/undefined/non-object", () => {
+    expect(toStringRecord(null)).toBeUndefined();
+    expect(toStringRecord(undefined)).toBeUndefined();
+    expect(toStringRecord("string")).toBeUndefined();
+    expect(toStringRecord(42)).toBeUndefined();
+    expect(toStringRecord([1, 2])).toBeUndefined();
+  });
+
+  it("extracts string values and drops non-strings", () => {
+    expect(toStringRecord({ a: "hello", b: 42, c: true, d: "world" }))
+      .toEqual({ a: "hello", d: "world" });
+  });
+
+  it("returns undefined for objects with no string values", () => {
+    expect(toStringRecord({ a: 42, b: true })).toBeUndefined();
+  });
+
+  it("returns undefined for empty objects", () => {
+    expect(toStringRecord({})).toBeUndefined();
+  });
+
+  it("returns all entries when all values are strings", () => {
+    expect(toStringRecord({ KEY: "val", OTHER: "val2" }))
+      .toEqual({ KEY: "val", OTHER: "val2" });
+  });
+});
 
 describe("resolveEnv", () => {
   beforeEach(() => {

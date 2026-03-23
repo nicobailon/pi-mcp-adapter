@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import type { McpConfig, ServerEntry, McpSettings, ImportKind, ServerProvenance } from "./types.js";
+import { toStringRecord } from "./utils.js";
 
 const DEFAULT_CONFIG_PATH = join(homedir(), ".pi", "agent", "mcp.json");
 const PROJECT_CONFIG_NAME = ".pi/mcp.json";
@@ -149,7 +150,7 @@ function extractOpencodeServers(rawMcp: unknown): Record<string, ServerEntry> {
       result[name] = {
         command: command[0],
         args: command.slice(1),
-        env: asStringRecord(server.environment),
+        env: toStringRecord(server.environment),
       };
       continue;
     }
@@ -157,26 +158,13 @@ function extractOpencodeServers(rawMcp: unknown): Record<string, ServerEntry> {
     if (server.type === "remote" && typeof server.url === "string") {
       result[name] = {
         url: server.url,
-        headers: asStringRecord(server.headers),
+        headers: toStringRecord(server.headers),
         auth: server.oauth && typeof server.oauth === "object" ? "oauth" : undefined,
       };
     }
   }
 
   return result;
-}
-
-function asStringRecord(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string");
-  if (entries.length === 0) {
-    return undefined;
-  }
-
-  return Object.fromEntries(entries);
 }
 
 export function getServerProvenance(overridePath?: string): Map<string, ServerProvenance> {

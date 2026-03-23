@@ -75,6 +75,27 @@ export function extractToolUiStreamMode(toolMeta: Record<string, unknown> | unde
 }
 
 /**
+ * Safely coerce a parsed JSON value into a string record.
+ * Drops any non-string values and returns undefined if the result is empty or the input is invalid.
+ */
+export function toStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+
+  const record = value as Record<string, unknown>;
+  const result: Record<string, string> = {};
+  let hasEntries = false;
+
+  for (const key of Object.keys(record)) {
+    if (typeof record[key] === "string") {
+      result[key] = record[key] as string;
+      hasEntries = true;
+    }
+  }
+
+  return hasEntries ? result : undefined;
+}
+
+/**
  * Resolve environment variables with interpolation.
  * Supports ${VAR}, $env:VAR, and {env:VAR} (OpenCode style) syntax.
  */
