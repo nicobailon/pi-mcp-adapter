@@ -305,10 +305,11 @@ function resolveEnv(env?: Record<string, string>): Record<string, string> {
   if (!env) return resolved;
   
   for (const [key, value] of Object.entries(env)) {
-    // Support ${VAR} and $env:VAR interpolation
+    // Support ${VAR}, $env:VAR, and {env:VAR} (OpenCode style) interpolation
     resolved[key] = value
       .replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "")
-      .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "");
+      .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "")
+      .replace(/\{env:(\w+)\}/g, (_, name) => process.env[name] ?? "");
   }
   
   return resolved;
@@ -324,7 +325,8 @@ function resolveHeaders(headers?: Record<string, string>): Record<string, string
   for (const [key, value] of Object.entries(headers)) {
     resolved[key] = value
       .replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "")
-      .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "");
+      .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "")
+      .replace(/\{env:(\w+)\}/g, (_, name) => process.env[name] ?? "");
   }
   return resolved;
 }
