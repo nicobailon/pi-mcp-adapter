@@ -13,6 +13,7 @@ const IMPORT_PATHS: Record<ImportKind, string> = {
   "claude-code": join(homedir(), ".claude", "claude_desktop_config.json"),
   "claude-desktop": join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json"),
   "codex": join(homedir(), ".codex", "config.json"),
+  "opencode": join(homedir(), ".config", "opencode", "opencode.json"),
   "windsurf": join(homedir(), ".windsurf", "mcp.json"),
   "vscode": ".vscode/mcp.json", // Relative to project
 };
@@ -117,6 +118,8 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
     case "vscode":
       servers = obj.mcpServers ?? obj["mcp-servers"];
       break;
+    case "opencode":
+      return extractOpencodeServers(obj.mcp);
     default:
       return {};
   }
@@ -126,6 +129,54 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
   }
   
   return servers as Record<string, ServerEntry>;
+}
+
+function extractOpencodeServers(rawMcp: unknown): Record<string, ServerEntry> {
+  if (!rawMcp || typeof rawMcp !== "object" || Array.isArray(rawMcp)) {
+    return {};
+  }
+
+  const result: Record<string, ServerEntry> = {};
+
+  for (const [name, entry] of Object.entries(rawMcp as Record<string, unknown>)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+
+    const server = entry as Record<string, unknown>;
+    if (server.enabled === false) continue;
+
+    if (server.type === "local" && Array.isArray(server.command) && typeof server.command[0] === "string") {
+      const command = server.command.filter((value): value is string => typeof value === "string");
+      result[name] = {
+        command: command[0],
+        args: command.slice(1),
+        env: asStringRecord(server.environment),
+      };
+      continue;
+    }
+
+    if (server.type === "remote" && typeof server.url === "string") {
+      result[name] = {
+        url: server.url,
+        headers: asStringRecord(server.headers),
+        auth: server.oauth && typeof server.oauth === "object" ? "oauth" : undefined,
+      };
+    }
+  }
+
+  return result;
+}
+
+function asStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(entries);
 }
 
 export function getServerProvenance(overridePath?: string): Map<string, ServerProvenance> {

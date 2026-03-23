@@ -241,12 +241,12 @@ Already have MCP set up elsewhere? Import it:
 
 ```json
 {
-  "imports": ["cursor", "claude-code", "claude-desktop"],
+  "imports": ["cursor", "claude-code", "claude-desktop", "opencode"],
   "mcpServers": { }
 }
 ```
 
-Supported: `cursor`, `claude-code`, `claude-desktop`, `vscode`, `windsurf`, `codex`
+Supported: `cursor`, `claude-code`, `claude-desktop`, `opencode`, `vscode`, `windsurf`, `codex`
 
 ### Project Config
 

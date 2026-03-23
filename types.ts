@@ -16,6 +16,7 @@ export type ImportKind =
   | "claude-code" 
   | "claude-desktop" 
   | "codex" 
+  | "opencode"
   | "windsurf" 
   | "vscode";
 
