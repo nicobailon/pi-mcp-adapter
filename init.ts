@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 import type { McpExtensionState } from "./state.js";
 import type { ToolMetadata } from "./types.js";
 import { existsSync } from "node:fs";
-import { loadMcpConfig } from "./config.js";
+import { loadMcpConfig, validatePoliciesInConfig } from "./config.js";
 import { ConsentManager } from "./consent-manager.js";
 import { McpLifecycleManager } from "./lifecycle.js";
 import {
@@ -30,6 +30,7 @@ export async function initializeMcp(
 ): Promise<McpExtensionState> {
   const configPath = pi.getFlag("mcp-config") as string | undefined;
   const config = loadMcpConfig(configPath);
+  validatePoliciesInConfig(config);
 
   const manager = new McpServerManager();
   const lifecycle = new McpLifecycleManager(manager);
