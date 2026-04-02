@@ -2,19 +2,23 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
+import { parse as parseToml } from "smol-toml";
 import type { McpConfig, ServerEntry, McpSettings, ImportKind, ServerProvenance } from "./types.js";
 
 const DEFAULT_CONFIG_PATH = join(homedir(), ".pi", "agent", "mcp.json");
 const PROJECT_CONFIG_NAME = ".pi/mcp.json";
 
 // Import source paths for other tools
-const IMPORT_PATHS: Record<ImportKind, string> = {
-  "cursor": join(homedir(), ".cursor", "mcp.json"),
-  "claude-code": join(homedir(), ".claude", "claude_desktop_config.json"),
-  "claude-desktop": join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json"),
-  "codex": join(homedir(), ".codex", "config.json"),
-  "windsurf": join(homedir(), ".windsurf", "mcp.json"),
-  "vscode": ".vscode/mcp.json", // Relative to project
+const IMPORT_PATHS: Record<ImportKind, string[]> = {
+  "cursor": [join(homedir(), ".cursor", "mcp.json")],
+  "claude-code": [join(homedir(), ".claude", "claude_desktop_config.json")],
+  "claude-desktop": [join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json")],
+  "codex": [
+    join(homedir(), ".codex", "config.toml"),
+    join(homedir(), ".codex", "config.json"),
+  ],
+  "windsurf": [join(homedir(), ".windsurf", "mcp.json")],
+  "vscode": [".vscode/mcp.json"], // Relative to project
 };
 
 export function loadMcpConfig(overridePath?: string): McpConfig {
@@ -35,27 +39,19 @@ export function loadMcpConfig(overridePath?: string): McpConfig {
   // Process imports from other tools
   if (config.imports?.length) {
     for (const importKind of config.imports) {
-      const importPath = IMPORT_PATHS[importKind];
-      if (!importPath) continue;
-      
-      const fullPath = importPath.startsWith(".") 
-        ? resolve(process.cwd(), importPath) 
-        : importPath;
-      
-      if (!existsSync(fullPath)) continue;
-      
-      try {
-        const imported = JSON.parse(readFileSync(fullPath, "utf-8"));
-        const servers = extractServers(imported, importKind);
-        
-        // Merge - local config takes precedence over imports
-        for (const [name, def] of Object.entries(servers)) {
-          if (!config.mcpServers[name]) {
-            config.mcpServers[name] = def;
-          }
+      const importPaths = IMPORT_PATHS[importKind];
+      if (!importPaths?.length) continue;
+
+      const imported = loadImportedConfig(importPaths, importKind, "Failed to import MCP config from");
+      if (!imported) continue;
+
+      const servers = extractServers(imported, importKind);
+
+      // Merge - local config takes precedence over imports
+      for (const [name, def] of Object.entries(servers)) {
+        if (!config.mcpServers[name]) {
+          config.mcpServers[name] = def;
         }
-      } catch (error) {
-        console.warn(`Failed to import MCP config from ${importKind}:`, error);
       }
     }
   }
@@ -78,6 +74,41 @@ export function loadMcpConfig(overridePath?: string): McpConfig {
   }
   
   return config;
+}
+
+function resolveImportPaths(paths: string[]): string[] {
+  return paths.map((importPath) => importPath.startsWith(".")
+    ? resolve(process.cwd(), importPath)
+    : importPath,
+  );
+}
+
+function readImportedConfig(path: string): unknown {
+  const raw = readFileSync(path, "utf-8");
+
+  if (path.endsWith(".toml")) {
+    return parseToml(raw);
+  }
+
+  return JSON.parse(raw);
+}
+
+function loadImportedConfig(
+  paths: string[],
+  importKind: ImportKind,
+  warningPrefix: string,
+): unknown | undefined {
+  for (const fullPath of resolveImportPaths(paths)) {
+    if (!existsSync(fullPath)) continue;
+
+    try {
+      return readImportedConfig(fullPath);
+    } catch (error) {
+      console.warn(`${warningPrefix} ${importKind}:`, error);
+    }
+  }
+
+  return undefined;
 }
 
 function validateConfig(raw: unknown): McpConfig {
@@ -109,8 +140,10 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
   switch (kind) {
     case "claude-desktop":
     case "claude-code":
-    case "codex":
       servers = obj.mcpServers;
+      break;
+    case "codex":
+      servers = obj.mcp_servers ?? obj.mcpServers;
       break;
     case "cursor":
     case "windsurf":
@@ -144,21 +177,16 @@ export function getServerProvenance(overridePath?: string): Map<string, ServerPr
 
   if (userConfig.imports?.length) {
     for (const importKind of userConfig.imports) {
-      const importPath = IMPORT_PATHS[importKind];
-      if (!importPath) continue;
-      const fullPath = importPath.startsWith(".")
-        ? resolve(process.cwd(), importPath)
-        : importPath;
-      if (!existsSync(fullPath)) continue;
-      try {
-        const imported = JSON.parse(readFileSync(fullPath, "utf-8"));
-        const servers = extractServers(imported, importKind);
-        for (const name of Object.keys(servers)) {
-          if (!provenance.has(name)) {
-            provenance.set(name, { path: userPath, kind: "import", importKind });
-          }
+      const importPaths = IMPORT_PATHS[importKind];
+      if (!importPaths?.length) continue;
+      const imported = loadImportedConfig(importPaths, importKind, "Failed to inspect imported MCP config from");
+      if (!imported) continue;
+      const servers = extractServers(imported, importKind);
+      for (const name of Object.keys(servers)) {
+        if (!provenance.has(name)) {
+          provenance.set(name, { path: userPath, kind: "import", importKind });
         }
-      } catch {}
+      }
     }
   }
 

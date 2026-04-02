@@ -72,6 +72,7 @@
     "@modelcontextprotocol/ext-apps": "^1.2.2",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@sinclair/typebox": "^0.32.0",
+    "smol-toml": "^1.6.1",
     "zod": "^3.25.0 || ^4.0.0"
   },
   "peerDependencies": {
