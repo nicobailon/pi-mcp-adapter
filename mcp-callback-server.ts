@@ -72,16 +72,16 @@ const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000
 async function isPortInUse(): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = connect({ host: "127.0.0.1", port: OAUTH_CALLBACK_PORT })
-    
+
     socket.on("connect", () => {
       socket.end()
       resolve(true)
     })
-    
+
     socket.on("error", () => {
       resolve(false)
     })
-    
+
     socket.on("timeout", () => {
       socket.destroy()
       resolve(false)
@@ -166,7 +166,6 @@ export async function ensureCallbackServer(): Promise<void> {
 
   const running = await isPortInUse()
   if (running) {
-    console.log(`MCP OAuth: Callback server already running on port ${OAUTH_CALLBACK_PORT}`)
     return
   }
 
@@ -178,7 +177,6 @@ export async function ensureCallbackServer(): Promise<void> {
     })
 
     server!.listen(OAUTH_CALLBACK_PORT, "127.0.0.1", () => {
-      console.log(`MCP OAuth: Callback server started on port ${OAUTH_CALLBACK_PORT}`)
       resolve()
     })
   })
@@ -224,7 +222,6 @@ export async function stopCallbackServer(): Promise<void> {
       })
     })
     server = undefined
-    console.log("MCP OAuth: Callback server stopped")
   }
 
   // Reject all pending auths (defer to allow any pending operations to complete)
