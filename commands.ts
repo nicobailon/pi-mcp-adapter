@@ -1,10 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
 import type { McpConfig, ServerEntry, McpPanelCallbacks, McpPanelResult } from "./types.js";
+import { createServer } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
 import { getServerProvenance, writeDirectToolsConfig } from "./config.js";
 import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
-import { getStoredTokens } from "./oauth-handler.js";
+import { ensureStoredTokens, persistOAuthTokens, readStoredTokens } from "./oauth-handler.js";
 import { buildToolMetadata } from "./tool-metadata.js";
 
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
@@ -113,51 +115,359 @@ export async function reconnectServers(
   updateStatusBar(state);
 }
 
+type OAuthServerMetadata = {
+  issuer?: string;
+  authorization_endpoint?: string;
+  token_endpoint?: string;
+  registration_endpoint?: string;
+};
+
+function toBase64Url(buffer: Buffer): string {
+  return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function createPkcePair(): { verifier: string; challenge: string } {
+  const verifier = toBase64Url(randomBytes(32));
+  const challenge = toBase64Url(createHash("sha256").update(verifier).digest());
+  return { verifier, challenge };
+}
+
+async function fetchOAuthMetadata(serverUrl: string): Promise<Required<OAuthServerMetadata>> {
+  const origin = new URL(serverUrl).origin;
+  const metadataUrl = new URL("/.well-known/oauth-authorization-server", origin);
+  const response = await fetch(metadataUrl, {
+    headers: { accept: "application/json" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`OAuth discovery failed (${response.status} ${response.statusText})`);
+  }
+
+  const metadata = (await response.json()) as OAuthServerMetadata;
+  if (!metadata.authorization_endpoint || !metadata.token_endpoint || !metadata.registration_endpoint) {
+    throw new Error("OAuth discovery response is missing required endpoints");
+  }
+
+  return {
+    issuer: metadata.issuer ?? origin,
+    authorization_endpoint: metadata.authorization_endpoint,
+    token_endpoint: metadata.token_endpoint,
+    registration_endpoint: metadata.registration_endpoint,
+  };
+}
+
+async function registerOAuthClient(
+  registrationEndpoint: string,
+  redirectUri: string,
+): Promise<{ client_id: string; client_secret?: string; token_endpoint_auth_method?: string }> {
+  const response = await fetch(registrationEndpoint, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      client_name: "pi-mcp-adapter",
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`OAuth client registration failed (${response.status}): ${body}`);
+  }
+
+  const json = JSON.parse(body) as { client_id?: string; client_secret?: string; token_endpoint_auth_method?: string };
+  if (!json.client_id) {
+    throw new Error("OAuth client registration did not return a client_id");
+  }
+
+  return {
+    client_id: json.client_id,
+    client_secret: json.client_secret,
+    token_endpoint_auth_method: json.token_endpoint_auth_method,
+  };
+}
+
+async function startOAuthCallbackServer(
+  expectedState: string,
+): Promise<{ redirectUri: string; waitForResult: Promise<{ callbackUrl: string; code: string }> }> {
+  const host = "127.0.0.1";
+
+  return new Promise((resolve, reject) => {
+    const timeoutMs = 5 * 60 * 1000;
+    let settled = false;
+
+    const server = createServer((req, res) => {
+      const requestUrl = new URL(req.url ?? "/", `http://${host}`);
+      if (requestUrl.pathname !== "/callback") {
+        res.statusCode = 404;
+        res.end("Not found");
+        return;
+      }
+
+      const state = requestUrl.searchParams.get("state");
+      const code = requestUrl.searchParams.get("code");
+      const error = requestUrl.searchParams.get("error");
+      const errorDescription = requestUrl.searchParams.get("error_description");
+
+      res.setHeader("content-type", "text/html; charset=utf-8");
+
+      const closeServer = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        server.close();
+      };
+
+      if (error) {
+        res.end(`<html><body><h1>Authentication failed</h1><p>${error}: ${errorDescription ?? "Unknown error"}</p><p>You can close this window.</p></body></html>`);
+        closeServer();
+        waiterReject(new Error(`OAuth authorization failed: ${error}${errorDescription ? ` - ${errorDescription}` : ""}`));
+        return;
+      }
+
+      if (!code) {
+        res.end("<html><body><h1>Authentication failed</h1><p>Missing authorization code.</p><p>You can close this window.</p></body></html>");
+        closeServer();
+        waiterReject(new Error("OAuth authorization failed: missing code in callback"));
+        return;
+      }
+
+      if (state !== expectedState) {
+        res.end("<html><body><h1>Authentication failed</h1><p>State mismatch.</p><p>You can close this window.</p></body></html>");
+        closeServer();
+        waiterReject(new Error("OAuth authorization failed: state mismatch"));
+        return;
+      }
+
+      res.end("<html><body><h1>Authentication complete</h1><p>You can close this window and return to pi.</p></body></html>");
+      closeServer();
+      waiterResolve({ callbackUrl: requestUrl.toString(), code });
+    });
+
+    let waiterResolve!: (value: { callbackUrl: string; code: string }) => void;
+    let waiterReject!: (reason?: unknown) => void;
+    const waitForResult = new Promise<{ callbackUrl: string; code: string }>((resolveWait, rejectWait) => {
+      waiterResolve = resolveWait;
+      waiterReject = rejectWait;
+    });
+
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      server.close();
+      waiterReject(new Error("Timed out waiting for OAuth callback"));
+    }, timeoutMs);
+
+    server.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      waiterReject(error);
+      reject(error);
+    });
+
+    server.listen(0, host, () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeoutId);
+          waiterReject(new Error("Failed to bind local OAuth callback server"));
+          reject(new Error("Failed to bind local OAuth callback server"));
+        }
+        return;
+      }
+
+      resolve({
+        redirectUri: `http://${host}:${address.port}/callback`,
+        waitForResult,
+      });
+    });
+  });
+}
+
+async function exchangeAuthorizationCode(
+  metadata: Required<OAuthServerMetadata>,
+  client: { client_id: string; client_secret?: string; token_endpoint_auth_method?: string },
+  redirectUri: string,
+  code: string,
+  codeVerifier: string,
+): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams({
+    grant_type: "authorization_code",
+    client_id: client.client_id,
+    redirect_uri: redirectUri,
+    code,
+    code_verifier: codeVerifier,
+  });
+
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "content-type": "application/x-www-form-urlencoded",
+  };
+
+  if (client.client_secret) {
+    if (client.token_endpoint_auth_method === "client_secret_basic") {
+      headers.authorization = `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString("base64")}`;
+      params.delete("client_id");
+    } else if (client.token_endpoint_auth_method === "client_secret_post") {
+      params.set("client_secret", client.client_secret);
+    }
+  }
+
+  const response = await fetch(metadata.token_endpoint, {
+    method: "POST",
+    headers,
+    body: params.toString(),
+  });
+
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`OAuth token exchange failed (${response.status}): ${body}`);
+  }
+
+  return JSON.parse(body) as Record<string, unknown>;
+}
+
+function extractCodeFromCallbackUrl(callbackUrl: string, expectedState: string): string {
+  const parsed = new URL(callbackUrl);
+  const state = parsed.searchParams.get("state");
+  const code = parsed.searchParams.get("code");
+  const error = parsed.searchParams.get("error");
+  const errorDescription = parsed.searchParams.get("error_description");
+
+  if (error) {
+    throw new Error(`OAuth authorization failed: ${error}${errorDescription ? ` - ${errorDescription}` : ""}`);
+  }
+  if (!code) {
+    throw new Error("OAuth authorization failed: missing code in callback URL");
+  }
+  if (state !== expectedState) {
+    throw new Error("OAuth authorization failed: state mismatch");
+  }
+
+  return code;
+}
+
+type AuthenticateServerOptions = {
+  reconnect?: boolean;
+  reason?: string;
+};
+
 export async function authenticateServer(
   serverName: string,
-  config: McpConfig,
-  ctx: ExtensionContext
-): Promise<void> {
-  if (!ctx.hasUI) return;
+  state: McpExtensionState,
+  ui = state.ui,
+  options: AuthenticateServerOptions = {},
+): Promise<boolean> {
+  if (!ui) return false;
 
-  const definition = config.mcpServers[serverName];
+  const definition = state.config.mcpServers[serverName];
   if (!definition) {
-    ctx.ui.notify(`Server "${serverName}" not found in config`, "error");
-    return;
+    ui.notify(`Server "${serverName}" not found in config`, "error");
+    return false;
   }
 
   if (definition.auth !== "oauth") {
-    ctx.ui.notify(
+    ui.notify(
       `Server "${serverName}" does not use OAuth authentication.\n` +
       `Current auth mode: ${definition.auth ?? "none"}`,
       "error"
     );
-    return;
+    return false;
   }
 
   if (!definition.url) {
-    ctx.ui.notify(
+    ui.notify(
       `Server "${serverName}" has no URL configured (OAuth requires HTTP transport)`,
       "error"
     );
-    return;
+    return false;
   }
 
-  const tokenPath = `~/.pi/agent/mcp-oauth/${serverName}/tokens.json`;
+  try {
+    const reason = options.reason ? ` (${options.reason})` : "";
+    ui.notify(`MCP: Starting OAuth flow for ${serverName}${reason}...`, "info");
 
-  ctx.ui.notify(
-    `OAuth setup for "${serverName}":\n\n` +
-    `1. Obtain an access token from your OAuth provider\n` +
-    `2. Create the token file:\n` +
-    `   ${tokenPath}\n\n` +
-    `3. Add your token:\n` +
-    `   {\n` +
-    `     "access_token": "your-token-here",\n` +
-    `     "token_type": "bearer"\n` +
-    `   }\n\n` +
-    `4. Run /mcp reconnect to connect with the token`,
-    "info"
-  );
+    const metadata = await fetchOAuthMetadata(definition.url);
+    const stateToken = toBase64Url(randomBytes(24));
+    const { verifier, challenge } = createPkcePair();
+    const { redirectUri, waitForResult } = await startOAuthCallbackServer(stateToken);
+    const client = await registerOAuthClient(metadata.registration_endpoint, redirectUri);
+
+    const authUrl = new URL(metadata.authorization_endpoint);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("client_id", client.client_id);
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("code_challenge", challenge);
+    authUrl.searchParams.set("code_challenge_method", "S256");
+    authUrl.searchParams.set("state", stateToken);
+
+    await state.openBrowser(authUrl.toString());
+    ui.notify(
+      `Complete Atlassian login in your browser.\n\nIf automatic callback fails, copy the full redirected URL and keep it handy — pi will ask for it.`,
+      "info"
+    );
+
+    let code: string;
+    try {
+      const result = await waitForResult;
+      code = result.code;
+    } catch (error) {
+      const pasted = await ui.input(
+        "Paste redirected callback URL",
+        `${redirectUri}?code=...&state=...`,
+      );
+      if (!pasted) {
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+      code = extractCodeFromCallbackUrl(pasted.trim(), stateToken);
+    }
+
+    const tokenPayload = await exchangeAuthorizationCode(metadata, client, redirectUri, code, verifier);
+    const tokenPath = persistOAuthTokens(serverName, tokenPayload, {
+      client_id: client.client_id,
+      client_secret: client.client_secret,
+      token_endpoint_auth_method: client.token_endpoint_auth_method,
+      token_endpoint: metadata.token_endpoint,
+      issuer: metadata.issuer,
+      server_url: definition.url,
+    });
+
+    ui.notify(`OAuth complete for ${serverName}. Saved token to ${tokenPath}`, "info");
+
+    if (options.reconnect !== false) {
+      await reconnectServers(state, { hasUI: true, ui } as ExtensionContext, serverName);
+    }
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ui.notify(`OAuth failed for ${serverName}: ${message}`, "error");
+    return false;
+  }
+}
+
+export async function autoAuthenticateOAuthServers(state: McpExtensionState): Promise<void> {
+  const ui = state.ui;
+  if (!ui) return;
+
+  for (const [serverName, definition] of Object.entries(state.config.mcpServers)) {
+    if (definition.auth !== "oauth") continue;
+
+    const tokens = await ensureStoredTokens(serverName);
+    if (tokens) continue;
+
+    const ok = await authenticateServer(serverName, state, ui, {
+      reason: "session start",
+      reconnect: true,
+    });
+    if (!ok) break;
+  }
 }
 
 export async function openMcpPanel(
@@ -176,7 +486,7 @@ export async function openMcpPanel(
     },
     getConnectionStatus: (serverName: string) => {
       const definition = config.mcpServers[serverName];
-      if (definition?.auth === "oauth" && getStoredTokens(serverName) === undefined) {
+      if (definition?.auth === "oauth" && readStoredTokens(serverName) === undefined) {
         return "needs-auth";
       }
       const connection = state.manager.getConnection(serverName);

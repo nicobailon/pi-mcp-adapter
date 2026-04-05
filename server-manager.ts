@@ -11,7 +11,7 @@ import type {
   Transport,
 } from "./types.js";
 import { serverStreamResultPatchNotificationSchema } from "./types.js";
-import { getStoredTokens } from "./oauth-handler.js";
+import { ensureStoredTokens } from "./oauth-handler.js";
 import { resolveNpxBinary } from "./npx-resolver.js";
 import { logger } from "./logger.js";
 
@@ -139,10 +139,10 @@ export class McpServerManager {
       if (!serverName) {
         throw new Error("Server name required for OAuth authentication");
       }
-      const tokens = getStoredTokens(serverName);
+      const tokens = await ensureStoredTokens(serverName);
       if (!tokens) {
         throw new Error(
-          `No OAuth tokens found for "${serverName}". Run /mcp-auth ${serverName} to authenticate.`
+          `No valid OAuth tokens found for "${serverName}". Run /mcp-auth ${serverName} to authenticate.`
         );
       }
       headers["Authorization"] = `Bearer ${tokens.access_token}`;

@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ToolInfo } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
 import { Type } from "@sinclair/typebox";
-import { showStatus, showTools, reconnectServers, authenticateServer, openMcpPanel } from "./commands.js";
+import { showStatus, showTools, reconnectServers, authenticateServer, autoAuthenticateOAuthServers, openMcpPanel } from "./commands.js";
 import { loadMcpConfig } from "./config.js";
 import { buildProxyDescription, createDirectToolExecutor, resolveDirectTools } from "./direct-tools.js";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.js";
@@ -109,6 +109,12 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       state = nextState;
       updateStatusBar(nextState);
       initPromise = null;
+
+      try {
+        await autoAuthenticateOAuthServers(nextState);
+      } catch (error) {
+        console.error("MCP: automatic OAuth authentication failed", error);
+      }
     }).catch(err => {
       if (generation !== lifecycleGeneration) {
         return;
@@ -198,7 +204,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         return;
       }
 
-      await authenticateServer(serverName, state.config, ctx);
+      await authenticateServer(serverName, state, ctx.ui);
     },
   });
 

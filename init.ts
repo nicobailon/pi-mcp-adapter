@@ -301,6 +301,23 @@ export async function lazyConnect(state: McpExtensionState, serverName: string):
     updateStatusBar(state);
     return true;
   } catch {
+    if (definition.auth === "oauth" && state.ui) {
+      try {
+        const { authenticateServer } = await import("./commands.js");
+        const authenticated = await authenticateServer(serverName, state, state.ui, {
+          reason: "expired or missing OAuth token",
+          reconnect: true,
+        });
+        if (authenticated) {
+          state.failureTracker.delete(serverName);
+          updateStatusBar(state);
+          return true;
+        }
+      } catch {
+        // fall through to failure tracking below
+      }
+    }
+
     state.failureTracker.set(serverName, Date.now());
     updateStatusBar(state);
     return false;
