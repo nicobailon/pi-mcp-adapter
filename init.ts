@@ -301,7 +301,11 @@ export async function lazyConnect(state: McpExtensionState, serverName: string):
     updateStatusBar(state);
     return true;
   } catch {
-    if (definition.auth === "oauth" && state.ui) {
+    if (
+      definition.auth === "oauth" &&
+      state.ui &&
+      state.config.settings?.autoOauthBrowserAuth !== false
+    ) {
       try {
         const { authenticateServer } = await import("./commands.js");
         const authenticated = await authenticateServer(serverName, state, state.ui, {

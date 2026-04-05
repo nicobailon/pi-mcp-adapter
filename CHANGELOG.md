@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Interactive OAuth browser flow for `/mcp-auth` using discovery, dynamic client registration, PKCE, and a localhost callback.
+- Automatic OAuth access-token refresh using persisted token endpoint/client metadata.
+- Automatic interactive browser re-auth on session start and lazy connect when no valid OAuth token remains.
+- `settings.autoOauthBrowserAuth` to disable automatic browser popups and require manual `/mcp-auth` instead.
+
+### Changed
+- OAuth-backed HTTP servers now attempt silent refresh before failing authentication.
+
 ## [2.2.2] - 2026-04-03
 
 ### Fixed

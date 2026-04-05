@@ -288,6 +288,7 @@ export interface McpSettings {
   toolPrefix?: "server" | "none" | "short";
   idleTimeout?: number; // minutes, default 10, 0 to disable
   directTools?: boolean;
+  autoOauthBrowserAuth?: boolean; // default true in interactive sessions
 }
 
 // Root config

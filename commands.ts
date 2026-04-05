@@ -359,6 +359,10 @@ type AuthenticateServerOptions = {
   reason?: string;
 };
 
+function isAutoOauthBrowserAuthEnabled(state: McpExtensionState): boolean {
+  return state.config.settings?.autoOauthBrowserAuth !== false;
+}
+
 export async function authenticateServer(
   serverName: string,
   state: McpExtensionState,
@@ -455,6 +459,7 @@ export async function authenticateServer(
 export async function autoAuthenticateOAuthServers(state: McpExtensionState): Promise<void> {
   const ui = state.ui;
   if (!ui) return;
+  if (!isAutoOauthBrowserAuthEnabled(state)) return;
 
   for (const [serverName, definition] of Object.entries(state.config.mcpServers)) {
     if (definition.auth !== "oauth") continue;

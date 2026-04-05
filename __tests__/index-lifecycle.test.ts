@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   showTools: vi.fn(),
   reconnectServers: vi.fn(),
   authenticateServer: vi.fn(),
+  autoAuthenticateOAuthServers: vi.fn(),
   openMcpPanel: vi.fn(),
   executeCall: vi.fn(),
   executeConnect: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock("../commands.js", () => ({
   showTools: mocks.showTools,
   reconnectServers: mocks.reconnectServers,
   authenticateServer: mocks.authenticateServer,
+  autoAuthenticateOAuthServers: mocks.autoAuthenticateOAuthServers,
   openMcpPanel: mocks.openMcpPanel,
 }));
 
@@ -123,6 +125,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.resolveDirectTools.mockReturnValue([]);
     mocks.getConfigPathFromArgv.mockReturnValue(undefined);
     mocks.truncateAtWord.mockImplementation((text: string) => text);
+    mocks.autoAuthenticateOAuthServers.mockResolvedValue(undefined);
   });
 
   it("starts a replacement init immediately and shuts down stale init results", async () => {
@@ -151,6 +154,7 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.resolve();
 
     expect(mocks.updateStatusBar).toHaveBeenCalledWith(activeState);
+    expect(mocks.autoAuthenticateOAuthServers).toHaveBeenCalledWith(activeState);
     expect(activeState.lifecycle.gracefulShutdown).not.toHaveBeenCalled();
 
     const staleState = createState();

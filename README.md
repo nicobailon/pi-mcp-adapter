@@ -104,7 +104,8 @@ Two calls instead of 26 tools cluttering the context.
 {
   "settings": {
     "toolPrefix": "server",
-    "idleTimeout": 10
+    "idleTimeout": 10,
+    "autoOauthBrowserAuth": true
   },
   "mcpServers": { }
 }
@@ -115,6 +116,7 @@ Two calls instead of 26 tools cluttering the context.
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), or `"none"` |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
+| `autoOauthBrowserAuth` | Automatically open the browser for OAuth re-auth in interactive sessions when tokens are missing/expired and refresh fails (default: `true`). Set to `false` to require manual `/mcp-auth`. |
 
 Per-server `idleTimeout` overrides the global setting.
 
@@ -173,6 +175,8 @@ Each direct tool costs ~150-300 tokens in the system prompt (name + description 
 Direct tools register from the metadata cache (`~/.pi/agent/mcp-cache.json`), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. Restart Pi and they'll be available. To force it: `/mcp reconnect <server>` then restart.
 
 **Interactive configuration:** Run `/mcp` to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. You can reconnect servers, initiate OAuth, and toggle tools between direct and proxy — all from one overlay. Changes are written to your config file; restart Pi to apply.
+
+**OAuth behavior:** `/mcp-auth <server>` now opens the browser for OAuth using discovery, dynamic client registration, PKCE, and a localhost callback. Expired access tokens are refreshed automatically when possible. In interactive sessions, if refresh fails or no valid token exists, the adapter can automatically trigger browser re-auth on session start or first lazy connect. Disable that behavior with `settings.autoOauthBrowserAuth: false` if you prefer manual authentication only.
 
 **Subagent integration:** If you use the subagent extension, agents can request direct MCP tools in their frontmatter with `mcp:server-name` syntax. See the subagent README for details.
 
@@ -276,7 +280,7 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 | `/mcp tools` | List all tools |
 | `/mcp reconnect` | Reconnect all servers |
 | `/mcp reconnect <server>` | Connect or reconnect a single server |
-| `/mcp-auth <server>` | OAuth setup |
+| `/mcp-auth <server>` | Start interactive OAuth browser authentication |
 
 ## How It Works
 
@@ -291,6 +295,6 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 
 ## Limitations
 
-- OAuth tokens obtained externally (no browser flow)
-- No automatic token refresh
+- Automatic browser OAuth re-auth only runs in interactive sessions with UI available
+- Non-interactive sessions still fail closed and require pre-existing valid tokens
 - Cross-session server sharing not yet implemented (each Pi session runs its own server processes)
