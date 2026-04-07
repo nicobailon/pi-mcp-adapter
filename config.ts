@@ -17,37 +17,57 @@ const IMPORT_PATHS: Record<ImportKind, string> = {
   "vscode": ".vscode/mcp.json", // Relative to project
 };
 
-export function loadMcpConfig(overridePath?: string): McpConfig {
-  const configPath = overridePath ? resolve(overridePath) : DEFAULT_CONFIG_PATH;
-  
-  // Load base config
+export function loadMcpConfig(overridePaths?: string | string[]): McpConfig {
+  const configPaths = Array.isArray(overridePaths)
+    ? (overridePaths.length > 0 ? overridePaths.map(path => resolve(path)) : [DEFAULT_CONFIG_PATH])
+    : [overridePaths ? resolve(overridePaths) : DEFAULT_CONFIG_PATH];
+
   let config: McpConfig = { mcpServers: {} };
-  
-  if (existsSync(configPath)) {
+  const importKinds: ImportKind[] = [];
+
+  for (const configPath of configPaths) {
+    if (!existsSync(configPath)) continue;
+
     try {
       const raw = JSON.parse(readFileSync(configPath, "utf-8"));
-      config = validateConfig(raw);
+      const validated = validateConfig(raw);
+
+      config.mcpServers = { ...config.mcpServers, ...validated.mcpServers };
+      if (validated.settings) {
+        config.settings = { ...config.settings, ...validated.settings };
+      }
+      if (validated.imports?.length) {
+        for (const importKind of validated.imports) {
+          if (!importKinds.includes(importKind)) {
+            importKinds.push(importKind);
+          }
+        }
+      }
     } catch (error) {
       console.warn(`Failed to load MCP config from ${configPath}:`, error);
     }
   }
-  
+
+  if (importKinds.length > 0) {
+    config.imports = importKinds;
+  }
+
   // Process imports from other tools
   if (config.imports?.length) {
     for (const importKind of config.imports) {
       const importPath = IMPORT_PATHS[importKind];
       if (!importPath) continue;
-      
-      const fullPath = importPath.startsWith(".") 
-        ? resolve(process.cwd(), importPath) 
+
+      const fullPath = importPath.startsWith(".")
+        ? resolve(process.cwd(), importPath)
         : importPath;
-      
+
       if (!existsSync(fullPath)) continue;
-      
+
       try {
         const imported = JSON.parse(readFileSync(fullPath, "utf-8"));
         const servers = extractServers(imported, importKind);
-        
+
         // Merge - local config takes precedence over imports
         for (const [name, def] of Object.entries(servers)) {
           if (!config.mcpServers[name]) {
@@ -59,14 +79,14 @@ export function loadMcpConfig(overridePath?: string): McpConfig {
       }
     }
   }
-  
-  // Check for project-local config (skip if it's the same as the main config)
+
+  // Check for project-local config (skip if it's the same as one of the main config paths)
   const projectPath = resolve(process.cwd(), PROJECT_CONFIG_NAME);
-  if (existsSync(projectPath) && projectPath !== configPath) {
+  if (existsSync(projectPath) && !configPaths.includes(projectPath)) {
     try {
       const projectConfig = JSON.parse(readFileSync(projectPath, "utf-8"));
       const validated = validateConfig(projectConfig);
-      
+
       // Project config overrides everything
       config.mcpServers = { ...config.mcpServers, ...validated.mcpServers };
       if (validated.settings) {
@@ -76,7 +96,7 @@ export function loadMcpConfig(overridePath?: string): McpConfig {
       console.warn(`Failed to load project MCP config:`, error);
     }
   }
-  
+
   return config;
 }
 
@@ -128,42 +148,52 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
   return servers as Record<string, ServerEntry>;
 }
 
-export function getServerProvenance(overridePath?: string): Map<string, ServerProvenance> {
+export function getServerProvenance(overridePaths?: string | string[]): Map<string, ServerProvenance> {
   const provenance = new Map<string, ServerProvenance>();
-  const userPath = overridePath ? resolve(overridePath) : DEFAULT_CONFIG_PATH;
+  const userPaths = Array.isArray(overridePaths)
+    ? (overridePaths.length > 0 ? overridePaths.map(path => resolve(path)) : [DEFAULT_CONFIG_PATH])
+    : [overridePaths ? resolve(overridePaths) : DEFAULT_CONFIG_PATH];
+  const importKinds: { path: string; kind: ImportKind }[] = [];
 
-  let userConfig: McpConfig = { mcpServers: {} };
-  if (existsSync(userPath)) {
-    try {
-      userConfig = validateConfig(JSON.parse(readFileSync(userPath, "utf-8")));
-    } catch {}
-  }
-  for (const name of Object.keys(userConfig.mcpServers)) {
-    provenance.set(name, { path: userPath, kind: "user" });
-  }
-
-  if (userConfig.imports?.length) {
-    for (const importKind of userConfig.imports) {
-      const importPath = IMPORT_PATHS[importKind];
-      if (!importPath) continue;
-      const fullPath = importPath.startsWith(".")
-        ? resolve(process.cwd(), importPath)
-        : importPath;
-      if (!existsSync(fullPath)) continue;
+  for (const userPath of userPaths) {
+    let userConfig: McpConfig = { mcpServers: {} };
+    if (existsSync(userPath)) {
       try {
-        const imported = JSON.parse(readFileSync(fullPath, "utf-8"));
-        const servers = extractServers(imported, importKind);
-        for (const name of Object.keys(servers)) {
-          if (!provenance.has(name)) {
-            provenance.set(name, { path: userPath, kind: "import", importKind });
-          }
-        }
+        userConfig = validateConfig(JSON.parse(readFileSync(userPath, "utf-8")));
       } catch {}
+    }
+
+    for (const name of Object.keys(userConfig.mcpServers)) {
+      provenance.set(name, { path: userPath, kind: "user" });
+    }
+
+    if (userConfig.imports?.length) {
+      for (const importKind of userConfig.imports) {
+        importKinds.push({ path: userPath, kind: importKind });
+      }
     }
   }
 
+  for (const { path: userPath, kind: importKind } of importKinds) {
+    const importPath = IMPORT_PATHS[importKind];
+    if (!importPath) continue;
+    const fullPath = importPath.startsWith(".")
+      ? resolve(process.cwd(), importPath)
+      : importPath;
+    if (!existsSync(fullPath)) continue;
+    try {
+      const imported = JSON.parse(readFileSync(fullPath, "utf-8"));
+      const servers = extractServers(imported, importKind);
+      for (const name of Object.keys(servers)) {
+        if (!provenance.has(name)) {
+          provenance.set(name, { path: userPath, kind: "import", importKind });
+        }
+      }
+    } catch {}
+  }
+
   const projectPath = resolve(process.cwd(), PROJECT_CONFIG_NAME);
-  if (existsSync(projectPath) && projectPath !== userPath) {
+  if (existsSync(projectPath) && !userPaths.includes(projectPath)) {
     try {
       const projectConfig = validateConfig(JSON.parse(readFileSync(projectPath, "utf-8")));
       for (const name of Object.keys(projectConfig.mcpServers)) {

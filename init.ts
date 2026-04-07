@@ -19,7 +19,7 @@ import {
 import { McpServerManager } from "./server-manager.js";
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.js";
 import { UiResourceHandler } from "./ui-resource-handler.js";
-import { openUrl, parallelLimit } from "./utils.js";
+import { getConfigPathsFromArgv, openUrl, parallelLimit } from "./utils.js";
 import { logger } from "./logger.js";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
@@ -28,8 +28,8 @@ export async function initializeMcp(
   pi: ExtensionAPI,
   ctx: ExtensionContext
 ): Promise<McpExtensionState> {
-  const configPath = pi.getFlag("mcp-config") as string | undefined;
-  const config = loadMcpConfig(configPath);
+  const configPaths = getConfigPathsFromArgv();
+  const config = loadMcpConfig(configPaths);
 
   const manager = new McpServerManager();
   const lifecycle = new McpLifecycleManager(manager);

@@ -7,7 +7,8 @@ import { buildProxyDescription, createDirectToolExecutor, resolveDirectTools } f
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
 import { executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.js";
-import { getConfigPathFromArgv, truncateAtWord } from "./utils.js";
+import { getConfigPathsFromArgv, truncateAtWord } from "./utils.js";
+import { getConfigPathsFromArgv } from "./utils.js";
 
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
@@ -44,8 +45,8 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     }
   }
 
-  const earlyConfigPath = getConfigPathFromArgv();
-  const earlyConfig = loadMcpConfig(earlyConfigPath);
+  const earlyConfigPaths = getConfigPathsFromArgv();
+  const earlyConfig = loadMcpConfig(earlyConfigPaths);
   const earlyCache = loadMetadataCache();
   const prefix = earlyConfig.settings?.toolPrefix ?? "server";
 
@@ -73,7 +74,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
 
   pi.registerFlag("mcp-config", {
-    description: "Path to MCP config file",
+    description: "Path(s) to MCP config file; can be repeated",
     type: "string",
   });
 
@@ -166,7 +167,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         case "":
         default:
           if (ctx.hasUI) {
-            await openMcpPanel(state, pi, ctx, earlyConfigPath);
+            await openMcpPanel(state, pi, ctx);
           } else {
             await showStatus(state, ctx);
           }
