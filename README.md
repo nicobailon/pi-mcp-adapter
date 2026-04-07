@@ -85,7 +85,8 @@ Two calls instead of 26 tools cluttering the context.
 | `cwd` | Working directory |
 | `url` | HTTP endpoint (StreamableHTTP with SSE fallback) |
 | `auth` | `"bearer"` or `"oauth"` |
-| `bearerToken` / `bearerTokenEnv` | Token or env var name |
+| `bearerToken` / `bearerTokenEnv` | Token or env var name (bearer auth only) |
+| `oauthScope` | Optional space-separated OAuth scopes (oauth auth only) |
 | `lifecycle` | `"lazy"` (default), `"eager"`, or `"keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
 | `exposeResources` | Expose MCP resources as tools (default: true) |
@@ -289,8 +290,46 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 - Keep-alive servers get health checks and auto-reconnect
 - Specific tools can be promoted from the proxy to first-class Pi tools via `directTools` config, so the LLM sees them directly instead of having to search
 
+## OAuth
+
+For MCP servers behind OAuth 2.1 (Supabase, Linear, GitHub Copilot, etc.), set `auth: "oauth"`:
+
+```json
+{
+  "mcpServers": {
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp",
+      "auth": "oauth"
+    }
+  }
+}
+```
+
+On first connect, the adapter:
+
+1. Discovers the authorization server via RFC 9728 protected-resource metadata (with the legacy fallback to the MCP server URL).
+2. Performs **dynamic client registration** (RFC 7591) if the server supports it — no manual app creation needed.
+3. Generates a PKCE challenge, opens your default browser to the consent screen, and listens on a single-shot loopback callback server (`http://127.0.0.1:<random-port>/callback`).
+4. Exchanges the authorization code for tokens and persists them under `~/.pi/agent/mcp-oauth/<server>/`.
+
+On subsequent connects, cached tokens are loaded automatically. Expired access tokens are refreshed via `refresh_token` when available.
+
+**Headless / SSH / no browser?** Set `PI_MCP_BROWSER=none` and copy the `OAuth: open this URL...` line from the log into a browser on another machine. The browser only needs network access to the MCP server's authorization endpoint and to your loopback port (use port-forwarding if needed).
+
+**Stored credentials:**
+
+| File | Purpose |
+|------|---------|
+| `~/.pi/agent/mcp-oauth/<server>/tokens.json` | access + refresh tokens |
+| `~/.pi/agent/mcp-oauth/<server>/client.json` | dynamic registration result (`client_id`, etc.) |
+| `~/.pi/agent/mcp-oauth/<server>/verifier.txt` | PKCE code verifier (transient) |
+
+All files are written with mode `0600`. Delete the directory to force a fresh OAuth flow on next connect.
+
+**Pre-fetched tokens** (CI / token-vault style): the legacy "drop a `tokens.json` by hand" workflow still works — the new provider reads the same file format, so existing setups don't need to change.
+
 ## Limitations
 
-- OAuth tokens obtained externally (no browser flow)
-- No automatic token refresh
-- Cross-session server sharing not yet implemented (each Pi session runs its own server processes)
+- OAuth tokens obtained via the in-process loopback flow (good) but no token revocation on logout yet.
+- Cross-session server sharing not yet implemented (each Pi session runs its own server processes).

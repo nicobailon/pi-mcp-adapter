@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Real OAuth 2.1 flow with dynamic client registration.** When a server is configured with `auth: "oauth"`, the adapter now drives the full RFC 7591 + RFC 8414 + PKCE handshake end-to-end:
+  - Spins up a single-shot loopback callback server on a random ephemeral port (`http://127.0.0.1:<port>/callback`).
+  - Opens the user's default browser to the authorization endpoint (override with `PI_MCP_BROWSER=none` for headless environments).
+  - Discovers the authorization server via RFC 9728 protected-resource metadata, with the legacy fallback to the MCP server URL.
+  - Performs dynamic client registration if the server supports it — no manual app creation needed.
+  - Persists tokens, client info, and PKCE verifier under `~/.pi/agent/mcp-oauth/<server>/` (mode `0600`).
+  - Refreshes expired access tokens automatically when a `refresh_token` is available.
+  - Backwards-compatible with the legacy "drop a hand-rolled `tokens.json` in place" workflow.
+- New `oauthScope` field on server config for requesting specific OAuth scopes.
+- New `oauth-provider.ts` module: `FileBackedOAuthProvider` implementing the SDK's `OAuthClientProvider` interface.
+- New `oauth-flow.ts` module: loopback callback server + cross-platform browser opener.
+- 19 new unit tests covering token persistence, dynamic registration, PKCE handling, callback server, error paths, and headless browser overrides.
+
+### Changed
+- `/mcp-auth <server>` no longer prints manual instructions — it actually starts the OAuth flow now, with progress notifications and a fallback message that points to the legacy manual-token path if the browser flow can't complete.
+- HTTP transport for OAuth servers no longer falls back to legacy SSE; OAuth implies a modern server that speaks StreamableHTTP.
+
 ## [2.2.2] - 2026-04-03
 
 ### Fixed
