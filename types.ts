@@ -273,6 +273,12 @@ export interface ServerEntry {
   auth?: "oauth" | "bearer";
   bearerToken?: string;
   bearerTokenEnv?: string;
+  /**
+   * Space-separated OAuth scope(s) to request when `auth: "oauth"`.
+   * Optional — if omitted, scopes are inferred from the server's protected
+   * resource metadata (RFC 9728) or from the dynamically registered client.
+   */
+  oauthScope?: string;
   lifecycle?: "keep-alive" | "lazy" | "eager";
   idleTimeout?: number; // minutes, overrides global setting
   // Resource handling

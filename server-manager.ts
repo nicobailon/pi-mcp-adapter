@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { auth, UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import type {
   McpTool,
@@ -12,6 +13,8 @@ import type {
 } from "./types.js";
 import { serverStreamResultPatchNotificationSchema } from "./types.js";
 import { getStoredTokens } from "./oauth-handler.js";
+import { FileBackedOAuthProvider } from "./oauth-provider.js";
+import { startCallbackServer, openBrowser, type CallbackServer } from "./oauth-flow.js";
 import { resolveNpxBinary } from "./npx-resolver.js";
 import { logger } from "./logger.js";
 
@@ -134,18 +137,14 @@ export class McpServerManager {
       }
     }
     
-    // Handle OAuth auth - use stored tokens
+    // OAuth has a richer flow (loopback callback server, browser open, dynamic
+    // client registration, token refresh) so it gets its own helper instead of
+    // sharing the simple probe-based fallback path below.
     if (definition.auth === "oauth") {
       if (!serverName) {
         throw new Error("Server name required for OAuth authentication");
       }
-      const tokens = getStoredTokens(serverName);
-      if (!tokens) {
-        throw new Error(
-          `No OAuth tokens found for "${serverName}". Run /mcp-auth ${serverName} to authenticate.`
-        );
-      }
-      headers["Authorization"] = `Bearer ${tokens.access_token}`;
+      return await this.createOAuthHttpTransport(url, headers, serverName, definition);
     }
     
     const requestInit = Object.keys(headers).length > 0 ? { headers } : undefined;
@@ -169,6 +168,124 @@ export class McpServerManager {
       
       // SSE is the legacy transport
       return new SSEClientTransport(url, { requestInit });
+    }
+  }
+
+  /**
+   * Build a StreamableHTTP transport for an OAuth-protected MCP server.
+   *
+   * Flow:
+   *   1. Bind a single-shot loopback callback server on a random port.
+   *   2. Construct a FileBackedOAuthProvider that points its `redirect_uri`
+   *      at that loopback port and persists tokens / client info / PKCE
+   *      verifier under `~/.pi/agent/mcp-oauth/<server>/`.
+   *   3. Build a StreamableHTTP transport with the provider attached.
+   *      The MCP SDK will load any cached tokens and try to connect.
+   *   4. If a probe connect succeeds we already had valid tokens — return
+   *      a fresh transport bound to the same provider and we're done.
+   *   5. If it throws UnauthorizedError, the SDK has already triggered
+   *      `provider.redirectToAuthorization(authUrl)` which opened the user's
+   *      browser. We block on the loopback server to receive the auth code,
+   *      then call `auth(provider, { authorizationCode })` directly to
+   *      exchange the code for tokens (which the provider then persists).
+   *      Finally, build a fresh transport bound to the same provider and
+   *      return it — the next connection will succeed using the new tokens.
+   *
+   * SSE fallback is intentionally not used here. Servers that speak OAuth
+   * are uniformly modern and support StreamableHTTP; legacy SSE servers
+   * predate the MCP auth spec.
+   */
+  private async createOAuthHttpTransport(
+    url: URL,
+    headers: Record<string, string>,
+    serverName: string,
+    definition: ServerDefinition,
+  ): Promise<Transport> {
+    const requestInit = Object.keys(headers).length > 0 ? { headers } : undefined;
+    let callbackServer: CallbackServer | undefined;
+    let cleanedUp = false;
+    const cleanup = (): void => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      callbackServer?.close();
+    };
+
+    try {
+      callbackServer = await startCallbackServer();
+
+      const provider = new FileBackedOAuthProvider(serverName, {
+        redirectPort: callbackServer.port,
+        clientName: `pi-mcp-adapter (${serverName})`,
+        scope: definition.oauthScope,
+        onRedirect: async (authUrl) => {
+          // The SDK calls this when the user must visit the authorization
+          // endpoint. We log the URL (so headless / SSH users can copy it)
+          // and best-effort open it in the system browser.
+          logger.info(`OAuth: open this URL to authorize "${serverName}":`, {
+            server: serverName,
+            url: authUrl.toString(),
+          });
+          await openBrowser(authUrl.toString());
+        },
+      });
+
+      // First attempt: maybe we already have valid cached tokens.
+      const probeTransport = new StreamableHTTPClientTransport(url, {
+        requestInit,
+        authProvider: provider,
+      });
+      const probeClient = new Client({ name: "pi-mcp-probe", version: "1.0.0" });
+
+      try {
+        await probeClient.connect(probeTransport);
+        await probeClient.close().catch(() => {});
+        await probeTransport.close().catch(() => {});
+        cleanup();
+        // Cached tokens worked. Return a fresh transport bound to the
+        // same provider for the real connection.
+        return new StreamableHTTPClientTransport(url, {
+          requestInit,
+          authProvider: provider,
+        });
+      } catch (probeError) {
+        await probeClient.close().catch(() => {});
+        await probeTransport.close().catch(() => {});
+
+        if (!(probeError instanceof UnauthorizedError)) {
+          // Real failure (DNS, TLS, 5xx, etc.) — surface it.
+          throw probeError;
+        }
+        // UnauthorizedError means the SDK has already invoked
+        // provider.redirectToAuthorization(authUrl), so the browser is
+        // open and the user is being walked through consent. Wait for
+        // the loopback callback to fire.
+      }
+
+      logger.info(`OAuth: waiting for browser callback for "${serverName}"...`, {
+        server: serverName,
+      });
+      const { code } = await callbackServer.waitForCode();
+
+      // Hand the code back to the SDK, which will exchange it for tokens
+      // and persist them via provider.saveTokens().
+      const result = await auth(provider, { serverUrl: url, authorizationCode: code });
+      if (result !== "AUTHORIZED") {
+        throw new Error(`OAuth flow for "${serverName}" did not complete (result=${result})`);
+      }
+
+      // The PKCE verifier is single-use; drop it so it doesn't linger on disk.
+      await provider.invalidateCredentials("verifier").catch(() => {});
+
+      logger.info(`OAuth: "${serverName}" authorized`, { server: serverName });
+      cleanup();
+
+      return new StreamableHTTPClientTransport(url, {
+        requestInit,
+        authProvider: provider,
+      });
+    } catch (err) {
+      cleanup();
+      throw err;
     }
   }
   

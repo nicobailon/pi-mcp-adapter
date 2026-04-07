@@ -116,7 +116,8 @@ export async function reconnectServers(
 export async function authenticateServer(
   serverName: string,
   config: McpConfig,
-  ctx: ExtensionContext
+  ctx: ExtensionContext,
+  state?: McpExtensionState,
 ): Promise<void> {
   if (!ctx.hasUI) return;
 
@@ -143,8 +144,52 @@ export async function authenticateServer(
     return;
   }
 
-  const tokenPath = `~/.pi/agent/mcp-oauth/${serverName}/tokens.json`;
+  // If we have a state handle, kick off the real OAuth flow by asking the
+  // server manager to (re)connect. The HTTP transport's OAuth helper will
+  // start the loopback callback server, open the user's browser, do dynamic
+  // client registration if needed, exchange the code for tokens, and persist
+  // them under ~/.pi/agent/mcp-oauth/<server>/.
+  if (state) {
+    ctx.ui.notify(
+      `OAuth: starting browser flow for "${serverName}"...\n` +
+      `If your browser does not open automatically, watch the log for the URL.`,
+      "info",
+    );
+    try {
+      // Drop any existing connection so the manager re-runs createHttpTransport.
+      await state.manager.close(serverName);
+      const connection = await state.manager.connect(serverName, definition);
+      const prefix = state.config.settings?.toolPrefix ?? "server";
+      const { metadata } = buildToolMetadata(
+        connection.tools,
+        connection.resources,
+        definition,
+        serverName,
+        prefix,
+      );
+      state.toolMetadata.set(serverName, metadata);
+      updateMetadataCache(state, serverName);
+      state.failureTracker.delete(serverName);
+      updateStatusBar(state);
+      ctx.ui.notify(
+        `MCP: Authorized "${serverName}" — ${connection.tools.length} tools available`,
+        "info",
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      state.failureTracker.set(serverName, Date.now());
+      ctx.ui.notify(
+        `MCP: OAuth flow for "${serverName}" failed: ${message}\n\n` +
+        `If your environment cannot open a browser, set PI_MCP_BROWSER=none and copy the URL from the log into a browser manually, ` +
+        `or drop a pre-fetched access token into ~/.pi/agent/mcp-oauth/${serverName}/tokens.json and run /mcp reconnect ${serverName}.`,
+        "error",
+      );
+    }
+    return;
+  }
 
+  // Fallback (should not normally happen): just print the manual instructions.
+  const tokenPath = `~/.pi/agent/mcp-oauth/${serverName}/tokens.json`;
   ctx.ui.notify(
     `OAuth setup for "${serverName}":\n\n` +
     `1. Obtain an access token from your OAuth provider\n` +
