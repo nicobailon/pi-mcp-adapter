@@ -279,6 +279,7 @@ export interface ServerEntry {
   exposeResources?: boolean;
   // Direct tool registration
   directTools?: boolean | string[];
+  excludeTools?: string[];
   // Debug
   debug?: boolean;  // Show server stderr (default: false)
 }

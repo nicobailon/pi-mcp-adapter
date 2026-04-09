@@ -66,7 +66,10 @@ export function resolveDirectTools(
 
     if (!toolFilter) continue;
 
+    const excludeSet = definition.excludeTools ? new Set(definition.excludeTools) : null;
+
     for (const tool of serverCache.tools ?? []) {
+      if (excludeSet && (excludeSet.has(tool.name) || excludeSet.has(formatToolName(tool.name, serverName, prefix)))) continue;
       if (toolFilter !== true && !toolFilter.includes(tool.name)) continue;
       const prefixedName = formatToolName(tool.name, serverName, prefix);
       if (BUILTIN_NAMES.has(prefixedName)) {
@@ -92,6 +95,7 @@ export function resolveDirectTools(
     if (definition.exposeResources !== false) {
       for (const resource of serverCache.resources ?? []) {
         const baseName = `get_${resourceNameToToolName(resource.name)}`;
+        if (excludeSet && (excludeSet.has(baseName) || excludeSet.has(formatToolName(baseName, serverName, prefix)))) continue;
         if (toolFilter !== true && !toolFilter.includes(baseName)) continue;
         const prefixedName = formatToolName(baseName, serverName, prefix);
         if (BUILTIN_NAMES.has(prefixedName)) {

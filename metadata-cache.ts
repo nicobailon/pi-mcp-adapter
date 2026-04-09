@@ -115,12 +115,15 @@ export function reconstructToolMetadata(
   serverName: string,
   entry: ServerCacheEntry,
   prefix: "server" | "none" | "short",
-  exposeResources?: boolean
+  exposeResources?: boolean,
+  excludeTools?: string[]
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
+  const excludeSet = excludeTools ? new Set(excludeTools) : null;
 
   for (const tool of entry.tools ?? []) {
     if (!tool?.name) continue;
+    if (excludeSet && (excludeSet.has(tool.name) || excludeSet.has(formatToolName(tool.name, serverName, prefix)))) continue;
     metadata.push({
       name: formatToolName(tool.name, serverName, prefix),
       originalName: tool.name,
@@ -135,6 +138,7 @@ export function reconstructToolMetadata(
     for (const resource of entry.resources ?? []) {
       if (!resource?.name || !resource?.uri) continue;
       const baseName = `get_${resourceNameToToolName(resource.name)}`;
+      if (excludeSet && (excludeSet.has(baseName) || excludeSet.has(formatToolName(baseName, serverName, prefix)))) continue;
       metadata.push({
         name: formatToolName(baseName, serverName, prefix),
         originalName: baseName,

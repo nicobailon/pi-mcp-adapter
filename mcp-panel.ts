@@ -1,6 +1,7 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
+import { formatToolName } from "./types.js";
 import type { MetadataCache, ServerCacheEntry, CachedTool } from "./metadata-cache.js";
 
 interface PanelTheme {
@@ -145,9 +146,13 @@ class McpPanel {
         toolFilter = globalDirect;
       }
 
+      const prefix = config.settings?.toolPrefix ?? "server";
+      const excludeSet = definition.excludeTools ? new Set(definition.excludeTools) : null;
+
       const tools: ToolState[] = [];
       if (serverCache) {
         for (const tool of serverCache.tools ?? []) {
+          if (excludeSet && (excludeSet.has(tool.name) || excludeSet.has(formatToolName(tool.name, serverName, prefix)))) continue;
           const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(tool.name));
           tools.push({
             name: tool.name,
@@ -160,6 +165,7 @@ class McpPanel {
         if (definition.exposeResources !== false) {
           for (const resource of serverCache.resources ?? []) {
             const baseName = `get_${resourceNameToToolName(resource.name)}`;
+            if (excludeSet && (excludeSet.has(baseName) || excludeSet.has(formatToolName(baseName, serverName, prefix)))) continue;
             const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(baseName));
             const ct: CachedTool = { name: baseName, description: resource.description };
             tools.push({

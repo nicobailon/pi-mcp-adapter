@@ -15,11 +15,14 @@ export function buildToolMetadata(
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
 
+  const excludeSet = definition.excludeTools ? new Set(definition.excludeTools) : null;
+
   for (const tool of tools) {
     if (!tool?.name) {
       failedTools.push("(unnamed)");
       continue;
     }
+    if (excludeSet && (excludeSet.has(tool.name) || excludeSet.has(formatToolName(tool.name, serverName, prefix)))) continue;
     let uiResourceUri: string | undefined;
     try {
       uiResourceUri = getToolUiResourceUri({ _meta: tool._meta });
@@ -39,6 +42,7 @@ export function buildToolMetadata(
   if (definition.exposeResources !== false) {
     for (const resource of resources) {
       const baseName = `get_${resourceNameToToolName(resource.name)}`;
+      if (excludeSet && (excludeSet.has(baseName) || excludeSet.has(formatToolName(baseName, serverName, prefix)))) continue;
       metadata.push({
         name: formatToolName(baseName, serverName, prefix),
         originalName: baseName,
