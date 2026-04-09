@@ -91,6 +91,7 @@ Two calls instead of 26 tools cluttering the context.
 | `exposeResources` | Expose MCP resources as tools (default: true) |
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
 | `debug` | Show server stderr (default: false) |
+| `headers` | Headers for HTTP endpoint |
 
 ### Lifecycle Modes
 
@@ -140,6 +141,15 @@ Per-server:
     "huge-server": {
       "command": "npx",
       "args": ["-y", "mega-mcp@latest"]
+    },
+    "stitch": {
+      "url": "https://stitch.googleapis.com/mcp",
+      "headers": {
+        "X-Goog-Api-Key": "${GOOGLE_STITCH_API_KEY}"
+      },
+      "env": {
+        "GOOGLE_STITCH_API_KEY": "GOOGLE_STITCH_API_KEY"
+      }
     }
   }
 }
