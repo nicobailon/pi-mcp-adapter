@@ -314,6 +314,7 @@ export interface McpSettings {
   toolPrefix?: "server" | "none" | "short";
   idleTimeout?: number; // minutes, default 10, 0 to disable
   directTools?: boolean;
+  disableProxyTool?: boolean;
 }
 
 // Root config

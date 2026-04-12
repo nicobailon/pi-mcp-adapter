@@ -207,86 +207,89 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "mcp",
-    label: "MCP",
-    description: buildProxyDescription(earlyConfig, earlyCache, directSpecs),
-    promptSnippet: "MCP gateway - connect to MCP servers and call their tools",
-    parameters: Type.Object({
-      tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
-      args: Type.Optional(Type.String({ description: "Arguments as JSON string (e.g., '{\"key\": \"value\"}')" })),
-      connect: Type.Optional(Type.String({ description: "Server name to connect (lazy connect + metadata refresh)" })),
-      describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
-      search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
-      regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
-      includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
-      server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
-      action: Type.Optional(Type.String({ description: "Action: 'ui-messages' to retrieve prompts/intents from UI sessions" })),
-    }),
-    async execute(_toolCallId, params: {
-      tool?: string;
-      args?: string;
-      connect?: string;
-      describe?: string;
-      search?: string;
-      regex?: boolean;
-      includeSchemas?: boolean;
-      server?: string;
-      action?: string;
-    }, _signal, _onUpdate, _ctx) {
-      let parsedArgs: Record<string, unknown> | undefined;
-      if (params.args) {
-        try {
-          parsedArgs = JSON.parse(params.args);
-          if (typeof parsedArgs !== "object" || parsedArgs === null || Array.isArray(parsedArgs)) {
-            const gotType = Array.isArray(parsedArgs) ? "array" : parsedArgs === null ? "null" : typeof parsedArgs;
-            throw new Error(`Invalid args: expected a JSON object, got ${gotType}`);
+  // Only register the 'mcp' proxy tool if not disabled via settings
+  if (earlyConfig.settings?.disableProxyTool !== true) {
+    pi.registerTool({
+      name: "mcp",
+      label: "MCP",
+      description: buildProxyDescription(earlyConfig, earlyCache, directSpecs),
+      promptSnippet: "MCP gateway - connect to MCP servers and call their tools",
+      parameters: Type.Object({
+        tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
+        args: Type.Optional(Type.String({ description: "Arguments as JSON string (e.g., '{\"key\": \"value\"}')" })),
+        connect: Type.Optional(Type.String({ description: "Server name to connect (lazy connect + metadata refresh)" })),
+        describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
+        search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
+        regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
+        includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
+        server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
+        action: Type.Optional(Type.String({ description: "Action: 'ui-messages' to retrieve prompts/intents from UI sessions" })),
+      }),
+      async execute(_toolCallId, params: {
+        tool?: string;
+        args?: string;
+        connect?: string;
+        describe?: string;
+        search?: string;
+        regex?: boolean;
+        includeSchemas?: boolean;
+        server?: string;
+        action?: string;
+      }, _signal, _onUpdate, _ctx) {
+        let parsedArgs: Record<string, unknown> | undefined;
+        if (params.args) {
+          try {
+            parsedArgs = JSON.parse(params.args);
+            if (typeof parsedArgs !== "object" || parsedArgs === null || Array.isArray(parsedArgs)) {
+              const gotType = Array.isArray(parsedArgs) ? "array" : parsedArgs === null ? "null" : typeof parsedArgs;
+              throw new Error(`Invalid args: expected a JSON object, got ${gotType}`);
+            }
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              throw new Error(`Invalid args JSON: ${error.message}`, { cause: error });
+            }
+            throw error;
           }
-        } catch (error) {
-          if (error instanceof SyntaxError) {
-            throw new Error(`Invalid args JSON: ${error.message}`, { cause: error });
-          }
-          throw error;
         }
-      }
 
-      if (!state && initPromise) {
-        try {
-          state = await initPromise;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+        if (!state && initPromise) {
+          try {
+            state = await initPromise;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
+              details: { error: "init_failed", message },
+            };
+          }
+        }
+        if (!state) {
           return {
-            content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
-            details: { error: "init_failed", message },
+            content: [{ type: "text" as const, text: "MCP not initialized" }],
+            details: { error: "not_initialized" },
           };
         }
-      }
-      if (!state) {
-        return {
-          content: [{ type: "text" as const, text: "MCP not initialized" }],
-          details: { error: "not_initialized" },
-        };
-      }
 
-      if (params.action === "ui-messages") {
-        return executeUiMessages(state);
-      }
-      if (params.tool) {
-        return executeCall(state, params.tool, parsedArgs, params.server);
-      }
-      if (params.connect) {
-        return executeConnect(state, params.connect);
-      }
-      if (params.describe) {
-        return executeDescribe(state, params.describe);
-      }
-      if (params.search) {
-        return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, getPiTools);
-      }
-      if (params.server) {
-        return executeList(state, params.server);
-      }
-      return executeStatus(state);
-    },
-  });
+        if (params.action === "ui-messages") {
+          return executeUiMessages(state);
+        }
+        if (params.tool) {
+          return executeCall(state, params.tool, parsedArgs, params.server);
+        }
+        if (params.connect) {
+          return executeConnect(state, params.connect);
+        }
+        if (params.describe) {
+          return executeDescribe(state, params.describe);
+        }
+        if (params.search) {
+          return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, getPiTools);
+        }
+        if (params.server) {
+          return executeList(state, params.server);
+        }
+        return executeStatus(state);
+      },
+    });
+  }
 }
