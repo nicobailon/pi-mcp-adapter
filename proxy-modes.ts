@@ -7,6 +7,7 @@ import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from ".
 import { transformMcpContent } from "./tool-registrar.js";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
 import { truncateAtWord } from "./utils.js";
+import { isToolAllowed, applyToolPolicy } from "./policy.js";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 
@@ -488,6 +489,31 @@ export async function executeCall(
       content: [{ type: "text" as const, text: msg }],
       details: { mode: "call", error: "tool_not_found", requestedTool: toolName, hintServer },
     };
+  }
+
+  // Policy enforcement
+  const serverPolicy = state.config.mcpServers[serverName]?.policy;
+  if (serverPolicy) {
+    const originalName = toolMeta.originalName;
+    if (!isToolAllowed(serverPolicy, originalName)) {
+      const msg = `Tool "${originalName}" is not allowed by policy (not in allowedTools)`;
+      return {
+        content: [{ type: 'text' as const, text: msg }],
+        details: { mode: 'call', error: msg, server: serverName },
+      };
+    }
+    const toolPolicy = serverPolicy.toolPolicies?.[originalName];
+    if (toolPolicy) {
+      const policyResult = applyToolPolicy(toolPolicy, args ?? {});
+      if (!policyResult.ok) {
+        const msg = `Policy violation: ${policyResult.error}`;
+        return {
+          content: [{ type: 'text' as const, text: msg }],
+          details: { mode: 'call', error: msg, server: serverName },
+        };
+      }
+      args = policyResult.args;
+    }
   }
 
   let connection = state.manager.getConnection(serverName);

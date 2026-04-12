@@ -66,8 +66,17 @@ export function resolveDirectTools(
 
     if (!toolFilter) continue;
 
+    // Intersect with policy.allowedTools when non-empty
+    const policyAllowed = definition.policy?.allowedTools;
+    const effectiveFilter: true | string[] =
+      policyAllowed && policyAllowed.length > 0
+        ? toolFilter === true
+          ? policyAllowed
+          : toolFilter.filter((t) => policyAllowed.includes(t))
+        : toolFilter;
+
     for (const tool of serverCache.tools ?? []) {
-      if (toolFilter !== true && !toolFilter.includes(tool.name)) continue;
+      if (effectiveFilter !== true && !effectiveFilter.includes(tool.name)) continue;
       const prefixedName = formatToolName(tool.name, serverName, prefix);
       if (BUILTIN_NAMES.has(prefixedName)) {
         console.warn(`MCP: skipping direct tool "${prefixedName}" (collides with builtin)`);

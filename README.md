@@ -119,6 +119,70 @@ Two calls instead of 26 tools cluttering the context.
 
 Per-server `idleTimeout` overrides the global setting.
 
+### MCP Policy Layer
+
+You can add a generic policy layer per server to control what the agent can see and send.
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "policy": {
+        "allowedTools": ["search_repositories", "get_file_contents", "create_issue"],
+        "allowedResources": [],
+        "allowedPrompts": [],
+        "toolPolicies": {
+          "get_file_contents": {
+            "defaults": { "ref": "main" },
+            "requireKeys": ["owner", "repo", "path"],
+            "forbidKeys": ["token"],
+            "allowedValues": {
+              "ref": ["main", "develop"]
+            }
+          },
+          "create_issue": {
+            "forbidKeys": ["assignees"],
+            "injectIntoEachItem": { "source": "pi" },
+            "allowedValuesEach": {
+              "source": ["pi"]
+            },
+            "forbidPerItemKeys": ["admin"],
+            "requirePerItemKeys": ["source"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Visibility rules**
+
+- `allowedTools`, `allowedResources`, `allowedPrompts`
+- Missing or empty list = allow all
+- Non-empty list = only listed entries are visible/usable
+- If an allowlist names tools/resources/prompts that the server does not actually expose, the adapter logs warnings so you can fix stale config
+
+**Per-tool request rules**
+
+Inside `toolPolicies[toolName]`:
+
+- `defaults` — fill missing top-level args
+- `allowedValues` — restrict top-level arg values
+- `forbidKeys` — reject requests containing these top-level keys
+- `requireKeys` — require these top-level keys
+- `injectIntoEachItem` — fill missing keys into each object in `items`
+- `allowedValuesEach` — restrict values inside each object in `items`
+- `forbidPerItemKeys` — reject per-item keys
+- `requirePerItemKeys` — require per-item keys
+
+**Validation**
+
+- Policy config is validated fail-fast at startup
+- Invalid combinations such as the same key appearing in both `forbidKeys` and `requireKeys` reject adapter initialization before server connection work begins
+
 ### Direct Tools
 
 By default, all MCP tools are accessed through the single `mcp` proxy tool. This keeps context small but means the LLM has to discover tools via search. If you want specific tools to show up directly in the agent's tool list — alongside `read`, `bash`, `edit`, etc. — add `directTools` to your config.

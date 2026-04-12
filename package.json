@@ -42,6 +42,7 @@
     "tool-metadata.ts",
     "init.ts",
     "ui-session.ts",
+    "policy.ts",
     "proxy-modes.ts",
     "direct-tools.ts",
     "commands.ts",
