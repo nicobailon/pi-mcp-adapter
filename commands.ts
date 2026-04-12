@@ -4,7 +4,6 @@ import type { McpConfig, ServerEntry, McpPanelCallbacks, McpPanelResult } from "
 import { getServerProvenance, writeDirectToolsConfig } from "./config.js";
 import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
-import { getStoredTokens } from "./oauth-handler.js";
 import { buildToolMetadata } from "./tool-metadata.js";
 import { supportsOAuth, authenticate } from "./mcp-auth-flow.js";
 import { hasStoredTokens } from "./mcp-auth.js";
@@ -26,6 +25,9 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     if (connection?.status === "connected") {
       status = "connected";
       statusIcon = "✓";
+    } else if (connection?.status === "needs-auth") {
+      status = "needs auth";
+      statusIcon = "⚠";
     } else if (failedAgo !== null) {
       status = `failed ${failedAgo}s ago`;
       statusIcon = "✗";
@@ -87,6 +89,12 @@ export async function reconnectServers(
       await state.manager.close(name);
 
       const connection = await state.manager.connect(name, definition);
+      if (connection.status === "needs-auth") {
+        if (ctx.hasUI) {
+          ctx.ui.notify(`MCP: ${name} requires OAuth. Run /mcp-auth ${name} first.`, "warning");
+        }
+        continue;
+      }
       const prefix = state.config.settings?.toolPrefix ?? "server";
 
       const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
@@ -188,10 +196,13 @@ export async function openMcpPanel(
     },
     getConnectionStatus: (serverName: string) => {
       const definition = config.mcpServers[serverName];
-      if (definition?.auth === "oauth" && getStoredTokens(serverName) === undefined) {
+      const connection = state.manager.getConnection(serverName);
+      if (connection?.status === "needs-auth") {
         return "needs-auth";
       }
-      const connection = state.manager.getConnection(serverName);
+      if (definition?.auth === "oauth" && !hasStoredTokens(serverName)) {
+        return "needs-auth";
+      }
       if (connection?.status === "connected") return "connected";
       if (getFailureAgeSeconds(state, serverName) !== null) return "failed";
       return "idle";

@@ -13,6 +13,7 @@ describe("package.json files", () => {
     const publishedFiles = new Set(packageJson.files ?? []);
     const runtimeModules = readdirSync(repoRoot)
       .filter((entry) => entry.endsWith(".ts"))
+      .filter((entry) => !entry.endsWith(".test.ts"))
       .filter((entry) => entry !== "vitest.config.ts");
 
     expect(runtimeModules.length).toBeGreaterThan(0);

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- OAuth callback server initialization on session start and a deprecated `/mcp-auth-callback` command that now points users to `/mcp-auth <server>`.
+
+### Fixed
+- OAuth `needs-auth` handling across `/mcp` status/panel, `mcp({ connect })`, `mcp({ tool })`, reconnect flow, lazy/direct tool execution, and startup bootstrap.
+- Startup/shutdown lifecycle regressions in `index.ts` (stale init cleanup, generation guards, and reliable teardown).
+- Error-signal regression for initialization failures in command/direct-tool paths (restored detailed failure messages).
+- OAuth callback cleanup now cancels by stored OAuth state and closes pending transports on failure/cancel paths.
+- Callback server now fails fast when the OAuth callback port is occupied by another process.
+- Package manifest test now ignores root `*.test.ts` files.
+
 ## [2.2.1] - 2026-03-23
 
 ### Fixed

@@ -181,10 +181,11 @@ export function createDirectToolExecutor(
     if (!state && initPromise) {
       try {
         state = await initPromise;
-      } catch {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         return {
-          content: [{ type: "text" as const, text: "MCP initialization failed" }],
-          details: { error: "init_failed" },
+          content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
+          details: { error: "init_failed", message },
         };
       }
     }
@@ -197,6 +198,13 @@ export function createDirectToolExecutor(
 
     const connected = await lazyConnect(state, spec.serverName);
     if (!connected) {
+      const authConnection = state.manager.getConnection(spec.serverName);
+      if (authConnection?.status === "needs-auth") {
+        return {
+          content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" requires OAuth authentication. Run /mcp-auth ${spec.serverName} first.` }],
+          details: { error: "auth_required", server: spec.serverName },
+        };
+      }
       const failedAgo = getFailureAgeSeconds(state, spec.serverName);
       return {
         content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not available${failedAgo !== null ? ` (failed ${failedAgo}s ago)` : ""}` }],

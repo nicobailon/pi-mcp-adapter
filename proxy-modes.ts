@@ -99,6 +99,8 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
     let status = "not connected";
     if (connection?.status === "connected") {
       status = "connected";
+    } else if (connection?.status === "needs-auth") {
+      status = "needs-auth";
     } else if (failedAgo !== null) {
       status = "failed";
     } else if (metadata !== undefined) {
@@ -115,6 +117,10 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
   for (const server of servers) {
     if (server.status === "connected") {
       text += `✓ ${server.name} (${server.toolCount} tools)\n`;
+      continue;
+    }
+    if (server.status === "needs-auth") {
+      text += `⚠ ${server.name} (needs auth)\n`;
       continue;
     }
     if (server.status === "cached") {
@@ -371,6 +377,12 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
       state.ui.setStatus("mcp", `MCP: connecting to ${serverName}...`);
     }
     const connection = await state.manager.connect(serverName, definition);
+    if (connection.status === "needs-auth") {
+      return {
+        content: [{ type: "text" as const, text: `Server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} first.` }],
+        details: { mode: "connect", error: "auth_required", server: serverName },
+      };
+    }
     const prefix = state.config.settings?.toolPrefix ?? "server";
     const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
     state.toolMetadata.set(serverName, metadata);
@@ -424,6 +436,13 @@ export async function executeCall(
     if (connected) {
       toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
     } else {
+      const needsAuthConnection = state.manager.getConnection(serverName);
+      if (needsAuthConnection?.status === "needs-auth") {
+        return {
+          content: [{ type: "text" as const, text: `Server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} first.` }],
+          details: { mode: "call", error: "auth_required", server: serverName },
+        };
+      }
       const failedAgo = getFailureAgeSeconds(state, serverName);
       if (failedAgo !== null) {
         return {
@@ -472,6 +491,12 @@ export async function executeCall(
   }
 
   let connection = state.manager.getConnection(serverName);
+  if (connection?.status === "needs-auth") {
+    return {
+      content: [{ type: "text" as const, text: `Server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} first.` }],
+      details: { mode: "call", error: "auth_required", server: serverName },
+    };
+  }
   if (!connection || connection.status !== "connected") {
     const failedAgo = getFailureAgeSeconds(state, serverName);
     if (failedAgo !== null) {
@@ -494,6 +519,12 @@ export async function executeCall(
         state.ui.setStatus("mcp", `MCP: connecting to ${serverName}...`);
       }
       connection = await state.manager.connect(serverName, definition);
+      if (connection.status === "needs-auth") {
+        return {
+          content: [{ type: "text" as const, text: `Server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} first.` }],
+          details: { mode: "call", error: "auth_required", server: serverName },
+        };
+      }
       state.failureTracker.delete(serverName);
       updateServerMetadata(state, serverName);
       updateMetadataCache(state, serverName);

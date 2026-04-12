@@ -7,9 +7,6 @@
 
 import {
   UnauthorizedError,
-  startAuthorization,
-  exchangeAuthorization,
-  refreshAuthorization,
 } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
@@ -100,23 +97,26 @@ export async function startAuth(
   const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
     authProvider,
   })
+  const client = new Client({
+    name: "pi-mcp",
+    version: "3.0.0",
+  })
 
   // Try to connect - this triggers the OAuth flow
   try {
-    const client = new Client({
-      name: "pi-mcp",
-      version: "3.0.0",
-    })
     await client.connect(transport)
     // If we get here, we're already authenticated
     await client.close().catch(() => {})
     return { authorizationUrl: "", transport }
   } catch (error) {
     if (error instanceof UnauthorizedError && capturedUrl) {
+      await client.close().catch(() => {})
       // Store transport for later finishAuth
       pendingTransports.set(serverName, transport)
       return { authorizationUrl: capturedUrl.toString(), transport }
     }
+    await client.close().catch(() => {})
+    await transport.close().catch(() => {})
     throw error
   }
 }
@@ -133,13 +133,14 @@ export async function completeAuth(
     throw new Error(`No pending OAuth flow for server: ${serverName}`)
   }
 
-  // Complete the auth using the transport's finishAuth method
-  await transport.finishAuth(authorizationCode)
-
-  // Clear the pending transport
-  pendingTransports.delete(serverName)
-
-  return "authenticated"
+  try {
+    // Complete the auth using the transport's finishAuth method
+    await transport.finishAuth(authorizationCode)
+    return "authenticated"
+  } finally {
+    pendingTransports.delete(serverName)
+    await transport.close().catch(() => {})
+  }
 }
 
 /**
@@ -199,6 +200,11 @@ export async function authenticate(
     return await completeAuth(serverName, code)
   } catch (error) {
     cancelPendingCallback(oauthState)
+    const pendingTransport = pendingTransports.get(serverName)
+    if (pendingTransport) {
+      pendingTransports.delete(serverName)
+      await pendingTransport.close().catch(() => {})
+    }
     throw error
   }
 }
@@ -296,8 +302,11 @@ export async function getAuthStatus(serverName: string): Promise<AuthStatus> {
  * @param serverName - The name of the MCP server
  */
 export async function removeAuth(serverName: string): Promise<void> {
+  const oauthState = await getOAuthState(serverName)
+  if (oauthState) {
+    cancelPendingCallback(oauthState)
+  }
   clearAllCredentials(serverName)
-  cancelPendingCallback(serverName)
   pendingTransports.delete(serverName)
   await clearOAuthState(serverName)
   console.log(`MCP Auth: Removed credentials for ${serverName}`)
@@ -337,5 +346,3 @@ export async function initializeOAuth(): Promise<void> {
 export async function shutdownOAuth(): Promise<void> {
   await stopCallbackServer()
 }
-
-export { pendingTransports }

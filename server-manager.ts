@@ -12,7 +12,6 @@ import type {
   Transport,
 } from "./types.js";
 import { serverStreamResultPatchNotificationSchema } from "./types.js";
-import { getStoredTokens } from "./oauth-handler.js";
 import { resolveNpxBinary } from "./npx-resolver.js";
 import { logger } from "./logger.js";
 import { McpOAuthProvider } from "./mcp-oauth-provider.js";
@@ -35,7 +34,6 @@ export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private uiStreamListeners = new Map<string, UiStreamListener>();
-  private pendingAuthTransports = new Map<string, StreamableHTTPClientTransport | SSEClientTransport>();
   
   async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
     // Dedupe concurrent connection attempts
@@ -100,10 +98,7 @@ export class McpServerManager {
     try {
       await client.connect(transport);
       this.attachAdapterNotificationHandlers(name, client);
-      
-      // Clear any pending auth transport on successful connection
-      this.pendingAuthTransports.delete(name);
-      
+
       // Discover tools and resources
       const [tools, resources] = await Promise.all([
         this.fetchAllTools(client),
@@ -123,14 +118,10 @@ export class McpServerManager {
     } catch (error) {
       // Check for UnauthorizedError - server requires OAuth
       if (error instanceof UnauthorizedError && supportsOAuth(definition)) {
-        // Store transport for later auth completion
-        if (transport instanceof StreamableHTTPClientTransport || transport instanceof SSEClientTransport) {
-          this.pendingAuthTransports.set(name, transport);
-        }
-        
-        // Clean up the client but keep the transport
+        // Clean up both client and transport before reporting needs-auth.
         await client.close().catch(() => {});
-        
+        await transport.close().catch(() => {});
+
         return {
           client,
           transport,
@@ -222,62 +213,6 @@ export class McpServerManager {
     }
   }
   
-  /**
-   * Complete OAuth authentication for a server that needs auth.
-   * This should be called after the user has authorized in the browser.
-   * 
-   * @param serverName - The name of the server to complete auth for
-   * @param authorizationCode - The authorization code from the callback
-   * @returns The updated connection
-   */
-  async completeAuth(
-    serverName: string, 
-    authorizationCode: string
-  ): Promise<ServerConnection> {
-    const transport = this.pendingAuthTransports.get(serverName);
-    if (!transport) {
-      throw new Error(`No pending OAuth flow for server: ${serverName}`);
-    }
-    
-    // Complete the auth using the transport's finishAuth method
-    await transport.finishAuth(authorizationCode);
-    
-    // Clear the pending transport
-    this.pendingAuthTransports.delete(serverName);
-    
-    // Now create the actual connection
-    const definition = this.connections.get(serverName)?.definition;
-    if (!definition) {
-      throw new Error(`Server ${serverName} not found in connections`);
-    }
-    
-    // Close the old connection if it exists
-    const existing = this.connections.get(serverName);
-    if (existing) {
-      await existing.client.close().catch(() => {});
-      await existing.transport.close().catch(() => {});
-      this.connections.delete(serverName);
-    }
-    
-    // Create a fresh connection
-    return this.connect(serverName, definition);
-  }
-  
-  /**
-   * Get the pending auth transport for a server.
-   * This is used during the OAuth flow to complete authentication.
-   */
-  getPendingAuthTransport(serverName: string): StreamableHTTPClientTransport | SSEClientTransport | undefined {
-    return this.pendingAuthTransports.get(serverName);
-  }
-  
-  /**
-   * Check if a server has a pending OAuth flow.
-   */
-  hasPendingAuth(serverName: string): boolean {
-    return this.pendingAuthTransports.has(serverName);
-  }
-  
   private async fetchAllTools(client: Client): Promise<McpTool[]> {
     const allTools: McpTool[] = [];
     let cursor: string | undefined;
@@ -350,7 +285,6 @@ export class McpServerManager {
     // delete() would then remove, orphaning the new server process.
     connection.status = "closed";
     this.connections.delete(name);
-    this.pendingAuthTransports.delete(name);
     await connection.client.close().catch(() => {});
     await connection.transport.close().catch(() => {});
   }

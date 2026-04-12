@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ToolInfo } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
 import { Type } from "@sinclair/typebox";
 import { showStatus, showTools, reconnectServers, authenticateServer, openMcpPanel } from "./commands.js";
@@ -13,6 +13,37 @@ import { initializeOAuth } from "./mcp-auth-flow.js";
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
+  let lifecycleGeneration = 0;
+
+  async function shutdownState(currentState: McpExtensionState | null, reason: string): Promise<void> {
+    if (!currentState) return;
+
+    if (currentState.uiServer) {
+      currentState.uiServer.close(reason);
+      currentState.uiServer = null;
+    }
+
+    let flushError: unknown;
+    try {
+      flushMetadataCache(currentState);
+    } catch (error) {
+      flushError = error;
+    }
+
+    try {
+      await currentState.lifecycle.gracefulShutdown();
+    } catch (error) {
+      if (flushError) {
+        console.error("MCP: graceful shutdown failed after metadata flush error", error);
+      } else {
+        throw error;
+      }
+    }
+
+    if (flushError) {
+      throw flushError;
+    }
+  }
 
   const earlyConfigPath = getConfigPathFromArgv();
   const earlyConfig = loadMcpConfig(earlyConfigPath);
@@ -48,41 +79,64 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    const generation = ++lifecycleGeneration;
+    const previousState = state;
+    state = null;
+    initPromise = null;
+
+    try {
+      await shutdownState(previousState, "session_restart");
+    } catch (error) {
+      console.error("MCP: failed to shut down previous session state", error);
+    }
+
+    if (generation !== lifecycleGeneration) {
+      return;
+    }
+
     // Initialize OAuth callback server
     await initializeOAuth().catch(err => {
       console.error("MCP OAuth initialization failed:", err);
     });
-    
-    // Non-blocking init - Pi starts immediately, MCP connects in background
-    initPromise = initializeMcp(pi, ctx);
 
-    initPromise.then(s => {
-      state = s;
+    const promise = initializeMcp(pi, ctx);
+    initPromise = promise;
+
+    promise.then(async (nextState) => {
+      if (generation !== lifecycleGeneration || initPromise !== promise) {
+        try {
+          await shutdownState(nextState, "stale_session_start");
+        } catch (error) {
+          console.error("MCP: failed to clean stale session state", error);
+        }
+        return;
+      }
+
+      state = nextState;
+      updateStatusBar(nextState);
       initPromise = null;
-      updateStatusBar(s);
     }).catch(err => {
+      if (generation !== lifecycleGeneration) {
+        return;
+      }
+      if (initPromise !== promise && initPromise !== null) {
+        return;
+      }
       console.error("MCP initialization failed:", err);
       initPromise = null;
     });
   });
 
   pi.on("session_shutdown", async () => {
-    if (initPromise) {
-      try {
-        state = await initPromise;
-      } catch {
-        // Initialization failed, nothing to clean up
-      }
-    }
+    ++lifecycleGeneration;
+    const currentState = state;
+    state = null;
+    initPromise = null;
 
-    if (state) {
-      if (state.uiServer) {
-        state.uiServer.close("session_shutdown");
-        state.uiServer = null;
-      }
-      flushMetadataCache(state);
-      await state.lifecycle.gracefulShutdown();
-      state = null;
+    try {
+      await shutdownState(currentState, "session_shutdown");
+    } catch (error) {
+      console.error("MCP: session shutdown cleanup failed", error);
     }
   });
 
@@ -92,8 +146,9 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       if (!state && initPromise) {
         try {
           state = await initPromise;
-        } catch {
-          if (ctx.hasUI) ctx.ui.notify("MCP initialization failed", "error");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (ctx.hasUI) ctx.ui.notify(`MCP initialization failed: ${message}`, "error");
           return;
         }
       }
@@ -138,8 +193,9 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       if (!state && initPromise) {
         try {
           state = await initPromise;
-        } catch {
-          if (ctx.hasUI) ctx.ui.notify("MCP initialization failed", "error");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (ctx.hasUI) ctx.ui.notify(`MCP initialization failed: ${message}`, "error");
           return;
         }
       }
@@ -199,28 +255,24 @@ export default function mcpAdapter(pi: ExtensionAPI) {
           parsedArgs = JSON.parse(params.args);
           if (typeof parsedArgs !== "object" || parsedArgs === null || Array.isArray(parsedArgs)) {
             const gotType = Array.isArray(parsedArgs) ? "array" : parsedArgs === null ? "null" : typeof parsedArgs;
-            return {
-              content: [{ type: "text" as const, text: `Invalid args: expected a JSON object, got ${gotType}` }],
-              isError: true,
-              details: { error: "invalid_args_type" },
-            };
+            throw new Error(`Invalid args: expected a JSON object, got ${gotType}`);
           }
-        } catch (e) {
-          return {
-            content: [{ type: "text" as const, text: `Invalid args JSON: ${e instanceof Error ? e.message : e}` }],
-            isError: true,
-            details: { error: "invalid_args" },
-          };
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            throw new Error(`Invalid args JSON: ${error.message}`, { cause: error });
+          }
+          throw error;
         }
       }
 
       if (!state && initPromise) {
         try {
           state = await initPromise;
-        } catch {
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
           return {
-            content: [{ type: "text" as const, text: "MCP initialization failed" }],
-            details: { error: "init_failed" },
+            content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
+            details: { error: "init_failed", message },
           };
         }
       }

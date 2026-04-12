@@ -72,6 +72,7 @@ const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000
 async function isPortInUse(): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = connect({ host: "127.0.0.1", port: OAUTH_CALLBACK_PORT })
+    socket.setTimeout(1000)
 
     socket.on("connect", () => {
       socket.end()
@@ -159,14 +160,14 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 
 /**
  * Ensure the callback server is running.
- * If the port is in use by another instance, we'll still be able to receive callbacks.
+ * If the port is in use by another process, fail fast with a clear error.
  */
 export async function ensureCallbackServer(): Promise<void> {
   if (server) return
 
   const running = await isPortInUse()
   if (running) {
-    return
+    throw new Error(`OAuth callback port ${OAUTH_CALLBACK_PORT} is already in use`)
   }
 
   server = createServer(handleRequest)
