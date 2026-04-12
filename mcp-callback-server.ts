@@ -180,6 +180,7 @@ export async function ensureCallbackServer(options: EnsureCallbackServerOptions 
       })
 
       server = candidateServer
+      server.unref()
       setOAuthCallbackPort(candidatePort)
       return
     } catch (error) {

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   updateStatusBar: vi.fn(),
   flushMetadataCache: vi.fn(),
   initializeOAuth: vi.fn().mockResolvedValue(undefined),
+  shutdownOAuth: vi.fn().mockResolvedValue(undefined),
   loadMcpConfig: vi.fn(() => ({ mcpServers: {} })),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
@@ -34,6 +35,7 @@ vi.mock("../init.js", () => ({
 
 vi.mock("../mcp-auth-flow.js", () => ({
   initializeOAuth: mocks.initializeOAuth,
+  shutdownOAuth: mocks.shutdownOAuth,
 }));
 
 vi.mock("../config.js", () => ({
@@ -122,6 +124,7 @@ describe("mcpAdapter session lifecycle", () => {
     }
 
     mocks.initializeOAuth.mockResolvedValue(undefined);
+    mocks.shutdownOAuth.mockResolvedValue(undefined);
     mocks.loadMcpConfig.mockReturnValue({ mcpServers: {} });
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway");
@@ -167,6 +170,37 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.updateStatusBar).not.toHaveBeenCalledWith(staleState);
     expect(mocks.flushMetadataCache).toHaveBeenCalledWith(staleState);
     expect(staleState.lifecycle.gracefulShutdown).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Regression: OAuth changes introduced initializeOAuth() on session_start but
+   * session_shutdown did not call shutdownOAuth(). The callback server was left running,
+   * keeping the event loop alive and preventing sub-agent processes from exiting.
+   *
+   * Fix: session_shutdown must call shutdownOAuth() so the callback server is closed.
+   */
+  it("calls shutdownOAuth on session_shutdown so the callback server closes and sub-agents can exit", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    // Establish a live session
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    mocks.shutdownOAuth.mockClear();
+
+    // Trigger shutdown (e.g. sub-agent process completing its task)
+    const sessionShutdown = handlers.get("session_shutdown");
+    expect(sessionShutdown).toBeTypeOf("function");
+    await sessionShutdown?.();
+
+    expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);
   });
 
   it("logs initialization errors when updateStatusBar throws", async () => {
