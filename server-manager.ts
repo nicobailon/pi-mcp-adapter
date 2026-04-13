@@ -13,6 +13,7 @@ import type {
 } from "./types.js";
 import { serverStreamResultPatchNotificationSchema } from "./types.js";
 import { resolveNpxBinary } from "./npx-resolver.js";
+import { resolveEnv, resolveHeaders } from "./utils.js";
 import { logger } from "./logger.js";
 import { McpOAuthProvider } from "./mcp-oauth-provider.js";
 import { supportsOAuth } from "./mcp-auth-flow.js";
@@ -330,43 +331,4 @@ export class McpServerManager {
     if (connection.inFlight > 0) return false;
     return (Date.now() - connection.lastUsedAt) > timeoutMs;
   }
-}
-
-/**
- * Resolve environment variables with interpolation.
- */
-function resolveEnv(env?: Record<string, string>): Record<string, string> {
-  // Copy process.env, filtering out undefined values
-  const resolved: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) {
-      resolved[key] = value;
-    }
-  }
-  
-  if (!env) return resolved;
-  
-  for (const [key, value] of Object.entries(env)) {
-    // Support ${VAR} and $env:VAR interpolation
-    resolved[key] = value
-      .replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "")
-      .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "");
-  }
-  
-  return resolved;
-}
-
-/**
- * Resolve headers with environment variable interpolation.
- */
-function resolveHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
-  if (!headers) return undefined;
-  
-  const resolved: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    resolved[key] = value
-      .replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "")
-      .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "");
-  }
-  return resolved;
 }

@@ -73,3 +73,71 @@ export function extractToolUiStreamMode(toolMeta: Record<string, unknown> | unde
   }
   return undefined;
 }
+
+/**
+ * Safely coerce a parsed JSON value into a string record.
+ * Drops any non-string values and returns undefined if the result is empty or the input is invalid.
+ */
+export function toStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+
+  const record = value as Record<string, unknown>;
+  const result: Record<string, string> = {};
+  let hasEntries = false;
+
+  for (const key of Object.keys(record)) {
+    if (typeof record[key] === "string") {
+      result[key] = record[key] as string;
+      hasEntries = true;
+    }
+  }
+
+  return hasEntries ? result : undefined;
+}
+
+/**
+ * Resolve environment variables with interpolation.
+ * Supports ${VAR}, $env:VAR, and {env:VAR} (OpenCode style) syntax.
+ */
+export function resolveEnv(env?: Record<string, string>): Record<string, string> {
+  // Copy process.env, filtering out undefined values
+  const resolved: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) {
+      resolved[key] = value;
+    }
+  }
+  
+  if (!env) return resolved;
+  
+  for (const [key, value] of Object.entries(env)) {
+    resolved[key] = interpolateEnvVars(value);
+  }
+  
+  return resolved;
+}
+
+/**
+ * Resolve headers with environment variable interpolation.
+ * Supports ${VAR}, $env:VAR, and {env:VAR} (OpenCode style) syntax.
+ */
+export function resolveHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  
+  const resolved: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    resolved[key] = interpolateEnvVars(value);
+  }
+  return resolved;
+}
+
+/**
+ * Interpolate environment variable references in a string.
+ * Supports ${VAR}, $env:VAR, and {env:VAR} (OpenCode style) syntax.
+ */
+function interpolateEnvVars(value: string): string {
+  return value
+    .replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "")
+    .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "")
+    .replace(/\{env:(\w+)\}/g, (_, name) => process.env[name] ?? "");
+}
