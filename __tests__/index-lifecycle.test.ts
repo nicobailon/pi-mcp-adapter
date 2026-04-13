@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   updateStatusBar: vi.fn(),
   flushMetadataCache: vi.fn(),
   initializeOAuth: vi.fn().mockResolvedValue(undefined),
+  shutdownOAuth: vi.fn().mockResolvedValue(undefined),
   loadMcpConfig: vi.fn(() => ({ mcpServers: {} })),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
@@ -34,6 +35,7 @@ vi.mock("../init.js", () => ({
 
 vi.mock("../mcp-auth-flow.js", () => ({
   initializeOAuth: mocks.initializeOAuth,
+  shutdownOAuth: mocks.shutdownOAuth,
 }));
 
 vi.mock("../config.js", () => ({
@@ -122,6 +124,7 @@ describe("mcpAdapter session lifecycle", () => {
     }
 
     mocks.initializeOAuth.mockResolvedValue(undefined);
+    mocks.shutdownOAuth.mockResolvedValue(undefined);
     mocks.loadMcpConfig.mockReturnValue({ mcpServers: {} });
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway");
@@ -195,5 +198,29 @@ describe("mcpAdapter session lifecycle", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("shuts down OAuth callback infrastructure on session shutdown", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    const sessionShutdown = handlers.get("session_shutdown");
+    expect(sessionStart).toBeTypeOf("function");
+    expect(sessionShutdown).toBeTypeOf("function");
+
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await sessionShutdown?.();
+
+    expect(mocks.flushMetadataCache).toHaveBeenCalledWith(state);
+    expect(state.lifecycle.gracefulShutdown).toHaveBeenCalledTimes(1);
+    expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);
   });
 });

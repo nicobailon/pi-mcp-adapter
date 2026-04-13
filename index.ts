@@ -8,7 +8,7 @@ import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
 import { executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.js";
 import { getConfigPathFromArgv, truncateAtWord } from "./utils.js";
-import { initializeOAuth } from "./mcp-auth-flow.js";
+import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.js";
 
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
@@ -136,6 +136,12 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       await shutdownState(currentState, "session_shutdown");
     } catch (error) {
       console.error("MCP: session shutdown cleanup failed", error);
+    }
+
+    try {
+      await shutdownOAuth();
+    } catch (error) {
+      console.error("MCP: OAuth shutdown cleanup failed", error);
     }
   });
 
