@@ -270,7 +270,17 @@ Supported: `cursor`, `claude-code`, `claude-desktop`, `vscode`, `windsurf`, `cod
 
 ### Project Config
 
-Add `.pi/mcp.json` in a project root for project-specific servers. Project config overrides global and imported servers.
+Project-local MCP definitions are loaded from the opened directory (and nearest parent project roots). Supported files:
+
+- `.mcp.json`
+- `.pi/mcp.json`
+- `.cursor/mcp.json`
+- `.windsurf/mcp.json`
+- `.vscode/mcp.json`
+- `.claude/mcp.json`
+- `.codex/config.json`
+
+Project config overrides global and imported servers. When multiple project files exist, the one closest to the current working directory wins.
 
 ## Usage
 

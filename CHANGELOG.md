@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Load project-local MCP configs from the opened directory and parent project roots, including `.mcp.json`, `.pi/mcp.json`, `.cursor/mcp.json`, `.windsurf/mcp.json`, `.vscode/mcp.json`, `.claude/mcp.json`, and `.codex/config.json`.
+- Project-local server provenance now points to the originating file, so direct tool toggles can be written back to the right project config.
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
