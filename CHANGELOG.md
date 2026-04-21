@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `renderCall` on direct tools and the `mcp` proxy tool: displays tool name and arguments inline on invocation, matching the style of native pi tools like `read` and `edit`.
+- `renderResult` on direct tools and the `mcp` proxy tool: results collapse to 10 lines by default with a native Ctrl+O expand hint, consistent with built-in pi tools like `bash` and `read`.
+
 ## [2.4.0] - 2026-04-13
 
 ### Added
