@@ -108,6 +108,7 @@ interface VisibleItem {
 }
 
 class McpPanel {
+  private noticeLines: string[];
   private prefix: "server" | "none" | "short";
   private servers: ServerState[] = [];
   private cursorIndex = 0;
@@ -134,8 +135,10 @@ class McpPanel {
     private callbacks: McpPanelCallbacks,
     tui: { requestRender(): void },
     private done: (result: McpPanelResult) => void,
+    noticeLines: string[] = [],
   ) {
     this.tui = tui;
+    this.noticeLines = noticeLines;
     this.prefix = config.settings?.toolPrefix ?? "server";
 
     for (const [serverName, definition] of Object.entries(config.mcpServers)) {
@@ -566,6 +569,12 @@ class McpPanel {
     }
 
     lines.push(emptyRow());
+    if (this.noticeLines.length > 0) {
+      for (const notice of this.noticeLines) {
+        lines.push(row(fg(t.hint, italic(notice))));
+      }
+      lines.push(emptyRow());
+    }
     lines.push(divider());
 
     if (this.servers.length === 0) {
@@ -735,6 +744,7 @@ export function createMcpPanel(
   callbacks: McpPanelCallbacks,
   tui: { requestRender(): void },
   done: (result: McpPanelResult) => void,
+  options?: { noticeLines?: string[] },
 ): McpPanel & { dispose(): void } {
-  return new McpPanel(config, cache, provenance, callbacks, tui, done);
+  return new McpPanel(config, cache, provenance, callbacks, tui, done, options?.noticeLines ?? []);
 }

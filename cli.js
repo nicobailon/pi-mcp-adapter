@@ -2,107 +2,173 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import https from "node:https";
 import os from "node:os";
-import { execSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
-const REPO_URL = "https://raw.githubusercontent.com/nicobailon/pi-mcp-adapter/main";
-const EXT_DIR = path.join(os.homedir(), ".pi", "agent", "extensions", "pi-mcp-adapter");
-const SETTINGS_FILE = path.join(os.homedir(), ".pi", "agent", "settings.json");
-const EXT_PATH = "~/.pi/agent/extensions/pi-mcp-adapter/index.ts";
+const HOME = os.homedir();
+const PI_CONFIG_PATH = path.join(HOME, ".pi", "agent", "mcp.json");
+const GENERIC_GLOBAL_CONFIG_PATH = path.join(HOME, ".config", "mcp", "mcp.json");
+const PROJECT_CONFIG_PATH = path.resolve(process.cwd(), ".mcp.json");
+const PROJECT_PI_CONFIG_PATH = path.resolve(process.cwd(), ".pi", "mcp.json");
 
-const FILES = [
-  "index.ts",
-  "types.ts",
-  "config.ts",
-  "server-manager.ts",
-  "tool-registrar.ts",
-  "resource-tools.ts",
-  "lifecycle.ts",
-  "metadata-cache.ts",
-  "npx-resolver.ts",
-  "oauth-handler.ts",
-  "package.json",
-  "tsconfig.json",
-  "README.md",
-  "CHANGELOG.md",
-  "LICENSE",
-];
+const IMPORT_PATHS = {
+  cursor: [path.join(HOME, ".cursor", "mcp.json")],
+  "claude-code": [
+    path.join(HOME, ".claude", "mcp.json"),
+    path.join(HOME, ".claude.json"),
+    path.join(HOME, ".claude", "claude_desktop_config.json"),
+  ],
+  "claude-desktop": [path.join(HOME, "Library", "Application Support", "Claude", "claude_desktop_config.json")],
+  codex: [path.join(HOME, ".codex", "config.json")],
+  windsurf: [path.join(HOME, ".windsurf", "mcp.json")],
+  vscode: [path.resolve(process.cwd(), ".vscode", "mcp.json")],
+};
 
-function download(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      if (res.statusCode === 301 || res.statusCode === 302) {
-        return download(res.headers.location).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        return reject(new Error(`Failed to download ${url}: ${res.statusCode}`));
-      }
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => resolve(data));
-      res.on("error", reject);
-    }).on("error", reject);
-  });
+function printHelp(log = console.log) {
+  log("pi-mcp-adapter helper\n");
+  log("Install the package with:");
+  log("  pi install npm:pi-mcp-adapter\n");
+  log("Then optionally run:");
+  log("  pi-mcp-adapter init       Detect host configs and scaffold Pi imports");
+  log("  pi-mcp-adapter init --dry-run");
 }
 
-async function main() {
-  console.log("Installing pi-mcp-adapter...\n");
+function readJsonFile(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+}
 
-  fs.mkdirSync(EXT_DIR, { recursive: true });
-  console.log(`Created directory: ${EXT_DIR}`);
-
-  for (const file of FILES) {
-    console.log(`Downloading ${file}...`);
-    const content = await download(`${REPO_URL}/${file}`);
-    fs.writeFileSync(path.join(EXT_DIR, file), content);
+function loadPiConfig() {
+  if (!fs.existsSync(PI_CONFIG_PATH)) {
+    return { mcpServers: {} };
   }
 
-  console.log("\nInstalling dependencies...");
-  try {
-    execSync("npm install --omit=dev", { cwd: EXT_DIR, stdio: "inherit" });
-  } catch {
-    console.error("Warning: npm install failed. You may need to run it manually.");
+  const raw = readJsonFile(PI_CONFIG_PATH);
+  const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
+  if (!mcpServers || typeof mcpServers !== "object" || Array.isArray(mcpServers)) {
+    throw new Error(`Invalid MCP config at ${PI_CONFIG_PATH}: expected \"mcpServers\" to be an object`);
   }
 
-  console.log(`\nUpdating settings: ${SETTINGS_FILE}`);
-  
-  let settings = {};
-  if (fs.existsSync(SETTINGS_FILE)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
-    } catch (err) {
-      console.error(`Warning: Could not parse existing settings.json: ${err.message}`);
-      console.error("Creating new settings file...");
+  const normalized = { ...raw };
+  delete normalized["mcp-servers"];
+
+  const imports = Array.isArray(raw.imports) ? raw.imports.filter((value) => typeof value === "string") : undefined;
+  return {
+    ...normalized,
+    mcpServers,
+    imports,
+  };
+}
+
+function findAvailableImports() {
+  const found = [];
+
+  for (const [kind, candidates] of Object.entries(IMPORT_PATHS)) {
+    const existing = candidates.find((candidate) => fs.existsSync(candidate));
+    if (existing) {
+      found.push({ kind, path: existing });
     }
   }
 
-  if (!Array.isArray(settings.extensions)) {
-    settings.extensions = [];
-  }
-
-  const hasMcpExt = settings.extensions.some(p => 
-    p === EXT_PATH || 
-    p.includes("/extensions/pi-mcp-adapter/index.ts") || 
-    p.includes("/extensions/pi-mcp-adapter")
-  );
-
-  if (!hasMcpExt) {
-    settings.extensions.push(EXT_PATH);
-    console.log(`Added "${EXT_PATH}" to extensions array`);
-  } else {
-    console.log("Extension already configured in settings.json");
-  }
-
-  fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + "\n");
-
-  console.log("\nInstallation complete!");
-  console.log("\nCreate ~/.pi/agent/mcp.json to configure MCP servers.");
-  console.log("Restart pi to load the extension.");
+  return found;
 }
 
-main().catch((err) => {
-  console.error(`\nInstallation failed: ${err.message}`);
-  process.exit(1);
-});
+function printDiscovery(log, imports) {
+  log("Config discovery:\n");
+
+  const paths = [
+    ["User-global standard MCP", GENERIC_GLOBAL_CONFIG_PATH],
+    ["Pi global override", PI_CONFIG_PATH],
+    ["Project standard MCP", PROJECT_CONFIG_PATH],
+    ["Project Pi override", PROJECT_PI_CONFIG_PATH],
+  ];
+
+  for (const [label, filePath] of paths) {
+    const prefix = fs.existsSync(filePath) ? "✓" : "-";
+    log(`${prefix} ${label}: ${filePath}`);
+  }
+
+  log("\nCompatibility imports:\n");
+  if (imports.length === 0) {
+    log("- No host-specific MCP configs detected");
+    return;
+  }
+
+  for (const entry of imports) {
+    log(`✓ ${entry.kind}: ${entry.path}`);
+  }
+}
+
+function writePiConfig(config) {
+  fs.mkdirSync(path.dirname(PI_CONFIG_PATH), { recursive: true });
+  fs.writeFileSync(PI_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+}
+
+async function runInit(argv, log = console.log) {
+  const dryRun = argv.includes("--dry-run");
+  const foundImports = findAvailableImports();
+  const existingConfig = loadPiConfig();
+  const existingImports = new Set(existingConfig.imports ?? []);
+  const importsToAdd = foundImports
+    .map((entry) => entry.kind)
+    .filter((kind) => !existingImports.has(kind));
+
+  printDiscovery(log, foundImports);
+
+  if (importsToAdd.length === 0) {
+    log("\nNo Pi config changes needed.");
+    log("Standard MCP configs are discovered automatically, and host-specific imports are already configured or unavailable.");
+    return 0;
+  }
+
+  const nextConfig = {
+    ...existingConfig,
+    imports: [...existingImports, ...importsToAdd],
+    mcpServers: existingConfig.mcpServers ?? {},
+  };
+
+  log(`\nDetected host configs to import into Pi: ${importsToAdd.join(", ")}`);
+
+  if (dryRun) {
+    log(`Dry run: would update ${PI_CONFIG_PATH}`);
+    return 0;
+  }
+
+  writePiConfig(nextConfig);
+  log(`Updated ${PI_CONFIG_PATH}`);
+  log("Pi will now keep reading standard MCP configs automatically, while these imports cover host-specific config formats.");
+  return 0;
+}
+
+export async function main(argv = process.argv.slice(2), log = console.log, error = console.error) {
+  const [command, ...rest] = argv;
+
+  if (!command || command === "help" || command === "--help" || command === "-h") {
+    printHelp(log);
+    return 0;
+  }
+
+  if (command === "install") {
+    error("The custom downloader has been retired.");
+    error("Use `pi install npm:pi-mcp-adapter` instead, then optionally run `pi-mcp-adapter init`.");
+    return 1;
+  }
+
+  if (command === "init") {
+    return runInit(rest, log);
+  }
+
+  error(`Unknown command: ${command}`);
+  printHelp(log);
+  return 1;
+}
+
+const isEntrypoint = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isEntrypoint) {
+  main().then((code) => {
+    process.exitCode = code;
+  }).catch((err) => {
+    console.error(`\nHelper failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
+}

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   reconnectServers: vi.fn(),
   authenticateServer: vi.fn(),
   openMcpPanel: vi.fn(),
+  openMcpSetup: vi.fn(),
   executeCall: vi.fn(),
   executeConnect: vi.fn(),
   executeDescribe: vi.fn(),
@@ -60,6 +61,7 @@ vi.mock("../commands.js", () => ({
   reconnectServers: mocks.reconnectServers,
   authenticateServer: mocks.authenticateServer,
   openMcpPanel: mocks.openMcpPanel,
+  openMcpSetup: mocks.openMcpSetup,
 }));
 
 vi.mock("../proxy-modes.js", () => ({
@@ -246,6 +248,51 @@ describe("mcpAdapter session lifecycle", () => {
     await sessionShutdown?.();
 
     expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes `/mcp setup` to the onboarding flow", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, { hasUI: true, ui: { notify: vi.fn() } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+    expect(commandDef).toBeDefined();
+
+    await commandDef.handler("setup", { hasUI: true, ui: { notify: vi.fn() } });
+
+    expect(mocks.openMcpSetup).toHaveBeenCalledWith(state, api, expect.any(Object), undefined, "setup");
+  });
+
+  it("triggers core reload after setup changes config", async () => {
+    const initialState = createState();
+    mocks.initializeMcp.mockResolvedValue(initialState);
+    mocks.openMcpSetup.mockResolvedValue({ configChanged: true });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const ui = { notify: vi.fn() };
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, { hasUI: true, ui });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+    await commandDef.handler("setup", { hasUI: true, ui, reload });
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+    expect(mocks.flushMetadataCache).not.toHaveBeenCalledWith(initialState);
   });
 
   it("logs initialization errors when updateStatusBar throws", async () => {

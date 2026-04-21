@@ -1,6 +1,6 @@
 {
   "name": "pi-mcp-adapter",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "MCP (Model Context Protocol) adapter extension for Pi coding agent",
   "type": "module",
   "license": "MIT",
@@ -45,6 +45,8 @@
     "proxy-modes.ts",
     "direct-tools.ts",
     "commands.ts",
+    "onboarding-state.ts",
+    "mcp-setup-panel.ts",
     "types.ts",
     "ui-stream-types.ts",
     "config.ts",

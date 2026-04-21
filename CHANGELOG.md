@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-04-22
+
+### Added
+- Added standard-MCP-first config discovery: `~/.config/mcp/mcp.json` and project `.mcp.json` now load automatically, with Pi-owned files preserved as override layers.
+- Added `pi-mcp-adapter init` as a native post-install helper that detects host-specific MCP configs and scaffolds Pi compatibility imports without using the old raw GitHub downloader flow.
+- Added first-run onboarding inside the extension: `/mcp` now shows shared-config hints or actionable empty states, and `/mcp setup` opens a guided setup flow for compatibility imports, minimal `.mcp.json` scaffolding, detected config paths, RepoPrompt quick-add, and exact before/after write previews.
+- Added automatic Pi-core reload after setup or direct-tool config changes, using the same flow as `/reload` so freshly configured direct tools can appear without a manual restart.
+- Added a dedicated Pi-owned onboarding state file so shared-config hints behave as one-time guidance instead of repeating every session.
+
+### Changed
+- Updated config precedence to prefer shared MCP files first, then Pi overrides, with `.pi/mcp.json` acting as the final Pi-specific project override.
+- Updated Claude Code compatibility probing to prefer modern Claude MCP config locations before legacy paths.
+- Updated project scaffolding so generated `.mcp.json` files are safe minimal shells instead of fake placeholder servers that fail on first reload.
+- Updated the setup panel and README for clearer first-run guidance, improved spacing, and a more digestible shared-MCP-first setup story.
+
 ## [2.4.0] - 2026-04-13
 
 ### Added

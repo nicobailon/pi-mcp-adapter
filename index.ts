@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ToolInfo } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
 import { Type } from "@sinclair/typebox";
-import { showStatus, showTools, reconnectServers, authenticateServer, openMcpPanel } from "./commands.js";
+import { showStatus, showTools, reconnectServers, authenticateServer, openMcpPanel, openMcpSetup } from "./commands.js";
 import { loadMcpConfig } from "./config.js";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.js";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.js";
@@ -178,11 +178,23 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         case "tools":
           await showTools(state, ctx);
           break;
+        case "setup": {
+          const result = await openMcpSetup(state, pi, ctx, earlyConfigPath, "setup");
+          if (result?.configChanged) {
+            await ctx.reload();
+            return;
+          }
+          break;
+        }
         case "status":
         case "":
         default:
           if (ctx.hasUI) {
-            await openMcpPanel(state, pi, ctx, earlyConfigPath);
+            const result = await openMcpPanel(state, pi, ctx, earlyConfigPath);
+            if (result?.configChanged) {
+              await ctx.reload();
+              return;
+            }
           } else {
             await showStatus(state, ctx);
           }
