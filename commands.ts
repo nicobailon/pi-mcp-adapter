@@ -4,7 +4,6 @@ import type { McpAuthResult, McpConfig, ServerEntry, McpPanelCallbacks, McpPanel
 import {
   ensureCompatibilityImports,
   getMcpDiscoverySummary,
-  getServerProvenance,
   previewCompatibilityImports,
   previewSharedServerEntry,
   previewStarterProjectConfig,
@@ -54,7 +53,6 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
 
   if (Object.keys(state.config.mcpServers).length === 0) {
     lines.push("No MCP servers configured");
-    lines.push("Run /mcp setup to adopt imports or scaffold a starter .mcp.json");
   }
 
   ctx.ui.notify(lines.join("\n"), "info");
@@ -166,8 +164,11 @@ export async function authenticateServer(
     return { ok: false, message };
   }
 
+  // Full automatic OAuth flow using SDK
   try {
     ctx.ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
+
+    // Runs the configured OAuth flow (interactive browser or non-interactive client_credentials)
     const status = await authenticate(serverName, definition.url, definition);
 
     if (status === "authenticated") {
@@ -314,49 +315,35 @@ function buildMcpPanelCallbacks(
   };
 }
 
+
 export async function openMcpPanel(
   state: McpExtensionState,
-  pi: ExtensionAPI,
+  _pi: ExtensionAPI,
   ctx: ExtensionContext,
-  configOverridePath?: string,
-): Promise<PanelFlowResult> {
-  if (Object.keys(state.config.mcpServers).length === 0) {
-    return openMcpSetup(state, pi, ctx, configOverridePath, "empty");
-  }
-
+): Promise<void> {
   const config = state.config;
   const cache = loadMetadataCache();
-  const configPath = pi.getFlag("mcp-config") as string | undefined ?? configOverridePath;
-  const provenanceMap = getServerProvenance(configPath, ctx.cwd);
-  const { lines: noticeLines, fingerprint } = buildSharedConfigNoticeLines(configPath, ctx.cwd);
+  const provenanceMap = state.provenance;
 
   const callbacks = buildMcpPanelCallbacks(state, config, ctx);
 
   const { createMcpPanel } = await import("./mcp-panel.ts");
-  let configChanged = false;
 
-  await new Promise<void>((resolve) => {
+  return new Promise<void>((resolve) => {
     ctx.ui.custom(
       (tui, _theme, _keybindings, done) => {
         return createMcpPanel(config, cache, provenanceMap, callbacks, tui, (result: McpPanelResult) => {
           if (!result.cancelled && result.changes.size > 0) {
             writeDirectToolsConfig(result.changes, provenanceMap, config);
-            configChanged = true;
-            ctx.ui.notify("Direct tools updated. Pi will reload after this panel closes.", "info");
+            ctx.ui.notify("Direct tools updated. Restart pi to apply.", "info");
           }
           done(undefined);
           resolve();
-        }, { noticeLines });
+        });
       },
       { overlay: true, overlayOptions: { anchor: "center", width: 82 } },
     );
   });
-
-  if (noticeLines.length > 0 && fingerprint) {
-    markSharedConfigHintShown(fingerprint);
-  }
-
-  return { configChanged };
 }
 
 export async function openMcpAuthPanel(

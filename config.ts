@@ -1,10 +1,17 @@
-// config.ts - Config loading with import support
+// config.ts - Config loading with import support and extension providers
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import type { McpConfig, ServerEntry, McpSettings, ImportKind, ServerProvenance } from "./types.ts";
+import {
+  MCP_COLLECT_SERVERS_EVENT,
+  type CollectMcpServersEvent,
+  type McpServerContribution,
+} from "./providers.ts";
 
+const DEFAULT_CONFIG_PATH = join(homedir(), ".pi", "agent", "mcp.json");
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const PROJECT_CONFIG_NAME = ".mcp.json";
 const PROJECT_PI_CONFIG_NAME = ".pi/mcp.json";
@@ -87,6 +94,15 @@ export interface ConfigWritePreview {
   beforeText: string;
   afterText: string;
   diffText: string;
+}
+
+export interface ResolvedMcpConfig {
+  config: McpConfig;
+  provenance: Map<string, ServerProvenance>;
+}
+
+export function getMcpConfigPath(overridePath?: string): string {
+  return overridePath ? resolve(overridePath) : DEFAULT_CONFIG_PATH;
 }
 
 export function getPiGlobalConfigPath(overridePath?: string): string {
@@ -248,6 +264,18 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
   return sources;
 }
 
+function mergeServerMaps(
+  base: Record<string, ServerEntry>,
+  incoming: Record<string, ServerEntry>,
+): Record<string, ServerEntry> {
+  const merged = { ...base };
+  for (const [name, definition] of Object.entries(incoming)) {
+    const existing = merged[name];
+    merged[name] = existing ? { ...existing, ...definition } : definition;
+  }
+  return merged;
+}
+
 function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
   return {
     mcpServers: { ...base.mcpServers, ...next.mcpServers },
@@ -329,6 +357,7 @@ function validateConfig(raw: unknown): McpConfig {
   const obj = raw as Record<string, unknown>;
   const servers = obj.mcpServers ?? obj["mcp-servers"] ?? {};
 
+  // Must be a plain object, not an array or null
   if (typeof servers !== "object" || servers === null || Array.isArray(servers)) {
     return { mcpServers: {} };
   }
@@ -628,6 +657,96 @@ export function getServerProvenance(overridePath?: string, cwd = process.cwd()):
   return provenance;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeContribution(
+  contribution: McpServerContribution,
+): McpServerContribution | null {
+  if (!contribution || typeof contribution.source !== "string" || !contribution.source.trim()) {
+    return null;
+  }
+  if (!isPlainObject(contribution.servers)) {
+    console.warn(`MCP: provider "${contribution.source}" contributed invalid servers payload; skipping`);
+    return null;
+  }
+
+  const servers: Record<string, ServerEntry> = {};
+  for (const [name, definition] of Object.entries(contribution.servers)) {
+    if (!isPlainObject(definition)) {
+      console.warn(`MCP: provider "${contribution.source}" contributed invalid server "${name}"; skipping`);
+      continue;
+    }
+    servers[name] = definition as ServerEntry;
+  }
+
+  return {
+    source: contribution.source,
+    priority: contribution.priority ?? 0,
+    servers,
+  };
+}
+
+export function collectExtensionServerContributions(
+  pi: Pick<ExtensionAPI, "events">,
+): McpServerContribution[] {
+  const collected: Array<McpServerContribution & { __index: number }> = [];
+  const event: CollectMcpServersEvent = {
+    add(input) {
+      const items = Array.isArray(input) ? input : [input];
+      for (const item of items) {
+        const normalized = normalizeContribution(item);
+        if (!normalized) continue;
+        collected.push({ ...normalized, __index: collected.length });
+      }
+    },
+  };
+
+  pi.events.emit(MCP_COLLECT_SERVERS_EVENT, event);
+
+  return collected
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.__index - b.__index)
+    .map(({ __index, ...item }) => item);
+}
+
+export function resolveMcpConfig(
+  pi: Pick<ExtensionAPI, "events">,
+  overridePath?: string,
+  cwd = process.cwd(),
+): ResolvedMcpConfig {
+  const userPath = getPiGlobalConfigPath(overridePath);
+  const fileConfig = loadMcpConfig(overridePath, cwd);
+  const fileProvenance = getServerProvenance(overridePath, cwd);
+  const provenance = new Map<string, ServerProvenance>();
+
+  let config: McpConfig = { mcpServers: {} };
+
+  for (const contribution of collectExtensionServerContributions(pi)) {
+    for (const [name, definition] of Object.entries(contribution.servers)) {
+      if (config.mcpServers[name]) {
+        console.warn(
+          `MCP: duplicate extension server "${name}" from "${contribution.source}" overrides previous provider definition`,
+        );
+      }
+      config.mcpServers = mergeServerMaps(config.mcpServers, { [name]: definition });
+      provenance.set(name, {
+        path: userPath,
+        kind: "extension",
+        extensionSource: contribution.source,
+      });
+    }
+  }
+
+  config = mergeConfigs(config, fileConfig);
+
+  for (const [name, prov] of fileProvenance) {
+    provenance.set(name, prov);
+  }
+
+  return { config, provenance };
+}
+
 export function writeDirectToolsConfig(
   changes: Map<string, true | string[] | false>,
   provenance: Map<string, ServerProvenance>,
@@ -637,7 +756,7 @@ export function writeDirectToolsConfig(
 
   for (const [serverName, value] of changes) {
     const prov = provenance.get(serverName);
-    if (!prov) continue;
+    if (!prov?.path) continue;
 
     const targetPath = prov.path;
 
@@ -646,11 +765,19 @@ export function writeDirectToolsConfig(
   }
 
   for (const [filePath, entries] of byPath) {
-    const raw = readRawConfigObject(filePath);
-    const servers = getServersObject(raw);
+    let raw: Record<string, unknown> = {};
+    if (existsSync(filePath)) {
+      try {
+        raw = JSON.parse(readFileSync(filePath, "utf-8"));
+      } catch {}
+    }
+    if (!raw || typeof raw !== "object") raw = {};
+
+    const servers = (raw.mcpServers ?? raw["mcp-servers"] ?? {}) as Record<string, ServerEntry>;
+    if (typeof servers !== "object" || Array.isArray(servers)) continue;
 
     for (const { name, value, prov } of entries) {
-      if (prov.kind === "import") {
+      if (prov.kind === "import" || prov.kind === "extension") {
         const fullDef = fullConfig.mcpServers[name];
         if (fullDef) {
           servers[name] = { ...fullDef, directTools: value };
@@ -660,7 +787,12 @@ export function writeDirectToolsConfig(
       }
     }
 
-    setServersObject(raw, servers);
-    writeRawConfigObject(filePath, raw);
+    const key = raw["mcp-servers"] && !raw.mcpServers ? "mcp-servers" : "mcpServers";
+    raw[key] = servers;
+
+    mkdirSync(dirname(filePath), { recursive: true });
+    const tmpPath = `${filePath}.${process.pid}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+    renameSync(tmpPath, filePath);
   }
 }

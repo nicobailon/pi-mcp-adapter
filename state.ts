@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ConsentManager } from "./consent-manager.ts";
 import type { McpLifecycleManager } from "./lifecycle.ts";
 import type { McpServerManager } from "./server-manager.ts";
-import type { ToolMetadata, McpConfig, UiSessionMessages, UiStreamSummary } from "./types.ts";
+import type { ToolMetadata, McpConfig, UiSessionMessages, UiStreamSummary, ServerProvenance } from "./types.ts";
 import type { UiResourceHandler } from "./ui-resource-handler.ts";
 import type { UiServerHandle } from "./ui-server.ts";
 
@@ -30,6 +30,7 @@ export interface McpExtensionState {
   lifecycle: McpLifecycleManager;
   toolMetadata: Map<string, ToolMetadata[]>;
   config: McpConfig;
+  provenance: Map<string, ServerProvenance>;
   failureTracker: Map<string, number>;
   uiResourceHandler: UiResourceHandler;
   consentManager: ConsentManager;
