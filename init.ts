@@ -36,6 +36,7 @@ export async function initializeMcp(
   const lifecycle = new McpLifecycleManager(manager);
   const toolMetadata = new Map<string, ToolMetadata[]>();
   const failureTracker = new Map<string, number>();
+  const pausedServers = new Set<string>();
   const uiResourceHandler = new UiResourceHandler(manager);
   const consentManager = new ConsentManager("once-per-server");
   const ui = ctx.hasUI ? ctx.ui : undefined;
@@ -45,6 +46,7 @@ export async function initializeMcp(
     toolMetadata,
     config,
     failureTracker,
+    pausedServers,
     uiResourceHandler,
     consentManager,
     uiServer: null,
@@ -265,7 +267,11 @@ export function updateStatusBar(state: McpExtensionState): void {
     return;
   }
   const connectedCount = state.manager.getAllConnections().size;
-  ui.setStatus("mcp", ui.theme.fg("accent", `MCP: ${connectedCount}/${total} servers`));
+  const pausedCount = state.pausedServers.size;
+  const label = pausedCount > 0
+    ? `MCP: ${connectedCount}/${total} servers (${pausedCount} paused)`
+    : `MCP: ${connectedCount}/${total} servers`;
+  ui.setStatus("mcp", ui.theme.fg("accent", label));
 }
 
 export function getFailureAgeSeconds(state: McpExtensionState, serverName: string): number | null {

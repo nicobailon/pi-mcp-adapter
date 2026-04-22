@@ -361,6 +361,9 @@ export interface McpPanelCallbacks {
   reconnect: (serverName: string) => Promise<boolean>;
   getConnectionStatus: (serverName: string) => "connected" | "idle" | "failed" | "needs-auth";
   refreshCacheAfterReconnect: (serverName: string) => import("./metadata-cache.js").ServerCacheEntry | null;
+  isPaused: (serverName: string) => boolean;
+  pause: (serverName: string) => Promise<void>;
+  resume: (serverName: string) => Promise<void>;
 }
 
 export interface McpPanelResult {

@@ -6,7 +6,7 @@ import { loadMcpConfig } from "./config.js";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.js";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
-import { executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.js";
+import { executeCall, executeConnect, executeDescribe, executeList, executePause, executeResume, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.js";
 import { getConfigPathFromArgv, truncateAtWord } from "./utils.js";
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.js";
 
@@ -175,6 +175,24 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         case "reconnect":
           await reconnectServers(state, ctx, targetServer);
           break;
+        case "pause": {
+          if (!targetServer) {
+            if (ctx.hasUI) ctx.ui.notify("Usage: /mcp pause <server-name>", "error");
+            break;
+          }
+          const pauseResult = await executePause(state, targetServer);
+          if (ctx.hasUI) ctx.ui.notify(pauseResult.content[0].text, "info");
+          break;
+        }
+        case "resume": {
+          if (!targetServer) {
+            if (ctx.hasUI) ctx.ui.notify("Usage: /mcp resume <server-name>", "error");
+            break;
+          }
+          const resumeResult = await executeResume(state, targetServer);
+          if (ctx.hasUI) ctx.ui.notify(resumeResult.content[0].text, "info");
+          break;
+        }
         case "tools":
           await showTools(state, ctx);
           break;
@@ -238,7 +256,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       promptSnippet: "MCP gateway - connect to MCP servers and call their tools",
       parameters: Type.Object({
         tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
-        args: Type.Optional(Type.String({ description: "Arguments as JSON string (e.g., '{\"key\": \"value\"}')" })),
+        args: Type.Optional(Type.String({ description: "Arguments as JSON string (e.g., '{"key": "value"}')" })),
         connect: Type.Optional(Type.String({ description: "Server name to connect (lazy connect + metadata refresh)" })),
         describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
@@ -246,6 +264,8 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
         server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages' to retrieve prompts/intents from UI sessions" })),
+        pause: Type.Optional(Type.String({ description: "Server name to pause — hides its tools and closes the connection" })),
+        resume: Type.Optional(Type.String({ description: "Server name to resume after pausing — reconnects and makes tools available again" })),
       }),
       async execute(_toolCallId, params: {
         tool?: string;
@@ -257,6 +277,8 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         includeSchemas?: boolean;
         server?: string;
         action?: string;
+        pause?: string;
+        resume?: string;
       }, _signal, _onUpdate, _ctx) {
         let parsedArgs: Record<string, unknown> | undefined;
         if (params.args) {
@@ -294,6 +316,12 @@ export default function mcpAdapter(pi: ExtensionAPI) {
 
         if (params.action === "ui-messages") {
           return executeUiMessages(state);
+        }
+        if (params.pause) {
+          return executePause(state, params.pause);
+        }
+        if (params.resume) {
+          return executeResume(state, params.resume);
         }
         if (params.tool) {
           return executeCall(state, params.tool, parsedArgs, params.server);

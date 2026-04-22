@@ -13,6 +13,7 @@ import {
   writeStarterProjectConfig,
 } from "./config.js";
 import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.js";
+import { executePause, executeResume } from "./proxy-modes.js";
 import { loadMetadataCache } from "./metadata-cache.js";
 import { buildToolMetadata } from "./tool-metadata.js";
 import { supportsOAuth, authenticate } from "./mcp-auth-flow.js";
@@ -315,6 +316,18 @@ export async function openMcpPanel(
       const freshCache = loadMetadataCache();
       return freshCache?.servers?.[serverName] ?? null;
     },
+    isPaused: (serverName: string) => state.pausedServers.has(serverName),
+    pause: async (serverName: string) => {
+      await executePause(state, serverName);
+    },
+    // Panel resume only unpauses — no eager reconnect. Connection happens
+    // lazily on the next tool call. (executeResume is used by the AI tool
+    // and does reconnect eagerly, which is the right behaviour there.)
+    resume: async (serverName: string) => {
+      state.pausedServers.delete(serverName);
+      state.failureTracker.delete(serverName);
+      updateStatusBar(state);
+    },
   };
 
   const { createMcpPanel } = await import("./mcp-panel.js");
@@ -322,8 +335,8 @@ export async function openMcpPanel(
 
   await new Promise<void>((resolve) => {
     ctx.ui.custom(
-      (tui, _theme, _keybindings, done) => {
-        return createMcpPanel(config, cache, provenanceMap, callbacks, tui, (result: McpPanelResult) => {
+      (tui, _theme, keybindings, done) => {
+        return createMcpPanel(config, cache, provenanceMap, callbacks, tui, keybindings, (result: McpPanelResult) => {
           if (!result.cancelled && result.changes.size > 0) {
             writeDirectToolsConfig(result.changes, provenanceMap, config);
             configChanged = true;

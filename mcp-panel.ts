@@ -1,8 +1,124 @@
-import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { KeybindingsManager, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { KeybindingDefinitions } from "@mariozechner/pi-tui";
 import { isToolExcluded } from "./types.js";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
 import type { MetadataCache, ServerCacheEntry, CachedTool } from "./metadata-cache.js";
+
+
+// All panel action IDs — every keybinding is configurable via
+// ~/.pi/agent/keybindings.json using the "mcp.panel.*" keys.
+// Declaration merging into the global Keybindings interface is not done here because
+// @mariozechner/pi-tui is a peer dep not in the project's own node_modules.
+// We use a local union type and a one-shot `as any` at the call site instead.
+type PanelAction =
+  | "mcp.panel.navigateUp"
+  | "mcp.panel.navigateDown"
+  | "mcp.panel.confirm"
+  | "mcp.panel.toggle"
+  | "mcp.panel.cancel"
+  | "mcp.panel.save"
+  | "mcp.panel.quit"
+  | "mcp.panel.reconnect"
+  | "mcp.panel.pause"
+  | "mcp.panel.descSearch"
+  | "mcp.panel.deleteBack"
+  | "mcp.panel.discardConfirm"
+  | "mcp.panel.discardCancel"
+  | "mcp.panel.discardSwitch";
+
+const MCP_PANEL_KB_DEFS: KeybindingDefinitions = {
+  "mcp.panel.navigateUp":     { defaultKeys: "up",                        description: "Navigate up" },
+  "mcp.panel.navigateDown":   { defaultKeys: "down",                      description: "Navigate down" },
+  "mcp.panel.confirm":        { defaultKeys: "return",                    description: "Expand server / toggle tool" },
+  "mcp.panel.toggle":         { defaultKeys: "space",                     description: "Toggle direct tool on/off" },
+  "mcp.panel.cancel":         { defaultKeys: "escape",                    description: "Clear search / close panel" },
+  "mcp.panel.save":           { defaultKeys: "ctrl+s",                    description: "Save changes" },
+  "mcp.panel.quit":           { defaultKeys: "ctrl+c",                    description: "Quit without saving" },
+  "mcp.panel.reconnect":      { defaultKeys: "ctrl+r",                    description: "Reconnect server" },
+  "mcp.panel.pause":          { defaultKeys: "ctrl+x",                    description: "Pause / resume server" },
+  "mcp.panel.descSearch":     { defaultKeys: "?",                         description: "Open description search" },
+  "mcp.panel.deleteBack":     { defaultKeys: "backspace",                 description: "Delete character from search" },
+  "mcp.panel.discardConfirm": { defaultKeys: ["y", "shift+y"],            description: "Confirm discard changes" },
+  "mcp.panel.discardCancel":  { defaultKeys: ["n", "shift+n"],            description: "Cancel discard (keep changes)" },
+  "mcp.panel.discardSwitch":  { defaultKeys: ["left", "right", "tab"],    description: "Switch between Discard/Keep buttons" },
+};
+
+// Single cast point — avoids scattering "as any" throughout the class
+function panelMatches(kb: KeybindingsManager, data: string, action: PanelAction): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return kb.matches(data, action as any);
+}
+function panelKeys(kb: KeybindingsManager, action: PanelAction): string[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return kb.getKeys(action as any);
+}
+
+/** Format a raw key id into a readable symbol/label for the hint bar. */
+function fmtKey(key: string): string {
+  const map: Record<string, string> = {
+    up: "↑", down: "↓", left: "←", right: "→",
+    enter: "⏎", return: "⏎", escape: "esc", space: "␣", backspace: "⌫",
+  };
+  return map[key.toLowerCase()] ?? key;
+}
+
+// All panel action IDs — every keybinding is configurable via
+// ~/.pi/agent/keybindings.json using the "mcp.panel.*" keys.
+// Declaration merging into the global Keybindings interface is not done here because
+// @mariozechner/pi-tui is a peer dep not in the project's own node_modules.
+// We use a local union type and a one-shot `as any` at the call site instead.
+type PanelAction =
+  | "mcp.panel.navigateUp"
+  | "mcp.panel.navigateDown"
+  | "mcp.panel.confirm"
+  | "mcp.panel.toggle"
+  | "mcp.panel.cancel"
+  | "mcp.panel.save"
+  | "mcp.panel.quit"
+  | "mcp.panel.reconnect"
+  | "mcp.panel.pause"
+  | "mcp.panel.descSearch"
+  | "mcp.panel.deleteBack"
+  | "mcp.panel.discardConfirm"
+  | "mcp.panel.discardCancel"
+  | "mcp.panel.discardSwitch";
+
+const MCP_PANEL_KB_DEFS: KeybindingDefinitions = {
+  "mcp.panel.navigateUp":     { defaultKeys: "up",                        description: "Navigate up" },
+  "mcp.panel.navigateDown":   { defaultKeys: "down",                      description: "Navigate down" },
+  "mcp.panel.confirm":        { defaultKeys: "return",                    description: "Expand server / toggle tool" },
+  "mcp.panel.toggle":         { defaultKeys: "space",                     description: "Toggle direct tool on/off" },
+  "mcp.panel.cancel":         { defaultKeys: "escape",                    description: "Clear search / close panel" },
+  "mcp.panel.save":           { defaultKeys: "ctrl+s",                    description: "Save changes" },
+  "mcp.panel.quit":           { defaultKeys: "ctrl+c",                    description: "Quit without saving" },
+  "mcp.panel.reconnect":      { defaultKeys: "ctrl+r",                    description: "Reconnect server" },
+  "mcp.panel.pause":          { defaultKeys: "ctrl+x",                    description: "Pause / resume server" },
+  "mcp.panel.descSearch":     { defaultKeys: "?",                         description: "Open description search" },
+  "mcp.panel.deleteBack":     { defaultKeys: "backspace",                 description: "Delete character from search" },
+  "mcp.panel.discardConfirm": { defaultKeys: ["y", "shift+y"],            description: "Confirm discard changes" },
+  "mcp.panel.discardCancel":  { defaultKeys: ["n", "shift+n"],            description: "Cancel discard (keep changes)" },
+  "mcp.panel.discardSwitch":  { defaultKeys: ["left", "right", "tab"],    description: "Switch between Discard/Keep buttons" },
+};
+
+// Single cast point — avoids scattering "as any" throughout the class
+function panelMatches(kb: KeybindingsManager, data: string, action: PanelAction): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return kb.matches(data, action as any);
+}
+function panelKeys(kb: KeybindingsManager, action: PanelAction): string[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return kb.getKeys(action as any);
+}
+
+/** Format a raw key id into a readable symbol/label for the hint bar. */
+function fmtKey(key: string): string {
+  const map: Record<string, string> = {
+    up: "↑", down: "↓", left: "←", right: "→",
+    enter: "⏎", return: "⏎", escape: "esc", space: "␣", backspace: "⌫",
+  };
+  return map[key.toLowerCase()] ?? key;
+}
 
 interface PanelTheme {
   border: string;
@@ -99,6 +215,7 @@ interface ServerState {
   connectionStatus: ConnectionStatus;
   tools: ToolState[];
   hasCachedData: boolean;
+  paused: boolean;
 }
 
 interface VisibleItem {
@@ -124,6 +241,7 @@ class McpPanel {
   private visibleItems: VisibleItem[] = [];
   private tui: { requestRender(): void };
   private t = DEFAULT_THEME;
+  private kb: KeybindingsManager;
 
   private static readonly MAX_VISIBLE = 12;
   private static readonly INACTIVITY_MS = 60_000;
@@ -134,12 +252,16 @@ class McpPanel {
     provenance: Map<string, ServerProvenance>,
     private callbacks: McpPanelCallbacks,
     tui: { requestRender(): void },
+    piKeybindings: KeybindingsManager,
     private done: (result: McpPanelResult) => void,
     noticeLines: string[] = [],
   ) {
     this.tui = tui;
     this.noticeLines = noticeLines;
     this.prefix = config.settings?.toolPrefix ?? "server";
+    // Build a panel-local manager so users can override these actions via
+    // ~/.pi/agent/keybindings.json using the "mcp.panel.*" action IDs.
+    this.kb = new KeybindingsManager(MCP_PANEL_KB_DEFS, piKeybindings.getUserBindings());
 
     for (const [serverName, definition] of Object.entries(config.mcpServers)) {
       const prov = provenance.get(serverName);
@@ -201,6 +323,7 @@ class McpPanel {
         connectionStatus: status,
         tools,
         hasCachedData: !!serverCache,
+        paused: callbacks.isPaused(serverName),
       });
     }
 
@@ -292,13 +415,13 @@ class McpPanel {
     }
 
     // Global shortcuts — always work, even during desc search
-    if (matchesKey(data, "ctrl+c")) {
+    if (panelMatches(this.kb, data, "mcp.panel.quit")) {
       this.cleanup();
       this.done({ cancelled: true, changes: new Map() });
       return;
     }
 
-    if (matchesKey(data, "ctrl+s")) {
+    if (panelMatches(this.kb, data, "mcp.panel.save")) {
       this.cleanup();
       this.done(this.buildResult());
       return;
@@ -306,14 +429,14 @@ class McpPanel {
 
     // Modal description search mode
     if (this.descSearchActive) {
-      if (matchesKey(data, "escape") || matchesKey(data, "return")) {
+      if (panelMatches(this.kb, data, "mcp.panel.cancel") || panelMatches(this.kb, data, "mcp.panel.confirm")) {
         this.descSearchActive = false;
         this.descQuery = "";
         this.rebuildVisibleItems();
         this.cursorIndex = Math.min(this.cursorIndex, Math.max(0, this.visibleItems.length - 1));
         return;
       }
-      if (matchesKey(data, "backspace")) {
+      if (panelMatches(this.kb, data, "mcp.panel.deleteBack")) {
         if (this.descQuery.length > 0) {
           this.descQuery = this.descQuery.slice(0, -1);
           this.rebuildVisibleItems();
@@ -321,9 +444,9 @@ class McpPanel {
         }
         return;
       }
-      if (matchesKey(data, "up")) { this.moveCursor(-1); return; }
-      if (matchesKey(data, "down")) { this.moveCursor(1); return; }
-      if (matchesKey(data, "space")) {
+      if (panelMatches(this.kb, data, "mcp.panel.navigateUp")) { this.moveCursor(-1); return; }
+      if (panelMatches(this.kb, data, "mcp.panel.navigateDown")) { this.moveCursor(1); return; }
+      if (panelMatches(this.kb, data, "mcp.panel.toggle")) {
         // Toggle even while in desc search
         const item = this.visibleItems[this.cursorIndex];
         if (item) this.toggleItem(item);
@@ -338,7 +461,7 @@ class McpPanel {
       return;
     }
 
-    if (matchesKey(data, "escape")) {
+    if (panelMatches(this.kb, data, "mcp.panel.cancel")) {
       if (this.nameQuery) {
         this.nameQuery = "";
         this.rebuildVisibleItems();
@@ -355,16 +478,16 @@ class McpPanel {
       return;
     }
 
-    if (matchesKey(data, "up")) { this.moveCursor(-1); return; }
-    if (matchesKey(data, "down")) { this.moveCursor(1); return; }
+    if (panelMatches(this.kb, data, "mcp.panel.navigateUp")) { this.moveCursor(-1); return; }
+    if (panelMatches(this.kb, data, "mcp.panel.navigateDown")) { this.moveCursor(1); return; }
 
-    if (matchesKey(data, "space")) {
+    if (panelMatches(this.kb, data, "mcp.panel.toggle")) {
       const item = this.visibleItems[this.cursorIndex];
       if (item) this.toggleItem(item);
       return;
     }
 
-    if (matchesKey(data, "return")) {
+    if (panelMatches(this.kb, data, "mcp.panel.confirm")) {
       const item = this.visibleItems[this.cursorIndex];
       if (!item) return;
       const server = this.servers[item.serverIndex];
@@ -387,11 +510,19 @@ class McpPanel {
       return;
     }
 
-    if (matchesKey(data, "ctrl+r")) {
+    if (panelMatches(this.kb, data, "mcp.panel.pause")) {
       const item = this.visibleItems[this.cursorIndex];
       if (!item) return;
       const server = this.servers[item.serverIndex];
-      if (server.connectionStatus === "connecting") return;
+      this.toggleServerPause(server);
+      return;
+    }
+
+    if (panelMatches(this.kb, data, "mcp.panel.reconnect")) {
+      const item = this.visibleItems[this.cursorIndex];
+      if (!item) return;
+      const server = this.servers[item.serverIndex];
+      if (server.paused || server.connectionStatus === "connecting") return;
       server.connectionStatus = "connecting";
       this.callbacks.reconnect(server.name).then(() => {
         server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
@@ -412,7 +543,7 @@ class McpPanel {
       return;
     }
 
-    if (data === "?") {
+    if (panelMatches(this.kb, data, "mcp.panel.descSearch")) {
       this.descSearchActive = true;
       this.descQuery = "";
       this.rebuildVisibleItems();
@@ -421,7 +552,7 @@ class McpPanel {
     }
 
     // Backspace removes from name query
-    if (matchesKey(data, "backspace")) {
+    if (panelMatches(this.kb, data, "mcp.panel.deleteBack")) {
       if (this.nameQuery.length > 0) {
         this.nameQuery = this.nameQuery.slice(0, -1);
         this.rebuildVisibleItems();
@@ -457,17 +588,45 @@ class McpPanel {
     this.updateDirty();
   }
 
+
+  private toggleServerPause(server: ServerState): void {
+    // Don't allow while a reconnect/previous pause is in progress
+    if (server.connectionStatus === "connecting") return;
+
+    const wasPaused = server.paused;
+    server.paused = !wasPaused;
+    if (!wasPaused) {
+      // Collapsing tools immediately gives snappy feedback
+      server.expanded = false;
+      this.rebuildVisibleItems();
+    }
+    this.tui.requestRender();
+
+    const action = wasPaused ? this.callbacks.resume.bind(this.callbacks) : this.callbacks.pause.bind(this.callbacks);
+    action(server.name).then(() => {
+      server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
+      this.tui.requestRender();
+    }).catch(() => {
+      // Revert optimistic update on error
+      server.paused = wasPaused;
+      if (wasPaused) server.expanded = false;
+      server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
+      this.rebuildVisibleItems();
+      this.tui.requestRender();
+    });
+  }
+
   private handleDiscardInput(data: string): void {
-    if (matchesKey(data, "ctrl+c")) {
+    if (panelMatches(this.kb, data, "mcp.panel.quit")) {
       this.cleanup();
       this.done({ cancelled: true, changes: new Map() });
       return;
     }
-    if (matchesKey(data, "escape") || data === "n" || data === "N") {
+    if (panelMatches(this.kb, data, "mcp.panel.cancel") || panelMatches(this.kb, data, "mcp.panel.discardCancel")) {
       this.confirmingDiscard = false;
       return;
     }
-    if (matchesKey(data, "return")) {
+    if (panelMatches(this.kb, data, "mcp.panel.confirm")) {
       if (this.discardSelected === 0) {
         this.cleanup();
         this.done({ cancelled: true, changes: new Map() });
@@ -476,12 +635,12 @@ class McpPanel {
       }
       return;
     }
-    if (data === "y" || data === "Y") {
+    if (panelMatches(this.kb, data, "mcp.panel.discardConfirm")) {
       this.cleanup();
       this.done({ cancelled: true, changes: new Map() });
       return;
     }
-    if (matchesKey(data, "left") || matchesKey(data, "right") || matchesKey(data, "tab")) {
+    if (panelMatches(this.kb, data, "mcp.panel.discardSwitch")) {
       this.discardSelected = this.discardSelected === 0 ? 1 : 0;
     }
   }
@@ -535,6 +694,33 @@ class McpPanel {
     server.tools = newTools;
     this.rebuildVisibleItems();
     this.updateDirty();
+  }
+
+  private toggleServerPause(server: ServerState): void {
+    // Don't allow while a reconnect/previous pause is in progress
+    if (server.connectionStatus === "connecting") return;
+
+    const wasPaused = server.paused;
+    server.paused = !wasPaused;
+    if (!wasPaused) {
+      // Collapsing tools immediately gives snappy feedback
+      server.expanded = false;
+      this.rebuildVisibleItems();
+    }
+    this.tui.requestRender();
+
+    const action = wasPaused ? this.callbacks.resume.bind(this.callbacks) : this.callbacks.pause.bind(this.callbacks);
+    action(server.name).then(() => {
+      server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
+      this.tui.requestRender();
+    }).catch(() => {
+      // Revert optimistic update on error
+      server.paused = wasPaused;
+      if (wasPaused) server.expanded = false;
+      server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
+      this.rebuildVisibleItems();
+      this.tui.requestRender();
+    });
   }
 
   render(width: number): string[] {
@@ -642,15 +828,27 @@ class McpPanel {
     }
 
     lines.push(emptyRow());
+    const upKey       = fmtKey(panelKeys(this.kb, "mcp.panel.navigateUp")[0]   ?? "up");
+    const dnKey       = fmtKey(panelKeys(this.kb, "mcp.panel.navigateDown")[0] ?? "down");
+    const toggleKey   = fmtKey(panelKeys(this.kb, "mcp.panel.toggle")[0]       ?? "space");
+    const confirmKey  = fmtKey(panelKeys(this.kb, "mcp.panel.confirm")[0]      ?? "return");
+    const reconnKey   = fmtKey(panelKeys(this.kb, "mcp.panel.reconnect")[0]    ?? "ctrl+r");
+    const pauseKey    = fmtKey(panelKeys(this.kb, "mcp.panel.pause")[0]        ?? "ctrl+x");
+    const dsearchKey  = fmtKey(panelKeys(this.kb, "mcp.panel.descSearch")[0]   ?? "?");
+    const saveKey     = fmtKey(panelKeys(this.kb, "mcp.panel.save")[0]         ?? "ctrl+s");
+    const cancelKey   = fmtKey(panelKeys(this.kb, "mcp.panel.cancel")[0]       ?? "escape");
+    const quitKey     = fmtKey(panelKeys(this.kb, "mcp.panel.quit")[0]         ?? "ctrl+c");
+    const navStr      = upKey === "↑" && dnKey === "↓" ? "↑↓" : `${upKey}/${dnKey}`;
     const hints = [
-      italic("↑↓") + " navigate",
-      italic("space") + " toggle",
-      italic("⏎") + " expand",
-      italic("ctrl+r") + " reconnect",
-      italic("?") + " desc search",
-      italic("ctrl+s") + " save",
-      italic("esc") + " clear/close",
-      italic("ctrl+c") + " quit",
+      italic(navStr)       + " navigate",
+      italic(toggleKey)    + " toggle",
+      italic(confirmKey)   + " expand",
+      italic(reconnKey)    + " reconnect",
+      italic(pauseKey)     + " pause/resume",
+      italic(dsearchKey)   + " desc search",
+      italic(saveKey)      + " save",
+      italic(cancelKey)    + " clear/close",
+      italic(quitKey)      + " quit",
     ];
     const gap = "  ";
     const gapW = 2;
@@ -680,11 +878,21 @@ class McpPanel {
     const t = this.t;
     const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
 
+    const importLabel = server.source === "import" ? fg(t.description, ` (${server.importKind ?? "import"})`) : "";
+
+    if (server.paused) {
+      const pauseIcon = fg(t.hint, "⏸");
+      const dot = fg(t.hint, "·");
+      const nameStr = isCursor ? bold(fg(t.selected, server.name)) : fg(t.hint, server.name);
+      const toolCount = server.tools.length;
+      const label = fg(t.hint, `(paused, ${toolCount} tool${toolCount === 1 ? "" : "s"} hidden)`);
+      return `${pauseIcon} ${dot} ${nameStr}${importLabel}  ${label}`;
+    }
+
     const expandIcon = server.expanded ? "▾" : "▸";
     const prefix = isCursor ? fg(t.selected, expandIcon) : fg(t.border, server.expanded ? expandIcon : "·");
 
     const nameStr = isCursor ? bold(fg(t.selected, server.name)) : server.name;
-    const importLabel = server.source === "import" ? fg(t.description, ` (${server.importKind ?? "import"})`) : "";
 
     if (!server.hasCachedData) {
       return `${prefix}   ${nameStr}${importLabel}  ${fg(t.description, "(not cached)")}`;
@@ -743,8 +951,9 @@ export function createMcpPanel(
   provenance: Map<string, ServerProvenance>,
   callbacks: McpPanelCallbacks,
   tui: { requestRender(): void },
+  piKeybindings: KeybindingsManager,
   done: (result: McpPanelResult) => void,
   options?: { noticeLines?: string[] },
 ): McpPanel & { dispose(): void } {
-  return new McpPanel(config, cache, provenance, callbacks, tui, done, options?.noticeLines ?? []);
+  return new McpPanel(config, cache, provenance, callbacks, tui, piKeybindings, done, options?.noticeLines ?? []);
 }

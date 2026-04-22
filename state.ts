@@ -31,6 +31,8 @@ export interface McpExtensionState {
   toolMetadata: Map<string, ToolMetadata[]>;
   config: McpConfig;
   failureTracker: Map<string, number>;
+  /** Servers explicitly paused by the user this session. Their tools are hidden from the AI. */
+  pausedServers: Set<string>;
   uiResourceHandler: UiResourceHandler;
   consentManager: ConsentManager;
   uiServer: UiServerHandle | null;

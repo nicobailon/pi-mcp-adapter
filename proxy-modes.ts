@@ -9,6 +9,69 @@ import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
 import { truncateAtWord } from "./utils.js";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.js";
 
+export async function executePause(state: McpExtensionState, serverName: string): Promise<ProxyToolResult> {
+  if (!state.config.mcpServers[serverName]) {
+    return {
+      content: [{ type: "text" as const, text: `Server "${serverName}" not found. Use mcp({}) to see available servers.` }],
+      details: { mode: "pause", error: "not_found", server: serverName },
+    };
+  }
+
+  if (state.pausedServers.has(serverName)) {
+    const toolCount = state.toolMetadata.get(serverName)?.length ?? 0;
+    return {
+      content: [{ type: "text" as const, text: `Server "${serverName}" is already paused (${toolCount} tools hidden). Use mcp({ resume: "${serverName}" }) to resume.` }],
+      details: { mode: "pause", server: serverName, toolCount, alreadyPaused: true },
+    };
+  }
+
+  // Close the connection to free resources (kills the subprocess)
+  await state.manager.close(serverName);
+
+  // Mark as paused (metadata is kept so status can still show tool count)
+  state.pausedServers.add(serverName);
+  updateStatusBar(state);
+
+  const toolCount = state.toolMetadata.get(serverName)?.length ?? 0;
+  return {
+    content: [{ type: "text" as const, text: `Server "${serverName}" paused — ${toolCount} tool${toolCount === 1 ? "" : "s"} hidden. Use mcp({ resume: "${serverName}" }) to resume.` }],
+    details: { mode: "pause", server: serverName, toolCount },
+  };
+}
+
+export async function executeResume(state: McpExtensionState, serverName: string): Promise<ProxyToolResult> {
+  if (!state.config.mcpServers[serverName]) {
+    return {
+      content: [{ type: "text" as const, text: `Server "${serverName}" not found. Use mcp({}) to see available servers.` }],
+      details: { mode: "resume", error: "not_found", server: serverName },
+    };
+  }
+
+  if (!state.pausedServers.has(serverName)) {
+    return {
+      content: [{ type: "text" as const, text: `Server "${serverName}" is not paused.` }],
+      details: { mode: "resume", server: serverName, notPaused: true },
+    };
+  }
+
+  state.pausedServers.delete(serverName);
+  // Clear any stale failure so lazyConnect will actually try
+  state.failureTracker.delete(serverName);
+
+  const connected = await lazyConnect(state, serverName);
+  if (connected) {
+    // Show available tools via executeList
+    return executeList(state, serverName);
+  }
+
+  // Reconnect failed — still resumed (tools visible again on next successful connect)
+  const toolCount = state.toolMetadata.get(serverName)?.length ?? 0;
+  return {
+    content: [{ type: "text" as const, text: `Server "${serverName}" resumed but could not reconnect right now. ${toolCount} cached tool${toolCount === 1 ? "" : "s"} available when it connects.` }],
+    details: { mode: "resume", server: serverName, connected: false, toolCount },
+  };
+}
+
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 
 type AutoAuthResult =
@@ -135,12 +198,15 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
   const servers: Array<{ name: string; status: string; toolCount: number; failedAgo: number | null }> = [];
 
   for (const name of Object.keys(state.config.mcpServers)) {
+    const isPaused = state.pausedServers.has(name);
     const connection = state.manager.getConnection(name);
     const metadata = state.toolMetadata.get(name);
     const toolCount = metadata?.length ?? 0;
     const failedAgo = getFailureAgeSeconds(state, name);
     let status = "not connected";
-    if (connection?.status === "connected") {
+    if (isPaused) {
+      status = "paused";
+    } else if (connection?.status === "connected") {
       status = "connected";
     } else if (connection?.status === "needs-auth") {
       status = "needs-auth";
@@ -153,11 +219,21 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
     servers.push({ name, status, toolCount, failedAgo });
   }
 
-  const totalTools = servers.reduce((sum, s) => sum + s.toolCount, 0);
+  const totalTools = servers.filter(s => s.status !== "paused").reduce((sum, s) => sum + s.toolCount, 0);
   const connectedCount = servers.filter(s => s.status === "connected").length;
+  const pausedCount = servers.filter(s => s.status === "paused").length;
 
-  let text = `MCP: ${connectedCount}/${servers.length} servers, ${totalTools} tools\n\n`;
+  let text = `MCP: ${connectedCount}/${servers.length} servers, ${totalTools} tools`;
+  if (pausedCount > 0) {
+    text += ` (${pausedCount} paused)`;
+  }
+  text += "\n\n";
+
   for (const server of servers) {
+    if (server.status === "paused") {
+      text += `⏸ ${server.name} (paused, ${server.toolCount} tools hidden)\n`;
+      continue;
+    }
     if (server.status === "connected") {
       text += `✓ ${server.name} (${server.toolCount} tools)\n`;
       continue;
@@ -179,11 +255,14 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
   if (servers.length > 0) {
     text += `\nmcp({ server: "name" }) to list tools, mcp({ search: "..." }) to search`;
+    if (pausedCount > 0) {
+      text += `, mcp({ resume: "name" }) to unpause`;
+    }
   }
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "status", servers, totalTools, connectedCount },
+    details: { mode: "status", servers, totalTools, connectedCount, pausedCount },
   };
 }
 
@@ -279,6 +358,7 @@ export function executeSearch(
 
   for (const [serverName, metadata] of state.toolMetadata.entries()) {
     if (server && serverName !== server) continue;
+    if (state.pausedServers.has(serverName)) continue; // tools invisible while paused
     for (const tool of metadata) {
       if (pattern.test(tool.name) || pattern.test(tool.description)) {
         matches.push({
@@ -356,6 +436,14 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     return {
       content: [{ type: "text" as const, text: `Server "${server}" not found. Use mcp({}) to see available servers.` }],
       details: { mode: "list", server, tools: [], count: 0, error: "not_found" },
+    };
+  }
+
+  if (state.pausedServers.has(server)) {
+    const toolCount = state.toolMetadata.get(server)?.length ?? 0;
+    return {
+      content: [{ type: "text" as const, text: `Server "${server}" is paused (${toolCount} tools hidden). Use mcp({ resume: "${server}" }) to resume.` }],
+      details: { mode: "list", server, tools: [], count: 0, paused: true },
     };
   }
 
@@ -477,9 +565,16 @@ export async function executeCall(
   }
 
   if (serverName) {
+    if (state.pausedServers.has(serverName)) {
+      return {
+        content: [{ type: "text" as const, text: `Server "${serverName}" is paused. Use mcp({ resume: "${serverName}" }) to resume it first.` }],
+        details: { mode: "call", error: "server_paused", server: serverName },
+      };
+    }
     toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
   } else {
     for (const [server, metadata] of state.toolMetadata.entries()) {
+      if (state.pausedServers.has(server)) continue; // tools invisible while paused
       const found = findToolByName(metadata, toolName);
       if (found) {
         serverName = server;
@@ -546,6 +641,7 @@ export async function executeCall(
 
   if (!serverName && !toolMeta && prefixMode !== "none") {
     const candidates = Object.keys(state.config.mcpServers)
+      .filter(name => !state.pausedServers.has(name)) // skip paused servers
       .map(name => ({ name, prefix: getServerPrefix(name, prefixMode) }))
       .filter(c => c.prefix && toolName.startsWith(c.prefix + "_"))
       .sort((a, b) => b.prefix.length - a.prefix.length);
