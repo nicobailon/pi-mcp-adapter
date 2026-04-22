@@ -360,9 +360,10 @@ export interface DirectToolSpec {
 }
 
 export interface ServerProvenance {
-  path: string;
-  kind: "user" | "project" | "import";
+  path?: string;
+  kind: "user" | "project" | "import" | "extension";
   importKind?: string;
+  extensionSource?: string;
 }
 
 export interface McpPanelCallbacks {

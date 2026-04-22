@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { ConsentManager } from "./consent-manager.js";
 import type { McpLifecycleManager } from "./lifecycle.js";
 import type { McpServerManager } from "./server-manager.js";
-import type { ToolMetadata, McpConfig, UiSessionMessages, UiStreamSummary } from "./types.js";
+import type { ToolMetadata, McpConfig, UiSessionMessages, UiStreamSummary, ServerProvenance } from "./types.js";
 import type { UiResourceHandler } from "./ui-resource-handler.js";
 import type { UiServerHandle } from "./ui-server.js";
 
@@ -30,6 +30,7 @@ export interface McpExtensionState {
   lifecycle: McpLifecycleManager;
   toolMetadata: Map<string, ToolMetadata[]>;
   config: McpConfig;
+  provenance: Map<string, ServerProvenance>;
   failureTracker: Map<string, number>;
   uiResourceHandler: UiResourceHandler;
   consentManager: ConsentManager;
