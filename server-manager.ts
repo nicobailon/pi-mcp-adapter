@@ -16,6 +16,7 @@ import { resolveNpxBinary } from "./npx-resolver.js";
 import { logger } from "./logger.js";
 import { McpOAuthProvider } from "./mcp-oauth-provider.js";
 import { supportsOAuth } from "./mcp-auth-flow.js";
+import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.js";
 
 interface ServerConnection {
   client: Client;
@@ -34,6 +35,11 @@ export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private uiStreamListeners = new Map<string, UiStreamListener>();
+  private samplingConfig: ServerSamplingConfig | undefined;
+
+  setSamplingConfig(config: ServerSamplingConfig | undefined): void {
+    this.samplingConfig = config;
+  }
   
   async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
     // Dedupe concurrent connection attempts
@@ -64,7 +70,7 @@ export class McpServerManager {
     name: string,
     definition: ServerDefinition
   ): Promise<ServerConnection> {
-    const client = new Client({ name: `pi-mcp-${name}`, version: "1.0.0" });
+    const client = this.createClient(name);
     
     let transport: Transport;
     
@@ -141,6 +147,17 @@ export class McpServerManager {
     }
   }
   
+  private createClient(serverName: string): Client {
+    const client = new Client(
+      { name: `pi-mcp-${serverName}`, version: "1.0.0" },
+      this.samplingConfig ? { capabilities: { sampling: {} } } : undefined,
+    );
+    if (this.samplingConfig) {
+      registerSamplingHandler(client, { ...this.samplingConfig, serverName });
+    }
+    return client;
+  }
+
   private async createHttpTransport(
     definition: ServerDefinition, 
     serverName: string

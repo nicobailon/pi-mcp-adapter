@@ -33,6 +33,16 @@ export async function initializeMcp(
   const config = loadMcpConfig(configPath);
 
   const manager = new McpServerManager();
+  const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
+  if (config.settings?.sampling !== false && (ctx.hasUI || samplingAutoApprove)) {
+    manager.setSamplingConfig({
+      autoApprove: samplingAutoApprove,
+      ui: ctx.hasUI ? ctx.ui : undefined,
+      modelRegistry: ctx.modelRegistry,
+      getCurrentModel: () => ctx.model,
+      getSignal: () => ctx.signal,
+    });
+  }
   const lifecycle = new McpLifecycleManager(manager);
   const toolMetadata = new Map<string, ToolMetadata[]>();
   const failureTracker = new Map<string, number>();

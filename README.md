@@ -158,6 +158,8 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
+| `sampling` | Allow MCP servers to request LLM sampling through Pi's current/default model (default: true when UI approval is available). |
+| `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
 
 Per-server `idleTimeout` overrides the global setting.
 
@@ -360,3 +362,4 @@ If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`,
 ## Limitations
 
 - Cross-session server sharing not yet implemented (each Pi session runs its own server processes)
+- MCP sampling support is text-only; context inclusion, tools, stop sequences, audio, and image content are rejected with explicit errors.

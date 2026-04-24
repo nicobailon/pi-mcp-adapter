@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added MCP `sampling/createMessage` support with conservative human approval by default and opt-in `settings.samplingAutoApprove` for non-interactive flows.
 - Added configured Vitest coverage for OAuth provider authorization fallback behavior.
 - Added `test:oauth-provider` for running the root OAuth provider node test with the required TypeScript loader.
 
