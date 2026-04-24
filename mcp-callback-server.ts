@@ -178,7 +178,7 @@ export async function ensureCallbackServer(options: EnsureCallbackServerOptions 
           reject(err)
         })
 
-        candidateServer.listen(candidatePort, "127.0.0.1", () => {
+        candidateServer.listen(candidatePort, "localhost", () => {
           resolve()
         })
       })
