@@ -150,6 +150,15 @@ describe("direct tools auto auth", () => {
       expect(fullOutputPath).toBeTruthy();
       expect(existsSync(fullOutputPath!)).toBe(true);
       expect(readFileSync(fullOutputPath!, "utf-8")).toContain(oversizedText);
+      expect(JSON.stringify(result.details)).not.toContain(omittedPrefix);
+      expect(result.details).toMatchObject({
+        server: "demo",
+        tool: "search",
+        output: {
+          truncated: true,
+          fullOutputPath,
+        },
+      });
     } finally {
       if (fullOutputPath && existsSync(fullOutputPath)) {
         unlinkSync(fullOutputPath);
@@ -216,6 +225,15 @@ describe("direct tools auto auth", () => {
       expect(fullOutputPath).toBeTruthy();
       expect(existsSync(fullOutputPath!)).toBe(true);
       expect(readFileSync(fullOutputPath!, "utf-8")).toContain(oversizedText);
+      expect(JSON.stringify(result.details)).not.toContain(omittedPrefix);
+      expect(result.details).toMatchObject({
+        server: "demo",
+        resourceUri: "demo://large",
+        output: {
+          truncated: true,
+          fullOutputPath,
+        },
+      });
     } finally {
       if (fullOutputPath && existsSync(fullOutputPath)) {
         unlinkSync(fullOutputPath);
@@ -291,6 +309,15 @@ describe("direct tools auto auth", () => {
       expect(text).not.toContain(omittedPrefix);
       expect(fullOutputPath).toBeTruthy();
       expect(existsSync(fullOutputPath!)).toBe(true);
+      expect(JSON.stringify(result.details)).not.toContain(omittedPrefix);
+      expect(result.details).toMatchObject({
+        error: "tool_error",
+        server: "demo",
+        output: {
+          truncated: true,
+          fullOutputPath,
+        },
+      });
     } finally {
       if (fullOutputPath && existsSync(fullOutputPath)) {
         unlinkSync(fullOutputPath);
@@ -355,6 +382,15 @@ describe("direct tools auto auth", () => {
       expect(text).not.toContain(omittedPrefix);
       expect(fullOutputPath).toBeTruthy();
       expect(existsSync(fullOutputPath!)).toBe(true);
+      expect(JSON.stringify(result.details)).not.toContain(omittedPrefix);
+      expect(result.details).toMatchObject({
+        error: "call_failed",
+        server: "demo",
+        output: {
+          truncated: true,
+          fullOutputPath,
+        },
+      });
     } finally {
       if (fullOutputPath && existsSync(fullOutputPath)) {
         unlinkSync(fullOutputPath);
@@ -419,11 +455,81 @@ describe("direct tools auto auth", () => {
       expect(fullOutputPath).toBeTruthy();
       expect(existsSync(fullOutputPath!)).toBe(true);
       expect(readFileSync(fullOutputPath!, "utf-8")).not.toContain(payload);
+      expect(JSON.stringify(result.details)).not.toContain(payload);
+      expect(result.details).toMatchObject({
+        server: "demo",
+        tool: "image",
+        output: {
+          truncated: true,
+          fullOutputPath,
+        },
+      });
     } finally {
       if (fullOutputPath && existsSync(fullOutputPath)) {
         unlinkSync(fullOutputPath);
       }
     }
+  });
+
+  it("omits resource blob payloads and sanitizes audio MIME labels in direct tool results", async () => {
+    const { createDirectToolExecutor } = await import("../direct-tools.ts");
+
+    const blobPayload = "base64-secret-ABC123";
+    const unsafeMimeType = "audio-secret\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007";
+    const connected = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: false,
+          content: [
+            { type: "resource", mimeType: unsafeMimeType, resource: { uri: "demo://blob", blob: blobPayload } },
+            { type: "audio", mimeType: unsafeMimeType, data: blobPayload },
+          ],
+        })),
+      },
+    };
+
+    mocks.lazyConnect.mockResolvedValue(true);
+
+    const state = {
+      config: {
+        settings: { autoAuth: true },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager: {
+        close: vi.fn(async () => {}),
+        getConnection: vi.fn(() => connected),
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "media",
+        prefixedName: "demo_media",
+        description: "Media",
+      },
+    );
+
+    const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
+    const text = result.content.map((block: any) => block.text ?? "").join("\n");
+
+    expect(text).toContain("[Resource: demo://blob]");
+    expect(text).toContain("[Binary data: application/octet-stream");
+    expect(text).toContain("[Audio content: audio/*]");
+    expect(text).not.toContain(blobPayload);
+    expect(text).not.toContain("audio-secret");
+    expect(text).not.toContain("https://example.com");
   });
 
   it("fails fast in non-ui context for browser-based OAuth", async () => {

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { formatImagePlaceholder, formatSize, sanitizeMimeType } from "./mcp-content-formatting.js";
 import type { ContentBlock } from "./types.js";
 
 const DEFAULT_MAX_LINES = 2000;
@@ -58,10 +59,11 @@ export interface McpOutputGuardResult {
  * Bounds model-facing MCP output and writes the full text representation to a temp file when it exceeds Pi's standard limits.
  */
 export async function guardMcpOutput(content: ContentBlock[], options: GuardOptions = {}): Promise<McpOutputGuardResult> {
-  const textOutput = serializeContent(content);
+  const safeContent = sanitizeContent(content);
+  const textOutput = serializeContent(safeContent);
   const prefix = options.prefix ?? "";
   const suffix = options.suffix ?? "";
-  const rawStats = getRawStats(content);
+  const rawStats = getRawStats(safeContent);
   const composedText = `${prefix}${textOutput}${suffix}`;
   const composedStats = getTextStats(composedText);
   const shouldTruncate = rawStats.lines > DEFAULT_MAX_LINES
@@ -74,7 +76,7 @@ export async function guardMcpOutput(content: ContentBlock[], options: GuardOpti
     if (prefix || suffix) {
       return { content: [{ type: "text", text: composedText }] };
     }
-    return { content };
+    return { content: safeContent };
   }
 
   let fullOutputPath: string | undefined;
@@ -103,6 +105,18 @@ export async function guardMcpOutput(content: ContentBlock[], options: GuardOpti
 }
 
 /**
+ * Normalize metadata on returned content blocks before they can reach model-facing output.
+ */
+function sanitizeContent(content: ContentBlock[]): ContentBlock[] {
+  return content.map((block) => {
+    if (block.type === "image") {
+      return { ...block, mimeType: sanitizeMimeType(block.mimeType ?? "") };
+    }
+    return block;
+  });
+}
+
+/**
  * Converts Pi content blocks to the text form stored in the full-output file.
  */
 function serializeContent(content: ContentBlock[]): string {
@@ -117,8 +131,7 @@ function serializeBlock(block: ContentBlock): string {
     return block.text;
   }
 
-  const byteLength = Buffer.byteLength(block.data ?? "", "utf-8");
-  return `[Image content: ${block.mimeType ?? "image/*"}, ${formatSize(byteLength)} base64 payload omitted]`;
+  return formatImagePlaceholder(block);
 }
 
 /**
@@ -364,17 +377,4 @@ function formatTruncationNotice(truncation: TruncationResult, fullOutputPath: st
     return `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${fullOutputPath}]`;
   }
   return `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${fullOutputPath}]`;
-}
-
-/**
- * Formats byte counts in the same compact style as Pi's standard tools.
- */
-function formatSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes}B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)}KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentToolResult, ToolRenderContext, ToolRenderResultOptions } from "@mariozechner/pi-coding-agent";
+import { formatImagePlaceholder } from "./mcp-content-formatting.js";
 
 type RenderTheme = {
   fg(color: string, text: string): string;
@@ -16,6 +17,12 @@ const COLLAPSED_RESULT_PREVIEW_LINES = 10;
 const DEFAULT_EXPAND_KEY = "ctrl+o";
 const KEYBINDINGS_PATH = join(homedir(), ".pi", "agent", "keybindings.json");
 const ANSI_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+const TERMINAL_SEQUENCE_PATTERN = /\x1b\][\s\S]*?(?:\x07|\x1b\\)|\x1b[P^_][\s\S]*?\x1b\\|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]/g;
+
+/**
+ * Cache keybinding text after the first read so terminal rendering does not block on filesystem access.
+ */
+const configuredKeyTextCache = new Map<string, string>();
 
 /**
  * Render MCP tool results with the same collapsed shape as standard Pi text tools.
@@ -39,13 +46,45 @@ export function renderMcpResult(
 }
 
 /**
- * Join text blocks into the same plain text that Pi's fallback renderer would show.
+ * Convert MCP content blocks to safe terminal text without copying binary payloads.
  */
 function getTextOutput(result: AgentToolResult<Record<string, unknown>>): string {
-  return result.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
+  return result.content.map(formatContentBlock).join("\n");
+}
+
+/**
+ * Keep text blocks verbatim and show metadata for image blocks so non-text results are not hidden.
+ */
+function formatContentBlock(block: AgentToolResult<Record<string, unknown>>["content"][number]): string {
+  if (block.type === "text") {
+    return sanitizeTerminalText(block.text);
+  }
+
+  return formatImagePlaceholder(block);
+}
+
+/**
+ * Remove terminal control sequences from external MCP text before TUI rendering.
+ */
+function sanitizeTerminalText(text: string): string {
+  return Array.from(text.replace(TERMINAL_SEQUENCE_PATTERN, "").replace(/\r/g, ""))
+    .filter((char) => {
+      const code = char.codePointAt(0);
+      if (code === undefined) {
+        return false;
+      }
+      if (code === 0x09 || code === 0x0a) {
+        return true;
+      }
+      if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+        return false;
+      }
+      if (code >= 0xfff9 && code <= 0xfffb) {
+        return false;
+      }
+      return true;
+    })
+    .join("");
 }
 
 /**
@@ -103,9 +142,23 @@ function getPiKeyHint(keybinding: string, description: string, theme: RenderThem
 }
 
 /**
- * Read Pi's user keybinding override and fall back to Pi's default expand key.
+ * Read Pi's user keybinding override once and fall back to Pi's default expand key.
  */
 function getConfiguredKeyText(keybinding: string): string {
+  const cached = configuredKeyTextCache.get(keybinding);
+  if (cached) {
+    return cached;
+  }
+
+  const keyText = readConfiguredKeyText(keybinding);
+  configuredKeyTextCache.set(keybinding, keyText);
+  return keyText;
+}
+
+/**
+ * Resolve a keybinding from Pi's config file without throwing during terminal rendering.
+ */
+function readConfiguredKeyText(keybinding: string): string {
   try {
     if (!existsSync(KEYBINDINGS_PATH)) {
       return DEFAULT_EXPAND_KEY;
@@ -141,15 +194,15 @@ function trimTrailingEmptyLines(lines: string[]): string[] {
 }
 
 /**
- * Truncate a line to terminal width without splitting ANSI escape sequences.
- */
-/**
  * Match Pi text tool rendering by replacing tabs before terminal output.
  */
 function replaceTabs(text: string): string {
   return text.replace(/\t/g, "   ");
 }
 
+/**
+ * Truncate a line to terminal width without splitting ANSI escape sequences.
+ */
 function truncateLine(line: string, width: number): string {
   if (visibleWidth(line) <= width) {
     return line;

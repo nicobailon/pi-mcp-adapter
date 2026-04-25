@@ -225,6 +225,79 @@ describe("proxy auto auth", () => {
     }
   });
 
+  it("summarizes proxy result details without copying raw structured content", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const secretPayload = "structured-secret".repeat(6000);
+    const unsafeKey = "key-secret\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007";
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: false,
+          content: [{ type: "text", text: "ok" }],
+          structuredContent: { [unsafeKey]: secretPayload },
+          _meta: { [unsafeKey]: secretPayload },
+          [unsafeKey]: secretPayload,
+        })),
+      },
+      tools: [{ name: "search", description: "Search" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo");
+
+    expect(result.content[0].text).toContain("ok");
+    expect(JSON.stringify(result.details)).not.toContain(secretPayload);
+    expect(JSON.stringify(result.details)).not.toContain("key-secret");
+    expect(JSON.stringify(result.details)).not.toContain("https://example.com");
+    expect(result.details).toMatchObject({
+      mode: "call",
+      mcpResult: {
+        isError: false,
+        contentSummary: [{ type: "text", textOmitted: true }],
+        structuredContent: { type: "object", omitted: true },
+        meta: { type: "object", omitted: true },
+        extraFields: [{ key: { keyOmitted: true }, omitted: true }],
+      },
+    });
+  });
+
   it("replaces oversized proxy image payloads with metadata and bounded details", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
 
@@ -300,6 +373,143 @@ describe("proxy auto auth", () => {
         unlinkSync(fullOutputPath);
       }
     }
+  });
+
+  it("bounds proxy content summary metadata without copying unsafe MIME labels", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const unsafeMimeType = `mime-secret-${"x".repeat(200)}\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007`;
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: false,
+          content: [
+            { type: "image", data: "abc", mimeType: unsafeMimeType },
+            ...Array.from({ length: 30 }, () => ({ type: "image", data: "def", mimeType: unsafeMimeType })),
+          ],
+        })),
+      },
+      tools: [{ name: "image", description: "Image" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_image",
+              originalName: "image",
+              description: "Image",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_image", {}, "demo");
+    const detailsText = JSON.stringify(result.details);
+
+    expect(detailsText).not.toContain("mime-secret");
+    expect(detailsText).not.toContain("https://example.com");
+    expect(result.details).toMatchObject({ mode: "call" });
+    const contentSummary = (result.details as any).mcpResult.contentSummary;
+    expect(contentSummary).toHaveLength(21);
+    expect(contentSummary[0]).toMatchObject({ type: "image", mimeType: "image/*", dataOmitted: true });
+    expect(contentSummary[1]).toMatchObject({ type: "image", mimeType: "image/*", dataOmitted: true });
+    expect(contentSummary.at(-1)).toEqual({ type: "omitted", count: 11 });
+  });
+
+  it("omits resource blob payloads and sanitizes audio MIME labels in proxy tool results", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const blobPayload = "base64-secret-ABC123";
+    const unsafeMimeType = "audio-secret\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007";
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: false,
+          content: [
+            { type: "resource", mimeType: unsafeMimeType, resource: { uri: "demo://blob", blob: blobPayload } },
+            { type: "audio", mimeType: unsafeMimeType, data: blobPayload },
+          ],
+        })),
+      },
+      tools: [{ name: "media", description: "Media" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_media",
+              originalName: "media",
+              description: "Media",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_media", {}, "demo");
+    const text = result.content.map((block: any) => block.text ?? "").join("\n");
+    const detailsText = JSON.stringify(result.details);
+
+    expect(text).toContain("[Resource: demo://blob]");
+    expect(text).toContain("[Binary data: application/octet-stream");
+    expect(text).toContain("[Audio content: audio/*]");
+    expect(text).not.toContain(blobPayload);
+    expect(text).not.toContain("audio-secret");
+    expect(text).not.toContain("https://example.com");
+    expect(detailsText).not.toContain(blobPayload);
+    expect(detailsText).not.toContain("audio-secret");
+    expect(detailsText).not.toContain("https://example.com");
   });
 
   it("keeps oversized proxy error output within final Pi limits after schema text is appended", async () => {

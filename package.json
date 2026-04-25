@@ -41,6 +41,7 @@
     "state.ts",
     "utils.ts",
     "mcp-output-guard.ts",
+    "mcp-content-formatting.ts",
     "tool-rendering.ts",
     "tool-metadata.ts",
     "init.ts",

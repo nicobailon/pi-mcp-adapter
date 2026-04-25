@@ -11,6 +11,7 @@ import { formatToolName, isToolExcluded } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.js";
 import { formatAuthRequiredMessage } from "./utils.js";
+import { sanitizeMimeType } from "./mcp-content-formatting.js";
 import { guardMcpOutput } from "./mcp-output-guard.js";
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
@@ -343,7 +344,7 @@ export function createDirectToolExecutor(
         const result = await connection.client.readResource({ uri: spec.resourceUri });
         const content = (result.contents ?? []).map(c => ({
           type: "text" as const,
-          text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
+          text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${sanitizeMimeType((c as { mimeType?: string }).mimeType ?? "", "application/octet-stream")}]` : JSON.stringify(c)),
         }));
         const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }]);
         return {
@@ -385,7 +386,6 @@ export function createDirectToolExecutor(
         };
       }
 
-      const guarded = await guardMcpOutput(outputContent);
       if (hasUi) {
         const uiMessage = uiSession?.reused
           ? "Updated the open UI."
@@ -397,6 +397,7 @@ export function createDirectToolExecutor(
         };
       }
 
+      const guarded = await guardMcpOutput(outputContent);
       return {
         content: guarded.content,
         details: { server: spec.serverName, tool: spec.originalName, ...(guarded.details ? { output: guarded.details } : {}) },

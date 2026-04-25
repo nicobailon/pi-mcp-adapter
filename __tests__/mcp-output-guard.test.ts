@@ -42,6 +42,58 @@ describe("mcp output guard", () => {
     }
   });
 
+  it("does not show the byte-read hint when byte truncation keeps complete lines", async () => {
+    const result = await guardMcpOutput([{
+      type: "text",
+      text: Array.from({ length: 100 }, (_, index) => `${index}-` + "x".repeat(1000)).join("\n"),
+    }]);
+    const text = result.content[0].type === "text" ? result.content[0].text : "";
+    const fullOutputPath = text.match(/Full output: (.+?)\]/)?.[1];
+
+    try {
+      expect(Buffer.byteLength(text, "utf-8")).toBeLessThanOrEqual(maxOutputBytes);
+      expect(text.split("\n").length).toBeLessThanOrEqual(maxOutputLines);
+      expect(fullOutputPath).toBeTruthy();
+      expect(text).toContain("Full output:");
+      expect(text).not.toContain("bash head -c");
+      expect(existsSync(fullOutputPath!)).toBe(true);
+    } finally {
+      if (fullOutputPath && existsSync(fullOutputPath)) {
+        unlinkSync(fullOutputPath);
+      }
+    }
+  });
+
+  it("sanitizes image MIME metadata on returned image blocks when output is not truncated", async () => {
+    const unsafeMimeType = `mime-secret-${"x".repeat(200)}\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007`;
+    const result = await guardMcpOutput([{ type: "image", data: "abc", mimeType: unsafeMimeType }]);
+
+    expect(result.content[0]).toMatchObject({ type: "image", data: "abc", mimeType: "image/*" });
+    expect(JSON.stringify(result.content)).not.toContain("mime-secret");
+    expect(JSON.stringify(result.content)).not.toContain("https://example.com");
+    expect(result.details).toBeUndefined();
+  });
+
+  it("sanitizes image MIME metadata before returning model-facing placeholders", async () => {
+    const payload = "a".repeat(60000);
+    const unsafeMimeType = `mime-secret-${"x".repeat(200)}\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007`;
+    const result = await guardMcpOutput([{ type: "image", data: payload, mimeType: unsafeMimeType }]);
+    const text = result.content[0].type === "text" ? result.content[0].text : "";
+    const fullOutputPath = text.match(/Full output: (.+?)\]/)?.[1];
+
+    try {
+      expect(text).toContain("[Image content: image/*");
+      expect(text).not.toContain("mime-secret");
+      expect(text).not.toContain("https://example.com");
+      expect(fullOutputPath).toBeTruthy();
+      expect(existsSync(fullOutputPath!)).toBe(true);
+    } finally {
+      if (fullOutputPath && existsSync(fullOutputPath)) {
+        unlinkSync(fullOutputPath);
+      }
+    }
+  });
+
   it("replaces oversized image payloads with text metadata before returning model-facing content", async () => {
     const payload = "a".repeat(60000);
     const result = await guardMcpOutput([{ type: "image", data: payload, mimeType: "image/png" }]);

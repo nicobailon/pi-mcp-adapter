@@ -160,8 +160,8 @@ describe("mcpAdapter session lifecycle", () => {
     const { api } = createPi();
     mcpAdapter(api);
 
-    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
-    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search", renderResult: expect.any(Function) }));
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "mcp", renderResult: expect.any(Function) }));
   });
 
   it("skips the proxy tool once direct tools are fully available", async () => {
@@ -184,7 +184,7 @@ describe("mcpAdapter session lifecycle", () => {
     const { api } = createPi();
     mcpAdapter(api);
 
-    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search", renderResult: expect.any(Function) }));
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));
   });
 
