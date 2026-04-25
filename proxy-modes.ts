@@ -8,8 +8,29 @@ import { transformMcpContent } from "./tool-registrar.js";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
 import { formatAuthRequiredMessage, truncateAtWord } from "./utils.js";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.js";
+import { sanitizeMimeType } from "./mcp-content-formatting.js";
+import { guardMcpOutput, type McpOutputGuardDetails } from "./mcp-output-guard.js";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
+
+type McpResultDetailsSummary = {
+  isError: boolean;
+  contentSummary: Array<Record<string, unknown>>;
+  structuredContent?: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  extraFields: Array<Record<string, unknown>>;
+  truncated?: boolean;
+  fullOutputPath?: string;
+  totalLines?: number;
+  totalBytes?: number;
+  outputLines?: number;
+  outputBytes?: number;
+  writeError?: string;
+};
+
+const DETAILS_KEYS_PREVIEW_LIMIT = 20;
+const DETAILS_KEY_LENGTH_LIMIT = 80;
+const DETAILS_CONTENT_SUMMARY_LIMIT = 20;
 
 type AutoAuthResult =
   | { status: "skipped" }
@@ -30,6 +51,134 @@ function getAuthFailedMessage(state: McpExtensionState, serverName: string, mess
     return `OAuth authentication failed for "${serverName}": ${message}. ${getAuthRequiredMessage(state, serverName)}`;
   }
   return `OAuth authentication failed for "${serverName}": ${message}. Run /mcp-auth ${serverName} first.`;
+}
+
+/**
+ * Stores bounded MCP result metadata in proxy details without copying raw result payloads.
+ */
+function buildMcpResultDetails(result: unknown, guardDetails: McpOutputGuardDetails | undefined): McpResultDetailsSummary {
+  const record = isRecord(result) ? result : {};
+  const summary: McpResultDetailsSummary = {
+    isError: record.isError === true,
+    contentSummary: summarizeContent(record.content),
+    extraFields: summarizeExtraFields(record),
+  };
+
+  if ("structuredContent" in record) {
+    summary.structuredContent = summarizeValue(record.structuredContent);
+  }
+  if ("_meta" in record) {
+    summary.meta = summarizeValue(record._meta);
+  }
+  if (guardDetails) {
+    summary.truncated = true;
+    summary.fullOutputPath = guardDetails.fullOutputPath;
+    summary.totalLines = guardDetails.totalLines;
+    summary.totalBytes = guardDetails.totalBytes;
+    summary.outputLines = guardDetails.outputLines;
+    summary.outputBytes = guardDetails.outputBytes;
+    summary.writeError = guardDetails.writeError;
+  }
+
+  return summary;
+}
+
+/**
+ * Check whether a value can be inspected as a plain record for details summaries.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Summarize MCP content blocks without storing text or base64 data in proxy details.
+ */
+function summarizeContent(content: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const summaries: Array<Record<string, unknown>> = content.slice(0, DETAILS_CONTENT_SUMMARY_LIMIT).map((block, index) => {
+    if (!isRecord(block)) {
+      return { type: typeof block, omitted: true };
+    }
+    if (block.type === "text") {
+      const text = typeof block.text === "string" ? block.text : "";
+      return { type: "text", bytes: Buffer.byteLength(text, "utf-8"), lines: text.split("\n").length, textOmitted: true };
+    }
+    if (block.type === "image") {
+      const data = typeof block.data === "string" ? block.data : "";
+      const mimeType = typeof block.mimeType === "string" ? sanitizeMimeType(block.mimeType) : undefined;
+      return { type: "image", mimeType, dataBytes: Buffer.byteLength(data, "utf-8"), dataOmitted: true };
+    }
+    return { type: "unknown", originalIndex: index, estimatedBytes: estimateValueBytes(block), omitted: true };
+  });
+
+  if (content.length > DETAILS_CONTENT_SUMMARY_LIMIT) {
+    summaries.push({ type: "omitted", count: content.length - DETAILS_CONTENT_SUMMARY_LIMIT });
+  }
+  return summaries;
+}
+
+/**
+ * Summarize structured objects without storing their values in proxy details.
+ */
+function summarizeValue(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    return { type: value === null ? "null" : typeof value, estimatedBytes: estimateValueBytes(value), omitted: true };
+  }
+
+  const keys = Object.keys(value);
+  return {
+    type: Array.isArray(value) ? "array" : "object",
+    estimatedBytes: estimateValueBytes(value),
+    keyCount: keys.length,
+    keysPreview: keys.slice(0, DETAILS_KEYS_PREVIEW_LIMIT).map((key) => summarizeDetailsKey(key)),
+    omitted: true,
+  };
+}
+
+/**
+ * Summarize non-standard MCP result fields without storing their values.
+ */
+function summarizeExtraFields(record: Record<string, unknown>): Array<Record<string, unknown>> {
+  const standardKeys = new Set(["content", "isError", "structuredContent", "_meta"]);
+  return Object.keys(record)
+    .filter((key) => !standardKeys.has(key))
+    .slice(0, DETAILS_KEYS_PREVIEW_LIMIT)
+    .map((key) => ({ key: summarizeDetailsKey(key), type: typeof record[key], estimatedBytes: estimateValueBytes(record[key]), omitted: true }));
+}
+
+/**
+ * Estimate omitted value size without materializing a full serialized copy.
+ */
+function estimateValueBytes(value: unknown, depth = 0): number {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+  if (typeof value === "string") {
+    return Buffer.byteLength(value, "utf-8");
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return Buffer.byteLength(String(value), "utf-8");
+  }
+  if (!isRecord(value) || depth >= 2) {
+    return 0;
+  }
+
+  const values = Array.isArray(value) ? value.slice(0, DETAILS_KEYS_PREVIEW_LIMIT) : Object.values(value).slice(0, DETAILS_KEYS_PREVIEW_LIMIT);
+  return values.reduce((total, item) => total + estimateValueBytes(item, depth + 1), 0);
+}
+
+/**
+ * Summarize object keys without storing their raw text in details.
+ */
+function summarizeDetailsKey(key: string): Record<string, unknown> {
+  return {
+    keyOmitted: true,
+    keyBytes: Buffer.byteLength(key, "utf-8"),
+    unsafe: key.length > DETAILS_KEY_LENGTH_LIMIT || /[\x00-\x1f\x7f-\x9f\u001b]/.test(key),
+  };
 }
 
 async function attemptAutoAuth(
@@ -698,11 +847,12 @@ export async function executeCall(
       const result = await connection.client.readResource({ uri: toolMeta.resourceUri });
       const content = (result.contents ?? []).map(c => ({
         type: "text" as const,
-        text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
+        text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${sanitizeMimeType((c as { mimeType?: string }).mimeType ?? "", "application/octet-stream")}]` : JSON.stringify(c)),
       }));
+      const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }]);
       return {
-        content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }],
-        details: { mode: "call", resourceUri: toolMeta.resourceUri, server: serverName },
+        content: guarded.content,
+        details: { mode: "call", resourceUri: toolMeta.resourceUri, server: serverName, ...(guarded.details ? { output: guarded.details } : {}) },
       };
     }
 
@@ -727,30 +877,24 @@ export async function executeCall(
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
       const mcpContent = (result.content ?? []) as McpContent[];
       const content = transformMcpContent(mcpContent);
-
-      const mcpText = content
-        .filter((c) => c.type === "text")
-        .map((c) => (c as { text: string }).text)
-        .join("\n");
+      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
       if (result.isError) {
-        let errorWithSchema = `Error: ${mcpText || "Tool execution failed"}`;
-        if (toolMeta.inputSchema) {
-          errorWithSchema += `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
-        }
+        const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+        const guardedError = await guardMcpOutput(outputContent, { prefix: "Error: ", suffix: schemaText });
         return {
-          content: [{ type: "text" as const, text: errorWithSchema }],
-          details: { mode: "call", error: "tool_error", mcpResult: result },
+          content: guardedError.content,
+          details: { mode: "call", error: "tool_error", mcpResult: buildMcpResultDetails(result, guardedError.details) },
         };
       }
 
-      const resultText = mcpText || "(empty result)";
       const uiMessage = uiSession?.reused
         ? "Updated the open UI."
         : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
+      const guardedUi = await guardMcpOutput(outputContent, { suffix: `\n\n${uiMessage}` });
       return {
-        content: [{ type: "text" as const, text: `${resultText}\n\n${uiMessage}` }],
-        details: { mode: "call", mcpResult: result, server: serverName, tool: toolMeta.originalName, uiOpen: true },
+        content: guardedUi.content,
+        details: { mode: "call", mcpResult: buildMcpResultDetails(result, guardedUi.details), server: serverName, tool: toolMeta.originalName, uiOpen: true },
       };
     }
 
@@ -758,40 +902,36 @@ export async function executeCall(
 
     const mcpContent = (result.content ?? []) as McpContent[];
     const content = transformMcpContent(mcpContent);
+    const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
     if (result.isError) {
-      const errorText = content
-        .filter((c) => c.type === "text")
-        .map((c) => (c as { text: string }).text)
-        .join("\n") || "Tool execution failed";
-
-      let errorWithSchema = `Error: ${errorText}`;
-      if (toolMeta.inputSchema) {
-        errorWithSchema += `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
-      }
-
+      const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+      const guardedError = await guardMcpOutput(outputContent, { prefix: "Error: ", suffix: schemaText });
       return {
-        content: [{ type: "text" as const, text: errorWithSchema }],
-        details: { mode: "call", error: "tool_error", mcpResult: result },
+        content: guardedError.content,
+        details: { mode: "call", error: "tool_error", mcpResult: buildMcpResultDetails(result, guardedError.details) },
       };
     }
 
+    const guarded = await guardMcpOutput(outputContent);
     return {
-      content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }],
-      details: { mode: "call", mcpResult: result, server: serverName, tool: toolMeta.originalName },
+      content: guarded.content,
+      details: { mode: "call", mcpResult: buildMcpResultDetails(result, guarded.details), server: serverName, tool: toolMeta.originalName },
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     uiSession?.sendToolCancelled(message);
 
-    let errorWithSchema = `Failed to call tool: ${message}`;
-    if (toolMeta.inputSchema) {
-      errorWithSchema += `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
-    }
-
+    const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+    const guardedError = await guardMcpOutput([{ type: "text" as const, text: message }], { prefix: "Failed to call tool: ", suffix: schemaText });
     return {
-      content: [{ type: "text" as const, text: errorWithSchema }],
-      details: { mode: "call", error: "call_failed", message },
+      content: guardedError.content,
+      details: {
+        mode: "call",
+        error: "call_failed",
+        message: guardedError.details ? "output truncated; see output.fullOutputPath" : message,
+        ...(guardedError.details ? { output: guardedError.details } : {}),
+      },
     };
   } finally {
     if (uiSession?.reused) {

@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -143,6 +144,522 @@ describe("proxy auto auth", () => {
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
     expect(result.content[0].text).toBe("Reconnect demo from the host app.");
+  });
+
+  it("stores oversized proxy tool text in a temp file and keeps details bounded", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const omittedPrefix = "proxy-prefix".repeat(6000);
+    const visibleTail = "proxy-tail";
+    const oversizedText = `${omittedPrefix}\n${visibleTail}`;
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: false,
+          content: [{ type: "text", text: oversizedText }],
+        })),
+      },
+      tools: [{ name: "search", description: "Search" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo");
+    const text = result.content[0].text;
+    const fullOutputPath = text.match(/Full output: (.+?)\]/)?.[1];
+
+    try {
+      expect(text.length).toBeLessThan(oversizedText.length);
+      expect(text).not.toContain(omittedPrefix);
+      expect(text).toContain(visibleTail);
+      expect(fullOutputPath).toBeTruthy();
+      expect(existsSync(fullOutputPath!)).toBe(true);
+      expect(readFileSync(fullOutputPath!, "utf-8")).toContain(oversizedText);
+      expect(JSON.stringify(result.details)).not.toContain(omittedPrefix);
+      expect(result.details).toMatchObject({
+        mode: "call",
+        mcpResult: {
+          truncated: true,
+          fullOutputPath,
+        },
+      });
+    } finally {
+      if (fullOutputPath && existsSync(fullOutputPath)) {
+        unlinkSync(fullOutputPath);
+      }
+    }
+  });
+
+  it("summarizes proxy result details without copying raw structured content", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const secretPayload = "structured-secret".repeat(6000);
+    const unsafeKey = "key-secret\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007";
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: false,
+          content: [{ type: "text", text: "ok" }],
+          structuredContent: { [unsafeKey]: secretPayload },
+          _meta: { [unsafeKey]: secretPayload },
+          [unsafeKey]: secretPayload,
+        })),
+      },
+      tools: [{ name: "search", description: "Search" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo");
+
+    expect(result.content[0].text).toContain("ok");
+    expect(JSON.stringify(result.details)).not.toContain(secretPayload);
+    expect(JSON.stringify(result.details)).not.toContain("key-secret");
+    expect(JSON.stringify(result.details)).not.toContain("https://example.com");
+    expect(result.details).toMatchObject({
+      mode: "call",
+      mcpResult: {
+        isError: false,
+        contentSummary: [{ type: "text", textOmitted: true }],
+        structuredContent: { type: "object", omitted: true },
+        meta: { type: "object", omitted: true },
+        extraFields: [{ key: { keyOmitted: true }, omitted: true }],
+      },
+    });
+  });
+
+  it("replaces oversized proxy image payloads with metadata and bounded details", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const payload = "a".repeat(60000);
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: false,
+          content: [{ type: "image", data: payload, mimeType: "image/png" }],
+        })),
+      },
+      tools: [{ name: "image", description: "Image" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_image",
+              originalName: "image",
+              description: "Image",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_image", {}, "demo");
+    const text = result.content[0].text;
+    const fullOutputPath = text.match(/Full output: (.+?)\]/)?.[1];
+
+    try {
+      expect(result.content[0].type).toBe("text");
+      expect(text).toContain("[Image content: image/png");
+      expect(text).not.toContain(payload);
+      expect(JSON.stringify(result.details)).not.toContain(payload);
+      expect(result.details).toMatchObject({
+        mode: "call",
+        mcpResult: {
+          truncated: true,
+          fullOutputPath,
+        },
+      });
+      expect(fullOutputPath).toBeTruthy();
+      expect(existsSync(fullOutputPath!)).toBe(true);
+      expect(readFileSync(fullOutputPath!, "utf-8")).not.toContain(payload);
+    } finally {
+      if (fullOutputPath && existsSync(fullOutputPath)) {
+        unlinkSync(fullOutputPath);
+      }
+    }
+  });
+
+  it("bounds proxy content summary metadata without copying unsafe MIME labels", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const unsafeMimeType = `mime-secret-${"x".repeat(200)}\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007`;
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: false,
+          content: [
+            { type: "image", data: "abc", mimeType: unsafeMimeType },
+            ...Array.from({ length: 30 }, () => ({ type: "image", data: "def", mimeType: unsafeMimeType })),
+          ],
+        })),
+      },
+      tools: [{ name: "image", description: "Image" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_image",
+              originalName: "image",
+              description: "Image",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_image", {}, "demo");
+    const detailsText = JSON.stringify(result.details);
+
+    expect(detailsText).not.toContain("mime-secret");
+    expect(detailsText).not.toContain("https://example.com");
+    expect(result.details).toMatchObject({ mode: "call" });
+    const contentSummary = (result.details as any).mcpResult.contentSummary;
+    expect(contentSummary).toHaveLength(21);
+    expect(contentSummary[0]).toMatchObject({ type: "image", mimeType: "image/*", dataOmitted: true });
+    expect(contentSummary[1]).toMatchObject({ type: "image", mimeType: "image/*", dataOmitted: true });
+    expect(contentSummary.at(-1)).toEqual({ type: "omitted", count: 11 });
+  });
+
+  it("omits resource blob payloads and sanitizes audio MIME labels in proxy tool results", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const blobPayload = "base64-secret-ABC123";
+    const unsafeMimeType = "audio-secret\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007";
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: false,
+          content: [
+            { type: "resource", mimeType: unsafeMimeType, resource: { uri: "demo://blob", blob: blobPayload } },
+            { type: "audio", mimeType: unsafeMimeType, data: blobPayload },
+          ],
+        })),
+      },
+      tools: [{ name: "media", description: "Media" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_media",
+              originalName: "media",
+              description: "Media",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_media", {}, "demo");
+    const text = result.content.map((block: any) => block.text ?? "").join("\n");
+    const detailsText = JSON.stringify(result.details);
+
+    expect(text).toContain("[Resource: demo://blob]");
+    expect(text).toContain("[Binary data: application/octet-stream");
+    expect(text).toContain("[Audio content: audio/*]");
+    expect(text).not.toContain(blobPayload);
+    expect(text).not.toContain("audio-secret");
+    expect(text).not.toContain("https://example.com");
+    expect(detailsText).not.toContain(blobPayload);
+    expect(detailsText).not.toContain("audio-secret");
+    expect(detailsText).not.toContain("https://example.com");
+  });
+
+  it("keeps oversized proxy error output within final Pi limits after schema text is appended", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const omittedPrefix = "proxy-error-prefix".repeat(6000);
+    const visibleTail = "proxy-error-tail";
+    const oversizedText = `${omittedPrefix}\n${visibleTail}`;
+    const largeInputSchema = {
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 500 }, (_, index) => [`field_${index}`, { type: "string", description: "schema-description".repeat(10) }]),
+      ),
+    };
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => ({
+          isError: true,
+          content: [{ type: "text", text: oversizedText }],
+        })),
+      },
+      tools: [{ name: "search", description: "Search" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: largeInputSchema,
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo");
+    const text = result.content[0].text;
+    const fullOutputPath = text.match(/Full output: (.+?)\]/)?.[1];
+
+    try {
+      expect(Buffer.byteLength(text, "utf-8")).toBeLessThanOrEqual(50 * 1024);
+      expect(text.split("\n").length).toBeLessThanOrEqual(2000);
+      expect(text).toContain("Error:");
+      expect(text).toContain("Expected parameters:");
+      expect(text).toContain(visibleTail);
+      expect(text).not.toContain(omittedPrefix);
+      expect(fullOutputPath).toBeTruthy();
+      expect(existsSync(fullOutputPath!)).toBe(true);
+      expect(JSON.stringify(result.details)).not.toContain(omittedPrefix);
+    } finally {
+      if (fullOutputPath && existsSync(fullOutputPath)) {
+        unlinkSync(fullOutputPath);
+      }
+    }
+  });
+
+  it("keeps thrown proxy call errors within final Pi limits", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const omittedPrefix = "proxy-throw-prefix".repeat(6000);
+    const visibleTail = "proxy-throw-tail";
+    const current = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async () => {
+          throw new Error(`${omittedPrefix}\n${visibleTail}`);
+        }),
+      },
+      tools: [{ name: "search", description: "Search" }],
+      resources: [],
+    };
+
+    const manager = {
+      connect: vi.fn(async () => current),
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(() => current),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+
+    const state = {
+      config: {
+        settings: { autoAuth: true, toolPrefix: "server" },
+        mcpServers: {
+          demo: { url: "https://api.example.com/mcp", auth: "oauth" },
+        },
+      },
+      manager,
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
+      failureTracker: new Map(),
+      ui: { setStatus: vi.fn() },
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo");
+    const text = result.content[0].text;
+    const fullOutputPath = text.match(/Full output: (.+?)\]/)?.[1];
+
+    try {
+      expect(Buffer.byteLength(text, "utf-8")).toBeLessThanOrEqual(50 * 1024);
+      expect(text).toContain("Failed to call tool:");
+      expect(text).toContain(visibleTail);
+      expect(text).not.toContain(omittedPrefix);
+      expect(JSON.stringify(result.details)).not.toContain(omittedPrefix);
+      expect(fullOutputPath).toBeTruthy();
+      expect(existsSync(fullOutputPath!)).toBe(true);
+    } finally {
+      if (fullOutputPath && existsSync(fullOutputPath)) {
+        unlinkSync(fullOutputPath);
+      }
+    }
   });
 
   it("auto-authenticates and retries executeCall once", async () => {

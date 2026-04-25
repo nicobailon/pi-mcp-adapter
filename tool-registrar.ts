@@ -2,6 +2,7 @@
 // NOTE: Tools are NOT registered with Pi - only the unified `mcp` proxy tool is registered.
 // This keeps the LLM context small (1 tool instead of 100s).
 
+import { formatSize, sanitizeMimeType } from "./mcp-content-formatting.js";
 import type { McpContent, ContentBlock } from "./types.js";
 
 /**
@@ -21,7 +22,7 @@ export function transformMcpContent(content: McpContent[]): ContentBlock[] {
     }
     if (c.type === "resource") {
       const resourceUri = c.resource?.uri ?? "(no URI)";
-      const resourceContent = c.resource?.text ?? (c.resource ? JSON.stringify(c.resource) : "(no content)");
+      const resourceContent = formatResourceContent(c);
       return {
         type: "text" as const,
         text: `[Resource: ${resourceUri}]\n${resourceContent}`,
@@ -38,9 +39,24 @@ export function transformMcpContent(content: McpContent[]): ContentBlock[] {
     if (c.type === "audio") {
       return {
         type: "text" as const,
-        text: `[Audio content: ${c.mimeType ?? "audio/*"}]`,
+        text: `[Audio content: ${sanitizeMimeType(c.mimeType ?? "", "audio/*")}]`,
       };
     }
     return { type: "text" as const, text: JSON.stringify(c) };
   });
+}
+
+/**
+ * Format MCP embedded resources without copying binary blob payloads into model-facing text.
+ */
+function formatResourceContent(content: McpContent): string {
+  if (content.resource?.text !== undefined) {
+    return content.resource.text;
+  }
+  if (content.resource?.blob !== undefined) {
+    const mimeType = sanitizeMimeType(content.mimeType ?? "", "application/octet-stream");
+    const bytes = Buffer.byteLength(content.resource.blob, "utf-8");
+    return `[Binary data: ${mimeType}, ${formatSize(bytes)} base64 payload omitted]`;
+  }
+  return "(no content)";
 }
