@@ -8,6 +8,7 @@ import { transformMcpContent } from "./tool-registrar.js";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
 import { formatAuthRequiredMessage, truncateAtWord } from "./utils.js";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.js";
+import { guardMcpOutput, type McpOutputGuardDetails } from "./mcp-output-guard.js";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 
@@ -30,6 +31,25 @@ function getAuthFailedMessage(state: McpExtensionState, serverName: string, mess
     return `OAuth authentication failed for "${serverName}": ${message}. ${getAuthRequiredMessage(state, serverName)}`;
   }
   return `OAuth authentication failed for "${serverName}": ${message}. Run /mcp-auth ${serverName} first.`;
+}
+
+/**
+ * Stores only bounded MCP result metadata in proxy details when the model-facing output was truncated.
+ */
+function buildMcpResultDetails(result: unknown, guardDetails: McpOutputGuardDetails | undefined): unknown {
+  if (!guardDetails) {
+    return result;
+  }
+
+  return {
+    truncated: true,
+    fullOutputPath: guardDetails.fullOutputPath,
+    totalLines: guardDetails.totalLines,
+    totalBytes: guardDetails.totalBytes,
+    outputLines: guardDetails.outputLines,
+    outputBytes: guardDetails.outputBytes,
+    writeError: guardDetails.writeError,
+  };
 }
 
 async function attemptAutoAuth(
@@ -700,9 +720,10 @@ export async function executeCall(
         type: "text" as const,
         text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
       }));
+      const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }]);
       return {
-        content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }],
-        details: { mode: "call", resourceUri: toolMeta.resourceUri, server: serverName },
+        content: guarded.content,
+        details: { mode: "call", resourceUri: toolMeta.resourceUri, server: serverName, ...(guarded.details ? { output: guarded.details } : {}) },
       };
     }
 
@@ -727,30 +748,24 @@ export async function executeCall(
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
       const mcpContent = (result.content ?? []) as McpContent[];
       const content = transformMcpContent(mcpContent);
-
-      const mcpText = content
-        .filter((c) => c.type === "text")
-        .map((c) => (c as { text: string }).text)
-        .join("\n");
+      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
       if (result.isError) {
-        let errorWithSchema = `Error: ${mcpText || "Tool execution failed"}`;
-        if (toolMeta.inputSchema) {
-          errorWithSchema += `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
-        }
+        const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+        const guardedError = await guardMcpOutput(outputContent, { prefix: "Error: ", suffix: schemaText });
         return {
-          content: [{ type: "text" as const, text: errorWithSchema }],
-          details: { mode: "call", error: "tool_error", mcpResult: result },
+          content: guardedError.content,
+          details: { mode: "call", error: "tool_error", mcpResult: buildMcpResultDetails(result, guardedError.details) },
         };
       }
 
-      const resultText = mcpText || "(empty result)";
       const uiMessage = uiSession?.reused
         ? "Updated the open UI."
         : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
+      const guardedUi = await guardMcpOutput(outputContent, { suffix: `\n\n${uiMessage}` });
       return {
-        content: [{ type: "text" as const, text: `${resultText}\n\n${uiMessage}` }],
-        details: { mode: "call", mcpResult: result, server: serverName, tool: toolMeta.originalName, uiOpen: true },
+        content: guardedUi.content,
+        details: { mode: "call", mcpResult: buildMcpResultDetails(result, guardedUi.details), server: serverName, tool: toolMeta.originalName, uiOpen: true },
       };
     }
 
@@ -758,40 +773,36 @@ export async function executeCall(
 
     const mcpContent = (result.content ?? []) as McpContent[];
     const content = transformMcpContent(mcpContent);
+    const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
     if (result.isError) {
-      const errorText = content
-        .filter((c) => c.type === "text")
-        .map((c) => (c as { text: string }).text)
-        .join("\n") || "Tool execution failed";
-
-      let errorWithSchema = `Error: ${errorText}`;
-      if (toolMeta.inputSchema) {
-        errorWithSchema += `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
-      }
-
+      const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+      const guardedError = await guardMcpOutput(outputContent, { prefix: "Error: ", suffix: schemaText });
       return {
-        content: [{ type: "text" as const, text: errorWithSchema }],
-        details: { mode: "call", error: "tool_error", mcpResult: result },
+        content: guardedError.content,
+        details: { mode: "call", error: "tool_error", mcpResult: buildMcpResultDetails(result, guardedError.details) },
       };
     }
 
+    const guarded = await guardMcpOutput(outputContent);
     return {
-      content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }],
-      details: { mode: "call", mcpResult: result, server: serverName, tool: toolMeta.originalName },
+      content: guarded.content,
+      details: { mode: "call", mcpResult: buildMcpResultDetails(result, guarded.details), server: serverName, tool: toolMeta.originalName },
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     uiSession?.sendToolCancelled(message);
 
-    let errorWithSchema = `Failed to call tool: ${message}`;
-    if (toolMeta.inputSchema) {
-      errorWithSchema += `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
-    }
-
+    const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+    const guardedError = await guardMcpOutput([{ type: "text" as const, text: message }], { prefix: "Failed to call tool: ", suffix: schemaText });
     return {
-      content: [{ type: "text" as const, text: errorWithSchema }],
-      details: { mode: "call", error: "call_failed", message },
+      content: guardedError.content,
+      details: {
+        mode: "call",
+        error: "call_failed",
+        message: guardedError.details ? "output truncated; see output.fullOutputPath" : message,
+        ...(guardedError.details ? { output: guardedError.details } : {}),
+      },
     };
   } finally {
     if (uiSession?.reused) {

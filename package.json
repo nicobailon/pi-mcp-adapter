@@ -40,6 +40,7 @@
     "index.ts",
     "state.ts",
     "utils.ts",
+    "mcp-output-guard.ts",
     "tool-rendering.ts",
     "tool-metadata.ts",
     "init.ts",

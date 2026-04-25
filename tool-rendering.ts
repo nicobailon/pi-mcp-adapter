@@ -45,8 +45,7 @@ function getTextOutput(result: AgentToolResult<Record<string, unknown>>): string
   return result.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
-    .join("\n")
-    .trim();
+    .join("\n");
 }
 
 /**
@@ -64,7 +63,7 @@ class McpResultPreview implements RenderComponent {
     const maxLines = this.expanded ? lines.length : COLLAPSED_RESULT_PREVIEW_LINES;
     const displayLines = lines.slice(0, maxLines);
     const remaining = lines.length - maxLines;
-    const rendered = ["", ...displayLines.map((line) => truncateLine(this.theme.fg("toolOutput", line), width))];
+    const rendered = ["", ...displayLines.map((line) => truncateLine(this.theme.fg("toolOutput", replaceTabs(line)), width))];
 
     if (remaining > 0) {
       rendered.push(truncateLine(formatRemainingLinesHint(remaining, this.theme), width));
@@ -144,6 +143,13 @@ function trimTrailingEmptyLines(lines: string[]): string[] {
 /**
  * Truncate a line to terminal width without splitting ANSI escape sequences.
  */
+/**
+ * Match Pi text tool rendering by replacing tabs before terminal output.
+ */
+function replaceTabs(text: string): string {
+  return text.replace(/\t/g, "   ");
+}
+
 function truncateLine(line: string, width: number): string {
   if (visibleWidth(line) <= width) {
     return line;

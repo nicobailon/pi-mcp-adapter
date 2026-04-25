@@ -11,6 +11,7 @@ import { formatToolName, isToolExcluded } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.js";
 import { formatAuthRequiredMessage } from "./utils.js";
+import { guardMcpOutput } from "./mcp-output-guard.js";
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 
@@ -344,9 +345,10 @@ export function createDirectToolExecutor(
           type: "text" as const,
           text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
         }));
+        const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }]);
         return {
-          content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }],
-          details: { server: spec.serverName, resourceUri: spec.resourceUri },
+          content: guarded.content,
+          details: { server: spec.serverName, resourceUri: spec.resourceUri, ...(guarded.details ? { output: guarded.details } : {}) },
         };
       }
 
@@ -372,43 +374,41 @@ export function createDirectToolExecutor(
 
       const mcpContent = (result.content ?? []) as McpContent[];
       const content = transformMcpContent(mcpContent);
+      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
       if (result.isError) {
-        let errorText = content.filter(c => c.type === "text").map(c => (c as { text: string }).text).join("\n") || "Tool execution failed";
-        if (spec.inputSchema) {
-          errorText += `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}`;
-        }
+        const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
+        const guardedError = await guardMcpOutput(outputContent, { prefix: "Error: ", suffix: schemaText });
         return {
-          content: [{ type: "text" as const, text: `Error: ${errorText}` }],
-          details: { error: "tool_error", server: spec.serverName },
+          content: guardedError.content,
+          details: { error: "tool_error", server: spec.serverName, ...(guardedError.details ? { output: guardedError.details } : {}) },
         };
       }
 
-      const resultText = content.filter(c => c.type === "text").map(c => (c as { text: string }).text).join("\n") || "(empty result)";
+      const guarded = await guardMcpOutput(outputContent);
       if (hasUi) {
         const uiMessage = uiSession?.reused
           ? "Updated the open UI."
           : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
+        const guardedUi = await guardMcpOutput(outputContent, { suffix: `\n\n${uiMessage}` });
         return {
-          content: [{ type: "text" as const, text: `${resultText}\n\n${uiMessage}` }],
-          details: { server: spec.serverName, tool: spec.originalName, uiOpen: true },
+          content: guardedUi.content,
+          details: { server: spec.serverName, tool: spec.originalName, uiOpen: true, ...(guardedUi.details ? { output: guardedUi.details } : {}) },
         };
       }
 
       return {
-        content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }],
-        details: { server: spec.serverName, tool: spec.originalName },
+        content: guarded.content,
+        details: { server: spec.serverName, tool: spec.originalName, ...(guarded.details ? { output: guarded.details } : {}) },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       uiSession?.sendToolCancelled(message);
-      let errorText = `Failed to call tool: ${message}`;
-      if (spec.inputSchema) {
-        errorText += `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}`;
-      }
+      const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
+      const guardedError = await guardMcpOutput([{ type: "text" as const, text: message }], { prefix: "Failed to call tool: ", suffix: schemaText });
       return {
-        content: [{ type: "text" as const, text: errorText }],
-        details: { error: "call_failed", server: spec.serverName },
+        content: guardedError.content,
+        details: { error: "call_failed", server: spec.serverName, ...(guardedError.details ? { output: guardedError.details } : {}) },
       };
     } finally {
       if (uiSession?.reused) {

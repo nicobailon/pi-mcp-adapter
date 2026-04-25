@@ -86,4 +86,21 @@ describe("renderMcpResult", () => {
 
     expect(result.render(4)).toEqual(["", "a..."]);
   });
+
+  /**
+   * Tabs are expanded before rendering because raw tabs can corrupt terminal layout inside boxed tool output.
+   */
+  it("expands tabs before rendering", () => {
+    const result = renderMcpResult(
+      {
+        content: [{ type: "text", text: "\t\"bytes\"" }],
+        details: {},
+      },
+      { expanded: false, isPartial: false },
+      theme,
+      {} as never,
+    );
+
+    expect(result.render(80)).toEqual(["", "   \"bytes\""]);
+  });
 });
