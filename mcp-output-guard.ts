@@ -356,14 +356,14 @@ function formatTruncationNotice(truncation: TruncationResult, fullOutputPath: st
 
   const startLine = truncation.totalLines - truncation.outputLines + 1;
   const endLine = truncation.totalLines;
-  const readHint = `\n[Read first bytes: bash head -c ${DEFAULT_MAX_BYTES} ${fullOutputPath}]`;
   if (truncation.lastLinePartial) {
+    const readHint = `\n[Read first bytes: bash head -c ${DEFAULT_MAX_BYTES} ${fullOutputPath}]`;
     return `[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine}. Full output: ${fullOutputPath}]${readHint}`;
   }
   if (truncation.truncatedBy === "lines") {
-    return `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${fullOutputPath}]${readHint}`;
+    return `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${fullOutputPath}]`;
   }
-  return `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${fullOutputPath}]${readHint}`;
+  return `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${fullOutputPath}]`;
 }
 
 /**

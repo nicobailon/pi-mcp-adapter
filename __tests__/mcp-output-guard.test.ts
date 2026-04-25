@@ -33,6 +33,7 @@ describe("mcp output guard", () => {
       expect(text.split("\n").length).toBeLessThanOrEqual(maxOutputLines);
       expect(Buffer.byteLength(text, "utf-8")).toBeLessThanOrEqual(maxOutputBytes);
       expect(fullOutputPath).toBeTruthy();
+      expect(text).not.toContain("bash head -c");
       expect(existsSync(fullOutputPath!)).toBe(true);
     } finally {
       if (fullOutputPath && existsSync(fullOutputPath)) {
