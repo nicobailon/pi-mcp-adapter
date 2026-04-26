@@ -80,6 +80,14 @@ export function formatAuthRequiredMessage(
   return template ? template.replaceAll("${server}", serverName) : defaultMessage;
 }
 
+export function getToolRequestTimeoutMs(config: McpConfig | undefined, serverName: string): number | undefined {
+  const serverTimeout = config?.mcpServers[serverName]?.toolTimeoutMs;
+  if (typeof serverTimeout === "number") return serverTimeout;
+
+  const globalTimeout = config?.settings?.toolTimeoutMs;
+  return typeof globalTimeout === "number" ? globalTimeout : undefined;
+}
+
 /**
  * Extract the adapter-owned UI stream mode from tool metadata.
  */

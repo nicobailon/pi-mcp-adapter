@@ -6,7 +6,7 @@ import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSe
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.js";
 import { transformMcpContent } from "./tool-registrar.js";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
-import { formatAuthRequiredMessage, truncateAtWord } from "./utils.js";
+import { formatAuthRequiredMessage, getToolRequestTimeoutMs, truncateAtWord } from "./utils.js";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.js";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
@@ -716,11 +716,16 @@ export async function executeCall(
         })
       : null;
 
-    const resultPromise = connection.client.callTool({
+    const callParams = {
       name: toolMeta.originalName,
       arguments: args ?? {},
       _meta: uiSession?.requestMeta,
-    });
+    };
+    const requestTimeoutMs = getToolRequestTimeoutMs(state.config, serverName);
+    const resultPromise =
+      requestTimeoutMs === undefined
+        ? connection.client.callTool(callParams)
+        : connection.client.callTool(callParams, undefined, { timeout: requestTimeoutMs });
 
     if (toolMeta.uiResourceUri) {
       const result = await resultPromise;

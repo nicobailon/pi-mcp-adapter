@@ -212,6 +212,7 @@ export async function maybeStartUiSession(
       resource,
       manager: state.manager,
       consentManager: state.consentManager,
+      config: state.config,
       hostContext,
 
       onMessage: (params: UiMessageParams) => {

@@ -301,6 +301,7 @@ export interface ServerEntry {
   oauth?: OAuthConfig | false;
   lifecycle?: "keep-alive" | "lazy" | "eager";
   idleTimeout?: number; // minutes, overrides global setting
+  toolTimeoutMs?: number; // MCP request timeout in milliseconds, overrides global setting
   // Resource handling
   exposeResources?: boolean;
   // Direct tool registration
@@ -315,6 +316,7 @@ export interface ServerEntry {
 export interface McpSettings {
   toolPrefix?: "server" | "none" | "short";
   idleTimeout?: number; // minutes, default 10, 0 to disable
+  toolTimeoutMs?: number; // MCP request timeout in milliseconds, default SDK timeout
   directTools?: boolean;
   disableProxyTool?: boolean;
   autoAuth?: boolean;

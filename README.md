@@ -110,7 +110,8 @@ Pi-specific files are the write targets for imported or shared global servers wh
       "command": "npx",
       "args": ["-y", "some-mcp-server"],
       "lifecycle": "lazy",
-      "idleTimeout": 10
+      "idleTimeout": 10,
+      "toolTimeoutMs": 600000
     }
   }
 }
@@ -128,6 +129,7 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `bearerToken` / `bearerTokenEnv` | Token or env var name |
 | `lifecycle` | `"lazy"` (default), `"eager"`, or `"keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
+| `toolTimeoutMs` | MCP tool call request timeout in milliseconds (overrides global) |
 | `exposeResources` | Expose MCP resources as tools (default: true) |
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
 | `excludeTools` | `string[]` of tool names to hide (matches original names like `get_screenshot` and prefixed names like `figma_get_screenshot`) |
@@ -145,7 +147,8 @@ Pi-specific files are the write targets for imported or shared global servers wh
 {
   "settings": {
     "toolPrefix": "server",
-    "idleTimeout": 10
+    "idleTimeout": 10,
+    "toolTimeoutMs": 600000
   },
   "mcpServers": { }
 }
@@ -155,13 +158,14 @@ Pi-specific files are the write targets for imported or shared global servers wh
 |---------|-------------|
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), or `"none"` |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
+| `toolTimeoutMs` | Global MCP tool call request timeout in milliseconds (defaults to MCP SDK timeout) |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to request LLM sampling through Pi's current/default model (default: true when UI approval is available). |
 | `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
 
-Per-server `idleTimeout` overrides the global setting.
+Per-server `idleTimeout` and `toolTimeoutMs` override the global settings.
 
 ### Direct Tools
 
