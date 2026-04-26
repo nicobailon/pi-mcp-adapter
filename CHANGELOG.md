@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added global and per-server `toolTimeoutMs` settings to configure MCP tool call request timeouts.
+
 ## [2.6.0] - 2026-05-10
 
 ### Added
