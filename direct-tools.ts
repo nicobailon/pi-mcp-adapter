@@ -10,7 +10,7 @@ import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
 import { formatToolName, isToolExcluded } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.js";
-import { formatAuthRequiredMessage } from "./utils.js";
+import { formatAuthRequiredMessage, getToolRequestTimeoutMs } from "./utils.js";
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 
@@ -361,11 +361,16 @@ export function createDirectToolExecutor(
           })
         : null;
 
-      const resultPromise = connection.client.callTool({
+      const callParams = {
         name: spec.originalName,
         arguments: params ?? {},
         _meta: uiSession?.requestMeta,
-      });
+      };
+      const requestTimeoutMs = getToolRequestTimeoutMs(state.config, spec.serverName);
+      const resultPromise =
+        requestTimeoutMs === undefined
+          ? connection.client.callTool(callParams)
+          : connection.client.callTool(callParams, undefined, { timeout: requestTimeoutMs });
 
       const result = await resultPromise;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);

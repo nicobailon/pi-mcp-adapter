@@ -28,6 +28,8 @@ import {
   type UiSessionMessages,
   type UiStreamSummary,
 } from "./types.js";
+import type { McpConfig } from "./types.js";
+import { getToolRequestTimeoutMs } from "./utils.js";
 
 const MAX_BODY_SIZE = 2 * 1024 * 1024;
 const ABANDONED_GRACE_MS = 60_000;
@@ -41,6 +43,7 @@ export interface UiServerOptions {
   resource: UiResourceContent;
   manager: McpServerManager;
   consentManager: ConsentManager;
+  config?: McpConfig;
   hostContext?: UiHostContext;
   initialResultPromise?: Promise<CallToolResult>;
   sessionToken?: string;
@@ -340,13 +343,18 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         try {
           options.manager.touch(options.serverName);
           options.manager.incrementInFlight(options.serverName);
-          const result = await connection.client.callTool({
+          const mcpCallParams = {
             name: callParams.name,
             arguments:
               callParams.arguments && typeof callParams.arguments === "object" && !Array.isArray(callParams.arguments)
                 ? callParams.arguments
                 : {},
-          });
+          };
+          const requestTimeoutMs = getToolRequestTimeoutMs(options.config, options.serverName);
+          const result =
+            requestTimeoutMs === undefined
+              ? await connection.client.callTool(mcpCallParams)
+              : await connection.client.callTool(mcpCallParams, undefined, { timeout: requestTimeoutMs });
           sendJson(res, 200, { ok: true, result });
         } finally {
           options.manager.decrementInFlight(options.serverName);
