@@ -64,8 +64,14 @@ export async function initializeMcp(
     sendMessage: (message, options) => pi.sendMessage(message, options),
   };
 
-  const serverEntries = Object.entries(config.mcpServers);
+  const serverEntries = Object.entries(config.mcpServers).filter(
+    ([, definition]) => !definition.disabled
+  );
   if (serverEntries.length === 0) {
+    const totalServers = Object.keys(config.mcpServers).length;
+    if (totalServers > 0 && ctx.hasUI) {
+      ctx.ui.notify(`MCP: All ${totalServers} server(s) are disabled`, "info");
+    }
     return state;
   }
 
@@ -269,13 +275,20 @@ export function flushMetadataCache(state: McpExtensionState): void {
 export function updateStatusBar(state: McpExtensionState): void {
   const ui = state.ui;
   if (!ui) return;
-  const total = Object.keys(state.config.mcpServers).length;
+  const allServers = Object.entries(state.config.mcpServers);
+  const total = allServers.length;
   if (total === 0) {
     ui.setStatus("mcp", undefined);
     return;
   }
+  const disabledCount = allServers.filter(([, def]) => def.disabled).length;
   const connectedCount = state.manager.getAllConnections().size;
-  ui.setStatus("mcp", ui.theme.fg("accent", `MCP: ${connectedCount}/${total} servers`));
+  const activeTotal = total - disabledCount;
+  let status = `MCP: ${connectedCount}/${activeTotal} servers`;
+  if (disabledCount > 0) {
+    status += ` (${disabledCount} disabled)`;
+  }
+  ui.setStatus("mcp", ui.theme.fg("accent", status));
 }
 
 export function getFailureAgeSeconds(state: McpExtensionState, serverName: string): number | null {

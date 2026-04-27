@@ -591,6 +591,22 @@ export function writeSharedServerEntry(filePath: string, serverName: string, ent
   return filePath;
 }
 
+export function setServerDisabled(overridePath: string | undefined, serverName: string, disabled: boolean): string | null {
+  const userPath = getPiGlobalConfigPath(overridePath);
+  const raw = readRawConfigObject(userPath);
+  const servers = getServersObject(raw);
+  if (!servers[serverName]) return null;
+  if (disabled) {
+    servers[serverName] = { ...servers[serverName], disabled: true };
+  } else {
+    const { disabled: _, ...rest } = servers[serverName];
+    servers[serverName] = rest;
+  }
+  setServersObject(raw, servers);
+  writeRawConfigObject(userPath, raw);
+  return userPath;
+}
+
 export function getServerProvenance(overridePath?: string): Map<string, ServerProvenance> {
   const provenance = new Map<string, ServerProvenance>();
   const userPath = getPiGlobalConfigPath(overridePath);

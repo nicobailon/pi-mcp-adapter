@@ -309,6 +309,8 @@ export interface ServerEntry {
   excludeTools?: string[];
   // Debug
   debug?: boolean;  // Show server stderr (default: false)
+  // Disable server without removing config
+  disabled?: boolean;
 }
 
 // Settings
