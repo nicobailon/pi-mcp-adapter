@@ -2,7 +2,7 @@ import type { ExtensionAPI, ToolInfo } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
 import { Type } from "typebox";
 import { showStatus, showTools, reconnectServers, authenticateServer, openMcpPanel, openMcpSetup } from "./commands.js";
-import { loadMcpConfig } from "./config.js";
+import { loadMcpConfig, setServerDisabled } from "./config.js";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.js";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
@@ -178,6 +178,32 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         case "tools":
           await showTools(state, ctx);
           break;
+        case "disable": {
+          if (!targetServer) {
+            if (ctx.hasUI) ctx.ui.notify("Usage: /mcp disable <server-name>", "error");
+            break;
+          }
+          const disablePath = setServerDisabled(earlyConfigPath, targetServer, true);
+          if (!disablePath) {
+            if (ctx.hasUI) ctx.ui.notify(`Server "${targetServer}" not found in config`, "error");
+          } else {
+            if (ctx.hasUI) ctx.ui.notify(`Disabled server "${targetServer}" — reload to apply`, "info");
+          }
+          break;
+        }
+        case "enable": {
+          if (!targetServer) {
+            if (ctx.hasUI) ctx.ui.notify("Usage: /mcp enable <server-name>", "error");
+            break;
+          }
+          const enablePath = setServerDisabled(earlyConfigPath, targetServer, false);
+          if (!enablePath) {
+            if (ctx.hasUI) ctx.ui.notify(`Server "${targetServer}" not found in config`, "error");
+          } else {
+            if (ctx.hasUI) ctx.ui.notify(`Enabled server "${targetServer}" — reload to apply`, "info");
+          }
+          break;
+        }
         case "setup": {
           const result = await openMcpSetup(state, pi, ctx, earlyConfigPath, "setup");
           if (result?.configChanged) {

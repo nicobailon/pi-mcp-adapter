@@ -132,6 +132,7 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
 | `excludeTools` | `string[]` of tool names to hide (matches original names like `get_screenshot` and prefixed names like `figma_get_screenshot`) |
 | `debug` | Show server stderr (default: false) |
+| `disabled` | Skip this server entirely without removing config (default: false) |
 
 ### Lifecycle Modes
 
@@ -344,6 +345,8 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 | `/mcp tools` | List all tools |
 | `/mcp reconnect` | Reconnect all servers |
 | `/mcp reconnect <server>` | Connect or reconnect a single server |
+| `/mcp disable <server>` | Disable a server (requires `/reload` to apply) |
+| `/mcp enable <server>` | Re-enable a disabled server (requires `/reload` to apply) |
 | `/mcp-auth <server>` | OAuth setup |
 
 If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`, and direct tool calls will automatically run OAuth when needed and retry once. In non-interactive sessions, browser-based OAuth still requires running `/mcp-auth <server>` manually.
