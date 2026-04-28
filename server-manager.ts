@@ -188,6 +188,8 @@ export class McpServerManager {
         clientId: definition.oauth?.clientId,
         clientSecret: definition.oauth?.clientSecret,
         scope: definition.oauth?.scope,
+        clientName: definition.oauth?.clientName,
+        clientUri: definition.oauth?.clientUri,
       };
       authProvider = new McpOAuthProvider(
         serverName,

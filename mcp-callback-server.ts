@@ -9,6 +9,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import {
   OAUTH_CALLBACK_PATH,
   getConfiguredOAuthCallbackPort,
+  getOAuthCallbackHost,
   getOAuthCallbackPort,
   setOAuthCallbackPort,
 } from "./mcp-oauth-provider.js"
@@ -178,7 +179,7 @@ export async function ensureCallbackServer(options: EnsureCallbackServerOptions 
           reject(err)
         })
 
-        candidateServer.listen(candidatePort, "localhost", () => {
+        candidateServer.listen(candidatePort, getOAuthCallbackHost(), () => {
           resolve()
         })
       })
@@ -203,13 +204,13 @@ export async function ensureCallbackServer(options: EnsureCallbackServerOptions 
 
   if (strictPort) {
     throw new Error(
-      `OAuth callback port ${preferredPort} is already in use. Pre-registered OAuth clients require an exact redirect URI; set MCP_OAUTH_CALLBACK_PORT to your registered port or free port ${preferredPort}`,
+      `OAuth callback ${getOAuthCallbackHost()}:${preferredPort} is already in use. Pre-registered OAuth clients require an exact redirect URI; set MCP_OAUTH_CALLBACK_PORT to your registered port or free port ${preferredPort}`,
       { cause: lastError }
     )
   }
 
   throw new Error(
-    `OAuth callback port ${preferredPort} is already in use and no free port was found in range ${preferredPort}-${preferredPort + MAX_PORT_SCAN_ATTEMPTS - 1}`,
+    `OAuth callback ${getOAuthCallbackHost()}:${preferredPort} is already in use and no free port was found in range ${preferredPort}-${preferredPort + MAX_PORT_SCAN_ATTEMPTS - 1}`,
     { cause: lastError }
   )
 }

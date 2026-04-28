@@ -60,6 +60,8 @@ function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     clientId: definition.oauth?.clientId,
     clientSecret: definition.oauth?.clientSecret,
     scope: definition.oauth?.scope,
+    clientName: definition.oauth?.clientName,
+    clientUri: definition.oauth?.clientUri,
   }
 }
 
