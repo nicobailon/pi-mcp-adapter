@@ -29,7 +29,10 @@ import {
 
 // Callback server configuration
 const DEFAULT_OAUTH_CALLBACK_PORT = 19876
+const DEFAULT_OAUTH_CALLBACK_HOST = "127.0.0.1"
 const OAUTH_CALLBACK_PATH = "/callback"
+
+const configuredOAuthCallbackHost = process.env.MCP_OAUTH_CALLBACK_HOST?.trim() || DEFAULT_OAUTH_CALLBACK_HOST
 
 let configuredOAuthCallbackPort = DEFAULT_OAUTH_CALLBACK_PORT
 
@@ -46,6 +49,10 @@ export function getConfiguredOAuthCallbackPort(): number {
   return configuredOAuthCallbackPort
 }
 
+export function getOAuthCallbackHost(): string {
+  return configuredOAuthCallbackHost
+}
+
 export function getOAuthCallbackPort(): number {
   return oauthCallbackPort
 }
@@ -60,6 +67,10 @@ export interface McpOAuthConfig {
   clientId?: string
   clientSecret?: string
   scope?: string
+  /** Override dynamic OAuth registration client_name. */
+  clientName?: string
+  /** Override dynamic OAuth registration client_uri. */
+  clientUri?: string
 }
 
 /** Callbacks for OAuth flow interactions */
@@ -83,13 +94,21 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return this.config.grantType === "client_credentials"
   }
 
+  private get clientName(): string {
+    return this.config.clientName ?? "Pi Coding Agent"
+  }
+
+  private get clientUri(): string {
+    return this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter"
+  }
+
   /**
    * The redirect URL for OAuth callbacks.
    * This must match the redirect_uri in client metadata.
    */
   get redirectUrl(): string | undefined {
     if (this.usesClientCredentials) return undefined
-    return `http://localhost:${getOAuthCallbackPort()}${OAUTH_CALLBACK_PATH}`
+    return `http://${getOAuthCallbackHost()}:${getOAuthCallbackPort()}${OAUTH_CALLBACK_PATH}`
   }
 
   /**
@@ -99,7 +118,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   get clientMetadata(): OAuthClientMetadata {
     if (this.usesClientCredentials) {
       return {
-        client_name: "Pi Coding Agent",
+        client_name: this.clientName,
         redirect_uris: [],
         grant_types: ["client_credentials"],
         token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
@@ -113,8 +132,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
     return {
       redirect_uris: [redirectUrl],
-      client_name: "Pi Coding Agent",
-      client_uri: "https://github.com/nicobailon/pi-mcp-adapter",
+      client_name: this.clientName,
+      client_uri: this.clientUri,
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
@@ -300,4 +319,4 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 }
 
-export { DEFAULT_OAUTH_CALLBACK_PORT, OAUTH_CALLBACK_PATH }
+export { DEFAULT_OAUTH_CALLBACK_PORT, DEFAULT_OAUTH_CALLBACK_HOST, OAUTH_CALLBACK_PATH }

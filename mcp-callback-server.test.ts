@@ -52,7 +52,7 @@ describe("mcp-callback-server", () => {
       // Simulate callback by making HTTP request
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?code=${expectedCode}&state=${state}`
+        `http://127.0.0.1:${callbackPort}/callback?code=${expectedCode}&state=${state}`
       )
 
       // Should get HTML success response
@@ -76,7 +76,7 @@ describe("mcp-callback-server", () => {
       // Simulate error callback
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?error=${errorMsg}&state=${state}`
+        `http://127.0.0.1:${callbackPort}/callback?error=${errorMsg}&state=${state}`
       )
 
       assert.strictEqual(response.status, 200)
@@ -92,7 +92,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?code=abc123`
+        `http://127.0.0.1:${callbackPort}/callback?code=abc123`
       )
 
       assert.strictEqual(response.status, 400)
@@ -108,7 +108,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?code=abc123&state=invalid-state`
+        `http://127.0.0.1:${callbackPort}/callback?code=abc123&state=invalid-state`
       )
 
       assert.strictEqual(response.status, 400)
@@ -127,7 +127,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?state=${state}`
+        `http://127.0.0.1:${callbackPort}/callback?state=${state}`
       )
 
       assert.strictEqual(response.status, 400)
@@ -143,7 +143,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/wrong/path`
+        `http://127.0.0.1:${callbackPort}/wrong/path`
       )
 
       assert.strictEqual(response.status, 404)

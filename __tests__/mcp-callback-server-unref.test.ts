@@ -50,6 +50,7 @@ const mocks = vi.hoisted(() => {
     runtime,
     createServer,
     getConfiguredOAuthCallbackPort: vi.fn(() => state.configuredPort),
+    getOAuthCallbackHost: vi.fn(() => "127.0.0.1"),
     getOAuthCallbackPort: vi.fn(() => state.activePort),
     setOAuthCallbackPort: vi.fn((port: number) => {
       state.activePort = port;
@@ -64,6 +65,7 @@ vi.mock("http", () => ({
 vi.mock("../mcp-oauth-provider.js", () => ({
   OAUTH_CALLBACK_PATH: "/callback",
   getConfiguredOAuthCallbackPort: mocks.getConfiguredOAuthCallbackPort,
+  getOAuthCallbackHost: mocks.getOAuthCallbackHost,
   getOAuthCallbackPort: mocks.getOAuthCallbackPort,
   setOAuthCallbackPort: mocks.setOAuthCallbackPort,
 }));
@@ -79,16 +81,17 @@ describe("mcp-callback-server", () => {
     };
     mocks.createServer.mockClear();
     mocks.getConfiguredOAuthCallbackPort.mockClear();
+    mocks.getOAuthCallbackHost.mockClear();
     mocks.getOAuthCallbackPort.mockClear();
     mocks.setOAuthCallbackPort.mockClear();
   });
 
-  it("binds localhost and unrefs the callback server after a successful bind", async () => {
+  it("binds the configured callback host and unrefs the callback server after a successful bind", async () => {
     const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
 
     await ensureCallbackServer();
 
-    expect(mocks.runtime.servers[0]?.listen).toHaveBeenCalledWith(4337, "localhost", expect.any(Function));
+    expect(mocks.runtime.servers[0]?.listen).toHaveBeenCalledWith(4337, "127.0.0.1", expect.any(Function));
     expect(mocks.runtime.servers[0]?.unref).toHaveBeenCalledTimes(1);
   });
 

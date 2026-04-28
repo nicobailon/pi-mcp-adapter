@@ -272,6 +272,10 @@ export interface OAuthConfig {
   clientSecret?: string;
   /** Requested OAuth scopes */
   scope?: string;
+  /** Override dynamic OAuth registration client_name */
+  clientName?: string;
+  /** Override dynamic OAuth registration client_uri */
+  clientUri?: string;
 }
 
 // Server configuration
