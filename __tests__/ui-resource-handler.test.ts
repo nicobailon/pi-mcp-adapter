@@ -192,8 +192,8 @@ describe("UiResourceHandler", () => {
               _meta: {
                 ui: {
                   csp: {
-                    scriptDomains: ["'self'", "cdn.example.com"],
-                    styleDomains: ["'self'"],
+                    resourceDomains: ["cdn.example.com"],
+                    connectDomains: ["https://api.example.com"],
                   },
                 },
               },
@@ -206,8 +206,8 @@ describe("UiResourceHandler", () => {
       const result = await handler.readUiResource("server", "ui://test/widget");
 
       expect(result.meta.csp).toEqual({
-        scriptDomains: ["'self'", "cdn.example.com"],
-        styleDomains: ["'self'"],
+        resourceDomains: ["cdn.example.com"],
+        connectDomains: ["https://api.example.com"],
       });
     });
 

@@ -158,16 +158,55 @@ describe("buildHostHtmlTemplate", () => {
   });
 
   describe("CSP handling", () => {
-    it("buildCspMetaContent generates correct CSP directives", async () => {
+    it("buildCspMetaContent generates restrictive default CSP when csp is omitted", async () => {
+      const { buildCspMetaContent } = await import("../host-html-template.js");
+      const csp = buildCspMetaContent(undefined);
+
+      expect(csp).toContain("default-src 'none'");
+      expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+      expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+      expect(csp).toContain("img-src 'self' data:");
+      expect(csp).toContain("media-src 'self' data:");
+      expect(csp).toContain("connect-src 'none'");
+      expect(csp).toContain("object-src 'none'");
+    });
+
+    it("buildCspMetaContent maps resourceDomains to all static-asset directives", async () => {
       const { buildCspMetaContent } = await import("../host-html-template.js");
       const csp = buildCspMetaContent({
-        scriptDomains: ["'self'", "cdn.example.com"],
-        styleDomains: ["'self'"],
+        resourceDomains: ["cdn.example.com"],
+        connectDomains: ["https://api.example.com"],
       });
 
-      expect(csp).toContain("script-src 'self' cdn.example.com");
-      expect(csp).toContain("style-src 'self'");
       expect(csp).toContain("default-src 'none'");
+      expect(csp).toContain("script-src 'self' 'unsafe-inline' cdn.example.com");
+      expect(csp).toContain("style-src 'self' 'unsafe-inline' cdn.example.com");
+      expect(csp).toContain("img-src 'self' data: cdn.example.com");
+      expect(csp).toContain("font-src 'self' cdn.example.com");
+      expect(csp).toContain("media-src 'self' data: cdn.example.com");
+      expect(csp).toContain("connect-src 'self' https://api.example.com");
+      expect(csp).toContain("object-src 'none'");
+      expect(csp).toContain("frame-src 'none'");
+      expect(csp).toContain("base-uri 'self'");
+    });
+
+    it("buildCspMetaContent respects frameDomains and baseUriDomains", async () => {
+      const { buildCspMetaContent } = await import("../host-html-template.js");
+      const csp = buildCspMetaContent({
+        frameDomains: ["https://embed.example.com"],
+        baseUriDomains: ["https://base.example.com"],
+      });
+
+      expect(csp).toContain("frame-src https://embed.example.com");
+      expect(csp).toContain("base-uri https://base.example.com");
+    });
+
+    it("buildCspMetaContent uses safe defaults for frame-src and base-uri when omitted", async () => {
+      const { buildCspMetaContent } = await import("../host-html-template.js");
+      const csp = buildCspMetaContent({});
+
+      expect(csp).toContain("frame-src 'none'");
+      expect(csp).toContain("base-uri 'self'");
     });
 
     it("applyCspMeta injects CSP meta into HTML head", async () => {

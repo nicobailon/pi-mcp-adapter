@@ -356,42 +356,48 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
 </html>`;
 }
 
-export function buildCspMetaContent(csp: UiResourceCsp | undefined): string | undefined {
-  if (!csp) return undefined;
+/**
+ * Build a CSP string from resource metadata following the MCP Apps spec
+ * (specification/2026-01-26/apps.mdx § "Content Security Policy Enforcement").
+ *
+ * When `csp` is omitted the host MUST apply the spec-mandated restrictive default.
+ * When `csp` is provided the host builds a full directive list using `resourceDomains`
+ * for static assets and `connectDomains` for network access.
+ */
+export function buildCspMetaContent(csp: UiResourceCsp | undefined): string {
+  // Spec: "If ui.csp is omitted, Host MUST use" this restrictive default.
+  if (!csp) {
+    return [
+      "default-src 'none'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "media-src 'self' data:",
+      "connect-src 'none'",
+      "object-src 'none'",
+    ].join("; ");
+  }
 
-  const directives: string[] = [];
-  directives.push("default-src 'none'");
-
-  const scriptSrc = toDirective("script-src", csp.scriptDomains);
-  const styleSrc = toDirective("style-src", csp.styleDomains);
-  const fontSrc = toDirective("font-src", csp.fontDomains);
-  const imgSrc = toDirective("img-src", csp.imgDomains);
-  const mediaSrc = toDirective("media-src", csp.mediaDomains);
-  const connectSrc = toDirective("connect-src", csp.connectDomains);
-  const frameSrc = toDirective("frame-src", csp.frameDomains);
-  const workerSrc = toDirective("worker-src", csp.workerDomains);
-  const baseUri = toDirective("base-uri", csp.baseUriDomains);
-
-  if (scriptSrc) directives.push(scriptSrc);
-  if (styleSrc) directives.push(styleSrc);
-  if (fontSrc) directives.push(fontSrc);
-  if (imgSrc) directives.push(imgSrc);
-  if (mediaSrc) directives.push(mediaSrc);
-  if (connectSrc) directives.push(connectSrc);
-  if (frameSrc) directives.push(frameSrc);
-  if (workerSrc) directives.push(workerSrc);
-  if (baseUri) directives.push(baseUri);
-
-  return directives.join("; ");
+  // Spec CSP construction from declared domains.
+  const res = csp.resourceDomains?.join(" ") ?? "";
+  const connect = csp.connectDomains?.join(" ") ?? "";
+  const frame = csp.frameDomains?.join(" ") || "'none'";
+  const base = csp.baseUriDomains?.join(" ") || "'self'";
+  return [
+    "default-src 'none'",
+    `script-src 'self' 'unsafe-inline'${res ? " " + res : ""}`,
+    `style-src 'self' 'unsafe-inline'${res ? " " + res : ""}`,
+    `connect-src 'self'${connect ? " " + connect : ""}`,
+    `img-src 'self' data:${res ? " " + res : ""}`,
+    `font-src 'self'${res ? " " + res : ""}`,
+    `media-src 'self' data:${res ? " " + res : ""}`,
+    `frame-src ${frame}`,
+    "object-src 'none'",
+    `base-uri ${base}`,
+  ].join("; ");
 }
 
-function toDirective(name: string, domains: string[] | undefined): string | null {
-  if (!domains || domains.length === 0) return null;
-  return `${name} ${domains.join(" ")}`;
-}
-
-export function applyCspMeta(html: string, cspContent: string | undefined): string {
-  if (!cspContent) return html;
+export function applyCspMeta(html: string, cspContent: string): string {
   if (/http-equiv=["']Content-Security-Policy["']/i.test(html)) return html;
   const metaTag = `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(cspContent)}">`;
   if (/<head[^>]*>/i.test(html)) {

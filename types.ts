@@ -64,14 +64,13 @@ export interface UiProxyResult<T = Record<string, unknown>> {
 }
 
 export interface UiResourceCsp {
+  /** Origins for network requests (fetch/XHR/WebSocket) → connect-src */
   connectDomains?: string[];
-  scriptDomains?: string[];
-  styleDomains?: string[];
-  fontDomains?: string[];
-  imgDomains?: string[];
-  mediaDomains?: string[];
+  /** Origins for static resources (scripts, images, styles, fonts, media) → script-src, style-src, img-src, font-src, media-src */
+  resourceDomains?: string[];
+  /** Origins for nested iframes → frame-src */
   frameDomains?: string[];
-  workerDomains?: string[];
+  /** Allowed base URIs → base-uri */
   baseUriDomains?: string[];
 }
 
