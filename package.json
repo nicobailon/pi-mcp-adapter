@@ -42,6 +42,7 @@
     "state.ts",
     "utils.ts",
     "tool-metadata.ts",
+    "i18n.ts",
     "init.ts",
     "ui-session.ts",
     "proxy-modes.ts",
