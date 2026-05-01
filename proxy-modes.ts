@@ -375,10 +375,9 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
   }
 
   for (const tool of toolNames) {
-    const desc = descMap.get(tool) ?? "";
-    const truncated = truncateAtWord(desc, 50);
+    const desc = (descMap.get(tool) ?? "").trim();
     text += `- ${tool}`;
-    if (truncated) text += ` - ${truncated}`;
+    if (desc) text += ` - ${desc}`;
     text += "\n";
   }
 
