@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ToolInfo } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "typebox";
 import { showStatus, showTools, reconnectServers, authenticateServer, openMcpPanel, openMcpSetup } from "./commands.js";
 import { loadMcpConfig } from "./config.js";
@@ -73,6 +74,63 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema || { type: "object", properties: {} }),
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
+      renderCall(args, options, _theme, context) {
+        const text = context.lastComponent ?? new Text("", 0, 0);
+        if (options.expanded) {
+          text.setText(`${spec.prefixedName}: ${JSON.stringify(args ?? {}, null, 2)}`);
+          return text;
+        }
+        const a = (args && typeof args === "object") ? args as Record<string, unknown> : {};
+        let summary =
+          (typeof a.objective === "string" && a.objective) ?
+            a.objective :
+          (typeof a.query === "string" && a.query) ?
+            a.query :
+          (typeof a.url === "string" && a.url) ?
+            a.url :
+          JSON.stringify(args ?? {});
+        if (summary.length > 60) summary = summary.slice(0, 57) + "...";
+        text.setText(`${spec.prefixedName}: ${summary}`);
+        return text;
+      },
+      renderResult(result, options, _theme, context) {
+        const text = context.lastComponent ?? new Text("", 0, 0);
+        const chunks: string[] = [];
+        for (const block of result.content) {
+          if (block.type === "text" && "text" in block) {
+            chunks.push((block as { text: string }).text);
+          } else if (block.type === "image") {
+            chunks.push("[image]");
+          } else {
+            chunks.push(`[${block.type}]`);
+          }
+        }
+        let allLines = chunks.join("\n").replace(/\r\n/g, "\n").split("\n");
+        if (!options.expanded) {
+          allLines = allLines.filter((l) => l.length > 0).map((l) => l.length > 500 ? l.slice(0, 497) + "..." : l);
+        }
+        const total = allLines.length;
+        const maxLines = options.expanded ? total : 5;
+        const display = allLines.slice(0, maxLines);
+        let output = display.join("\n");
+        const remaining = total - maxLines;
+        const hints: string[] = [];
+        if (remaining > 0) {
+          hints.push(`${remaining} more lines, press Ctrl+O to expand`);
+        }
+        if (options.isPartial) {
+          hints.push("streaming");
+        }
+        if (hints.length > 0) {
+          const hintText = `... (${hints.join(", ")})`;
+          output = output ? `${output}\n${hintText}` : hintText;
+        }
+        if (total === 0 && !options.isPartial) {
+          output = "(no output)";
+        }
+        text.setText(output);
+        return text;
+      },
     });
   }
 
