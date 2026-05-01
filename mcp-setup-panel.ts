@@ -2,6 +2,7 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui"
 import type { ImportKind } from "./types.js";
 import type { ConfigWritePreview, McpDiscoverySummary } from "./config.js";
 import type { McpOnboardingState } from "./onboarding-state.js";
+import { t } from "./i18n.js";
 
 interface SetupTheme {
   border: string;
@@ -125,23 +126,23 @@ export class McpSetupPanel {
   private getActions(): Action[] {
     const actions: Action[] = [];
     if (this.screen === "empty") {
-      actions.push({ id: "run-setup", label: "Run setup", description: "Inspect detected configs, adopt imports, and scaffold a minimal `.mcp.json`." });
+      actions.push({ id: "run-setup", label: t("setup.run.label", "Run setup"), description: t("setup.run.description", "Inspect detected configs, adopt imports, and scaffold a minimal `.mcp.json`.") });
     }
     if (this.discovery.imports.length > 0) {
-      actions.push({ id: "adopt-imports", label: "Adopt detected compatibility imports", description: `Choose which host-specific MCP configs Pi should import into its own override file. ${this.discovery.imports.length} source${this.discovery.imports.length === 1 ? "" : "s"} found.` });
+      actions.push({ id: "adopt-imports", label: t("setup.adopt.label", "Adopt detected compatibility imports"), description: t("setup.adopt.description", `Choose which host-specific MCP configs Pi should import into its own override file. ${this.discovery.imports.length} source${this.discovery.imports.length === 1 ? "" : "s"} found.`, { count: this.discovery.imports.length }) });
     }
-    actions.push({ id: "view-example", label: "View example `.mcp.json`", description: "Preview a working shared MCP config you can paste or adapt." });
+    actions.push({ id: "view-example", label: t("setup.example.label", "View example `.mcp.json`"), description: t("setup.example.description", "Preview a working shared MCP config you can paste or adapt.") });
     if (!this.discovery.sources.some((source) => source.id === "shared-project" && source.exists)) {
-      actions.push({ id: "scaffold-project", label: "Scaffold project `.mcp.json`", description: "Write a minimal project config using the standard shared MCP file path, then reload Pi." });
+      actions.push({ id: "scaffold-project", label: t("setup.scaffold.label", "Scaffold project `.mcp.json`"), description: t("setup.scaffold.description", "Write a minimal project config using the standard shared MCP file path, then reload Pi.") });
     }
-    actions.push({ id: "show-precedence", label: "Explain config precedence", description: "Show the read order and where Pi writes compatibility settings." });
+    actions.push({ id: "show-precedence", label: t("setup.precedence.label", "Explain config precedence"), description: t("setup.precedence.description", "Show the read order and where Pi writes compatibility settings.") });
     if (this.getDetectedPaths().length > 0) {
-      actions.push({ id: "open-paths", label: "Open detected config paths", description: "Browse the actual config files that Pi discovered on this machine." });
+      actions.push({ id: "open-paths", label: t("setup.paths.label", "Open detected config paths"), description: t("setup.paths.description", "Browse the actual config files that Pi discovered on this machine.") });
     }
     if (!this.discovery.repoPrompt.configured && this.discovery.repoPrompt.executablePath && this.discovery.repoPrompt.targetPath && this.discovery.repoPrompt.entry && this.discovery.repoPrompt.serverName) {
-      actions.push({ id: "add-repoprompt", label: "Add RepoPrompt to shared MCP config", description: "Write a standard MCP entry for RepoPrompt to the recommended shared target, then reload MCP in-session." });
+      actions.push({ id: "add-repoprompt", label: t("setup.repoprompt.label", "Add RepoPrompt to shared MCP config"), description: t("setup.repoprompt.description", "Write a standard MCP entry for RepoPrompt to the recommended shared target, then reload MCP in-session.") });
     }
-    actions.push({ id: "close", label: "Close", description: "Exit the onboarding flow." });
+    actions.push({ id: "close", label: t("setup.close.label", "Close"), description: t("setup.close.description", "Exit the onboarding flow.") });
     return actions;
   }
 

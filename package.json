@@ -47,6 +47,7 @@
     "proxy-modes.ts",
     "direct-tools.ts",
     "commands.ts",
+    "i18n.ts",
     "onboarding-state.ts",
     "mcp-setup-panel.ts",
     "types.ts",
