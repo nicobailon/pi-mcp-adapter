@@ -141,6 +141,7 @@ export async function initializeMcp(
     const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
     toolMetadata.set(name, metadata);
     updateMetadataCache(state, name);
+    notifyToolMetadataUpdated(state, name, "startup");
 
     if (failedTools.length > 0 && ctx.hasUI) {
       ctx.ui.notify(
@@ -179,6 +180,7 @@ export async function initializeMcp(
             const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
             toolMetadata.set(name, metadata);
             updateMetadataCache(state, name);
+            notifyToolMetadataUpdated(state, name, "direct-tools-bootstrap");
             return { name, ok: true };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -189,7 +191,7 @@ export async function initializeMcp(
       );
       const bootstrapped = bootstrapResults.filter(r => r.ok).map(r => r.name);
       if (bootstrapped.length > 0 && ctx.hasUI) {
-        ctx.ui.notify(`MCP: direct tools for ${bootstrapped.join(", ")} will be available after restart`, "info");
+        ctx.ui.notify(`MCP: refreshed direct tool metadata for ${bootstrapped.join(", ")}`, "info");
       }
     }
   }
@@ -197,6 +199,7 @@ export async function initializeMcp(
   lifecycle.setReconnectCallback((serverName) => {
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
+    notifyToolMetadataUpdated(state, serverName, "lifecycle-reconnect");
     state.failureTracker.delete(serverName);
     updateStatusBar(state);
   });
@@ -258,6 +261,21 @@ export function updateMetadataCache(state: McpExtensionState, serverName: string
   saveMetadataCache({ version: 1, servers: { [serverName]: entry } });
 }
 
+export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: string, reason: string): void {
+  try {
+    const result = state.onToolMetadataUpdated?.(serverName, reason);
+    if (result && typeof (result as Promise<void>).catch === "function") {
+      (result as Promise<void>).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.debug(`MCP: metadata update hook failed for ${serverName}: ${message}`);
+      });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.debug(`MCP: metadata update hook failed for ${serverName}: ${message}`);
+  }
+}
+
 export function flushMetadataCache(state: McpExtensionState): void {
   for (const [name, connection] of state.manager.getAllConnections()) {
     if (connection.status === "connected") {
@@ -313,6 +331,7 @@ export async function lazyConnect(state: McpExtensionState, serverName: string):
     state.failureTracker.delete(serverName);
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
+    notifyToolMetadataUpdated(state, serverName, "lazy-connect");
     updateStatusBar(state);
     return true;
   } catch (error) {

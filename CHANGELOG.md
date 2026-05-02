@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Hot-load refreshed direct MCP tools in the current Pi session after metadata reconnects, lazy connects, and direct-tool panel changes.
+
 ### Changed
 - Ignored npm lockfiles and removed checked-in `package-lock.json` files.
 
