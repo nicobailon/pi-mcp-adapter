@@ -2,7 +2,7 @@ import type { AgentToolResult, ToolInfo } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
 import type { ToolMetadata, McpContent } from "./types.js";
 import { getServerPrefix, parseUiPromptHandoff } from "./types.js";
-import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.js";
+import { lazyConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.js";
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.js";
 import { transformMcpContent } from "./tool-registrar.js";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
@@ -426,6 +426,7 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
     const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
     state.toolMetadata.set(serverName, metadata);
     updateMetadataCache(state, serverName);
+    notifyToolMetadataUpdated(state, serverName, "proxy-connect");
     state.failureTracker.delete(serverName);
     updateStatusBar(state);
     return executeList(state, serverName);
@@ -665,6 +666,7 @@ export async function executeCall(
       state.failureTracker.delete(serverName);
       updateServerMetadata(state, serverName);
       updateMetadataCache(state, serverName);
+      notifyToolMetadataUpdated(state, serverName, "proxy-call-reconnect");
       updateStatusBar(state);
       toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
       if (!toolMeta) {

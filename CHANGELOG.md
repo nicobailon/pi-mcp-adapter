@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Hot-load refreshed direct MCP tools in the current Pi session after metadata reconnects, lazy connects, and direct-tool panel changes.
+- Refreshed metadata and hot-loaded direct tools when connected MCP servers emit tool or resource list-change notifications.
+
 ### Changed
 - Ignored npm lockfiles and removed checked-in `package-lock.json` files.
+- Removed stale hot-loaded tools from Pi's extension registry when `pi.unregisterTool()` is available, while preserving active-tool deactivation fallback for older Pi versions.
 
 ## [2.5.3] - 2026-05-01
 

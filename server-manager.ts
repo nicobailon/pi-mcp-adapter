@@ -31,15 +31,21 @@ interface ServerConnection {
 }
 
 type UiStreamListener = (serverName: string, notification: ServerStreamResultPatchNotification["params"]) => void;
+type MetadataListChangedListener = (serverName: string, reason: string) => void;
 
 export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private uiStreamListeners = new Map<string, UiStreamListener>();
   private samplingConfig: ServerSamplingConfig | undefined;
+  private metadataListChangedListener: MetadataListChangedListener | undefined;
 
   setSamplingConfig(config: ServerSamplingConfig | undefined): void {
     this.samplingConfig = config;
+  }
+
+  setMetadataListChangedListener(listener: MetadataListChangedListener | undefined): void {
+    this.metadataListChangedListener = listener;
   }
   
   async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
@@ -149,14 +155,53 @@ export class McpServerManager {
   }
   
   private createClient(serverName: string): Client {
+    const options = {
+      ...(this.samplingConfig ? { capabilities: { sampling: {} } } : {}),
+      listChanged: {
+        tools: {
+          onChanged: (error: Error | null, tools: McpTool[] | null) => {
+            this.handleToolsListChanged(serverName, error, tools);
+          },
+        },
+        resources: {
+          onChanged: (error: Error | null, resources: McpResource[] | null) => {
+            this.handleResourcesListChanged(serverName, error, resources);
+          },
+        },
+      },
+    };
     const client = new Client(
       { name: `pi-mcp-${serverName}`, version: "1.0.0" },
-      this.samplingConfig ? { capabilities: { sampling: {} } } : undefined,
+      options,
     );
     if (this.samplingConfig) {
       registerSamplingHandler(client, { ...this.samplingConfig, serverName });
     }
     return client;
+  }
+
+  private handleToolsListChanged(serverName: string, error: Error | null, tools: McpTool[] | null): void {
+    if (error) {
+      logger.debug(`MCP: tools/list_changed refresh failed for ${serverName}: ${error.message}`);
+      return;
+    }
+    if (!tools) return;
+    const connection = this.connections.get(serverName);
+    if (!connection || connection.status !== "connected") return;
+    connection.tools = tools;
+    this.metadataListChangedListener?.(serverName, "tools-list-changed");
+  }
+
+  private handleResourcesListChanged(serverName: string, error: Error | null, resources: McpResource[] | null): void {
+    if (error) {
+      logger.debug(`MCP: resources/list_changed refresh failed for ${serverName}: ${error.message}`);
+      return;
+    }
+    if (!resources) return;
+    const connection = this.connections.get(serverName);
+    if (!connection || connection.status !== "connected") return;
+    connection.resources = resources;
+    this.metadataListChangedListener?.(serverName, "resources-list-changed");
   }
 
   private async createHttpTransport(

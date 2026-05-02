@@ -70,7 +70,9 @@ describe("McpServerManager sampling", () => {
     await manager.connect("demo", { command: "node", args: ["server.js"] });
 
     const client = mocks.clients[0];
-    expect(client.options).toEqual({ capabilities: { sampling: {} } });
+    expect(client.options).toMatchObject({ capabilities: { sampling: {} } });
+    expect(client.options.listChanged.tools.onChanged).toBeTypeOf("function");
+    expect(client.options.listChanged.resources.onChanged).toBeTypeOf("function");
     expect(client.setRequestHandler).toHaveBeenCalledTimes(1);
     expect(client.setRequestHandler.mock.invocationCallOrder[0]).toBeLessThan(
       client.connect.mock.invocationCallOrder[0],
@@ -84,8 +86,31 @@ describe("McpServerManager sampling", () => {
     await manager.connect("demo", { command: "node", args: ["server.js"] });
 
     const client = mocks.clients[0];
-    expect(client.options).toBeUndefined();
+    expect(client.options.capabilities).toBeUndefined();
+    expect(client.options.listChanged.tools.onChanged).toBeTypeOf("function");
+    expect(client.options.listChanged.resources.onChanged).toBeTypeOf("function");
     expect(client.setRequestHandler).not.toHaveBeenCalled();
+  });
+
+  it("updates cached server lists when MCP list_changed callbacks refresh", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const metadataChanged = vi.fn();
+    manager.setMetadataListChangedListener(metadataChanged);
+
+    await manager.connect("demo", { command: "node", args: ["server.js"] });
+
+    const client = mocks.clients[0];
+    const tools = [{ name: "new_tool", description: "New tool" }];
+    const resources = [{ uri: "file://demo", name: "Demo resource" }];
+
+    client.options.listChanged.tools.onChanged(null, tools);
+    client.options.listChanged.resources.onChanged(null, resources);
+
+    expect(manager.getConnection("demo")?.tools).toEqual(tools);
+    expect(manager.getConnection("demo")?.resources).toEqual(resources);
+    expect(metadataChanged).toHaveBeenCalledWith("demo", "tools-list-changed");
+    expect(metadataChanged).toHaveBeenCalledWith("demo", "resources-list-changed");
   });
 
   it("expands environment variables and tilde in stdio cwd", async () => {

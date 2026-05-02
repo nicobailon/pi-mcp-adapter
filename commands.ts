@@ -12,7 +12,7 @@ import {
   writeSharedServerEntry,
   writeStarterProjectConfig,
 } from "./config.js";
-import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.js";
+import { lazyConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
 import { buildToolMetadata } from "./tool-metadata.js";
 import { supportsOAuth, authenticate } from "./mcp-auth-flow.js";
@@ -113,6 +113,7 @@ export async function reconnectServers(
       const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
       state.toolMetadata.set(name, metadata);
       updateMetadataCache(state, name);
+      notifyToolMetadataUpdated(state, name, "command-reconnect");
       state.failureTracker.delete(name);
 
       if (ctx.hasUI) {
@@ -279,6 +280,7 @@ export async function openMcpPanel(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   configOverridePath?: string,
+  onDirectToolsConfigChanged?: (changes: Map<string, true | string[] | false>) => void | Promise<void>,
 ): Promise<PanelFlowResult> {
   if (Object.keys(state.config.mcpServers).length === 0) {
     return openMcpSetup(state, pi, ctx, configOverridePath, "empty");
@@ -291,7 +293,11 @@ export async function openMcpPanel(
 
   const callbacks: McpPanelCallbacks = {
     reconnect: async (serverName: string) => {
-      return lazyConnect(state, serverName);
+      const connected = await lazyConnect(state, serverName);
+      if (connected) {
+        notifyToolMetadataUpdated(state, serverName, "panel-reconnect");
+      }
+      return connected;
     },
     getConnectionStatus: (serverName: string) => {
       const definition = config.mcpServers[serverName];
@@ -324,13 +330,21 @@ export async function openMcpPanel(
     ctx.ui.custom(
       (tui, _theme, _keybindings, done) => {
         return createMcpPanel(config, cache, provenanceMap, callbacks, tui, (result: McpPanelResult) => {
-          if (!result.cancelled && result.changes.size > 0) {
-            writeDirectToolsConfig(result.changes, provenanceMap, config);
+          void (async () => {
+            if (!result.cancelled && result.changes.size > 0) {
+              writeDirectToolsConfig(result.changes, provenanceMap, config);
+              await onDirectToolsConfigChanged?.(result.changes);
+              ctx.ui.notify("Direct tools updated for this session.", "info");
+            }
+            done(undefined as never);
+            resolve();
+          })().catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            ctx.ui.notify(`Direct tools updated, but live refresh failed: ${message}`, "error");
             configChanged = true;
-            ctx.ui.notify("Direct tools updated. Pi will reload after this panel closes.", "info");
-          }
-          done();
-          resolve();
+            done(undefined as never);
+            resolve();
+          });
         }, { noticeLines });
       },
       { overlay: true, overlayOptions: { anchor: "center", width: 82 } },
