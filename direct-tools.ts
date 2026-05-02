@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import type { McpExtensionState } from "./state.js";
+import { buildMcpRequestMeta, type McpExtensionState } from "./state.js";
 import type { DirectToolSpec, McpConfig, McpContent } from "./types.js";
 import type { MetadataCache } from "./metadata-cache.js";
 import { lazyConnect, getFailureAgeSeconds } from "./init.js";
@@ -364,7 +364,7 @@ export function createDirectToolExecutor(
       const resultPromise = connection.client.callTool({
         name: spec.originalName,
         arguments: params ?? {},
-        _meta: uiSession?.requestMeta,
+        _meta: buildMcpRequestMeta(state.sessionId, uiSession?.requestMeta),
       });
 
       const result = await resultPromise;

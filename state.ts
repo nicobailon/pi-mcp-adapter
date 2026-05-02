@@ -35,7 +35,19 @@ export interface McpExtensionState {
   consentManager: ConsentManager;
   uiServer: UiServerHandle | null;
   completedUiSessions: CompletedUiSession[];
+  sessionId: string;
   openBrowser: (url: string) => Promise<void>;
   ui?: ExtensionContext["ui"];
   sendMessage?: SendMessageFn;
+}
+
+export function buildMcpRequestMeta(
+  sessionId: string | undefined,
+  requestMeta?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!sessionId) return requestMeta;
+  return {
+    ...requestMeta,
+    "pi/session_id": sessionId,
+  };
 }

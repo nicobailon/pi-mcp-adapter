@@ -199,6 +199,7 @@ describe("proxy auto auth", () => {
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],
+      sessionId: "pi-session-proxy",
     } as any;
 
     const result = await executeCall(state, "demo_search", { q: "hello" }, "demo");
@@ -209,6 +210,11 @@ describe("proxy auto auth", () => {
       state.config.mcpServers.demo,
     );
     expect(manager.connect).toHaveBeenCalledTimes(1);
+    expect(connected.client.callTool).toHaveBeenCalledWith({
+      name: "search",
+      arguments: { q: "hello" },
+      _meta: { "pi/session_id": "pi-session-proxy" },
+    });
     expect(result.content[0].text).toContain("ok");
   });
 });

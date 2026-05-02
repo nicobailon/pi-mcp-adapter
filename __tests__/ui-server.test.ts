@@ -436,13 +436,17 @@ describe("UiServer", () => {
       const manager = createMockManager({
         getConnection: vi.fn().mockReturnValue({ status: "connected", client: mockClient }),
       });
-      handle = await startUiServer(createServerOptions({ manager }));
+      handle = await startUiServer(createServerOptions({ manager, piSessionId: "pi-session-ui" }));
 
       const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
         method: "POST",
         body: {
           token: handle.sessionToken,
-          params: { name: "some_tool", arguments: { arg1: "value1" } },
+          params: {
+            name: "some_tool",
+            arguments: { arg1: "value1" },
+            _meta: { "ui/call": "from-widget" },
+          },
         },
       });
 
@@ -454,6 +458,7 @@ describe("UiServer", () => {
       expect(mockClient.callTool).toHaveBeenCalledWith({
         name: "some_tool",
         arguments: { arg1: "value1" },
+        _meta: { "ui/call": "from-widget", "pi/session_id": "pi-session-ui" },
       });
     });
 

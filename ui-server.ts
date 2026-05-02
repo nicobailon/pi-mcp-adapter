@@ -12,6 +12,7 @@ import { ServerError, wrapError } from "./errors.js";
 import { buildHostHtmlTemplate, buildCspMetaContent, applyCspMeta } from "./host-html-template.js";
 import { logger } from "./logger.js";
 import type { McpServerManager } from "./server-manager.js";
+import { buildMcpRequestMeta } from "./state.js";
 import {
   extractUiPromptText,
   getVisualizationStreamEnvelope,
@@ -42,6 +43,7 @@ export interface UiServerOptions {
   manager: McpServerManager;
   consentManager: ConsentManager;
   hostContext?: UiHostContext;
+  piSessionId?: string;
   initialResultPromise?: Promise<CallToolResult>;
   sessionToken?: string;
   port?: number;
@@ -346,6 +348,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               callParams.arguments && typeof callParams.arguments === "object" && !Array.isArray(callParams.arguments)
                 ? callParams.arguments
                 : {},
+            _meta: buildMcpRequestMeta(options.piSessionId, callParams._meta),
           });
           sendJson(res, 200, { ok: true, result });
         } finally {
