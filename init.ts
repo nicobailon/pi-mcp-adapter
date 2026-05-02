@@ -63,6 +63,12 @@ export async function initializeMcp(
     ui,
     sendMessage: (message, options) => pi.sendMessage(message, options),
   };
+  manager.setMetadataListChangedListener((serverName, reason) => {
+    updateServerMetadata(state, serverName);
+    updateMetadataCache(state, serverName);
+    notifyToolMetadataUpdated(state, serverName, reason);
+    updateStatusBar(state);
+  });
 
   const serverEntries = Object.entries(config.mcpServers);
   if (serverEntries.length === 0) {
