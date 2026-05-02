@@ -11,7 +11,12 @@ import { executeCall, executeConnect, executeDescribe, executeList, executeSearc
 import { getConfigPathFromArgv, truncateAtWord } from "./utils.js";
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.js";
 
+type ExtensionToolUnregisterAPI = ExtensionAPI & {
+  unregisterTool?: (name: string) => boolean;
+};
+
 export default function mcpAdapter(pi: ExtensionAPI) {
+  const toolApi = pi as ExtensionToolUnregisterAPI;
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
   let lifecycleGeneration = 0;
@@ -85,15 +90,17 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     return resolveDirectTools(config, cache, prefix, envDirectToolOverride);
   }
 
-  function deactivateTools(toolNames: string[]): void {
-    if (toolNames.length === 0) return;
+  function deactivateTools(toolNames: string[]): string[] {
+    if (toolNames.length === 0) return [];
+    const unregistered = toolNames.filter((toolName) => toolApi.unregisterTool?.(toolName) === true);
     const remove = new Set(toolNames);
     const activeTools = pi.getActiveTools?.();
-    if (!activeTools || activeTools.length === 0) return;
+    if (!activeTools || activeTools.length === 0) return unregistered;
     const nextActiveTools = activeTools.filter((name) => !remove.has(name));
     if (nextActiveTools.length !== activeTools.length) {
       pi.setActiveTools(nextActiveTools);
     }
+    return unregistered;
   }
 
   function syncDirectTools(config: McpConfig, cache: MetadataCache | null, reason: string): {
@@ -427,7 +434,11 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     }
 
     if (proxyToolRegistered) {
-      deactivateTools(["mcp"]);
+      const unregistered = deactivateTools(["mcp"]);
+      if (unregistered.includes("mcp")) {
+        proxyToolRegistered = false;
+        proxyToolDescription = null;
+      }
     }
   }
 

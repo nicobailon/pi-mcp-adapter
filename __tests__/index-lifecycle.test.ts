@@ -102,13 +102,18 @@ function createState() {
   } as any;
 }
 
-function createPi() {
+function createPi(options: { unregisterTool?: false | ((name: string) => boolean) } = {}) {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let activeTools = ["bash", "mcp", "demo_search"];
+  const unregisterTool =
+    options.unregisterTool === false
+      ? undefined
+      : vi.fn(options.unregisterTool ?? (() => true));
   return {
     handlers,
     api: {
       registerTool: vi.fn(),
+      ...(unregisterTool ? { unregisterTool } : {}),
       registerFlag: vi.fn(),
       registerCommand: vi.fn(),
       on: vi.fn((event: string, handler: (...args: any[]) => unknown) => {
@@ -287,6 +292,56 @@ describe("mcpAdapter session lifecycle", () => {
     const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
     await commandDef.handler("reconnect demo", { hasUI: false });
 
+    expect(api.unregisterTool).toHaveBeenCalledWith("demo_search");
+    expect(api.setActiveTools).toHaveBeenCalledWith(["bash", "mcp"]);
+  });
+
+  it("falls back to active-tool deactivation when Pi cannot unregister stale direct tools", async () => {
+    const config = {
+      settings: { disableProxyTool: true },
+      mcpServers: {
+        demo: { command: "npx", args: ["-y", "demo-server"], directTools: true },
+      },
+    };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools
+      .mockReturnValueOnce([
+        {
+          serverName: "demo",
+          originalName: "search",
+          prefixedName: "demo_search",
+          description: "Search demo",
+        },
+      ])
+      .mockReturnValueOnce([
+        {
+          serverName: "demo",
+          originalName: "search",
+          prefixedName: "demo_search",
+          description: "Search demo",
+        },
+      ])
+      .mockReturnValue([]);
+    mocks.reconnectServers.mockImplementation(async (currentState: any) => {
+      await currentState.onToolMetadataUpdated?.("demo", "command-reconnect");
+    });
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi({ unregisterTool: false });
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+    await commandDef.handler("reconnect demo", { hasUI: false });
+
+    expect(api.unregisterTool).toBeUndefined();
     expect(api.setActiveTools).toHaveBeenCalledWith(["bash", "mcp"]);
   });
 

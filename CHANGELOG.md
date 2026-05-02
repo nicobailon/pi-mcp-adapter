@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Ignored npm lockfiles and removed checked-in `package-lock.json` files.
+- Removed stale hot-loaded tools from Pi's extension registry when `pi.unregisterTool()` is available, while preserving active-tool deactivation fallback for older Pi versions.
 
 ## [2.5.3] - 2026-05-01
 
