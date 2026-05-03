@@ -75,6 +75,20 @@ export function interpolateEnvRecord(values: Record<string, string> | undefined)
   return resolved;
 }
 
+export function resolveBearerToken(
+  bearerToken: string | undefined,
+  bearerTokenEnv: string | undefined,
+): string | undefined {
+  const tokenFromField = bearerToken ? interpolateEnvVars(bearerToken) : undefined;
+  if (tokenFromField) return tokenFromField;
+
+  if (!bearerTokenEnv) return undefined;
+  const envName = interpolateEnvVars(bearerTokenEnv);
+  if (!envName) return undefined;
+
+  return process.env[envName];
+}
+
 export function resolveConfigPath(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
 

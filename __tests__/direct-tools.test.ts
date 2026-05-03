@@ -156,6 +156,35 @@ describe("metadata cache hashing", () => {
       computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "token-two", bearerTokenEnv: "MCP_HASH_TOKEN" }),
     );
   });
+
+  it("hashes interpolated bearerToken values", () => {
+    process.env.MCP_HASH_INLINE_TOKEN = "token-one";
+    const first = computeServerHash({
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerToken: "${MCP_HASH_INLINE_TOKEN}",
+    });
+
+    process.env.MCP_HASH_INLINE_TOKEN = "token-two";
+    const second = computeServerHash({
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerToken: "${MCP_HASH_INLINE_TOKEN}",
+    });
+
+    expect(first).not.toBe(second);
+    expect(computeServerHash({
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerToken: "${MCP_HASH_INLINE_TOKEN}",
+    })).toBe(
+      computeServerHash({
+        url: "https://example.test/mcp",
+        auth: "bearer",
+        bearerToken: "token-two",
+      }),
+    );
+  });
 });
 
 describe("excludeTools filtering", () => {
