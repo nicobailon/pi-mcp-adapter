@@ -7,7 +7,7 @@ import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge"
 import type { McpTool, McpResource, ServerEntry, ToolMetadata } from "./types.js";
 import { formatToolName, isToolExcluded } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
-import { extractToolUiStreamMode, interpolateEnvRecord, resolveConfigPath } from "./utils.js";
+import { extractToolUiStreamMode, interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.js";
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -93,7 +93,7 @@ export function computeServerHash(definition: ServerEntry): string {
     url: definition.url,
     headers: interpolateEnvRecord(definition.headers),
     auth: definition.auth,
-    bearerToken: definition.bearerToken ?? (definition.bearerTokenEnv ? process.env[definition.bearerTokenEnv] : undefined),
+    bearerToken: resolveBearerToken(definition.bearerToken, definition.bearerTokenEnv),
     bearerTokenEnv: definition.bearerTokenEnv,
     exposeResources: definition.exposeResources,
     excludeTools: definition.excludeTools,

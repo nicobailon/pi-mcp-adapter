@@ -17,7 +17,7 @@ import { logger } from "./logger.js";
 import { McpOAuthProvider } from "./mcp-oauth-provider.js";
 import { supportsOAuth } from "./mcp-auth-flow.js";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.js";
-import { interpolateEnvRecord, resolveConfigPath } from "./utils.js";
+import { interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.js";
 
 interface ServerConnection {
   client: Client;
@@ -170,8 +170,7 @@ export class McpServerManager {
     
     // For bearer auth, add the token to headers BEFORE creating requestInit
     if (definition.auth === "bearer") {
-      const token = definition.bearerToken 
-        ?? (definition.bearerTokenEnv ? process.env[definition.bearerTokenEnv] : undefined);
+      const token = resolveBearerToken(definition.bearerToken, definition.bearerTokenEnv);
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
       }
