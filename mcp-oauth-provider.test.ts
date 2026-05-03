@@ -13,7 +13,7 @@ import { randomBytes } from "crypto"
 const TEST_DIR = join(tmpdir(), `mcp-oauth-test-${randomBytes(4).toString('hex')}`)
 process.env.MCP_OAUTH_DIR = TEST_DIR
 
-import { McpOAuthProvider } from "./mcp-oauth-provider.js"
+import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.js"
 import { saveAuthEntry, updateOAuthState } from "./mcp-auth.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
@@ -47,7 +47,7 @@ describe("McpOAuthProvider", () => {
     redirectCaptured = undefined
   })
 
-  function createProvider(config: { clientId?: string; clientSecret?: string; scope?: string } = {}) {
+  function createProvider(config: McpOAuthConfig = {}) {
     return new McpOAuthProvider(serverName, serverUrl, config, {
       onRedirect: async (url) => {
         redirectCaptured = url
@@ -60,7 +60,7 @@ describe("McpOAuthProvider", () => {
       const provider = createProvider()
       assert.strictEqual(
         provider.redirectUrl,
-        "http://localhost:19876/callback"
+        "http://127.0.0.1:19876/callback"
       )
     })
   })
@@ -70,7 +70,7 @@ describe("McpOAuthProvider", () => {
       const provider = createProvider()
       const metadata = provider.clientMetadata
 
-      assert.deepStrictEqual(metadata.redirect_uris, ["http://localhost:19876/callback"])
+      assert.deepStrictEqual(metadata.redirect_uris, ["http://127.0.0.1:19876/callback"])
       assert.strictEqual(metadata.client_name, "Pi Coding Agent")
       assert.strictEqual(metadata.client_uri, "https://github.com/nicobailon/pi-mcp-adapter")
       assert.deepStrictEqual(metadata.grant_types, ["authorization_code", "refresh_token"])
@@ -83,6 +83,28 @@ describe("McpOAuthProvider", () => {
       const metadata = provider.clientMetadata
 
       assert.strictEqual(metadata.token_endpoint_auth_method, "client_secret_post")
+    })
+
+    it("should support custom dynamic registration metadata", () => {
+      const provider = createProvider({
+        clientName: "Custom Client",
+        clientUri: "https://example.com/custom-client",
+      })
+      const metadata = provider.clientMetadata
+
+      assert.strictEqual(metadata.client_name, "Custom Client")
+      assert.strictEqual(metadata.client_uri, "https://example.com/custom-client")
+    })
+
+    it("should use custom client name for client credentials metadata", () => {
+      const provider = createProvider({
+        grantType: "client_credentials",
+        clientName: "Machine Client",
+      })
+      const metadata = provider.clientMetadata
+
+      assert.strictEqual(metadata.client_name, "Machine Client")
+      assert.deepStrictEqual(metadata.redirect_uris, [])
     })
   })
 
@@ -171,6 +193,7 @@ describe("McpOAuthProvider", () => {
       const info: OAuthClientInformationFull = {
         client_id: "new-client",
         client_secret: "new-secret",
+        redirect_uris: ["http://127.0.0.1:19876/callback"],
         client_id_issued_at: Math.floor(Date.now() / 1000),
         client_secret_expires_at: futureTime,
       }

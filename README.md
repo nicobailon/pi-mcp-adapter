@@ -126,6 +126,7 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
+| `oauth.clientName` / `oauth.clientUri` | Override OAuth dynamic client registration metadata when a server requires a specific registered client identity |
 | `bearerToken` / `bearerTokenEnv` | Token or env var name |
 | `lifecycle` | `"lazy"` (default), `"eager"`, or `"keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
@@ -348,6 +349,8 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 | `/mcp-auth <server>` | OAuth setup |
 
 If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`, and direct tool calls will automatically run OAuth when needed and retry once. In non-interactive sessions, browser-based OAuth still requires running `/mcp-auth <server>` manually.
+
+OAuth callbacks bind to `127.0.0.1:19876` by default. Set `MCP_OAUTH_CALLBACK_HOST` or `MCP_OAUTH_CALLBACK_PORT` before starting Pi if your OAuth client registration requires a different loopback redirect URI.
 
 ## How It Works
 
