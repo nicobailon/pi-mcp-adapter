@@ -6,6 +6,7 @@ import {
   CreateMessageRequestSchema,
   type CreateMessageRequest,
   type CreateMessageResult,
+  type ModelHint,
   type SamplingMessage,
   type SamplingMessageContentBlock,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -50,7 +51,7 @@ export async function handleSamplingRequest(
   }
 
   const messages = params.messages.map(convertSamplingMessage);
-  const { model, apiKey, headers } = await resolveSamplingModel(options);
+  const { model, apiKey, headers } = await resolveSamplingModel(options, params.modelPreferences?.hints);
   await confirmSampling(
     options,
     "Approve MCP sampling request",
@@ -114,16 +115,40 @@ function messageText(message: Message): string {
   }).join("\n");
 }
 
-async function resolveSamplingModel(options: SamplingHandlerOptions): Promise<{
+async function resolveSamplingModel(
+  options: SamplingHandlerOptions,
+  hints?: ModelHint[],
+): Promise<{
   model: Model<any>;
   apiKey?: string;
   headers?: Record<string, string>;
 }> {
+  const available = options.modelRegistry.getAvailable();
+
+  // If the server provided model hints, try to match them first.
+  // Per the MCP spec, hints are treated as substrings of model names.
+  if (hints?.length) {
+    for (const hint of hints) {
+      if (!hint.name) continue;
+      const needle = hint.name.toLowerCase();
+      for (const model of available) {
+        const haystack = `${model.provider}/${model.id}`.toLowerCase();
+        if (haystack.includes(needle) || model.name.toLowerCase().includes(needle)) {
+          const auth = await options.modelRegistry.getApiKeyAndHeaders(model);
+          if (auth.ok) {
+            return { model, apiKey: auth.apiKey, headers: auth.headers };
+          }
+        }
+      }
+    }
+  }
+
+  // Fall back to current model, then any available model.
   const candidates: Model<any>[] = [];
   const currentModel = options.getCurrentModel();
   if (currentModel) candidates.push(currentModel);
 
-  for (const model of options.modelRegistry.getAvailable()) {
+  for (const model of available) {
     if (!candidates.some((candidate) => candidate.provider === model.provider && candidate.id === model.id)) {
       candidates.push(model);
     }

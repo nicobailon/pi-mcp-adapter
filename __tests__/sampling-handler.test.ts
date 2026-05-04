@@ -130,6 +130,74 @@ describe("sampling handler", () => {
     expect(ui.confirm.mock.calls[1][1]).toContain("Bonjour");
   });
 
+  it("respects modelPreferences.hints to select a matching model", async () => {
+    const { handleSamplingRequest } = await import("../sampling-handler.ts");
+    const flashModel = {
+      provider: "google",
+      id: "gemini-2.5-flash",
+      api: "google-genai",
+      name: "Gemini 2.5 Flash",
+      input: ["text"],
+      reasoning: false,
+      cost: usage.cost,
+      contextWindow: 1000000,
+      maxTokens: 8192,
+    };
+    const options = createOptions({
+      getCurrentModel: vi.fn(() => model),
+      modelRegistry: {
+        getAvailable: vi.fn(() => [model, flashModel]),
+        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "gkey", headers: {} })),
+      },
+    });
+
+    await handleSamplingRequest(options, {
+      method: "sampling/createMessage",
+      params: {
+        messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+        maxTokens: 50,
+        modelPreferences: {
+          hints: [{ name: "flash" }],
+        },
+      },
+    } as any);
+
+    // Should have called complete with the flash model, not the current model
+    expect(mocks.complete).toHaveBeenCalledWith(
+      flashModel,
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("falls back to current model when hints don't match", async () => {
+    const { handleSamplingRequest } = await import("../sampling-handler.ts");
+    const options = createOptions({
+      getCurrentModel: vi.fn(() => model),
+      modelRegistry: {
+        getAvailable: vi.fn(() => [model]),
+        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "key", headers: {} })),
+      },
+    });
+
+    await handleSamplingRequest(options, {
+      method: "sampling/createMessage",
+      params: {
+        messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+        maxTokens: 50,
+        modelPreferences: {
+          hints: [{ name: "nonexistent-model" }],
+        },
+      },
+    } as any);
+
+    expect(mocks.complete).toHaveBeenCalledWith(
+      model,
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it("rejects unsupported sampling features loudly", async () => {
     const { handleSamplingRequest } = await import("../sampling-handler.ts");
 
