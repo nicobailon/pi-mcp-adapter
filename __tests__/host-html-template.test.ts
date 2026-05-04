@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildHostHtmlTemplate, type HostHtmlTemplateInput } from "../host-html-template.js";
+import {
+  applyCspMeta,
+  buildCspMetaContent,
+  buildHostHtmlTemplate,
+  type HostHtmlTemplateInput,
+} from "../host-html-template.js";
 
 function createMinimalInput(overrides: Partial<HostHtmlTemplateInput> = {}): HostHtmlTemplateInput {
   return {
@@ -7,12 +12,6 @@ function createMinimalInput(overrides: Partial<HostHtmlTemplateInput> = {}): Hos
     serverName: "test-server",
     toolName: "test-tool",
     toolArgs: { arg1: "value1" },
-    resource: {
-      uri: "ui://test/widget",
-      html: "<h1>Test Widget</h1>",
-      mimeType: "text/html",
-      meta: {},
-    },
     allowAttribute: "",
     requireToolConsent: false,
     cacheToolConsent: true,
@@ -45,7 +44,7 @@ describe("buildHostHtmlTemplate", () => {
 
       expect(html).toContain('id="server-name"');
       expect(html).toContain('id="tool-name"');
-      expect(html).toContain("Sandboxed");
+      expect(html).toContain("Hosted");
     });
 
     it("includes iframe for app content", () => {
@@ -158,8 +157,7 @@ describe("buildHostHtmlTemplate", () => {
   });
 
   describe("CSP handling", () => {
-    it("buildCspMetaContent generates restrictive default CSP when csp is omitted", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.js");
+    it("buildCspMetaContent generates restrictive default CSP when csp is omitted", () => {
       const csp = buildCspMetaContent(undefined);
 
       expect(csp).toContain("default-src 'none'");
@@ -168,11 +166,12 @@ describe("buildHostHtmlTemplate", () => {
       expect(csp).toContain("img-src 'self' data:");
       expect(csp).toContain("media-src 'self' data:");
       expect(csp).toContain("connect-src 'none'");
+      expect(csp).toContain("frame-src 'none'");
       expect(csp).toContain("object-src 'none'");
+      expect(csp).toContain("base-uri 'self'");
     });
 
-    it("buildCspMetaContent maps resourceDomains to all static-asset directives", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.js");
+    it("buildCspMetaContent maps resourceDomains to all static-asset directives", () => {
       const csp = buildCspMetaContent({
         resourceDomains: ["cdn.example.com"],
         connectDomains: ["https://api.example.com"],
@@ -190,8 +189,7 @@ describe("buildHostHtmlTemplate", () => {
       expect(csp).toContain("base-uri 'self'");
     });
 
-    it("buildCspMetaContent respects frameDomains and baseUriDomains", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.js");
+    it("buildCspMetaContent respects frameDomains and baseUriDomains", () => {
       const csp = buildCspMetaContent({
         frameDomains: ["https://embed.example.com"],
         baseUriDomains: ["https://base.example.com"],
@@ -201,16 +199,26 @@ describe("buildHostHtmlTemplate", () => {
       expect(csp).toContain("base-uri https://base.example.com");
     });
 
-    it("buildCspMetaContent uses safe defaults for frame-src and base-uri when omitted", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.js");
+    it("buildCspMetaContent rejects malformed domain fields", () => {
+      expect(() => buildCspMetaContent({
+        resourceDomains: "cdn.example.com" as unknown as string[],
+      })).toThrow("ui.csp.resourceDomains must be an array of strings");
+    });
+
+    it("buildCspMetaContent rejects CSP source tokens with directive separators", () => {
+      expect(() => buildCspMetaContent({
+        connectDomains: ["https://api.example.com; frame-src *"],
+      })).toThrow("ui.csp.connectDomains[0] must be a domain/source token");
+    });
+
+    it("buildCspMetaContent uses safe defaults for frame-src and base-uri when omitted", () => {
       const csp = buildCspMetaContent({});
 
       expect(csp).toContain("frame-src 'none'");
       expect(csp).toContain("base-uri 'self'");
     });
 
-    it("applyCspMeta injects CSP meta into HTML head", async () => {
-      const { applyCspMeta } = await import("../host-html-template.js");
+    it("applyCspMeta injects CSP meta into HTML head", () => {
       const html = applyCspMeta(
         "<html><head></head><body>Content</body></html>",
         "default-src 'none'; script-src 'self'"
@@ -220,8 +228,7 @@ describe("buildHostHtmlTemplate", () => {
       expect(html).toContain("script-src");
     });
 
-    it("applyCspMeta preserves existing CSP in resource HTML", async () => {
-      const { applyCspMeta } = await import("../host-html-template.js");
+    it("applyCspMeta replaces existing resource CSP with the host policy", () => {
       const resourceWithCsp = `<html>
         <head>
           <meta http-equiv="Content-Security-Policy" content="default-src 'self'">
@@ -229,11 +236,36 @@ describe("buildHostHtmlTemplate", () => {
         <body>Content</body>
       </html>`;
 
-      const html = applyCspMeta(resourceWithCsp, "script-src 'self'");
+      const html = applyCspMeta(resourceWithCsp, "default-src 'none'; script-src 'self'");
 
-      // Should not duplicate CSP meta - applyCspMeta should detect existing CSP and skip injection
       const cspMatches = html.match(/Content-Security-Policy/g) ?? [];
       expect(cspMatches.length).toBe(1);
+      expect(html).toContain("default-src 'none'; script-src 'self'");
+      expect(html).not.toContain("default-src 'self'");
+    });
+
+    it("applyCspMeta replaces unquoted resource CSP meta tags", () => {
+      const html = applyCspMeta(
+        `<html><head><meta content="default-src 'self'" http-equiv=Content-Security-Policy></head><body>Content</body></html>`,
+        "default-src 'none'; script-src 'self'"
+      );
+
+      const cspMatches = html.match(/Content-Security-Policy/g) ?? [];
+      expect(cspMatches.length).toBe(1);
+      expect(html).toContain("default-src 'none'; script-src 'self'");
+      expect(html).not.toContain("default-src 'self'");
+    });
+
+    it("applyCspMeta does not strip CSP-like text inside scripts", () => {
+      const html = applyCspMeta(
+        `<html><head><script>const tpl = \`<meta http-equiv="Content-Security-Policy" content="default-src 'self'">\`;</script></head><body>Content</body></html>`,
+        "default-src 'none'"
+      );
+
+      expect(html).toContain(
+        `<script>const tpl = \`<meta http-equiv="Content-Security-Policy" content="default-src 'self'">\`;</script>`
+      );
+      expect(html).toContain("default-src 'none'");
     });
   });
 

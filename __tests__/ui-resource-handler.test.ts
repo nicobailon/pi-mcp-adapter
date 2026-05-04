@@ -211,6 +211,58 @@ describe("UiResourceHandler", () => {
       });
     });
 
+    it("throws when CSP domain fields are not arrays", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [
+            {
+              uri: "ui://test/widget",
+              mimeType: "text/html",
+              text: "<h1>Content</h1>",
+              _meta: {
+                ui: {
+                  csp: {
+                    resourceDomains: "cdn.example.com",
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      await expect(handler.readUiResource("server", "ui://test/widget")).rejects.toThrow(
+        "ui.csp.resourceDomains must be an array of strings"
+      );
+    });
+
+    it("throws when CSP source tokens contain directive separators", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [
+            {
+              uri: "ui://test/widget",
+              mimeType: "text/html",
+              text: "<h1>Content</h1>",
+              _meta: {
+                ui: {
+                  csp: {
+                    connectDomains: ["https://api.example.com; frame-src *"],
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      await expect(handler.readUiResource("server", "ui://test/widget")).rejects.toThrow(
+        "ui.csp.connectDomains[0] must be a domain/source token"
+      );
+    });
+
     it("extracts permissions meta", async () => {
       const manager = createMockManager({
         readResource: vi.fn().mockResolvedValue({

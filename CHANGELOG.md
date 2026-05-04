@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Aligned MCP UI CSP handling with the MCP Apps spec `resourceDomains` metadata, enforced host-owned CSP headers/meta tags, and validated CSP source metadata before serving UI resources. Thanks @hydrosquall for PR #65.
+
 ## [2.5.1] - 2026-04-24
 
 ### Fixed

@@ -241,7 +241,6 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           serverName: options.serverName,
           toolName: options.toolName,
           toolArgs: options.toolArgs,
-          resource: options.resource,
           allowAttribute: buildAllowAttribute(options.resource.meta.permissions),
           requireToolConsent: options.consentManager.requiresPrompt(options.serverName),
           cacheToolConsent: options.consentManager.shouldCacheConsent(),
@@ -285,12 +284,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         if (!validateTokenQuery(url, sessionToken, res)) return;
         touchHeartbeat();
         // Serve the MCP app's UI HTML directly (avoids blob URL security issues)
-        // Apply CSP meta tag if specified in resource metadata
         const cspContent = buildCspMetaContent(options.resource.meta.csp);
         const appHtml = applyCspMeta(options.resource.html, cspContent);
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
+          "Content-Security-Policy": cspContent,
         });
         res.end(appHtml);
         return;

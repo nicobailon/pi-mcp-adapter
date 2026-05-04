@@ -3,7 +3,7 @@ import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { ResourceFetchError, ResourceParseError } from "./errors.js";
 import { logger } from "./logger.js";
 import type { McpServerManager } from "./server-manager.js";
-import type { UiResourceContent, UiResourceMeta } from "./types.js";
+import type { UiResourceContent, UiResourceCsp, UiResourceMeta } from "./types.js";
 
 interface ResourceContentRecord {
   uri?: string;
@@ -57,8 +57,8 @@ export class UiResourceHandler {
       throw new ResourceParseError(uri, "content is empty", { server: serverName });
     }
 
-    const contentMeta = extractUiMeta(content._meta);
-    const listMeta = extractUiMeta(this.getListResourceMeta(serverName, uri));
+    const contentMeta = extractUiMeta(content._meta, uri, serverName);
+    const listMeta = extractUiMeta(this.getListResourceMeta(serverName, uri), uri, serverName);
 
     log.debug("Resource loaded successfully", { 
       contentLength: html.length,
@@ -121,25 +121,70 @@ function toHtml(content: ResourceContentRecord): string {
   throw new Error(`UI resource ${content.uri ?? "(unknown)"} did not include text or blob content`);
 }
 
-function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMeta {
+function extractUiMeta(
+  meta: Record<string, unknown> | undefined,
+  uri: string,
+  serverName: string
+): UiResourceMeta {
   if (!meta || typeof meta !== "object") return {};
-  const ui = meta.ui as Record<string, unknown> | undefined;
-  if (!ui || typeof ui !== "object") return {};
+  const ui = meta.ui;
+  if (!ui || typeof ui !== "object" || Array.isArray(ui)) return {};
+  const uiMeta = ui as Record<string, unknown>;
 
   const out: UiResourceMeta = {};
 
-  if (ui.csp && typeof ui.csp === "object") {
-    out.csp = ui.csp as UiResourceMeta["csp"];
+  if (uiMeta.csp !== undefined) {
+    out.csp = parseUiResourceCsp(uiMeta.csp, uri, serverName);
   }
-  if (ui.permissions && typeof ui.permissions === "object") {
-    out.permissions = ui.permissions as UiResourceMeta["permissions"];
+  if (uiMeta.permissions && typeof uiMeta.permissions === "object") {
+    out.permissions = uiMeta.permissions as UiResourceMeta["permissions"];
   }
-  if (typeof ui.domain === "string") {
-    out.domain = ui.domain;
+  if (typeof uiMeta.domain === "string") {
+    out.domain = uiMeta.domain;
   }
-  if (typeof ui.prefersBorder === "boolean") {
-    out.prefersBorder = ui.prefersBorder;
+  if (typeof uiMeta.prefersBorder === "boolean") {
+    out.prefersBorder = uiMeta.prefersBorder;
   }
 
   return out;
+}
+
+function parseUiResourceCsp(value: unknown, uri: string, serverName: string): UiResourceCsp {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ResourceParseError(uri, "ui.csp must be an object", { server: serverName });
+  }
+
+  const input = value as Record<string, unknown>;
+  const csp: UiResourceCsp = {};
+  const fields = ["connectDomains", "resourceDomains", "frameDomains", "baseUriDomains"] as const;
+
+  for (const field of fields) {
+    const domains = input[field];
+    if (domains === undefined) continue;
+    if (!Array.isArray(domains)) {
+      throw new ResourceParseError(uri, `ui.csp.${field} must be an array of strings`, {
+        server: serverName,
+      });
+    }
+
+    csp[field] = domains.map((domain, index) => {
+      if (typeof domain !== "string") {
+        throw new ResourceParseError(uri, `ui.csp.${field}[${index}] must be a string`, {
+          server: serverName,
+        });
+      }
+
+      const trimmed = domain.trim();
+      if (!trimmed || /[\u0000-\u001F\u007F\s;,"'<>`]/.test(trimmed)) {
+        throw new ResourceParseError(
+          uri,
+          `ui.csp.${field}[${index}] must be a domain/source token without whitespace, semicolons, commas, or quotes`,
+          { server: serverName }
+        );
+      }
+      return trimmed;
+    });
+  }
+
+  return csp;
 }

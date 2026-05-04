@@ -254,6 +254,43 @@ describe("UiServer", () => {
     });
   });
 
+  describe("GET /ui-app", () => {
+    it("serves app HTML with the host CSP as header and meta tag", async () => {
+      handle = await startUiServer(createServerOptions({
+        resource: createMockResource({
+          html: `<html><head><meta content="default-src 'self'" http-equiv=Content-Security-Policy></head><body>App</body></html>`,
+          meta: {
+            permissions: [],
+            csp: {
+              resourceDomains: ["https://cdn.example.com"],
+              connectDomains: ["https://api.example.com"],
+            },
+          },
+        }),
+      }));
+      const url = `http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`;
+
+      const res = await request(url);
+      if (typeof res.body !== "string") {
+        throw new Error("Expected /ui-app to return HTML text");
+      }
+      const body = res.body;
+      const cspHeader = res.headers["content-security-policy"];
+      if (typeof cspHeader !== "string") {
+        throw new Error("Missing Content-Security-Policy header");
+      }
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(cspHeader).toContain("default-src 'none'");
+      expect(cspHeader).toContain("connect-src 'self' https://api.example.com");
+      expect(cspHeader).toContain("script-src 'self' 'unsafe-inline' https://cdn.example.com");
+      expect(body.match(/http-equiv="Content-Security-Policy"/g)?.length).toBe(1);
+      expect(body).toContain(`content="${cspHeader}"`);
+      expect(body).not.toContain("default-src 'self'");
+    });
+  });
+
   describe("GET /app-bridge.bundle.js", () => {
     it("serves JavaScript bundle", async () => {
       handle = await startUiServer(createServerOptions());

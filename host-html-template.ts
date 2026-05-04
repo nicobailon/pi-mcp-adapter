@@ -1,4 +1,4 @@
-import type { UiHostContext, UiResourceContent, UiResourceCsp } from "./types.js";
+import type { UiHostContext, UiResourceCsp } from "./types.js";
 
 // Use locally bundled AppBridge to avoid CDN Zod bundling issues
 const DEFAULT_APP_BRIDGE_MODULE_URL = "/app-bridge.bundle.js";
@@ -8,7 +8,6 @@ export interface HostHtmlTemplateInput {
   serverName: string;
   toolName: string;
   toolArgs: Record<string, unknown>;
-  resource: UiResourceContent;
   allowAttribute: string;
   requireToolConsent: boolean;
   cacheToolConsent: boolean;
@@ -17,13 +16,10 @@ export interface HostHtmlTemplateInput {
 }
 
 export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
-  const cspContent = buildCspMetaContent(input.resource.meta.csp);
-  const resourceHtml = applyCspMeta(input.resource.html, cspContent);
   const hostContext = input.hostContext ?? {};
 
   const sessionToken = safeInlineJSON(input.sessionToken);
   const toolArgs = safeInlineJSON(input.toolArgs);
-  const uiHtml = safeInlineJSON(resourceHtml);
   const serverName = safeInlineJSON(input.serverName);
   const toolName = safeInlineJSON(input.toolName);
   const hostContextJson = safeInlineJSON(hostContext);
@@ -92,7 +88,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     <div class="title">
       <span class="server">MCP · <span id="server-name"></span></span>
       <span class="tool" id="tool-name"></span>
-      <span class="badge">Sandboxed</span>
+      <span class="badge">Hosted</span>
     </div>
     <div class="controls">
       <span class="status" id="status">Loading UI...</span>
@@ -151,9 +147,18 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
         body: JSON.stringify({ token: SESSION_TOKEN, params }),
       });
 
-      const body = await response.json().catch(() => ({ ok: false, error: "Invalid JSON response" }));
-      if (!response.ok || !body.ok) {
-        const message = body.error || ("HTTP " + response.status);
+      let body;
+      try {
+        body = await response.json();
+      } catch (error) {
+        throw new Error("Invalid JSON response from " + endpoint + " (HTTP " + response.status + ")", {
+          cause: error,
+        });
+      }
+      if (!response.ok || !body || typeof body !== "object" || !body.ok) {
+        const message = body && typeof body === "object" && typeof body.error === "string"
+          ? body.error
+          : "HTTP " + response.status;
         throw new Error(message);
       }
       return body.result ?? {};
@@ -374,15 +379,17 @@ export function buildCspMetaContent(csp: UiResourceCsp | undefined): string {
       "img-src 'self' data:",
       "media-src 'self' data:",
       "connect-src 'none'",
+      "frame-src 'none'",
       "object-src 'none'",
+      "base-uri 'self'",
     ].join("; ");
   }
 
   // Spec CSP construction from declared domains.
-  const res = csp.resourceDomains?.join(" ") ?? "";
-  const connect = csp.connectDomains?.join(" ") ?? "";
-  const frame = csp.frameDomains?.join(" ") || "'none'";
-  const base = csp.baseUriDomains?.join(" ") || "'self'";
+  const res = formatCspDomainList(csp.resourceDomains, "resourceDomains");
+  const connect = formatCspDomainList(csp.connectDomains, "connectDomains");
+  const frame = formatCspDomainList(csp.frameDomains, "frameDomains") || "'none'";
+  const base = formatCspDomainList(csp.baseUriDomains, "baseUriDomains") || "'self'";
   return [
     "default-src 'none'",
     `script-src 'self' 'unsafe-inline'${res ? " " + res : ""}`,
@@ -397,13 +404,74 @@ export function buildCspMetaContent(csp: UiResourceCsp | undefined): string {
   ].join("; ");
 }
 
-export function applyCspMeta(html: string, cspContent: string): string {
-  if (/http-equiv=["']Content-Security-Policy["']/i.test(html)) return html;
-  const metaTag = `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(cspContent)}">`;
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, (match) => `${match}\n${metaTag}`);
+function formatCspDomainList(domains: unknown, field: keyof UiResourceCsp): string {
+  if (domains === undefined) return "";
+  if (!Array.isArray(domains)) {
+    throw new Error(`ui.csp.${field} must be an array of strings`);
   }
-  return `${metaTag}\n${html}`;
+
+  return domains
+    .map((domain, index) => {
+      if (typeof domain !== "string") {
+        throw new Error(`ui.csp.${field}[${index}] must be a string`);
+      }
+
+      const trimmed = domain.trim();
+      if (!trimmed || /[\u0000-\u001F\u007F\s;,"'<>`]/.test(trimmed)) {
+        throw new Error(
+          `ui.csp.${field}[${index}] must be a domain/source token without whitespace, semicolons, commas, or quotes`
+        );
+      }
+      return trimmed;
+    })
+    .join(" ");
+}
+
+export function applyCspMeta(html: string, cspContent: string): string {
+  const metaTag = `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(cspContent)}">`;
+  const htmlWithoutCsp = removeHeadCspMetaTags(html);
+  if (/<head[^>]*>/i.test(htmlWithoutCsp)) {
+    return htmlWithoutCsp.replace(/<head[^>]*>/i, (match) => `${match}\n${metaTag}`);
+  }
+  return `${metaTag}\n${htmlWithoutCsp}`;
+}
+
+function removeHeadCspMetaTags(html: string): string {
+  const headOpenMatch = /<head\b[^>]*>/i.exec(html);
+  if (!headOpenMatch) return removeCspMetaTagsOutsideRawText(html);
+
+  const headContentStart = headOpenMatch.index + headOpenMatch[0].length;
+  const afterHeadOpen = html.slice(headContentStart);
+  const headCloseMatch = /<\/head\s*>/i.exec(afterHeadOpen);
+  const headContentEnd = headCloseMatch ? headContentStart + headCloseMatch.index : html.length;
+  const headContent = html.slice(headContentStart, headContentEnd);
+
+  return `${html.slice(0, headContentStart)}${removeCspMetaTagsOutsideRawText(
+    headContent
+  )}${html.slice(headContentEnd)}`;
+}
+
+function removeCspMetaTagsOutsideRawText(html: string): string {
+  const protectedRanges = Array.from(
+    html.matchAll(/<!--[\s\S]*?-->|<(script|style|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi),
+    (match) => {
+      const start = match.index ?? 0;
+      return { start, end: start + match[0].length };
+    }
+  );
+
+  return html.replace(/<meta\b[^>]*>/gi, (tag, offset) => {
+    const insideProtectedRange = protectedRanges.some(
+      (range) => offset >= range.start && offset < range.end
+    );
+    return !insideProtectedRange && hasContentSecurityPolicyHttpEquiv(tag) ? "" : tag;
+  });
+}
+
+function hasContentSecurityPolicyHttpEquiv(metaTag: string): boolean {
+  const match = /\bhttp-equiv\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i.exec(metaTag);
+  const value = match?.[1] ?? match?.[2] ?? match?.[3];
+  return value?.trim().toLowerCase() === "content-security-policy";
 }
 
 function safeInlineJSON(value: unknown): string {
