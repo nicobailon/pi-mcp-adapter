@@ -251,11 +251,12 @@ export function buildProxyDescription(
   desc += `  mcp({ })                              → Show server status\n`;
   desc += `  mcp({ server: "name" })               → List tools from server\n`;
   desc += `  mcp({ search: "query" })              → Search MCP tools by name/description\n`;
-  desc += `  mcp({ describe: "tool_name" })        → Show tool details and parameters\n`;
+  desc += `  mcp({ describe: "tool_name" })        → REQUIRED before calling: full schema + parameters\n`;
   desc += `  mcp({ connect: "server-name" })       → Connect to a server and refresh metadata\n`;
-  desc += `  mcp({ tool: "name", args: '{"key": "value"}' })    → Call a tool (args is JSON string)\n`;
+  desc += `  mcp({ tool: "name", args: '{"key": "value"}' })    → Call a tool (args is JSON string). Only after describe.\n`;
   desc += `  mcp({ action: "ui-messages" })        → Retrieve accumulated messages from completed UI sessions\n`;
   desc += `\nMode: tool (call) > connect > describe > search > server (list) > action > nothing (status)`;
+  desc += `\nMANDATORY: mcp({ describe: "tool_name" }) before first use of any tool. Never guess any parameters. Calling tools without describe will fail!`;
 
   return desc;
 }
