@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolInfo } from "@mariozechner/pi-coding-agent";
-import type { McpExtensionState } from "./state.js";
+import { buildMcpRequestMeta, type McpExtensionState } from "./state.js";
 import type { ToolMetadata, McpContent } from "./types.js";
 import { getServerPrefix, parseUiPromptHandoff } from "./types.js";
 import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.js";
@@ -719,7 +719,7 @@ export async function executeCall(
     const resultPromise = connection.client.callTool({
       name: toolMeta.originalName,
       arguments: args ?? {},
-      _meta: uiSession?.requestMeta,
+      _meta: buildMcpRequestMeta(state.sessionId, uiSession?.requestMeta),
     });
 
     if (toolMeta.uiResourceUri) {

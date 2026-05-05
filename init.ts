@@ -59,6 +59,7 @@ export async function initializeMcp(
     consentManager,
     uiServer: null,
     completedUiSessions: [],
+    sessionId: ctx.sessionManager.getSessionId(),
     openBrowser: (url: string) => openUrl(pi, url, process.env.BROWSER),
     ui,
     sendMessage: (message, options) => pi.sendMessage(message, options),

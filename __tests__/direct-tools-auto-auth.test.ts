@@ -66,6 +66,7 @@ describe("direct tools auto auth", () => {
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],
+      sessionId: "pi-session-direct",
     } as any;
 
     const executor = createDirectToolExecutor(
@@ -87,6 +88,11 @@ describe("direct tools auto auth", () => {
       state.config.mcpServers.demo,
     );
     expect(state.manager.close).toHaveBeenCalledWith("demo");
+    expect(connected.client.callTool).toHaveBeenCalledWith({
+      name: "search",
+      arguments: { q: "hello" },
+      _meta: { "pi/session_id": "pi-session-direct" },
+    });
     expect(result.content[0].text).toContain("ok");
   });
 

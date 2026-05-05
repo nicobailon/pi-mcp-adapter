@@ -213,6 +213,7 @@ export async function maybeStartUiSession(
       manager: state.manager,
       consentManager: state.consentManager,
       hostContext,
+      piSessionId: state.sessionId,
 
       onMessage: (params: UiMessageParams) => {
         const prompt = extractUiPromptText(params);
