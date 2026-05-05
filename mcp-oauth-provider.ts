@@ -89,7 +89,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
    */
   get redirectUrl(): string | undefined {
     if (this.usesClientCredentials) return undefined
-    return `http://localhost:${getOAuthCallbackPort()}${OAUTH_CALLBACK_PATH}`
+    return `http://127.0.0.1:${getOAuthCallbackPort()}${OAUTH_CALLBACK_PATH}`
   }
 
   /**
