@@ -19,42 +19,48 @@ import { supportsOAuth, authenticate } from "./mcp-auth-flow.js";
 import { hasStoredTokens } from "./mcp-auth.js";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.js";
 import { openPath } from "./utils.js";
+import { t } from "./i18n.js";
 
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return;
 
-  const lines: string[] = ["MCP Server Status:", ""];
+  const lines: string[] = [t("mcp.status.title", "MCP Server Status:"), ""];
 
   for (const name of Object.keys(state.config.mcpServers)) {
     const connection = state.manager.getConnection(name);
     const metadata = state.toolMetadata.get(name);
     const toolCount = metadata?.length ?? 0;
     const failedAgo = getFailureAgeSeconds(state, name);
-    let status = "not connected";
+    let status = t("mcp.status.notConnected", "not connected");
     let statusIcon = "○";
     let failed = false;
 
     if (connection?.status === "connected") {
-      status = "connected";
+      status = t("mcp.status.connected", "connected");
       statusIcon = "✓";
     } else if (connection?.status === "needs-auth") {
-      status = "needs auth";
+      status = t("mcp.status.needsAuth", "needs auth");
       statusIcon = "⚠";
     } else if (failedAgo !== null) {
-      status = `failed ${failedAgo}s ago`;
+      status = t("mcp.status.failedAgo", "failed {seconds}s ago", { seconds: failedAgo });
       statusIcon = "✗";
       failed = true;
     } else if (metadata !== undefined) {
-      status = "cached";
+      status = t("mcp.status.cached", "cached");
     }
 
-    const toolSuffix = failed ? "" : ` (${toolCount} tools${status === "cached" ? ", cached" : ""})`;
+    const cachedStatus = t("mcp.status.cached", "cached");
+    const toolSuffix = failed
+      ? ""
+      : ` (${status === cachedStatus
+        ? t("mcp.status.toolsCached", "{count} tools, cached", { count: toolCount })
+        : t("mcp.status.tools", "{count} tools", { count: toolCount })})`;
     lines.push(`${statusIcon} ${name}: ${status}${toolSuffix}`);
   }
 
   if (Object.keys(state.config.mcpServers).length === 0) {
-    lines.push("No MCP servers configured");
-    lines.push("Run /mcp setup to adopt imports or scaffold a starter .mcp.json");
+    lines.push(t("mcp.status.noneConfigured", "No MCP servers configured"));
+    lines.push(t("mcp.status.setupHint", "Run /mcp setup to adopt imports or scaffold a starter .mcp.json"));
   }
 
   ctx.ui.notify(lines.join("\n"), "info");
