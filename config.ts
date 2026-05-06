@@ -180,16 +180,16 @@ export function getMcpDiscoverySummary(overridePath?: string, cwd = process.cwd(
   };
 }
 
-export function loadMcpConfig(overridePath?: string): McpConfig {
+export function loadMcpConfig(overridePath?: string, memoryConfig?: McpConfig): McpConfig {
   let config: McpConfig = { mcpServers: {} };
 
   for (const source of getConfigSources(overridePath)) {
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
     if (!loaded) continue;
-    config = mergeConfigs(config, expandImports(loaded));
+    config = mergeMcpConfigs(config, expandImports(loaded));
   }
 
-  return config;
+  return memoryConfig ? mergeMcpConfigs(config, memoryConfig) : config;
 }
 
 function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
@@ -248,7 +248,7 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
   return sources;
 }
 
-function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
+export function mergeMcpConfigs(base: McpConfig, next: McpConfig): McpConfig {
   return {
     mcpServers: { ...base.mcpServers, ...next.mcpServers },
     imports: mergeImports(base.imports, next.imports),

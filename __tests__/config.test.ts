@@ -76,6 +76,51 @@ describe("config discovery", () => {
     });
   });
 
+  it("merges in-memory config after file config with in-memory precedence", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-memory-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-memory-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(project, ".mcp.json"), {
+      imports: ["cursor"],
+      settings: { toolPrefix: "short", idleTimeout: 5 },
+      mcpServers: {
+        shared: { command: "file-command", directTools: true },
+        fileOnly: { command: "file-only" },
+      },
+    });
+    writeJson(join(home, ".cursor", "mcp.json"), {
+      mcpServers: {
+        importedOnly: { command: "cursor" },
+      },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(undefined, {
+      imports: ["vscode"],
+      settings: { idleTimeout: 30, sampling: false },
+      mcpServers: {
+        shared: { url: "https://memory.example.com/mcp", lifecycle: "eager" },
+        memoryOnly: { url: "https://memory-only.example.com/mcp" },
+      },
+    });
+
+    expect(config.imports).toEqual(["cursor", "vscode"]);
+    expect(config.settings).toEqual({
+      toolPrefix: "short",
+      idleTimeout: 30,
+      sampling: false,
+    });
+    expect(config.mcpServers.fileOnly).toEqual({ command: "file-only" });
+    expect(config.mcpServers.importedOnly).toEqual({ command: "cursor" });
+    expect(config.mcpServers.memoryOnly).toEqual({ url: "https://memory-only.example.com/mcp" });
+    expect(config.mcpServers.shared).toEqual({
+      url: "https://memory.example.com/mcp",
+      lifecycle: "eager",
+    });
+  });
+
   it("prefers modern Claude Code config detection over legacy paths", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-import-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-import-project-"));
