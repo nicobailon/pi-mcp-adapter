@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ToolInfo } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
+import type { McpAdapterOptions } from "./types.js";
 import { Type } from "typebox";
 import { showStatus, showTools, reconnectServers, authenticateServer, openMcpPanel, openMcpSetup } from "./commands.js";
 import { loadMcpConfig } from "./config.js";
@@ -10,7 +11,7 @@ import { executeCall, executeConnect, executeDescribe, executeList, executeSearc
 import { getConfigPathFromArgv, truncateAtWord } from "./utils.js";
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.js";
 
-export default function mcpAdapter(pi: ExtensionAPI) {
+function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
   let lifecycleGeneration = 0;
@@ -45,8 +46,8 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     }
   }
 
-  const earlyConfigPath = getConfigPathFromArgv();
-  const earlyConfig = loadMcpConfig(earlyConfigPath);
+  const earlyConfigPath = options.configPath ?? getConfigPathFromArgv();
+  const earlyConfig = loadMcpConfig(earlyConfigPath, options.config);
   const earlyCache = loadMetadataCache();
   const prefix = earlyConfig.settings?.toolPrefix ?? "server";
 
@@ -106,7 +107,10 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       console.error("MCP OAuth initialization failed:", err);
     });
 
-    const promise = initializeMcp(pi, ctx);
+    const promise = initializeMcp(pi, ctx, {
+      configPath: earlyConfigPath,
+      config: options.config,
+    });
     initPromise = promise;
 
     promise.then(async (nextState) => {
@@ -315,3 +319,11 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     });
   }
 }
+
+export function createMcpAdapter(options: McpAdapterOptions = {}) {
+  return function mcpAdapter(pi: ExtensionAPI) {
+    installMcpAdapter(pi, options);
+  };
+}
+
+export default createMcpAdapter();
