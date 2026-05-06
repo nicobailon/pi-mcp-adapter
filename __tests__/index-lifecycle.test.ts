@@ -199,6 +199,38 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));
   });
 
+  it("creates an SDK adapter that merges file config with in-memory config", async () => {
+    const memoryConfig = {
+      mcpServers: {
+        memory: { url: "https://memory.example.com/mcp", lifecycle: "eager" },
+      },
+    };
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.loadMcpConfig.mockReturnValue(memoryConfig);
+
+    const { createMcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    createMcpAdapter({
+      configPath: "/tmp/sdk-mcp.json",
+      config: memoryConfig,
+    })(api);
+
+    expect(mocks.loadMcpConfig).toHaveBeenCalledWith("/tmp/sdk-mcp.json", memoryConfig);
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+
+    expect(mocks.initializeMcp).toHaveBeenCalledWith(
+      api,
+      expect.any(Object),
+      {
+        configPath: "/tmp/sdk-mcp.json",
+        config: memoryConfig,
+      },
+    );
+  });
+
   it("starts a replacement init immediately and shuts down stale init results", async () => {
     const first = createDeferred<any>();
     const second = createDeferred<any>();

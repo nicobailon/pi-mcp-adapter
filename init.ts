@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
-import type { ToolMetadata } from "./types.js";
+import type { McpAdapterOptions, ToolMetadata } from "./types.js";
 import { existsSync } from "node:fs";
 import { loadMcpConfig } from "./config.js";
 import { ConsentManager } from "./consent-manager.js";
@@ -27,10 +27,12 @@ const FAILURE_BACKOFF_MS = 60 * 1000;
 
 export async function initializeMcp(
   pi: ExtensionAPI,
-  ctx: ExtensionContext
+  ctx: ExtensionContext,
+  options: McpAdapterOptions = {},
 ): Promise<McpExtensionState> {
-  const configPath = pi.getFlag("mcp-config") as string | undefined;
-  const config = loadMcpConfig(configPath);
+  const flagConfigPath = pi.getFlag("mcp-config");
+  const configPath = options.configPath ?? (typeof flagConfigPath === "string" ? flagConfigPath : undefined);
+  const config = loadMcpConfig(configPath, options.config);
 
   const manager = new McpServerManager();
   const samplingAutoApprove = config.settings?.samplingAutoApprove === true;

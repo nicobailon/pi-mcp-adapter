@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `createMcpAdapter({ configPath, config })` for SDK integrations that need to overlay an in-memory MCP config on top of the existing file-based config.
+
 ## [2.5.4] - 2026-05-04
 
 ### Changed
