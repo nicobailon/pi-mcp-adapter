@@ -73,6 +73,7 @@ const MAX_PORT_SCAN_ATTEMPTS = 25
 
 interface EnsureCallbackServerOptions {
   strictPort?: boolean
+  preferredPort?: number
 }
 
 /**
@@ -149,7 +150,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
  * If strictPort is false, scans forward for an available local port.
  */
 export async function ensureCallbackServer(options: EnsureCallbackServerOptions = {}): Promise<void> {
-  const configuredPort = getConfiguredOAuthCallbackPort()
+  const configuredPort = options.preferredPort ?? getConfiguredOAuthCallbackPort()
   const strictPort = options.strictPort === true
 
   if (server) {

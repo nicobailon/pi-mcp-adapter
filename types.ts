@@ -272,6 +272,8 @@ export interface OAuthConfig {
   clientSecret?: string;
   /** Requested OAuth scopes */
   scope?: string;
+  /** Callback port for pre-registered OAuth clients that require an exact redirect URI */
+  callbackPort?: number;
 }
 
 // Server configuration

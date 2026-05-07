@@ -60,6 +60,7 @@ export interface McpOAuthConfig {
   clientId?: string
   clientSecret?: string
   scope?: string
+  callbackPort?: number
 }
 
 /** Callbacks for OAuth flow interactions */

@@ -4,6 +4,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert"
+import { createServer } from "node:http"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -13,6 +14,22 @@ import {
   getPendingAuthCount,
 } from "./mcp-callback-server.js"
 import { getOAuthCallbackPort } from "./mcp-oauth-provider.js"
+
+async function getAvailablePort(): Promise<number> {
+  const server = createServer()
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(0, "localhost", () => resolve())
+  })
+
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+  const port = address.port
+
+  await new Promise<void>((resolve) => server.close(() => resolve()))
+  return port
+}
 
 describe("mcp-callback-server", () => {
   beforeEach(async () => {
@@ -36,6 +53,15 @@ describe("mcp-callback-server", () => {
       await ensureCallbackServer()
       await ensureCallbackServer()
       assert.strictEqual(isCallbackServerRunning(), true)
+    })
+
+    it("should use a configured preferred port", async () => {
+      const preferredPort = await getAvailablePort()
+
+      await ensureCallbackServer({ strictPort: true, preferredPort })
+
+      assert.strictEqual(isCallbackServerRunning(), true)
+      assert.strictEqual(getOAuthCallbackPort(), preferredPort)
     })
   })
 
