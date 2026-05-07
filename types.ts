@@ -263,6 +263,8 @@ export interface McpContent {
 export type ContentBlock = TextContent | ImageContent;
 
 // OAuth configuration (SDK handles auto-discovery and dynamic registration)
+export type OAuthOpenMode = "auto" | "browser" | "manual";
+
 export interface OAuthConfig {
   /** OAuth grant type (defaults to authorization_code) */
   grantType?: "authorization_code" | "client_credentials";
@@ -272,6 +274,16 @@ export interface OAuthConfig {
   clientSecret?: string;
   /** Requested OAuth scopes */
   scope?: string;
+  /** Client name used for dynamic registration (defaults to Pi Coding Agent). */
+  clientName?: string;
+  /** Client URI used for dynamic registration. */
+  clientUri?: string;
+  /** Hostname used in OAuth redirect URLs (defaults to localhost). */
+  callbackHost?: string;
+  /** Require binding the configured OAuth callback port instead of scanning fallback ports. */
+  strictCallbackPort?: boolean;
+  /** How to present authorization URLs for this server. */
+  openMode?: OAuthOpenMode;
 }
 
 // Server configuration
@@ -318,6 +330,8 @@ export interface McpSettings {
   directTools?: boolean;
   disableProxyTool?: boolean;
   autoAuth?: boolean;
+  /** Global default for OAuth URL presentation. Per-server oauth.openMode overrides this. */
+  oauthOpenMode?: OAuthOpenMode;
   sampling?: boolean;
   samplingAutoApprove?: boolean;
   /**

@@ -163,11 +163,35 @@ describe("mcp-auth-flow explicit auth", () => {
     await expect(authenticate("browser-fail", "https://api.example.com/mcp", {
       url: "https://api.example.com/mcp",
       auth: "oauth",
+      oauth: { openMode: "browser" },
     })).rejects.toThrow("Could not open browser");
 
     expect(mocks.cancelPendingCallback).toHaveBeenCalledTimes(1);
     expect(mocks.transportClose).toHaveBeenCalledTimes(1);
     expect(getOAuthState("browser-fail")).toBeUndefined();
+  });
+
+  it("supports manual authorization URL presentation", async () => {
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+      return "REDIRECT";
+    });
+    mocks.waitForCallback.mockResolvedValueOnce("code");
+    const { authenticate } = await import("../mcp-auth-flow.ts");
+    const seenUrls: string[] = [];
+
+    const status = await authenticate("manual", "https://api.example.com/mcp", {
+      url: "https://api.example.com/mcp",
+      auth: "oauth",
+      oauth: { openMode: "manual" },
+    }, {
+      onAuthorizationUrl: (url) => seenUrls.push(url),
+    });
+
+    expect(status).toBe("authenticated");
+    expect(seenUrls).toEqual(["https://auth.example.com/authorize"]);
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(mocks.finishAuth).toHaveBeenCalledWith("code");
   });
 
   it("enforces strict callback port for pre-registered OAuth clients", async () => {
@@ -182,6 +206,26 @@ describe("mcp-auth-flow explicit auth", () => {
       auth: "oauth",
       oauth: {
         clientId: "registered-client",
+      },
+    });
+
+    expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
+    expect(mocks.ensureCallbackServer).toHaveBeenCalledWith({ strictPort: true });
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+
+  it("enforces strict callback port when configured for dynamic registration", async () => {
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+      return "REDIRECT";
+    });
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    const result = await startAuth("svc", "https://api.example.com/mcp", {
+      url: "https://api.example.com/mcp",
+      auth: "oauth",
+      oauth: {
+        strictCallbackPort: true,
       },
     });
 

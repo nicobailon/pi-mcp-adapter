@@ -126,6 +126,11 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
+| `oauth.clientName` | Client name used for dynamic OAuth registration (defaults to `"Pi Coding Agent"`) |
+| `oauth.clientUri` | Client URI used for dynamic OAuth registration |
+| `oauth.callbackHost` | Hostname used in OAuth redirect URLs (defaults to `localhost`) |
+| `oauth.strictCallbackPort` | Require the configured callback port instead of scanning fallback ports |
+| `oauth.openMode` | `"auto"`, `"browser"`, or `"manual"` for authorization URL handling |
 | `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation |
 | `lifecycle` | `"lazy"` (default), `"eager"`, or `"keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
@@ -159,6 +164,7 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
+| `oauthOpenMode` | Global default for authorization URL handling: `"auto"`, `"browser"`, or `"manual"`. |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
 | `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
 
@@ -348,6 +354,8 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 | `/mcp-auth <server>` | OAuth setup |
 
 If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`, and direct tool calls will automatically run OAuth when needed and retry once. In non-interactive sessions, browser-based OAuth still requires running `/mcp-auth <server>` manually.
+
+For containers, SSH sessions, and other headless environments, set `settings.oauthOpenMode` or per-server `oauth.openMode` to `"manual"`. The adapter prints and displays the authorization URL instead of trying to launch a browser, then waits for the normal OAuth callback.
 
 ## How It Works
 

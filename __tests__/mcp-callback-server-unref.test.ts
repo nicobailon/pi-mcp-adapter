@@ -83,12 +83,12 @@ describe("mcp-callback-server", () => {
     mocks.setOAuthCallbackPort.mockClear();
   });
 
-  it("binds localhost and unrefs the callback server after a successful bind", async () => {
+  it("binds loopback and unrefs the callback server after a successful bind", async () => {
     const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
 
     await ensureCallbackServer();
 
-    expect(mocks.runtime.servers[0]?.listen).toHaveBeenCalledWith(4337, "localhost", expect.any(Function));
+    expect(mocks.runtime.servers[0]?.listen).toHaveBeenCalledWith(4337, "127.0.0.1", expect.any(Function));
     expect(mocks.runtime.servers[0]?.unref).toHaveBeenCalledTimes(1);
   });
 

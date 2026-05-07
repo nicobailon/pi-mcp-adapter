@@ -168,7 +168,15 @@ export async function authenticateServer(
 
   try {
     ctx.ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
-    const status = await authenticate(serverName, definition.url, definition);
+    const status = await authenticate(serverName, definition.url, definition, {
+      openMode: config.settings?.oauthOpenMode,
+      onAuthorizationUrl: (authorizationUrl) => {
+        ctx.ui.notify(
+          `Open this URL in your browser to authenticate "${serverName}":\n${authorizationUrl}`,
+          "info",
+        );
+      },
+    });
 
     if (status === "authenticated") {
       ctx.ui.notify(

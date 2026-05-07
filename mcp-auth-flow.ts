@@ -10,6 +10,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import open from "open"
+import { existsSync, readFileSync } from "node:fs"
 import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.js"
 import {
   ensureCallbackServer,
@@ -31,6 +32,12 @@ import type { ServerEntry } from "./types.js"
 
 /** Auth status for a server */
 export type AuthStatus = "authenticated" | "expired" | "not_authenticated"
+export type OAuthOpenMode = "auto" | "browser" | "manual"
+
+export interface AuthenticateOptions {
+  openMode?: OAuthOpenMode
+  onAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>
+}
 
 // Track pending transports for auth completion
 const pendingTransports = new Map<string, StreamableHTTPClientTransport>()
@@ -60,6 +67,56 @@ function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     clientId: definition.oauth?.clientId,
     clientSecret: definition.oauth?.clientSecret,
     scope: definition.oauth?.scope,
+    clientName: definition.oauth?.clientName,
+    clientUri: definition.oauth?.clientUri,
+    callbackHost: definition.oauth?.callbackHost,
+    strictCallbackPort: definition.oauth?.strictCallbackPort,
+    openMode: definition.oauth?.openMode,
+  }
+}
+
+function isContainerEnvironment(): boolean {
+  if (existsSync("/.dockerenv")) return true
+
+  try {
+    const cgroup = readFileSync("/proc/1/cgroup", "utf8")
+    return /docker|kubepods|containerd|podman/i.test(cgroup)
+  } catch {
+    return false
+  }
+}
+
+function resolveOpenMode(definition?: ServerEntry, options: AuthenticateOptions = {}): OAuthOpenMode {
+  const envMode = process.env.MCP_OAUTH_OPEN_MODE as OAuthOpenMode | undefined
+  const configuredMode = options.openMode ?? (definition?.oauth === false ? undefined : definition?.oauth?.openMode) ?? envMode ?? "auto"
+
+  if (configuredMode === "browser" || configuredMode === "manual") return configuredMode
+  return isContainerEnvironment() ? "manual" : "browser"
+}
+
+async function presentAuthorizationUrl(
+  serverName: string,
+  authorizationUrl: string,
+  definition?: ServerEntry,
+  options: AuthenticateOptions = {},
+): Promise<void> {
+  const openMode = resolveOpenMode(definition, options)
+
+  if (openMode === "manual") {
+    console.log(`MCP Auth: Open this URL to authenticate ${serverName}:\n${authorizationUrl}`)
+    await options.onAuthorizationUrl?.(authorizationUrl)
+    return
+  }
+
+  console.log(`MCP Auth: Opening browser for ${serverName}`)
+  try {
+    await open(authorizationUrl)
+  } catch (error) {
+    console.warn(`MCP Auth: Failed to open browser for ${serverName}`, { error })
+    throw new Error(
+      `Could not open browser. Please open this URL manually: ${authorizationUrl}`,
+      { cause: error },
+    )
   }
 }
 
@@ -89,7 +146,9 @@ export async function startAuth(
 
   // Start the callback server.
   // Pre-registered OAuth clients require an exact redirect URI, so enforce strict port binding.
-  await ensureCallbackServer({ strictPort: Boolean(config.clientId) })
+  // Some container/forwarder setups also require the configured port for dynamic registration.
+  const envStrictCallbackPort = /^(1|true|yes)$/i.test(process.env.MCP_OAUTH_STRICT_CALLBACK_PORT ?? "")
+  await ensureCallbackServer({ strictPort: Boolean(config.clientId) || config.strictCallbackPort === true || envStrictCallbackPort })
 
   const oauthState = generateState()
   await updateOAuthState(serverName, oauthState)
@@ -155,6 +214,7 @@ export async function authenticate(
   serverName: string,
   serverUrl: string,
   definition?: ServerEntry,
+  options: AuthenticateOptions = {},
 ): Promise<AuthStatus> {
   const inFlight = pendingAuthentications.get(serverName)
   if (inFlight) {
@@ -180,17 +240,7 @@ export async function authenticate(
     const callbackPromise = waitForCallback(oauthState)
 
     try {
-      // Open browser
-      console.log(`MCP Auth: Opening browser for ${serverName}`)
-      try {
-        await open(authorizationUrl)
-      } catch (error) {
-        console.warn(`MCP Auth: Failed to open browser for ${serverName}`, { error })
-        throw new Error(
-          `Could not open browser. Please open this URL manually: ${authorizationUrl}`,
-          { cause: error },
-        )
-      }
+      await presentAuthorizationUrl(serverName, authorizationUrl, definition, options)
 
       // Wait for callback
       const code = await callbackPromise

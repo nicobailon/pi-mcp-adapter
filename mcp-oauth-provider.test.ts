@@ -47,7 +47,7 @@ describe("McpOAuthProvider", () => {
     redirectCaptured = undefined
   })
 
-  function createProvider(config: { clientId?: string; clientSecret?: string; scope?: string } = {}) {
+  function createProvider(config: { clientId?: string; clientSecret?: string; scope?: string; clientName?: string; clientUri?: string; callbackHost?: string } = {}) {
     return new McpOAuthProvider(serverName, serverUrl, config, {
       onRedirect: async (url) => {
         redirectCaptured = url
@@ -83,6 +83,26 @@ describe("McpOAuthProvider", () => {
       const metadata = provider.clientMetadata
 
       assert.strictEqual(metadata.token_endpoint_auth_method, "client_secret_post")
+    })
+
+    it("should use configured callback host", () => {
+      const provider = createProvider({ callbackHost: "127.0.0.1" })
+
+      assert.strictEqual(
+        provider.redirectUrl,
+        "http://127.0.0.1:19876/callback"
+      )
+    })
+
+    it("should use configured client metadata", () => {
+      const provider = createProvider({
+        clientName: "Custom MCP Client",
+        clientUri: "https://example.com/client",
+      })
+      const metadata = provider.clientMetadata
+
+      assert.strictEqual(metadata.client_name, "Custom MCP Client")
+      assert.strictEqual(metadata.client_uri, "https://example.com/client")
     })
   })
 
