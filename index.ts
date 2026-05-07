@@ -9,6 +9,7 @@ import { loadMetadataCache } from "./metadata-cache.js";
 import { executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.js";
 import { getConfigPathFromArgv, truncateAtWord } from "./utils.js";
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.js";
+import { createMcpRenderers } from "./renderers.js";
 
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
@@ -66,6 +67,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     || missingConfiguredDirectToolServers.length > 0;
 
   for (const spec of directSpecs) {
+    const { renderCall, renderResult } = createMcpRenderers(spec.prefixedName);
     pi.registerTool({
       name: spec.prefixedName,
       label: `MCP: ${spec.originalName}`,
@@ -73,6 +75,8 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema || { type: "object", properties: {} }),
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
+      renderCall,
+      renderResult,
     });
   }
 
@@ -231,11 +235,14 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   });
 
   if (shouldRegisterProxyTool) {
+    const { renderCall: mcpProxyRenderCall, renderResult: mcpProxyRenderResult } = createMcpRenderers("mcp");
     pi.registerTool({
       name: "mcp",
       label: "MCP",
       description: buildProxyDescription(earlyConfig, earlyCache, directSpecs),
       promptSnippet: "MCP gateway - connect to MCP servers and call their tools",
+      renderCall: mcpProxyRenderCall,
+      renderResult: mcpProxyRenderResult,
       parameters: Type.Object({
         tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
         args: Type.Optional(Type.String({ description: "Arguments as JSON string (e.g., '{\"key\": \"value\"}')" })),
