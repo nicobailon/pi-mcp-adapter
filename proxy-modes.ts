@@ -8,6 +8,7 @@ import { transformMcpContent } from "./tool-registrar.ts";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, truncateAtWord } from "./utils.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
+import { dispatchViaSubagent, isSubagentChild } from "./subagent-dispatch.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 
@@ -704,6 +705,51 @@ export async function executeCall(
         content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }],
         details: { mode: "call", resourceUri: toolMeta.resourceUri, server: serverName },
       };
+    }
+
+    // Tutoria fork: routeViaSubagent interception. When the operator flags
+    // a server with `routeViaSubagent: true` in mcp.json, every tool call
+    // (except UI-resource tools, which need the live MCP UI session) is
+    // dispatched through a child Pi process. Heavy MCP payloads stay in the
+    // child's chat context; only the synthesized final assistant text returns
+    // here. Falls back to the normal direct call on any dispatch failure.
+    // Recursion guard: if we are *inside* a subagent child, never re-route.
+    const serverDef = state.config.mcpServers[serverName];
+    if (
+      serverDef?.routeViaSubagent === true
+      && !toolMeta.uiResourceUri
+      && !toolMeta.resourceUri
+      && !isSubagentChild()
+    ) {
+      try {
+        const dispatch = await dispatchViaSubagent({
+          toolName: toolMeta.originalName,
+          args: args ?? {},
+          agentName: serverDef.subagentName,
+          serverName,
+        });
+        if (dispatch.ok) {
+          return {
+            content: [{ type: "text" as const, text: dispatch.text }],
+            details: {
+              mode: "call",
+              server: serverName,
+              tool: toolMeta.originalName,
+              routedViaSubagent: true,
+              agent: serverDef.subagentName ?? "delegate",
+            },
+          };
+        }
+        // Soft failure: log and fall through to direct call so the operator's
+        // request still completes.
+        console.error(
+          `[mcp-adapter] routeViaSubagent failed for ${serverName}/${toolMeta.originalName}: ${dispatch.error ?? "unknown"}; falling back to direct call`,
+        );
+      } catch (err) {
+        console.error(
+          `[mcp-adapter] routeViaSubagent threw for ${serverName}/${toolMeta.originalName}: ${err instanceof Error ? err.message : String(err)}; falling back to direct call`,
+        );
+      }
     }
 
     uiSession = toolMeta.uiResourceUri

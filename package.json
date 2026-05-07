@@ -45,6 +45,7 @@
     "init.ts",
     "ui-session.ts",
     "proxy-modes.ts",
+    "subagent-dispatch.ts",
     "direct-tools.ts",
     "commands.ts",
     "onboarding-state.ts",

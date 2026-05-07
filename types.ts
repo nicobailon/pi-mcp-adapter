@@ -309,6 +309,21 @@ export interface ServerEntry {
   excludeTools?: string[];
   // Debug
   debug?: boolean;  // Show server stderr (default: false)
+  /**
+   * Tutoria fork: route MCP calls for this server through a Pi subagent.
+   * When `true`, every call is dispatched to a child Pi process running the
+   * agent named by `subagentName` (default: "delegate"). Heavy MCP payloads
+   * stay in the subagent's child process; only the synthesized final
+   * assistant text returns to the parent. Falls back to a direct call on
+   * dispatch failure so operator MCP requests never break.
+   */
+  routeViaSubagent?: boolean;
+  /**
+   * Tutoria fork: optional agent name for `routeViaSubagent`. Resolved against
+   * `~/.pi/agents/<name>.md` first, then `<pi-subagents pkg>/agents/<name>.md`.
+   * Defaults to "delegate".
+   */
+  subagentName?: string;
 }
 
 // Settings
