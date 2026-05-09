@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { getAgentPath } from "./agent-dir.js";
 
 export interface McpOnboardingState {
   version: 1;
@@ -16,7 +16,7 @@ const DEFAULT_STATE: McpOnboardingState = {
 };
 
 export function getOnboardingStatePath(): string {
-  return join(homedir(), ".pi", "agent", "mcp-onboarding.json");
+  return getAgentPath("mcp-onboarding.json");
 }
 
 export function loadOnboardingState(): McpOnboardingState {

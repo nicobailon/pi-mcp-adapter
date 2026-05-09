@@ -1,11 +1,20 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { logger, type LogEntry, type LogLevel } from "../logger.js";
 
 describe("Logger", () => {
   beforeEach(() => {
+    vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
     logger.clearHandlers();
     logger.setLevel("debug"); // Enable all levels for testing
     logger.setDefaultContext({});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe("log levels", () => {

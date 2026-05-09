@@ -17,6 +17,7 @@ import { logger } from "./logger.js";
 import { McpOAuthProvider } from "./mcp-oauth-provider.js";
 import { supportsOAuth } from "./mcp-auth-flow.js";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.js";
+import { interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.js";
 
 interface ServerConnection {
   client: Client;
@@ -91,7 +92,7 @@ export class McpServerManager {
         command,
         args,
         env: resolveEnv(definition.env),
-        cwd: definition.cwd,
+        cwd: resolveConfigPath(definition.cwd),
         stderr: definition.debug ? "inherit" : "ignore",
       });
     } else if (definition.url) {
@@ -169,8 +170,7 @@ export class McpServerManager {
     
     // For bearer auth, add the token to headers BEFORE creating requestInit
     if (definition.auth === "bearer") {
-      const token = definition.bearerToken 
-        ?? (definition.bearerTokenEnv ? process.env[definition.bearerTokenEnv] : undefined);
+      const token = resolveBearerToken(definition);
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
       }
@@ -362,28 +362,14 @@ function resolveEnv(env?: Record<string, string>): Record<string, string> {
   }
   
   if (!env) return resolved;
-  
-  for (const [key, value] of Object.entries(env)) {
-    // Support ${VAR} and $env:VAR interpolation
-    resolved[key] = value
-      .replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "")
-      .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "");
-  }
-  
-  return resolved;
+
+  const overrides = interpolateEnvRecord(env);
+  return overrides ? { ...resolved, ...overrides } : resolved;
 }
 
 /**
  * Resolve headers with environment variable interpolation.
  */
 function resolveHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
-  if (!headers) return undefined;
-  
-  const resolved: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    resolved[key] = value
-      .replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "")
-      .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "");
-  }
-  return resolved;
+  return interpolateEnvRecord(headers);
 }

@@ -1,17 +1,16 @@
 // metadata-cache.ts - Persistent MCP metadata cache
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { getAgentPath } from "./agent-dir.js";
 import { createHash } from "node:crypto";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpTool, McpResource, ServerEntry, ToolMetadata } from "./types.js";
 import { formatToolName, isToolExcluded } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
-import { extractToolUiStreamMode } from "./utils.js";
+import { extractToolUiStreamMode, interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.js";
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const CACHE_PATH = join(homedir(), ".pi", "agent", "mcp-cache.json");
 
 export interface CachedTool {
   name: string;
@@ -40,13 +39,14 @@ export interface MetadataCache {
 }
 
 export function getMetadataCachePath(): string {
-  return CACHE_PATH;
+  return getAgentPath("mcp-cache.json");
 }
 
 export function loadMetadataCache(): MetadataCache | null {
-  if (!existsSync(CACHE_PATH)) return null;
+  const cachePath = getMetadataCachePath();
+  if (!existsSync(cachePath)) return null;
   try {
-    const raw = JSON.parse(readFileSync(CACHE_PATH, "utf-8"));
+    const raw = JSON.parse(readFileSync(cachePath, "utf-8"));
     if (!raw || typeof raw !== "object") return null;
     if (raw.version !== CACHE_VERSION) return null;
     if (!raw.servers || typeof raw.servers !== "object") return null;
@@ -57,13 +57,14 @@ export function loadMetadataCache(): MetadataCache | null {
 }
 
 export function saveMetadataCache(cache: MetadataCache): void {
-  const dir = dirname(CACHE_PATH);
+  const cachePath = getMetadataCachePath();
+  const dir = dirname(cachePath);
   mkdirSync(dir, { recursive: true });
 
   let merged: MetadataCache = { version: CACHE_VERSION, servers: {} };
   try {
-    if (existsSync(CACHE_PATH)) {
-      const existing = JSON.parse(readFileSync(CACHE_PATH, "utf-8")) as MetadataCache;
+    if (existsSync(cachePath)) {
+      const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as MetadataCache;
       if (existing && existing.version === CACHE_VERSION && existing.servers) {
         merged.servers = { ...existing.servers };
       }
@@ -75,9 +76,9 @@ export function saveMetadataCache(cache: MetadataCache): void {
   merged.version = CACHE_VERSION;
   merged.servers = { ...merged.servers, ...cache.servers };
 
-  const tmpPath = `${CACHE_PATH}.${process.pid}.tmp`;
+  const tmpPath = `${cachePath}.${process.pid}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
-  renameSync(tmpPath, CACHE_PATH);
+  renameSync(tmpPath, cachePath);
 }
 
 export function computeServerHash(definition: ServerEntry): string {
@@ -87,12 +88,12 @@ export function computeServerHash(definition: ServerEntry): string {
   const identity: Record<string, unknown> = {
     command: definition.command,
     args: definition.args,
-    env: definition.env,
-    cwd: definition.cwd,
+    env: interpolateEnvRecord(definition.env),
+    cwd: resolveConfigPath(definition.cwd),
     url: definition.url,
-    headers: definition.headers,
+    headers: interpolateEnvRecord(definition.headers),
     auth: definition.auth,
-    bearerToken: definition.bearerToken,
+    bearerToken: resolveBearerToken(definition),
     bearerTokenEnv: definition.bearerTokenEnv,
     exposeResources: definition.exposeResources,
     excludeTools: definition.excludeTools,

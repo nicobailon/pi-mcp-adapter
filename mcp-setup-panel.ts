@@ -459,7 +459,7 @@ export class McpSetupPanel {
           this.callbacks.previewImports(this.discovery.imports.filter((entry) => this.selectedImports.has(entry.kind)).map((entry) => entry.kind)),
           [
             `Detected imports: ${this.discovery.imports.map((entry) => `${entry.kind} (${entry.serverCount} servers)`).join(", ")}`,
-            "Selected imports are written into `~/.pi/agent/mcp.json` as Pi-owned compatibility state.",
+            "Selected imports are written into the Pi agent dir config as Pi-owned compatibility state.",
           ],
         );
       case "view-example":
@@ -480,7 +480,7 @@ export class McpSetupPanel {
         return this.formatPreview([
           "Read order:",
           "1. ~/.config/mcp/mcp.json",
-          "2. ~/.pi/agent/mcp.json",
+          "2. <Pi agent dir>/mcp.json",
           "3. .mcp.json",
           "4. .pi/mcp.json",
           "Pi writes compatibility imports and adapter-only overrides to Pi-owned files.",

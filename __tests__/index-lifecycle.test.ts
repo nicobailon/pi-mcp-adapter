@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn(),
@@ -119,7 +119,10 @@ function createPi() {
 }
 
 describe("mcpAdapter session lifecycle", () => {
+  const originalDirectTools = process.env.MCP_DIRECT_TOOLS;
+
   beforeEach(() => {
+    delete process.env.MCP_DIRECT_TOOLS;
     vi.resetModules();
     for (const value of Object.values(mocks)) {
       if (typeof value === "function" && "mockReset" in value) {
@@ -137,6 +140,14 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.resolveDirectTools.mockReturnValue([]);
     mocks.getConfigPathFromArgv.mockReturnValue(undefined);
     mocks.truncateAtWord.mockImplementation((text: string) => text);
+  });
+
+  afterEach(() => {
+    if (originalDirectTools === undefined) {
+      delete process.env.MCP_DIRECT_TOOLS;
+    } else {
+      process.env.MCP_DIRECT_TOOLS = originalDirectTools;
+    }
   });
 
   it("keeps the proxy tool when direct tools are still missing from cache", async () => {

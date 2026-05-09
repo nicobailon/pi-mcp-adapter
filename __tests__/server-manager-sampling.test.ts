@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const mocks = vi.hoisted(() => ({
   clients: [] as any[],
@@ -40,9 +42,19 @@ vi.mock("../npx-resolver.js", () => ({
 }));
 
 describe("McpServerManager sampling", () => {
+  const originalMcpTestCwd = process.env.MCP_TEST_CWD;
+
   beforeEach(() => {
     mocks.clients.length = 0;
     mocks.transports.length = 0;
+  });
+
+  afterEach(() => {
+    if (originalMcpTestCwd === undefined) {
+      delete process.env.MCP_TEST_CWD;
+    } else {
+      process.env.MCP_TEST_CWD = originalMcpTestCwd;
+    }
   });
 
   it("advertises sampling and registers the handler before connecting", async () => {
@@ -74,5 +86,27 @@ describe("McpServerManager sampling", () => {
     const client = mocks.clients[0];
     expect(client.options).toBeUndefined();
     expect(client.setRequestHandler).not.toHaveBeenCalled();
+  });
+
+  it("expands environment variables and tilde in stdio cwd", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    process.env.MCP_TEST_CWD = "/tmp/pi-mcp-cwd";
+
+    const envManager = new McpServerManager();
+    await envManager.connect("env-cwd", {
+      command: "node",
+      args: ["server.js"],
+      cwd: "${MCP_TEST_CWD}/nested",
+    });
+
+    const homeManager = new McpServerManager();
+    await homeManager.connect("home-cwd", {
+      command: "node",
+      args: ["server.js"],
+      cwd: "~/nested",
+    });
+
+    expect(mocks.transports[0].options).toMatchObject({ cwd: "/tmp/pi-mcp-cwd/nested" });
+    expect(mocks.transports[1].options).toMatchObject({ cwd: join(homedir(), "nested") });
   });
 });

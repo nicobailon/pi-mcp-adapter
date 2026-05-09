@@ -1,12 +1,11 @@
 // npx-resolver.ts - Resolve npx/npm exec binaries to avoid npm parent processes
 import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, dirname, extname, resolve, sep } from "node:path";
+import { getAgentPath } from "./agent-dir.js";
 import { spawn, spawnSync } from "node:child_process";
 
 const CACHE_VERSION = 1;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const CACHE_PATH = join(homedir(), ".pi", "agent", "mcp-npx-cache.json");
 
 interface NpxCacheEntry {
   resolvedBin: string;
@@ -367,10 +366,15 @@ function getNpmCacheDir(): string | null {
   return null;
 }
 
+function getNpxCachePath(): string {
+  return getAgentPath("mcp-npx-cache.json");
+}
+
 function loadCache(): NpxCache | null {
-  if (!existsSync(CACHE_PATH)) return null;
+  const cachePath = getNpxCachePath();
+  if (!existsSync(cachePath)) return null;
   try {
-    const raw = JSON.parse(readFileSync(CACHE_PATH, "utf-8"));
+    const raw = JSON.parse(readFileSync(cachePath, "utf-8"));
     if (!raw || typeof raw !== "object") return null;
     if (raw.version !== CACHE_VERSION) return null;
     if (!raw.entries || typeof raw.entries !== "object") return null;
@@ -381,13 +385,14 @@ function loadCache(): NpxCache | null {
 }
 
 function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
-  const dir = dirname(CACHE_PATH);
+  const cachePath = getNpxCachePath();
+  const dir = dirname(cachePath);
   mkdirSync(dir, { recursive: true });
 
   let merged: NpxCache = { version: CACHE_VERSION, entries: {} };
   try {
-    if (existsSync(CACHE_PATH)) {
-      const existing = JSON.parse(readFileSync(CACHE_PATH, "utf-8")) as NpxCache;
+    if (existsSync(cachePath)) {
+      const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as NpxCache;
       if (existing && existing.version === CACHE_VERSION && existing.entries) {
         merged.entries = { ...existing.entries };
       }
@@ -397,9 +402,9 @@ function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
   }
 
   merged.entries[key] = entry;
-  const tmpPath = `${CACHE_PATH}.${process.pid}.tmp`;
+  const tmpPath = `${cachePath}.${process.pid}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
-  renameSync(tmpPath, CACHE_PATH);
+  renameSync(tmpPath, cachePath);
 }
 
 function safeRealpath(path: string): string {

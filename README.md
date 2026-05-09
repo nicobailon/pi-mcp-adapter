@@ -34,7 +34,7 @@ The adapter reads standard MCP files automatically. No extra setup needed if you
 | Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
 | Nothing configured yet | Run `/mcp setup` to scaffold a minimal `.mcp.json`, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
 
-If you prefer the terminal, you can also run `pi-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to `~/.pi/agent/mcp.json`.
+If you prefer the terminal, you can also run `pi-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to the Pi agent dir (`~/.pi/agent/mcp.json` by default, or `$PI_CODING_AGENT_DIR/mcp.json` when set).
 
 ## Quick Start
 
@@ -55,13 +55,13 @@ Preferred user-global shared config: `~/.config/mcp/mcp.json`
 
 Pi also reads Pi-owned override files for settings and host-specific compatibility:
 
-- `~/.pi/agent/mcp.json` — Pi global override
+- `<Pi agent dir>/mcp.json` — Pi global override (`~/.pi/agent/mcp.json` by default)
 - `.pi/mcp.json` — Pi project override
 
 Precedence is:
 
 1. `~/.config/mcp/mcp.json`
-2. `~/.pi/agent/mcp.json`
+2. `<Pi agent dir>/mcp.json`
 3. `.mcp.json`
 4. `.pi/mcp.json`
 
@@ -96,7 +96,7 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 |------|---------|
 | `~/.config/mcp/mcp.json` | User-global shared MCP config |
 | `.mcp.json` | Project-local shared MCP config |
-| `~/.pi/agent/mcp.json` | Pi global override and compatibility imports |
+| `<Pi agent dir>/mcp.json` | Pi global override and compatibility imports (`~/.pi/agent/mcp.json` by default) |
 | `.pi/mcp.json` | Pi project override |
 
 Pi-specific files are the write targets for imported or shared global servers when Pi needs to persist adapter-only settings such as `directTools`.
@@ -120,12 +120,13 @@ Pi-specific files are the write targets for imported or shared global servers wh
 |-------|-------------|
 | `command` | Executable for stdio transport |
 | `args` | Command arguments |
-| `env` | Environment variables (`${VAR}` interpolation) |
-| `cwd` | Working directory |
+| `env` | Environment variables; supports `${VAR}` and `$env:VAR` interpolation |
+| `cwd` | Working directory; supports `${VAR}`, `$env:VAR`, and `~` expansion |
 | `url` | HTTP endpoint (StreamableHTTP with SSE fallback) |
+| `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
-| `bearerToken` / `bearerTokenEnv` | Token or env var name |
+| `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation |
 | `lifecycle` | `"lazy"` (default), `"eager"`, or `"keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
 | `exposeResources` | Expose MCP resources as tools (default: true) |
@@ -158,7 +159,7 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
-| `sampling` | Allow MCP servers to request LLM sampling through Pi's current/default model (default: true when UI approval is available). |
+| `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
 | `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
 
 Per-server `idleTimeout` overrides the global setting.
@@ -231,7 +232,7 @@ To exclude specific tools while still using `directTools: true`, add `excludeToo
 
 Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`.
 
-Direct tools register from the metadata cache (`~/.pi/agent/mcp-cache.json`), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. To force it: `/mcp reconnect <server>`.
+Direct tools register from the metadata cache in the Pi agent dir (`~/.pi/agent/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. To force it: `/mcp reconnect <server>`.
 
 When you change direct-tool toggles in `/mcp` or write new config through `/mcp setup`, the extension triggers Pi's normal reload flow automatically. That refreshes extensions, prompts, skills, and MCP tool registration in one shot, so newly configured direct tools can appear without a manual restart.
 
@@ -313,7 +314,7 @@ Shared MCP files are loaded automatically. Use `imports` only for host-specific 
 
 Supported compatibility imports: `cursor`, `claude-code`, `claude-desktop`, `vscode`, `windsurf`, `codex`
 
-`pi-mcp-adapter init` detects these host-specific configs and adds missing imports to `~/.pi/agent/mcp.json` for you.
+`pi-mcp-adapter init` detects these host-specific configs and adds missing imports to the Pi agent dir config for you.
 
 ### Project Config
 

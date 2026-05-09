@@ -1,9 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { buildProxyDescription, resolveDirectTools } from "../direct-tools.js";
-import { computeServerHash, type MetadataCache } from "../metadata-cache.js";
+import { computeServerHash, isServerCacheValid, type MetadataCache } from "../metadata-cache.js";
 import { buildToolMetadata } from "../tool-metadata.js";
 import type { McpConfig } from "../types.js";
 import { reconstructToolMetadata } from "../metadata-cache.js";
+
+const originalHashEnv = {
+  MCP_HASH_CWD: process.env.MCP_HASH_CWD,
+  MCP_HASH_ENV: process.env.MCP_HASH_ENV,
+  MCP_HASH_HEADER: process.env.MCP_HASH_HEADER,
+  MCP_HASH_TOKEN: process.env.MCP_HASH_TOKEN,
+};
+
+afterEach(() => {
+  for (const [key, value] of Object.entries(originalHashEnv)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+});
 
 describe("buildProxyDescription", () => {
   it("documents the ui-messages action", () => {
@@ -76,6 +95,96 @@ describe("buildProxyDescription", () => {
 
     expect(description).toContain("Servers: figma (1 tools)");
     expect(description).not.toContain("figma (3 tools)");
+  });
+});
+
+describe("metadata cache hashing", () => {
+  it("hashes interpolated cwd", () => {
+    process.env.MCP_HASH_CWD = "/tmp/mcp-one";
+    const first = computeServerHash({ command: "node", cwd: "${MCP_HASH_CWD}/server" });
+
+    process.env.MCP_HASH_CWD = "/tmp/mcp-two";
+    const second = computeServerHash({ command: "node", cwd: "${MCP_HASH_CWD}/server" });
+
+    expect(first).not.toBe(second);
+    expect(computeServerHash({ command: "node", cwd: "${MCP_HASH_CWD}/server" })).toBe(
+      computeServerHash({ command: "node", cwd: "/tmp/mcp-two/server" }),
+    );
+  });
+
+  it("hashes interpolated env values", () => {
+    process.env.MCP_HASH_ENV = "/tmp/data-one";
+    const first = computeServerHash({ command: "node", env: { DATA_DIR: "${MCP_HASH_ENV}" } });
+
+    process.env.MCP_HASH_ENV = "/tmp/data-two";
+    const second = computeServerHash({ command: "node", env: { DATA_DIR: "${MCP_HASH_ENV}" } });
+
+    expect(first).not.toBe(second);
+    expect(computeServerHash({ command: "node", env: { DATA_DIR: "${MCP_HASH_ENV}" } })).toBe(
+      computeServerHash({ command: "node", env: { DATA_DIR: "/tmp/data-two" } }),
+    );
+  });
+
+  it("hashes interpolated header values", () => {
+    process.env.MCP_HASH_HEADER = "header-one";
+    const first = computeServerHash({ url: "https://example.test/mcp", headers: { "x-root": "$env:MCP_HASH_HEADER" } });
+
+    process.env.MCP_HASH_HEADER = "header-two";
+    const second = computeServerHash({ url: "https://example.test/mcp", headers: { "x-root": "$env:MCP_HASH_HEADER" } });
+
+    expect(first).not.toBe(second);
+    expect(computeServerHash({ url: "https://example.test/mcp", headers: { "x-root": "$env:MCP_HASH_HEADER" } })).toBe(
+      computeServerHash({ url: "https://example.test/mcp", headers: { "x-root": "header-two" } }),
+    );
+  });
+
+  it("hashes tilde cwd as the home directory", () => {
+    expect(computeServerHash({ command: "node", cwd: "~/server" })).toBe(
+      computeServerHash({ command: "node", cwd: join(homedir(), "server") }),
+    );
+  });
+
+  it("hashes the effective bearerTokenEnv value", () => {
+    process.env.MCP_HASH_TOKEN = "token-one";
+    const first = computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerTokenEnv: "MCP_HASH_TOKEN" });
+
+    process.env.MCP_HASH_TOKEN = "token-two";
+    const second = computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerTokenEnv: "MCP_HASH_TOKEN" });
+
+    expect(first).not.toBe(second);
+    expect(computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerTokenEnv: "MCP_HASH_TOKEN" })).toBe(
+      computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "token-two", bearerTokenEnv: "MCP_HASH_TOKEN" }),
+    );
+  });
+
+  it("hashes interpolated bearerToken values", () => {
+    process.env.MCP_HASH_TOKEN = "token-one";
+    const first = computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "${MCP_HASH_TOKEN}" });
+
+    process.env.MCP_HASH_TOKEN = "token-two";
+    const second = computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "${MCP_HASH_TOKEN}" });
+
+    expect(first).not.toBe(second);
+    expect(computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "$env:MCP_HASH_TOKEN" })).toBe(
+      computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "token-two" }),
+    );
+  });
+
+  it("invalidates cached metadata when an interpolated bearerToken env value changes", () => {
+    const definition = { url: "https://example.test/mcp", auth: "bearer" as const, bearerToken: "${MCP_HASH_TOKEN}" };
+    process.env.MCP_HASH_TOKEN = "token-one";
+    const entry = {
+      configHash: computeServerHash(definition),
+      cachedAt: Date.now(),
+      tools: [],
+      resources: [],
+    };
+
+    expect(isServerCacheValid(entry, definition)).toBe(true);
+
+    process.env.MCP_HASH_TOKEN = "token-two";
+
+    expect(isServerCacheValid(entry, definition)).toBe(false);
   });
 });
 

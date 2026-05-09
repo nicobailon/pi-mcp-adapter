@@ -1,4 +1,4 @@
-import { complete, type AssistantMessage, type Message, type Model, type TextContent } from "@mariozechner/pi-ai";
+import { complete, type Api, type AssistantMessage, type Message, type Model, type TextContent } from "@mariozechner/pi-ai";
 import { truncateAtWord } from "./utils.js";
 import type { ExtensionUIContext, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -6,6 +6,7 @@ import {
   CreateMessageRequestSchema,
   type CreateMessageRequest,
   type CreateMessageResult,
+  type ModelPreferences,
   type SamplingMessage,
   type SamplingMessageContentBlock,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -15,7 +16,7 @@ export interface SamplingHandlerOptions {
   autoApprove: boolean;
   ui?: ExtensionUIContext;
   modelRegistry: ModelRegistry;
-  getCurrentModel: () => Model<any> | undefined;
+  getCurrentModel: () => Model<Api> | undefined;
   getSignal: () => AbortSignal | undefined;
 }
 
@@ -50,7 +51,7 @@ export async function handleSamplingRequest(
   }
 
   const messages = params.messages.map(convertSamplingMessage);
-  const { model, apiKey, headers } = await resolveSamplingModel(options);
+  const { model, apiKey, headers } = await resolveSamplingModel(options, params.modelPreferences);
   await confirmSampling(
     options,
     "Approve MCP sampling request",
@@ -114,19 +115,33 @@ function messageText(message: Message): string {
   }).join("\n");
 }
 
-async function resolveSamplingModel(options: SamplingHandlerOptions): Promise<{
-  model: Model<any>;
+async function resolveSamplingModel(
+  options: SamplingHandlerOptions,
+  modelPreferences: ModelPreferences | undefined,
+): Promise<{
+  model: Model<Api>;
   apiKey?: string;
   headers?: Record<string, string>;
 }> {
-  const candidates: Model<any>[] = [];
-  const currentModel = options.getCurrentModel();
-  if (currentModel) candidates.push(currentModel);
+  const candidates: Model<Api>[] = [];
+  const availableModels = options.modelRegistry.getAvailable();
 
-  for (const model of options.modelRegistry.getAvailable()) {
-    if (!candidates.some((candidate) => candidate.provider === model.provider && candidate.id === model.id)) {
-      candidates.push(model);
+  for (const hint of modelPreferences?.hints ?? []) {
+    const normalizedHint = hint.name?.trim().toLowerCase();
+    if (!normalizedHint) continue;
+    for (const model of availableModels) {
+      const searchableNames = [`${model.provider}/${model.id}`, model.id, model.name];
+      if (searchableNames.some((name) => name.toLowerCase().includes(normalizedHint))) {
+        addSamplingCandidate(candidates, model);
+      }
     }
+  }
+
+  const currentModel = options.getCurrentModel();
+  if (currentModel) addSamplingCandidate(candidates, currentModel);
+
+  for (const model of availableModels) {
+    addSamplingCandidate(candidates, model);
   }
 
   const errors: string[] = [];
@@ -142,6 +157,12 @@ async function resolveSamplingModel(options: SamplingHandlerOptions): Promise<{
     throw new Error(`No configured auth for MCP sampling model. ${errors.join("; ")}`);
   }
   throw new Error("No Pi model is available for MCP sampling");
+}
+
+function addSamplingCandidate(candidates: Model<Api>[], model: Model<Api>): void {
+  if (!candidates.some((candidate) => candidate.provider === model.provider && candidate.id === model.id)) {
+    candidates.push(model);
+  }
 }
 
 async function confirmSampling(options: SamplingHandlerOptions, title: string, message: string): Promise<void> {

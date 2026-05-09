@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.4] - 2026-05-04
+
+### Changed
+- Ignored npm lockfiles and removed checked-in `package-lock.json` files.
+
+### Fixed
+- Resolved `${VAR}` and `$env:VAR` placeholders in HTTP bearer tokens.
+- Honored MCP sampling `modelPreferences.hints` before falling back to the current/default model.
+
+## [2.5.3] - 2026-05-01
+
+### Added
+- Added environment variable and `~` expansion for stdio server `cwd` values.
+
+## [2.5.2] - 2026-04-29
+
+### Fixed
+- Respected `PI_CODING_AGENT_DIR` for Pi-owned MCP config and state files, including metadata cache, npx cache, onboarding state, OAuth credentials, and `pi-mcp-adapter init` writes.
+
 ## [2.5.1] - 2026-04-24
 
 ### Fixed

@@ -5,12 +5,13 @@
  * and PKCE state for MCP servers. Maintains backward compatibility with
  * per-server directory structure.
  * 
- * Token storage location: ~/.pi/agent/mcp-oauth/<server>/tokens.json
+ * Token storage location: $MCP_OAUTH_DIR/<server>/tokens.json when set,
+ * otherwise <Pi agent dir>/mcp-oauth/<server>/tokens.json
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { getAgentPath } from './agent-dir.js';
 
 /** OAuth token storage format */
 export interface StoredTokens {
@@ -39,9 +40,8 @@ export interface AuthEntry {
 
 // Base directory for auth storage - can be overridden via env var for testing
 function getAuthBaseDir(): string {
-  return process.env.MCP_OAUTH_DIR 
-    ? process.env.MCP_OAUTH_DIR 
-    : join(homedir(), '.pi', 'agent', 'mcp-oauth');
+  const override = process.env.MCP_OAUTH_DIR?.trim();
+  return override ? override : getAgentPath('mcp-oauth');
 }
 
 /**

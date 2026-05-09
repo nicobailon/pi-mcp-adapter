@@ -6,7 +6,17 @@ import os from "node:os";
 import { pathToFileURL } from "node:url";
 
 const HOME = os.homedir();
-const PI_CONFIG_PATH = path.join(HOME, ".pi", "agent", "mcp.json");
+
+function expandHome(input) {
+  if (input === "~") return HOME;
+  if (input.startsWith("~/")) return path.resolve(HOME, input.slice(2));
+  return path.resolve(input);
+}
+
+const AGENT_DIR = process.env.PI_CODING_AGENT_DIR?.trim()
+  ? expandHome(process.env.PI_CODING_AGENT_DIR.trim())
+  : path.join(HOME, ".pi", "agent");
+const PI_CONFIG_PATH = path.join(AGENT_DIR, "mcp.json");
 const GENERIC_GLOBAL_CONFIG_PATH = path.join(HOME, ".config", "mcp", "mcp.json");
 const PROJECT_CONFIG_PATH = path.resolve(process.cwd(), ".mcp.json");
 const PROJECT_PI_CONFIG_PATH = path.resolve(process.cwd(), ".pi", "mcp.json");

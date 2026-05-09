@@ -2,9 +2,9 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { getAgentPath } from "./agent-dir.js";
 import type { McpConfig, ServerEntry, McpSettings, ImportKind, ServerProvenance } from "./types.js";
 
-const PI_GLOBAL_CONFIG_PATH = join(homedir(), ".pi", "agent", "mcp.json");
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const PROJECT_CONFIG_NAME = ".mcp.json";
 const PROJECT_PI_CONFIG_NAME = ".pi/mcp.json";
@@ -90,7 +90,7 @@ export interface ConfigWritePreview {
 }
 
 export function getPiGlobalConfigPath(overridePath?: string): string {
-  return overridePath ? resolve(overridePath) : PI_GLOBAL_CONFIG_PATH;
+  return overridePath ? resolve(overridePath) : getAgentPath("mcp.json");
 }
 
 export function getGenericGlobalConfigPath(): string {
