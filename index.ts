@@ -264,7 +264,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages' to retrieve prompts/intents from UI sessions" })),
       }),
       renderResult: renderMcpToolResult,
-      async execute(_toolCallId, params: {
+      async execute(toolCallId, params: {
         tool?: string;
         args?: string;
         connect?: string;
@@ -275,6 +275,10 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         server?: string;
         action?: string;
       }, _signal, _onUpdate, _ctx) {
+        const mode = inferMcpMode(params);
+        const id = `mcp:${String(toolCallId)}`;
+        const label = params.tool ?? params.describe ?? params.search ?? params.connect ?? params.server ?? params.action ?? mode;
+        const startedAt = Date.now();
         let parsedArgs: Record<string, unknown> | undefined;
         if (params.args) {
           try {
@@ -291,44 +295,140 @@ export default function mcpAdapter(pi: ExtensionAPI) {
           }
         }
 
-        if (!state && initPromise) {
-          try {
-            state = await initPromise;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+        const metadataBase = { mode, server: params.server, tool: params.tool, label };
+        pi.events.emit("workitem:start", {
+          id,
+          kind: "mcp",
+          label: String(label),
+          status: "running",
+          started_at: startedAt,
+          updated_at: startedAt,
+          provenance: "mcp",
+          surface_tier: "collapsed",
+          triggered_by: "agent",
+          controls: ["expand"],
+          metadata: metadataBase,
+        });
+
+        const run = async () => {
+          if (!state && initPromise) {
+            try {
+              state = await initPromise;
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return {
+                content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
+                details: { error: "init_failed", message },
+              };
+            }
+          }
+          if (!state) {
             return {
-              content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
-              details: { error: "init_failed", message },
+              content: [{ type: "text" as const, text: "MCP not initialized" }],
+              details: { error: "not_initialized" },
             };
           }
-        }
-        if (!state) {
-          return {
-            content: [{ type: "text" as const, text: "MCP not initialized" }],
-            details: { error: "not_initialized" },
-          };
-        }
 
-        if (params.action === "ui-messages") {
-          return executeUiMessages(state);
+          if (params.action === "ui-messages") {
+            return executeUiMessages(state);
+          }
+          if (params.tool) {
+            return executeCall(state, params.tool, parsedArgs, params.server, getPiTools);
+          }
+          if (params.connect) {
+            return executeConnect(state, params.connect);
+          }
+          if (params.describe) {
+            return executeDescribe(state, params.describe);
+          }
+          if (params.search) {
+            return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas);
+          }
+          if (params.server) {
+            return executeList(state, params.server);
+          }
+          return executeStatus(state);
+        };
+
+        try {
+          const result = await run();
+          const details = (result.details ?? {}) as any;
+          const isError = Boolean(details.error);
+          pi.events.emit("workitem:end", {
+            id,
+            status: isError ? "error" : "ok",
+            ended_at: Date.now(),
+            summary: summarizeMcp((details.mode as string | undefined) ?? mode, details),
+            metadata: { ...metadataBase, ...details },
+          });
+          return result;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          pi.events.emit("workitem:end", {
+            id,
+            status: "error",
+            ended_at: Date.now(),
+            summary: message,
+            failure_action: "inspect MCP tool error",
+            metadata: { ...metadataBase, error: message },
+          });
+          throw error;
         }
-        if (params.tool) {
-          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools);
-        }
-        if (params.connect) {
-          return executeConnect(state, params.connect);
-        }
-        if (params.describe) {
-          return executeDescribe(state, params.describe);
-        }
-        if (params.search) {
-          return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas);
-        }
-        if (params.server) {
-          return executeList(state, params.server);
-        }
-        return executeStatus(state);
       },
     });
+  }
+}
+
+/** Infer mode from mcp() params before executor sets details.mode. */
+function inferMcpMode(args: { tool?: string; describe?: string; search?: string; connect?: string; action?: string; server?: string }): string {
+  if (args.tool) return "call";
+  if (args.describe) return "describe";
+  if (args.search) return "search";
+  if (args.connect) return "connect";
+  if (args.action === "ui-messages") return "ui-messages";
+  if (args.server) return "list";
+  return "status";
+}
+
+/** One-line summary per mode. Reads loosely-typed details from proxy-modes returns. */
+function summarizeMcp(mode: string, d: any): string {
+  switch (mode) {
+    case "list": {
+      const server = d.server ?? "?";
+      const count = d.count ?? d.tools?.length ?? 0;
+      return d.error ? `${server} · ${d.error}` : `${server} · ${count} tools`;
+    }
+    case "describe": {
+      const tool = d.tool?.name ?? d.requestedTool ?? "?";
+      return d.error ? `${tool} · ${d.error}` : tool;
+    }
+    case "call": {
+      const tool = d.tool ?? d.requestedTool ?? "?";
+      if (d.error) return `${tool} · ${d.error}`;
+      const routed = d.routedViaSubagent ? " [sub]" : "";
+      return `${tool} → ok${routed}`;
+    }
+    case "search": {
+      const q = d.query ?? "?";
+      const matches = d.count ?? d.matches?.length ?? 0;
+      return d.error ? `"${q}" · ${d.error}` : `"${q}" · ${matches} matches`;
+    }
+    case "status": {
+      const conn = d.connectedCount ?? 0;
+      const total = d.servers?.length ?? 0;
+      const tools = d.totalTools ?? 0;
+      return `${conn}/${total} servers · ${tools} tools`;
+    }
+    case "connect": {
+      const server = d.server ?? "?";
+      return d.error ? `${server} · ${d.error}` : `${server} → ok`;
+    }
+    case "ui-messages": {
+      const sessions = d.sessions ?? 0;
+      const intents = d.intents?.length ?? 0;
+      return `${sessions} sessions · ${intents} intents`;
+    }
+    default:
+      return "";
   }
 }
