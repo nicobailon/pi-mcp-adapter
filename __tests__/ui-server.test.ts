@@ -457,6 +457,44 @@ describe("UiServer", () => {
       });
     });
 
+    it("passes configured tool timeout to MCP calls", async () => {
+      const mockClient = {
+        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }),
+      };
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({ status: "connected", client: mockClient }),
+      });
+      handle = await startUiServer(createServerOptions({
+        manager,
+        config: {
+          settings: { toolTimeoutMs: 120000 },
+          mcpServers: {
+            "test-server": {
+              toolTimeoutMs: 600000,
+            },
+          },
+        },
+      }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: { arg1: "value1" } },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockClient.callTool).toHaveBeenCalledWith(
+        {
+          name: "some_tool",
+          arguments: { arg1: "value1" },
+        },
+        undefined,
+        { timeout: 600000 },
+      );
+    });
+
     it("checks consent before calling tool", async () => {
       const consentManager = createMockConsentManager({
         ensureApproved: vi.fn().mockImplementation(() => {
