@@ -1,8 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import type { ToolMetadata } from "./types.ts";
+import type { ToolMetadata, McpConfig, ServerProvenance } from "./types.ts";
 import { existsSync } from "node:fs";
-import { loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
 import { McpLifecycleManager } from "./lifecycle.ts";
 import {
@@ -27,10 +26,10 @@ const FAILURE_BACKOFF_MS = 60 * 1000;
 
 export async function initializeMcp(
   pi: ExtensionAPI,
-  ctx: ExtensionContext
+  ctx: ExtensionContext,
+  config: McpConfig,
+  provenance: Map<string, ServerProvenance>,
 ): Promise<McpExtensionState> {
-  const configPath = pi.getFlag("mcp-config") as string | undefined;
-  const config = loadMcpConfig(configPath, ctx.cwd);
 
   const manager = new McpServerManager();
   const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
@@ -54,6 +53,7 @@ export async function initializeMcp(
     lifecycle,
     toolMetadata,
     config,
+    provenance,
     failureTracker,
     uiResourceHandler,
     consentManager,

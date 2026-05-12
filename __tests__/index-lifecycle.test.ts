@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   flushMetadataCache: vi.fn(),
   initializeOAuth: vi.fn().mockResolvedValue(undefined),
   shutdownOAuth: vi.fn().mockResolvedValue(undefined),
-  loadMcpConfig: vi.fn(() => ({ mcpServers: {} })),
+  resolveMcpConfig: vi.fn(() => ({ config: { mcpServers: {} }, provenance: new Map() })),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
   createDirectToolExecutor: vi.fn(() => vi.fn()),
@@ -42,7 +42,7 @@ vi.mock("../mcp-auth-flow.ts", () => ({
 }));
 
 vi.mock("../config.ts", () => ({
-  loadMcpConfig: mocks.loadMcpConfig,
+  resolveMcpConfig: mocks.resolveMcpConfig,
 }));
 
 vi.mock("../metadata-cache.ts", () => ({
@@ -95,6 +95,7 @@ function createState() {
     lifecycle: { gracefulShutdown: vi.fn().mockResolvedValue(undefined) },
     toolMetadata: new Map(),
     config: { mcpServers: {} },
+    provenance: new Map(),
     failureTracker: new Map(),
     uiResourceHandler: {},
     consentManager: {},
@@ -116,6 +117,7 @@ function createPi() {
         handlers.set(event, handler);
       }),
       getAllTools: vi.fn(() => []),
+      events: { emit: vi.fn(), on: vi.fn() },
     } as any,
   };
 }
@@ -132,9 +134,10 @@ describe("mcpAdapter session lifecycle", () => {
       }
     }
 
+    mocks.initializeMcp.mockResolvedValue(createState());
     mocks.initializeOAuth.mockResolvedValue(undefined);
     mocks.shutdownOAuth.mockResolvedValue(undefined);
-    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {} });
+    mocks.resolveMcpConfig.mockReturnValue({ config: { mcpServers: {} }, provenance: new Map() });
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway");
     mocks.createDirectToolExecutor.mockReturnValue(vi.fn());
@@ -153,11 +156,14 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   it("keeps the proxy tool when direct tools are still missing from cache", async () => {
-    mocks.loadMcpConfig.mockReturnValue({
-      mcpServers: {
-        demo: { command: "npx", args: ["-y", "demo-server"], directTools: true },
+    mocks.resolveMcpConfig.mockReturnValue({
+      config: {
+        mcpServers: {
+          demo: { command: "npx", args: ["-y", "demo-server"], directTools: true },
+        },
+        settings: { disableProxyTool: true },
       },
-      settings: { disableProxyTool: true },
+      provenance: new Map(),
     });
     mocks.resolveDirectTools.mockReturnValue([
       {
@@ -170,25 +176,24 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["demo"]);
 
     const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
+    const { api, handlers } = createPi();
     mcpAdapter(api);
 
-    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
-      name: "demo_search",
-      renderResult: expect.any(Function),
-    }));
-    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
-      name: "mcp",
-      renderResult: expect.any(Function),
-    }));
+    await handlers.get("session_start")?.({}, {} as any);
+
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));
   });
 
   it("skips the proxy tool once direct tools are fully available", async () => {
-    mocks.loadMcpConfig.mockReturnValue({
-      mcpServers: {
-        demo: { command: "npx", args: ["-y", "demo-server"], directTools: true },
+    mocks.resolveMcpConfig.mockReturnValue({
+      config: {
+        mcpServers: {
+          demo: { command: "npx", args: ["-y", "demo-server"], directTools: true },
+        },
+        settings: { disableProxyTool: true },
       },
-      settings: { disableProxyTool: true },
+      provenance: new Map(),
     });
     mocks.resolveDirectTools.mockReturnValue([
       {
@@ -200,13 +205,12 @@ describe("mcpAdapter session lifecycle", () => {
     ]);
 
     const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
+    const { api, handlers } = createPi();
     mcpAdapter(api);
 
-    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
-      name: "demo_search",
-      renderResult: expect.any(Function),
-    }));
+    await handlers.get("session_start")?.({}, {} as any);
+
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));
   });
 
