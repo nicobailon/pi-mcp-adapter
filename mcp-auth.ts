@@ -27,6 +27,8 @@ export interface StoredClientInfo {
   clientSecret?: string;
   clientIdIssuedAt?: number;
   clientSecretExpiresAt?: number;
+  /** Redirect URIs used when this dynamic client was registered. */
+  redirectUris?: string[];
 }
 
 /** Complete auth entry for a server */

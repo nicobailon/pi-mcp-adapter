@@ -24,6 +24,7 @@ import {
   clearAllCredentials,
   clearClientInfo,
   clearCodeVerifier,
+  clearTokens,
   updateOAuthState,
   getOAuthState,
   clearOAuthState,
@@ -100,15 +101,25 @@ export async function startAuth(
   // Pre-registered OAuth clients require an exact redirect URI, so enforce strict port binding.
   await ensureCallbackServer({ strictPort: Boolean(config.clientId) })
 
-  const oauthState = generateState()
-  await updateOAuthState(serverName, oauthState, serverUrl)
-
   let capturedUrl: URL | undefined
   const authProvider = new McpOAuthProvider(serverName, serverUrl, config, {
     onRedirect: async (url) => {
       capturedUrl = url
     },
   })
+
+  const currentAuth = await getAuthForUrl(serverName, serverUrl)
+  const currentRedirectUrl = authProvider.redirectUrl
+  if (!config.clientId && currentAuth?.clientInfo &&
+    (!currentRedirectUrl || !currentAuth.clientInfo.redirectUris?.includes(currentRedirectUrl))) {
+    clearClientInfo(serverName)
+    clearTokens(serverName)
+    clearCodeVerifier(serverName)
+    await clearOAuthState(serverName)
+  }
+
+  const oauthState = generateState()
+  await updateOAuthState(serverName, oauthState, serverUrl)
 
   try {
     const result = await runSdkAuth(authProvider, { serverUrl })

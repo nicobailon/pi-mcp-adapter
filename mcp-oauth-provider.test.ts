@@ -105,6 +105,7 @@ describe("McpOAuthProvider", () => {
           clientSecret: "stored-secret",
           clientIdIssuedAt: Math.floor(Date.now() / 1000),
           clientSecretExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+          redirectUris: [provider.redirectUrl!],
         },
         serverUrl,
       }, serverUrl)
@@ -139,12 +140,46 @@ describe("McpOAuthProvider", () => {
           clientId: "stored-client",
           clientSecret: "stored-secret",
           clientSecretExpiresAt: 1, // Expired in 1970
+          redirectUris: [provider.redirectUrl!],
         },
         serverUrl,
       }, serverUrl)
 
       const info = await provider.clientInformation()
       assert.strictEqual(info, undefined)
+    })
+
+    it("should return stored client info even when redirect URI metadata is stale", async () => {
+      const provider = createProvider()
+
+      saveAuthEntry(serverName, {
+        clientInfo: {
+          clientId: "stored-client",
+          clientSecret: "stored-secret",
+          redirectUris: ["http://localhost:19877/callback"],
+        },
+        serverUrl,
+      }, serverUrl)
+
+      const info = await provider.clientInformation()
+      assert.strictEqual(info?.client_id, "stored-client")
+      assert.strictEqual(info?.client_secret, "stored-secret")
+    })
+
+    it("should return stored client info without redirect URI metadata", async () => {
+      const provider = createProvider()
+
+      saveAuthEntry(serverName, {
+        clientInfo: {
+          clientId: "stored-client",
+          clientSecret: "stored-secret",
+        },
+        serverUrl,
+      }, serverUrl)
+
+      const info = await provider.clientInformation()
+      assert.strictEqual(info?.client_id, "stored-client")
+      assert.strictEqual(info?.client_secret, "stored-secret")
     })
 
     it("should prefer config over stored", async () => {
@@ -171,12 +206,15 @@ describe("McpOAuthProvider", () => {
       const info: OAuthClientInformationFull = {
         client_id: "new-client",
         client_secret: "new-secret",
-        redirect_uris: ["http://localhost:3118/callback"],
+        redirect_uris: [provider.redirectUrl!],
         client_id_issued_at: Math.floor(Date.now() / 1000),
         client_secret_expires_at: futureTime,
       }
 
       await provider.saveClientInformation(info)
+
+      const storedEntry = getAuthForUrl(serverName, serverUrl)
+      assert.deepStrictEqual(storedEntry?.clientInfo?.redirectUris, [provider.redirectUrl])
 
       const storedInfo = await provider.clientInformation()
       assert.strictEqual(storedInfo?.client_id, "new-client")
@@ -372,7 +410,7 @@ describe("McpOAuthProvider", () => {
       await provider.saveClientInformation({
         client_id: "client",
         client_secret: "secret",
-        redirect_uris: ["http://localhost/callback"],
+        redirect_uris: [provider.redirectUrl!],
       })
 
       await provider.invalidateCredentials("all")
@@ -392,7 +430,7 @@ describe("McpOAuthProvider", () => {
       await provider.saveClientInformation({
         client_id: "client",
         client_secret: "secret",
-        redirect_uris: ["http://localhost/callback"],
+        redirect_uris: [provider.redirectUrl!],
         client_id_issued_at: Math.floor(Date.now() / 1000),
         client_secret_expires_at: futureTime,
       })
@@ -415,7 +453,7 @@ describe("McpOAuthProvider", () => {
       await provider.saveClientInformation({
         client_id: "client",
         client_secret: "secret",
-        redirect_uris: ["http://localhost/callback"],
+        redirect_uris: [provider.redirectUrl!],
         client_id_issued_at: Math.floor(Date.now() / 1000),
         client_secret_expires_at: futureTime,
       })

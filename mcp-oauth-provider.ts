@@ -160,6 +160,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
       clientSecret: info.client_secret,
       clientIdIssuedAt: info.client_id_issued_at,
       clientSecretExpiresAt: info.client_secret_expires_at,
+      redirectUris: info.redirect_uris?.map((uri) => String(uri)) ??
+        (this.redirectUrl ? [this.redirectUrl] : undefined),
     }
     updateClientInfo(this.serverName, clientInfo, this.serverUrl)
   }
