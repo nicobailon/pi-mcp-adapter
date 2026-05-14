@@ -313,7 +313,7 @@ export interface ServerEntry {
 
 // Settings
 export interface McpSettings {
-  toolPrefix?: "server" | "none" | "short";
+  toolPrefix?: "server" | "none" | "short" | "mcp";
   idleTimeout?: number; // minutes, default 10, 0 to disable
   directTools?: boolean;
   disableProxyTool?: boolean;
@@ -388,7 +388,7 @@ export interface McpPanelResult {
  */
 export function getServerPrefix(
   serverName: string,
-  mode: "server" | "none" | "short"
+  mode: "server" | "none" | "short" | "mcp"
 ): string {
   if (mode === "none") return "";
   if (mode === "short") {
@@ -396,6 +396,7 @@ export function getServerPrefix(
     if (!short) short = "mcp";
     return short;
   }
+  if (mode === "mcp") return `mcp__${serverName.replace(/-/g, "_")}`;
   return serverName.replace(/-/g, "_");
 }
 
@@ -405,7 +406,7 @@ export function getServerPrefix(
 export function formatToolName(
   toolName: string,
   serverName: string,
-  prefix: "server" | "none" | "short"
+  prefix: "server" | "none" | "short" | "mcp"
 ): string {
   const p = getServerPrefix(serverName, prefix);
   return p ? `${p}_${toolName}` : toolName;
@@ -418,7 +419,7 @@ function normalizeToolName(value: string): string {
 export function isToolExcluded(
   toolName: string,
   serverName: string,
-  prefix: "server" | "none" | "short",
+  prefix: "server" | "none" | "short" | "mcp",
   excludeTools?: unknown
 ): boolean {
   if (!Array.isArray(excludeTools) || excludeTools.length === 0) return false;
