@@ -1,4 +1,5 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
+import { checkSync as checkRegexSync } from "recheck";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
 import { getServerPrefix, parseUiPromptHandoff } from "./types.ts";
@@ -256,25 +257,54 @@ export function executeSearch(
   const matches: Array<{ server: string; tool: ToolMetadata }> = [];
 
   let pattern: RegExp;
-  try {
-    if (regex) {
-      pattern = new RegExp(query, "i");
-    } else {
-      const terms = query.trim().split(/\s+/).filter(t => t.length > 0);
-      if (terms.length === 0) {
-        return {
-          content: [{ type: "text" as const, text: "Search query cannot be empty" }],
-          details: { mode: "search", error: "empty_query" },
-        };
-      }
-      const escaped = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-      pattern = new RegExp(escaped.join("|"), "i");
+  if (regex) {
+    // Length cap stops trivially long inputs from pushing the parser itself
+    // into pathological territory before we even reach the analyser.
+    const MAX_REGEX_QUERY_LENGTH = 256;
+    if (query.length > MAX_REGEX_QUERY_LENGTH) {
+      return {
+        content: [{ type: "text" as const, text: `Regex query too long (max ${MAX_REGEX_QUERY_LENGTH} chars)` }],
+        details: { mode: "search", error: "query_too_long" },
+      };
     }
-  } catch {
-    return {
-      content: [{ type: "text" as const, text: `Invalid regex: ${query}` }],
-      details: { mode: "search", error: "invalid_pattern", query },
-    };
+    // Validate the regex syntax first so a malformed query reports an
+    // accurate "invalid_pattern" instead of being masked as "unsafe_pattern"
+    // by the ReDoS check below.
+    try {
+      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- syntax probe only; rebuilt below after recheck approves
+      new RegExp(query, "i");
+    } catch {
+      return {
+        content: [{ type: "text" as const, text: `Invalid regex: ${query}` }],
+        details: { mode: "search", error: "invalid_pattern", query },
+      };
+    }
+    // recheck performs static analysis for catastrophic backtracking, including
+    // the alternation-overlap patterns (e.g. `(a|a)*b`) that older heuristic
+    // checkers like safe-regex miss. Anything not classified `safe` is rejected
+    // so the regex engine never compiles a pinning pattern.
+    const recheckResult = checkRegexSync(query, "i");
+    if (recheckResult.status !== "safe") {
+      return {
+        content: [{ type: "text" as const, text: `Regex query rejected as unsafe (${recheckResult.status})` }],
+        details: { mode: "search", error: "unsafe_pattern", query },
+      };
+    }
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- query approved by `checkRegexSync` above; semgrep cannot trace the sanitiser call
+    pattern = new RegExp(query, "i");
+  } else {
+    const terms = query.trim().split(/\s+/).filter(t => t.length > 0);
+    if (terms.length === 0) {
+      return {
+        content: [{ type: "text" as const, text: "Search query cannot be empty" }],
+        details: { mode: "search", error: "empty_query" },
+      };
+    }
+    // Each term is metacharacter-escaped, so the resulting pattern has no
+    // attacker-controlled regex syntax. This is the standard escape recipe.
+    const escaped = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- terms metacharacter-escaped above; semgrep cannot trace the escape call
+    pattern = new RegExp(escaped.join("|"), "i");
   }
 
   for (const [serverName, metadata] of state.toolMetadata.entries()) {

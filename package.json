@@ -10,6 +10,8 @@
   },
   "scripts": {
     "test": "vitest run",
+    "test:node": "node --import tsx --test mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts proxy-modes.test.ts",
+    "test:all": "npm run test && npm run test:node",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:oauth-provider": "node --import tsx --test mcp-oauth-provider.test.ts"
@@ -85,6 +87,7 @@
     "@modelcontextprotocol/ext-apps": "^1.2.2",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "open": "^10.2.0",
+    "recheck": "^4.5.0",
     "typebox": "^1.1.24",
     "zod": "^3.25.0 || ^4.0.0"
   },
@@ -94,10 +97,9 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@types/bun": "^1.0.0",
-    "@types/node": "^20.0.0",
-    "@types/open": "^6.2.1",
+    "@types/node": "^25.7.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.0.0",
+    "typescript": "^6.0.3",
     "vitest": "^3.0.0"
   }
 }
