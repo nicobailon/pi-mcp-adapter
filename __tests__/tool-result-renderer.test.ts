@@ -95,4 +95,15 @@ describe("MCP tool result renderer", () => {
     expect(output).not.toContain("Ctrl+O to expand");
     expect(output).not.toContain("…");
   });
+
+  it("marks routed subagent results with [sub]", () => {
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "child summary" }], { routedViaSubagent: true }),
+      collapsedOptions,
+      plainTheme,
+      { isError: false },
+    ).render(80).join("\n");
+
+    expect(output).toContain("child summary [sub]");
+  });
 });

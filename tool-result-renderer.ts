@@ -57,9 +57,12 @@ export function renderMcpToolResult(
   const output = display.lines
     .map((line) => line === "…" ? theme.fg("muted", line) : theme.fg("toolOutput", line))
     .join("\n");
+  const subagentHint = result.details.routedViaSubagent === true
+    ? theme.fg("muted", " [sub]")
+    : "";
   const hint = display.truncated && !options.expanded
     ? `\n${theme.fg("muted", "(Ctrl+O to expand)")}`
     : "";
 
-  return new Text(`${output}${hint}`, 0, 0);
+  return new Text(`${output}${subagentHint}${hint}`, 0, 0);
 }
