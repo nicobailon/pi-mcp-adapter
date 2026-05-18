@@ -404,12 +404,21 @@ export default function myExtension(pi) {
 }
 ```
 
-For consumers that attach mid-session (or after a reload), each transition is
-also mirrored durably to the session log via `pi.appendEntry("mcp:state", …)`.
+For consumers that attach mid-session (or after a reload), state is also
+mirrored durably to the session log via `pi.appendEntry("mcp:state", …)`.
 Replaying `mcp:state` entries reconstructs current per-server state
 (`{ serverId, transport, status, toolCount }`, `status` one of `connected`,
 `disconnected`, `needs-auth`, `failed`, `cached`) without racing a live
-`mcp({ ... })` status pull. These entries are persisted state, not LLM context.
+`mcp({ ... })` status pull. Writes are coalesced — an entry is appended only
+when the reconstructable state actually changes, not on every transition, so a
+churny multi-server config doesn't amplify session-JSONL writes.
+
+`pi.appendEntry` is PI's documented mechanism for persisted session state that
+is *not* sent to the model ("not sent to LLM" per the `ExtensionAPI` contract):
+in the pinned PI version, `type:"custom"` session entries are excluded from
+both the live context and the compaction-kept replay. That exclusion is a
+PI-internal guarantee this adapter depends on — if PI ever surfaces custom
+entries to the model, these snapshots would need an explicit opt-out.
 
 ## Limitations
 

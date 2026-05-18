@@ -73,7 +73,11 @@ export class McpLifecycleManager {
       const connection = this.manager.getConnection(name);
       
       if (!connection || connection.status !== "connected") {
-        this.events.emitServer(name, definitionTransportKind(definition), "reconnecting");
+        this.events.emitServer(
+          name,
+          this.manager.getTransportKind(name) ?? definitionTransportKind(definition),
+          "reconnecting",
+        );
         try {
           await this.manager.connect(name, definition);
           logger.debug(`Reconnected to ${name}`);

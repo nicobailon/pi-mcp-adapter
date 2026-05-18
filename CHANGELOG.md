@@ -13,8 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   envelope as a stable, additive integration contract. Each transition is also
   mirrored durably via `pi.appendEntry("mcp:state", …)` so consumers attaching
   mid-session can reconstruct state by replaying entries. Emission is
-  fire-and-forget and changes no existing tool/command/UI behaviour. See the
-  new "Events" section in the README.
+  fire-and-forget and changes no existing tool/command/UI behaviour. The
+  durable `mcp:state` write is coalesced (appended only when the
+  reconstructable state changes, not per transition) to avoid session-JSONL
+  write amplification, and the last observed transport kind is retained across
+  disconnect so `reconnecting` events are not mislabelled for SSE servers. See
+  the new "Events" section in the README.
 
 ## [2.6.1] - 2026-05-13
 

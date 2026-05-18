@@ -110,25 +110,44 @@ describe("McpServerManager lifecycle events", () => {
 });
 
 describe("McpLifecycleManager lifecycle events", () => {
-  it("emits reconnecting → reconnected for a forced reconnect", async () => {
+  it("emits reconnecting → reconnected and labels reconnecting with the last known transport", async () => {
     const { bus, emitted } = spyBus();
 
+    // A URL server previously observed as SSE: the manager retains that kind
+    // across disconnect, so `reconnecting` must not fall back to http.
     const fakeManager = {
       getConnection: vi.fn(() => undefined),
       connect: vi.fn(async () => ({ status: "connected" })),
-      getTransportKind: vi.fn(() => "stdio" as const),
+      getTransportKind: vi.fn(() => "sse" as const),
       isIdle: vi.fn(() => false),
       close: vi.fn(async () => undefined),
     };
 
     const lifecycle = new McpLifecycleManager(fakeManager as any);
     lifecycle.setEventBus(bus);
-    lifecycle.markKeepAlive("keep", { command: "demo" });
+    lifecycle.markKeepAlive("keep", { url: "https://example.test/mcp" });
 
     await (lifecycle as any).checkConnections();
 
     expect(phases(emitted)).toEqual(["mcp:server:reconnecting", "mcp:server:reconnected"]);
-    expect(fakeManager.connect).toHaveBeenCalledWith("keep", { command: "demo" });
+    expect(emitted.map((e) => e.data.transport)).toEqual(["sse", "sse"]);
+    expect(fakeManager.connect).toHaveBeenCalledWith("keep", { url: "https://example.test/mcp" });
+  });
+
+  it("retains the last observed transport kind across disconnect", async () => {
+    const { bus } = spyBus();
+    const manager = new McpServerManager();
+    manager.setEventBus(bus);
+
+    expect(manager.getTransportKind("local")).toBeUndefined();
+
+    await manager.connect("local", { command: "demo-server" });
+    expect(manager.getTransportKind("local")).toBe("stdio");
+
+    await manager.close("local");
+    // No live connection, but the kind is still known for a precise
+    // `reconnecting` label instead of a config-derived guess.
+    expect(manager.getTransportKind("local")).toBe("stdio");
   });
 
   it("closes idle servers with the idle reason so close() emits idle_shutdown", async () => {

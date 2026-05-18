@@ -133,6 +133,7 @@ export function toEventError(err: unknown): { message: string; code?: string } {
 export class McpEventBus {
   private sink?: McpEventSink;
   private snapshotProvider?: McpStateSnapshotProvider;
+  private lastSnapshotKey?: string;
   private readonly now: () => number;
 
   constructor(sink?: McpEventSink, now: () => number = Date.now) {
@@ -229,10 +230,18 @@ export class McpEventBus {
     const provider = this.snapshotProvider;
     if (!sink?.appendEntry || !provider) return;
     try {
+      const servers = provider();
+      // Coalesce: a mid-session consumer only needs the latest reconstructable
+      // state, so skip the append when nothing observable changed. Otherwise a
+      // churny multi-server config amplifies session-JSONL writes (one per
+      // transition, including no-op reconnect attempts).
+      const key = JSON.stringify(servers);
+      if (key === this.lastSnapshotKey) return;
+      this.lastSnapshotKey = key;
       const snapshot: McpStateSnapshot = {
         v: MCP_EVENT_VERSION,
         at: this.now(),
-        servers: provider(),
+        servers,
       };
       sink.appendEntry(MCP_STATE_ENTRY_TYPE, snapshot);
     } catch (err) {

@@ -125,6 +125,26 @@ describe("McpEventBus", () => {
     ]);
   });
 
+  it("coalesces snapshots: appends only when reconstructable state changes", () => {
+    const sink = createSpySink();
+    const bus = new McpEventBus(sink, () => 1);
+    let status = "connecting";
+    bus.setSnapshotProvider(() => [
+      { serverId: "s", transport: "stdio", status: status as any, toolCount: 0 },
+    ]);
+
+    bus.emitServer("s", "stdio", "connecting");
+    bus.emitServer("s", "stdio", "connecting"); // no state change → no extra append
+    expect(sink.entries).toHaveLength(1);
+
+    status = "connected";
+    bus.emitServer("s", "stdio", "connected");
+    expect(sink.entries).toHaveLength(2);
+
+    bus.emitServer("s", "stdio", "connected"); // unchanged again
+    expect(sink.entries).toHaveLength(2);
+  });
+
   it("does not mirror when the sink cannot append entries", () => {
     const emitted: Emitted[] = [];
     const bus = new McpEventBus({ emit: (channel, data) => emitted.push({ channel, data }) });

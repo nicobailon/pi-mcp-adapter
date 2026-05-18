@@ -39,6 +39,10 @@ export class McpServerManager {
   private uiStreamListeners = new Map<string, UiStreamListener>();
   private samplingConfig: ServerSamplingConfig | undefined;
   private events: McpEventBus = NOOP_EVENT_BUS;
+  // Last transport kind actually observed per server, retained across
+  // disconnect so the lifecycle manager can label a `reconnecting` event
+  // (no live connection yet) precisely instead of guessing http for SSE.
+  private lastTransportKind = new Map<string, McpTransportKind>();
 
   setSamplingConfig(config: ServerSamplingConfig | undefined): void {
     this.samplingConfig = config;
@@ -122,6 +126,7 @@ export class McpServerManager {
       ]);
 
       const kind = transportKind(definition, transport);
+      this.lastTransportKind.set(name, kind);
       this.events.emitServer(name, kind, "connected");
       this.events.emitTools(
         name,
@@ -148,7 +153,9 @@ export class McpServerManager {
         await client.close().catch(() => {});
         await transport.close().catch(() => {});
 
-        this.events.emitAuth(name, transportKind(definition, transport), "auth_required");
+        const authKind = transportKind(definition, transport);
+        this.lastTransportKind.set(name, authKind);
+        this.events.emitAuth(name, authKind, "auth_required");
 
         return {
           client,
@@ -357,13 +364,17 @@ export class McpServerManager {
   }
 
   /**
-   * Precise transport kind for a live connection, used by the lifecycle
-   * manager when labelling health/idle events.
+   * Precise transport kind for a server, used by the lifecycle manager when
+   * labelling health/idle events. Falls back to the last kind actually
+   * observed (retained across disconnect) so a `reconnecting` event for a
+   * previously-connected SSE server is not mislabelled as http.
    */
   getTransportKind(name: string): McpTransportKind | undefined {
     const connection = this.connections.get(name);
-    if (!connection) return undefined;
-    return transportKind(connection.definition, connection.transport);
+    if (connection) {
+      return transportKind(connection.definition, connection.transport);
+    }
+    return this.lastTransportKind.get(name);
   }
 
   touch(name: string): void {
