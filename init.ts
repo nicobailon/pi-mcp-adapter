@@ -17,6 +17,8 @@ import {
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
 import { McpServerManager } from "./server-manager.ts";
+import { McpEventBus, type McpStateSnapshotServer, type McpStateStatus, type McpTransportKind } from "./mcp-events.ts";
+import { setAuthEventBus } from "./mcp-auth-flow.ts";
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
 import { openUrl, parallelLimit } from "./utils.ts";
@@ -63,6 +65,17 @@ export async function initializeMcp(
     ui,
     sendMessage: (message, options) => pi.sendMessage(message as unknown as Parameters<typeof pi.sendMessage>[0], options),
   };
+
+  // Wire the lifecycle event bus to PI's shared bus + durable session log.
+  // Additive and fire-and-forget: emission can never wedge a connection.
+  const eventBus = new McpEventBus({
+    emit: (channel, data) => pi.events.emit(channel, data),
+    appendEntry: (customType, data) => pi.appendEntry(customType, data),
+  });
+  eventBus.setSnapshotProvider(() => buildStateSnapshot(state));
+  manager.setEventBus(eventBus);
+  lifecycle.setEventBus(eventBus);
+  setAuthEventBus(eventBus);
 
   const serverEntries = Object.entries(config.mcpServers);
   if (serverEntries.length === 0) {
@@ -284,6 +297,37 @@ export function getFailureAgeSeconds(state: McpExtensionState, serverName: strin
   const ageMs = Date.now() - failedAt;
   if (ageMs > FAILURE_BACKOFF_MS) return null;
   return Math.round(ageMs / 1000);
+}
+
+/**
+ * Build the per-server snapshot mirrored durably via `pi.appendEntry`. Lets a
+ * consumer attaching mid-session reconstruct current state by replaying
+ * entries instead of racing a live `status` pull.
+ */
+export function buildStateSnapshot(state: McpExtensionState): McpStateSnapshotServer[] {
+  const servers: McpStateSnapshotServer[] = [];
+  for (const [name, definition] of Object.entries(state.config.mcpServers)) {
+    const connection = state.manager.getConnection(name);
+    const transport: McpTransportKind =
+      state.manager.getTransportKind(name) ?? (definition.command ? "stdio" : "http");
+    const toolCount = state.toolMetadata.get(name)?.length ?? 0;
+
+    let status: McpStateStatus;
+    if (connection?.status === "connected") {
+      status = "connected";
+    } else if (connection?.status === "needs-auth") {
+      status = "needs-auth";
+    } else if (getFailureAgeSeconds(state, name) !== null) {
+      status = "failed";
+    } else if (toolCount > 0) {
+      status = "cached";
+    } else {
+      status = "disconnected";
+    }
+
+    servers.push({ serverId: name, transport, status, toolCount });
+  }
+  return servers;
 }
 
 export async function lazyConnect(state: McpExtensionState, serverName: string): Promise<boolean> {

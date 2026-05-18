@@ -58,6 +58,7 @@
     "tool-result-renderer.ts",
     "resource-tools.ts",
     "lifecycle.ts",
+    "mcp-events.ts",
     "metadata-cache.ts",
     "host-html-template.ts",
     "ui-resource-handler.ts",

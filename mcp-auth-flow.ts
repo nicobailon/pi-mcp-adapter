@@ -29,10 +29,20 @@ import {
   clearOAuthState,
   type StoredTokens,
 } from "./mcp-auth.ts"
+import { McpEventBus, NOOP_EVENT_BUS, toEventError } from "./mcp-events.ts"
 import type { ServerEntry } from "./types.ts"
 
 /** Auth status for a server */
 export type AuthStatus = "authenticated" | "expired" | "not_authenticated"
+
+// OAuth is a process-global flow (one callback server, module-level pending
+// state), so its event bus is module-global too. init.ts sets it per session.
+let authEventBus: McpEventBus = NOOP_EVENT_BUS
+
+/** Wire the OAuth event bus. No-op bus until `init.ts` provides PI's. */
+export function setAuthEventBus(bus: McpEventBus): void {
+  authEventBus = bus
+}
 
 // Track pending transports for auth completion
 const pendingTransports = new Map<string, StreamableHTTPClientTransport>()
@@ -179,6 +189,8 @@ export async function authenticate(
       return "authenticated"
     }
 
+    authEventBus.emitAuth(serverName, "http", "auth_required", { authorizationUrl })
+
     // Get the state that was already generated and stored in startAuth()
     const oauthState = await getOAuthState(serverName)
     if (!oauthState) {
@@ -229,7 +241,14 @@ export async function authenticate(
   pendingAuthentications.set(serverName, operation)
 
   try {
-    return await operation
+    const status = await operation
+    if (status === "authenticated") {
+      authEventBus.emitAuth(serverName, "http", "auth_succeeded")
+    }
+    return status
+  } catch (error) {
+    authEventBus.emitAuth(serverName, "http", "auth_failed", { error: toEventError(error) })
+    throw error
   } finally {
     if (pendingAuthentications.get(serverName) === operation) {
       pendingAuthentications.delete(serverName)

@@ -366,6 +366,51 @@ In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or 
 - Keep-alive servers get health checks and auto-reconnect
 - Specific tools can be promoted from the proxy to first-class Pi tools via `directTools` config, so the LLM sees them directly instead of having to search
 
+## Events
+
+The adapter announces every MCP server state transition on PI's shared event
+bus (`pi.events`) under the reserved `mcp:` channel namespace. This is a stable,
+additive contract: subscribing is optional, emission is fire-and-forget, and a
+faulty subscriber can never wedge a connection. Any extension, dashboard, or
+embedder can react without adapter-specific glue.
+
+Every event shares a versioned envelope. Branch on `v`; additive fields within a
+version are allowed, semantic changes bump `v`. No secrets are ever emitted —
+`authorizationUrl` is the only auth-adjacent field and only on the interactive
+`auth_required` phase.
+
+| Channel | Payload | Phases / fields |
+|---|---|---|
+| `mcp:server` | `{ v, serverId, transport, at, phase, error? }` | `connecting`, `connected`, `disconnected`, `reconnecting`, `reconnected`, `idle_shutdown`, `errored` |
+| `mcp:tools` | `{ v, serverId, transport, at, toolCount, toolNames?, source }` | `source`: `connect` \| `refresh` \| `cache`; `toolNames` omitted past 100 tools |
+| `mcp:auth` | `{ v, serverId, transport, at, phase, authorizationUrl?, error? }` | `auth_required`, `auth_succeeded`, `auth_failed` |
+
+`transport` is `"stdio" | "http" | "sse"`; `at` is epoch ms; `serverId` is the
+configured server key.
+
+Subscribe from any extension:
+
+```ts
+export default function myExtension(pi) {
+  pi.events.on("mcp:server", (e) => {
+    console.log(`[mcp] ${e.serverId} (${e.transport}) → ${e.phase}`);
+  });
+  pi.events.on("mcp:tools", (e) => {
+    console.log(`[mcp] ${e.serverId} exposes ${e.toolCount} tools`);
+  });
+  pi.events.on("mcp:auth", (e) => {
+    if (e.phase === "auth_required") console.log(`[mcp] authorize: ${e.authorizationUrl}`);
+  });
+}
+```
+
+For consumers that attach mid-session (or after a reload), each transition is
+also mirrored durably to the session log via `pi.appendEntry("mcp:state", …)`.
+Replaying `mcp:state` entries reconstructs current per-server state
+(`{ serverId, transport, status, toolCount }`, `status` one of `connected`,
+`disconnected`, `needs-auth`, `failed`, `cached`) without racing a live
+`mcp({ ... })` status pull. These entries are persisted state, not LLM context.
+
 ## Limitations
 
 - Cross-session server sharing not yet implemented (each Pi session runs its own server processes)

@@ -18,6 +18,7 @@ import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { supportsOAuth } from "./mcp-auth-flow.ts";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
 import { interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.ts";
+import { McpEventBus, NOOP_EVENT_BUS, toEventError, type McpTransportKind } from "./mcp-events.ts";
 
 interface ServerConnection {
   client: Client;
@@ -37,9 +38,15 @@ export class McpServerManager {
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private uiStreamListeners = new Map<string, UiStreamListener>();
   private samplingConfig: ServerSamplingConfig | undefined;
+  private events: McpEventBus = NOOP_EVENT_BUS;
 
   setSamplingConfig(config: ServerSamplingConfig | undefined): void {
     this.samplingConfig = config;
+  }
+
+  /** Wire the lifecycle event bus. No-op bus until `init.ts` provides PI's. */
+  setEventBus(bus: McpEventBus): void {
+    this.events = bus;
   }
   
   async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
@@ -71,8 +78,10 @@ export class McpServerManager {
     name: string,
     definition: ServerDefinition
   ): Promise<ServerConnection> {
+    this.events.emitServer(name, transportKind(definition), "connecting");
+
     const client = this.createClient(name);
-    
+
     let transport: Transport;
     
     if (definition.command) {
@@ -111,7 +120,17 @@ export class McpServerManager {
         this.fetchAllTools(client),
         this.fetchAllResources(client),
       ]);
-      
+
+      const kind = transportKind(definition, transport);
+      this.events.emitServer(name, kind, "connected");
+      this.events.emitTools(
+        name,
+        kind,
+        tools.length,
+        "connect",
+        tools.map((t) => t.name),
+      );
+
       return {
         client,
         transport,
@@ -129,6 +148,8 @@ export class McpServerManager {
         await client.close().catch(() => {});
         await transport.close().catch(() => {});
 
+        this.events.emitAuth(name, transportKind(definition, transport), "auth_required");
+
         return {
           client,
           transport,
@@ -140,10 +161,16 @@ export class McpServerManager {
           status: "needs-auth",
         };
       }
-      
+
       // Clean up both client and transport on any error
       await client.close().catch(() => {});
       await transport.close().catch(() => {});
+      this.events.emitServer(
+        name,
+        transportKind(definition, transport),
+        "errored",
+        toEventError(error),
+      );
       throw error;
     }
   }
@@ -294,10 +321,17 @@ export class McpServerManager {
     }
   }
   
-  async close(name: string): Promise<void> {
+  /**
+   * Close a server connection. `reason: "idle"` emits the `idle_shutdown`
+   * phase instead of `disconnected` so the idle path keeps a single, properly
+   * labelled transition (the lifecycle manager passes it on idle shutdown).
+   */
+  async close(name: string, opts?: { reason?: "idle" }): Promise<void> {
     const connection = this.connections.get(name);
     if (!connection) return;
-    
+
+    const kind = transportKind(connection.definition, connection.transport);
+
     // Delete from map BEFORE async cleanup to prevent a race where a
     // concurrent connect() creates a new connection that our deferred
     // delete() would then remove, orphaning the new server process.
@@ -305,6 +339,8 @@ export class McpServerManager {
     this.connections.delete(name);
     await connection.client.close().catch(() => {});
     await connection.transport.close().catch(() => {});
+
+    this.events.emitServer(name, kind, opts?.reason === "idle" ? "idle_shutdown" : "disconnected");
   }
   
   async closeAll(): Promise<void> {
@@ -318,6 +354,16 @@ export class McpServerManager {
   
   getAllConnections(): Map<string, ServerConnection> {
     return new Map(this.connections);
+  }
+
+  /**
+   * Precise transport kind for a live connection, used by the lifecycle
+   * manager when labelling health/idle events.
+   */
+  getTransportKind(name: string): McpTransportKind | undefined {
+    const connection = this.connections.get(name);
+    if (!connection) return undefined;
+    return transportKind(connection.definition, connection.transport);
   }
 
   touch(name: string): void {
@@ -347,6 +393,18 @@ export class McpServerManager {
     if (connection.inFlight > 0) return false;
     return (Date.now() - connection.lastUsedAt) > timeoutMs;
   }
+}
+
+/**
+ * Classify a connection's transport for the event envelope. `command`
+ * servers are stdio; URL servers are http unless we resolved to the SSE
+ * fallback transport. Pre-transport callers omit `transport` and get the
+ * http/stdio best guess.
+ */
+function transportKind(definition: ServerDefinition, transport?: Transport): McpTransportKind {
+  if (definition.command) return "stdio";
+  if (transport instanceof SSEClientTransport) return "sse";
+  return "http";
 }
 
 /**
