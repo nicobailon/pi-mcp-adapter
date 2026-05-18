@@ -12,6 +12,7 @@ import { createHash } from 'crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import { getAgentPath } from './agent-dir.ts';
+import { getResolvedOAuthDir } from './config.ts';
 
 /** OAuth token storage format */
 export interface StoredTokens {
@@ -39,10 +40,13 @@ export interface AuthEntry {
   serverUrl?: string; // Track the URL these credentials are for
 }
 
-// Base directory for auth storage - can be overridden via env var for testing
-function getAuthBaseDir(): string {
+// Base directory for auth storage - can be overridden via env var or project config
+export function getAuthBaseDir(): string {
   const override = process.env.MCP_OAUTH_DIR?.trim();
-  return override ? override : getAgentPath('mcp-oauth');
+  if (override) return override;
+  const oauthDir = getResolvedOAuthDir();
+  if (oauthDir) return oauthDir;
+  return getAgentPath('mcp-oauth');
 }
 
 /**
