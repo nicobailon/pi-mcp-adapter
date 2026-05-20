@@ -347,10 +347,12 @@ export function supportsOAuth(definition: ServerEntry): boolean {
 
 /**
  * Initialize the OAuth system on startup.
- * Starts the callback server if there are any OAuth servers configured.
+ * No-op: the callback server starts on demand via ensureCallbackServer()
+ * inside startAuth(). This avoids binding a port at init time when no
+ * OAuth flow will occur, preventing EADDRINUSE with concurrent sessions.
  */
 export async function initializeOAuth(): Promise<void> {
-  await ensureCallbackServer()
+  // Lazy — callback server is started on demand by startAuth()
 }
 
 /**

@@ -69,7 +69,44 @@ const pendingAuths = new Map<string, PendingAuth>()
 /** Timeout for callback completion (5 minutes) */
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000
 
-const MAX_PORT_SCAN_ATTEMPTS = 25
+/** Whether process exit handlers have been registered */
+let exitHandlersRegistered = false
+
+/**
+ * Register process signal/exit handlers to ensure the callback server is
+ * cleaned up even when the process is terminated abnormally (SIGTERM, SIGINT,
+ * SIGHUP, etc.). Without this, the HTTP server keeps the port occupied after
+ * the parent process is killed, eventually exhausting the entire port range.
+ */
+function registerExitHandlers(): void {
+  if (exitHandlersRegistered) return
+  exitHandlersRegistered = true
+
+  const cleanup = (): void => {
+    if (server) {
+      try { server.close() } catch { /* best effort */ }
+      server = undefined
+    }
+  }
+
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    const listeners = process.listeners(signal)
+    // Only register if no other listener has claimed the signal
+    if (listeners.length === 0) {
+      process.once(signal, () => {
+        cleanup()
+        process.exit(128 + (signal === "SIGINT" ? 2 : signal === "SIGTERM" ? 15 : 1))
+      })
+    } else {
+      // Prepend our cleanup so it runs before existing handlers
+      process.prependOnceListener(signal, cleanup)
+    }
+  }
+
+  // Also handle normal process exit (covers cases where node exits cleanly
+  // but the extension shutdown hook didn't fire)
+  process.on("exit", cleanup)
+}
 
 interface EnsureCallbackServerOptions {
   strictPort?: boolean
@@ -146,7 +183,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 /**
  * Ensure the callback server is running.
  * If strictPort is true, requires binding on the configured callback port.
- * If strictPort is false, scans forward for an available local port.
+ * If strictPort is false, uses port 0 to let the OS assign a free ephemeral port.
  */
 export async function ensureCallbackServer(options: EnsureCallbackServerOptions = {}): Promise<void> {
   const configuredPort = getConfiguredOAuthCallbackPort()
@@ -164,54 +201,43 @@ export async function ensureCallbackServer(options: EnsureCallbackServerOptions 
     await stopCallbackServer()
   }
 
-  const preferredPort = configuredPort
-  const maxAttempts = strictPort ? 1 : MAX_PORT_SCAN_ATTEMPTS
-  let lastError: Error | undefined
-
-  for (let offset = 0; offset < maxAttempts; offset++) {
-    const candidatePort = preferredPort + offset
-    const candidateServer = createServer(handleRequest)
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        candidateServer.once("error", (err) => {
-          reject(err)
-        })
-
-        candidateServer.listen(candidatePort, "localhost", () => {
-          resolve()
-        })
-      })
-
-      server = candidateServer
-      server.unref()
-      setOAuthCallbackPort(candidatePort)
-      return
-    } catch (error) {
-      const nodeError = error as NodeJS.ErrnoException
-      await new Promise<void>((resolve) => {
-        candidateServer.close(() => resolve())
-      })
-
-      if (nodeError.code !== "EADDRINUSE") {
-        throw error
-      }
-
-      lastError = error instanceof Error ? error : new Error(String(error))
-    }
-  }
+  const candidateServer = createServer(handleRequest)
 
   if (strictPort) {
-    throw new Error(
-      `OAuth callback port ${preferredPort} is already in use. Pre-registered OAuth clients require an exact redirect URI; set MCP_OAUTH_CALLBACK_PORT to your registered port or free port ${preferredPort}`,
-      { cause: lastError }
-    )
+    // Pre-registered OAuth clients require an exact redirect URI.
+    try {
+      await new Promise<void>((resolve, reject) => {
+        candidateServer.once("error", reject)
+        candidateServer.listen(configuredPort, "localhost", () => resolve())
+      })
+    } catch (error) {
+      await new Promise<void>((resolve) => { candidateServer.close(() => resolve()) })
+      throw new Error(
+        `OAuth callback port ${configuredPort} is already in use. Pre-registered OAuth clients require an exact redirect URI; set MCP_OAUTH_CALLBACK_PORT to your registered port or free port ${configuredPort}`,
+        { cause: error instanceof Error ? error : new Error(String(error)) }
+      )
+    }
+    server = candidateServer
+    server.unref()
+    setOAuthCallbackPort(configuredPort)
+    registerExitHandlers()
+    return
   }
 
-  throw new Error(
-    `OAuth callback port ${preferredPort} is already in use and no free port was found in range ${preferredPort}-${preferredPort + MAX_PORT_SCAN_ATTEMPTS - 1}`,
-    { cause: lastError }
-  )
+  // Non-strict: let the OS assign a guaranteed-free ephemeral port.
+  // This eliminates port scanning and scales to any number of concurrent sessions.
+  const assignedPort = await new Promise<number>((resolve, reject) => {
+    candidateServer.once("error", reject)
+    candidateServer.listen(0, "localhost", () => {
+      const addr = candidateServer.address()
+      resolve(typeof addr === "object" && addr ? addr.port : configuredPort)
+    })
+  })
+
+  server = candidateServer
+  server.unref()
+  setOAuthCallbackPort(assignedPort)
+  registerExitHandlers()
 }
 
 /**

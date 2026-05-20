@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => {
       }),
       close: vi.fn((cb?: () => void) => cb?.()),
       unref: vi.fn(),
+      address: vi.fn(() => ({ port: 4338, family: "IPv6", address: "::1" })),
     };
 
     runtime.servers.push(server);
@@ -88,7 +89,8 @@ describe("mcp-callback-server", () => {
 
     await ensureCallbackServer();
 
-    expect(mocks.runtime.servers[0]?.listen).toHaveBeenCalledWith(4337, "localhost", expect.any(Function));
+    // Non-strict mode uses listen(0) for OS-assigned port
+    expect(mocks.runtime.servers[0]?.listen).toHaveBeenCalledWith(0, "localhost", expect.any(Function));
     expect(mocks.runtime.servers[0]?.unref).toHaveBeenCalledTimes(1);
   });
 
@@ -106,43 +108,19 @@ describe("mcp-callback-server", () => {
   });
 
   it("rebinds to the configured port when strict mode is requested", async () => {
-    let firstConfiguredAttemptBlocked = true;
-    mocks.runtime.listenImpl = (_server, port, onListen, handlers) => {
-      if (port === mocks.state.configuredPort && firstConfiguredAttemptBlocked) {
-        firstConfiguredAttemptBlocked = false;
-        Promise.resolve().then(() => {
-          handlers.get("error")?.(Object.assign(new Error("EADDRINUSE"), { code: "EADDRINUSE" }));
-        });
-        return;
-      }
-
-      onListen();
-    };
-
     const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
 
+    // First call: non-strict, gets OS-assigned port via listen(0)
     await ensureCallbackServer();
     expect(mocks.state.activePort).toBe(4338);
 
+    // Second call: strict mode, must bind on the configured port
     await ensureCallbackServer({ strictPort: true });
 
     expect(mocks.state.activePort).toBe(4337);
   });
 
   it("does not switch ports in strict mode while callbacks are pending", async () => {
-    let firstConfiguredAttemptBlocked = true;
-    mocks.runtime.listenImpl = (_server, port, onListen, handlers) => {
-      if (port === mocks.state.configuredPort && firstConfiguredAttemptBlocked) {
-        firstConfiguredAttemptBlocked = false;
-        Promise.resolve().then(() => {
-          handlers.get("error")?.(Object.assign(new Error("EADDRINUSE"), { code: "EADDRINUSE" }));
-        });
-        return;
-      }
-
-      onListen();
-    };
-
     const {
       ensureCallbackServer,
       waitForCallback,
