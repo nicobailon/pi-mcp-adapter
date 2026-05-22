@@ -10,7 +10,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'fs';
-import { join } from 'path';
+import { join, relative, resolve, isAbsolute } from 'path';
 import { getAgentPath } from './agent-dir.ts';
 
 /** OAuth token storage format */
@@ -44,16 +44,44 @@ function getAuthBaseDir(): string {
   return override ? override : getAgentPath('mcp-oauth');
 }
 
-/**
- * Get the server-specific directory path.
- */
-function getServerDir(serverName: string): string {
-  return join(getAuthBaseDir(), serverName);
+// MCP server names are filesystem directory components. The allow-list keeps
+// us inside the auth base directory, sidesteps Unicode normalisation pitfalls
+// (NFC/NFD collisions create distinct dirs on most Linux/macOS filesystems),
+// and rejects whitespace, control characters, and leading hyphens that look
+// like CLI flags. The names come from the user's mcp.json so the threat model
+// is low likelihood, but the allow-list keeps a stray `..` or absolute path
+// from clobbering files outside the configured MCP_OAUTH_DIR.
+//
+// Two shapes are accepted so users can key their mcp.json entries by either a
+// plain identifier (`github`, `scoped:tool`) or an npm-package style scoped
+// name (`@modelcontextprotocol/server-github` is the canonical example from
+// the README). The scoped form is the only path under which `/` is allowed,
+// and only as a single separator between scope and name; everything else is
+// rejected up front.
+const SAFE_SERVER_NAME = /^(?:@[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+
+function assertSafeServerName(serverName: unknown): asserts serverName is string {
+  if (typeof serverName !== 'string' || !SAFE_SERVER_NAME.test(serverName)) {
+    throw new Error(`Invalid MCP server name: ${JSON.stringify(serverName)}`);
+  }
 }
 
-/**
- * Get the tokens file path for a server.
- */
+function getServerDir(serverName: string): string {
+  assertSafeServerName(serverName);
+  const base = resolve(getAuthBaseDir());
+  const candidate = resolve(base, serverName);
+  // Defence-in-depth: even if a future allow-list change lets something
+  // exotic through, `path.relative` surfaces whether the candidate sits
+  // inside `base`. We reject anything that escapes (absolute path or `..`),
+  // and we tolerate base being a filesystem root because `relative` handles
+  // the trailing-separator case correctly.
+  const rel = relative(base, candidate);
+  if (rel.length === 0 || (!isAbsolute(rel) && !rel.startsWith('..'))) {
+    return candidate;
+  }
+  throw new Error(`MCP server name resolved outside base: ${JSON.stringify(serverName)}`);
+}
+
 function getTokensFilePath(serverName: string): string {
   return join(getServerDir(serverName), 'tokens.json');
 }

@@ -370,4 +370,91 @@ describe("mcp-auth", () => {
       assert.strictEqual(entry?.clientInfo?.clientId, "client")
     })
   })
+
+  describe("server name validation", () => {
+    const traversalNames: string[] = [
+      "",
+      ".",
+      "..",
+      "../etc",
+      "../../etc/passwd",
+      "/etc/passwd",
+      "\\windows\\system32",
+      "name/with/slash",
+      "name\\with\\backslash",
+      "name\0null",
+      // Whitespace and control characters: not exploitable on POSIX, but a
+      // typo footgun and unsafe on Windows / in log files.
+      " foo ",
+      "foo\nbar",
+      "foo\tbar",
+      "foo\rbar",
+      // Leading hyphen: looks like a CLI flag in any tool that re-uses the name.
+      "--help",
+      // Non-ASCII: NFC vs NFD would produce distinct directories on
+      // case-sensitive filesystems. Allow-list keeps us ASCII-only.
+      "café",
+      "café",
+    ]
+
+    for (const bad of traversalNames) {
+      // saveAuthEntry -> writeAuthEntry propagates throws; the validation surfaces here.
+      it(`should reject ${JSON.stringify(bad)} on save`, () => {
+        assert.throws(
+          () => saveAuthEntry(bad, { serverUrl: "https://example.com" }, "https://example.com"),
+          /Invalid MCP server name/,
+        )
+      })
+
+      // updateOAuthState propagates too; covers a second write path.
+      it(`should reject ${JSON.stringify(bad)} on updateOAuthState`, () => {
+        assert.throws(
+          () => updateOAuthState(bad, "state-value", "https://example.com"),
+          /Invalid MCP server name/,
+        )
+      })
+
+      // Read returns undefined (the try/catch in readAuthEntry swallows by design);
+      // crucially, no file outside TEST_DIR is created/read.
+      it(`should return undefined for ${JSON.stringify(bad)} on read`, () => {
+        const entry = getAuthEntry(bad)
+        assert.strictEqual(entry, undefined)
+      })
+    }
+
+    // Type system can't catch every caller; the validator must reject
+    // non-string inputs at runtime instead of crashing on .includes().
+    it("should reject non-string inputs (undefined, null, number)", () => {
+      const cases: unknown[] = [undefined, null, 42, {}, []]
+      for (const bad of cases) {
+        assert.throws(
+          () => saveAuthEntry(bad as string, {}, "https://example.com"),
+          /Invalid MCP server name/,
+        )
+      }
+    })
+
+    const safeNames = [
+      "github",
+      "github.com",
+      "my-server",
+      "my_server",
+      "Server123",
+      "scoped:server",
+      // npm-package-style scoped names from the project's README example set.
+      "@modelcontextprotocol/server-github",
+      "@scope/name",
+      "@my-org/my.tool",
+    ]
+
+    for (const good of safeNames) {
+      it(`should accept ${JSON.stringify(good)}`, () => {
+        // Round-trip: save then retrieve should succeed.
+        saveAuthEntry(good, { serverUrl: "https://example.com" }, "https://example.com")
+        const entry = getAuthEntry(good)
+        assert.ok(entry, `expected entry for ${good}`)
+        removeAuthEntry(good)
+      })
+    }
+  })
 })
