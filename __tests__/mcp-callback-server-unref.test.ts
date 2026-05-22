@@ -62,7 +62,7 @@ vi.mock("http", () => ({
 }));
 
 vi.mock("../mcp-oauth-provider.ts", () => ({
-  OAUTH_CALLBACK_PATH: "/callback",
+  getOAuthCallbackPath: vi.fn(() => "/callback"),
   getConfiguredOAuthCallbackPort: mocks.getConfiguredOAuthCallbackPort,
   getOAuthCallbackPort: mocks.getOAuthCallbackPort,
   setOAuthCallbackPort: mocks.setOAuthCallbackPort,

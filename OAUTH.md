@@ -73,6 +73,9 @@ You can optionally provide a pre-registered client:
 - `oauth.clientId` - Pre-registered client ID (optional, SDK tries dynamic registration if not provided)
 - `oauth.clientSecret` - Client secret for confidential clients (optional)
 - `oauth.scope` - Requested OAuth scopes (optional)
+- `oauth.redirectUri` - Full redirect URI for authorization-code flow. Overrides the default `http://localhost:<port>/callback` callback URI.
+- `oauth.clientName` - Dynamic registration `client_name` override (default: `Pi Coding Agent`).
+- `oauth.clientUri` - Dynamic registration `client_uri` override (default: this package repository).
 
 ### Non-Interactive `client_credentials`
 
@@ -174,18 +177,19 @@ If no `clientId` is provided, the SDK:
 
 1. Discovers the registration endpoint from OAuth metadata
 2. Registers a new client with:
-   - `client_name`: "Pi Coding Agent"
-   - `redirect_uris`: `["http://localhost:<active-callback-port>/callback"]`
+   - `client_name`: `oauth.clientName` or "Pi Coding Agent"
+   - `client_uri`: `oauth.clientUri` or this package repository
+   - `redirect_uris`: `[oauth.redirectUri]` when configured, otherwise `["http://localhost:<active-callback-port>/callback"]`
    - `grant_types`: `["authorization_code", "refresh_token"]`
 3. Stores the registered client credentials
 
 ### Callback Server
 
-A Node.js HTTP server runs on `localhost` at path `/callback`:
+A Node.js HTTP server runs on `localhost` at path `/callback` by default. When `oauth.redirectUri` is configured, the callback server uses that URI's path.
 
 - Preferred callback port is `19876` (or `MCP_OAUTH_CALLBACK_PORT` if set)
-- For dynamic registration, if the preferred port is busy, the adapter scans forward for a free local port
-- For pre-registered clients (`oauth.clientId`), the adapter requires the exact configured callback port
+- For dynamic registration without an explicit `oauth.redirectUri`, if the preferred port is busy, the adapter scans forward for a free local port
+- For pre-registered clients (`oauth.clientId`) or explicit redirect URIs (`oauth.redirectUri`), the adapter requires the exact configured callback port
 
 - Handles `code`, `state`, and `error` parameters
 - Displays success/error HTML pages

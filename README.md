@@ -126,6 +126,12 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
+| `oauth.clientId` | Pre-registered client ID (optional, SDK tries dynamic registration if not provided) |
+| `oauth.clientSecret` | Client secret for confidential clients (optional) |
+| `oauth.scope` | Requested OAuth scopes (optional) |
+| `oauth.redirectUri` | Full OAuth redirect URI for authorization-code flow. Overrides the default `http://localhost:<port>/callback` callback URI. |
+| `oauth.clientName` | Dynamic registration `client_name` override (default: `Pi Coding Agent`). |
+| `oauth.clientUri` | Dynamic registration `client_uri` override (default: this package repository). |
 | `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation |
 | `lifecycle` | `"lazy"` (default), `"eager"`, or `"keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |

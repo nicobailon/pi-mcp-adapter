@@ -272,6 +272,12 @@ export interface OAuthConfig {
   clientSecret?: string;
   /** Requested OAuth scopes */
   scope?: string;
+  /** Full redirect URI for authorization_code flow. Overrides the default localhost callback URI. */
+  redirectUri?: string;
+  /** OAuth dynamic registration client_name. */
+  clientName?: string;
+  /** OAuth dynamic registration client_uri. */
+  clientUri?: string;
 }
 
 // Server configuration

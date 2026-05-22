@@ -7,7 +7,7 @@
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http"
 import {
-  OAUTH_CALLBACK_PATH,
+  getOAuthCallbackPath,
   getConfiguredOAuthCallbackPort,
   getOAuthCallbackPort,
   setOAuthCallbackPort,
@@ -82,7 +82,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url || "/", `http://${req.headers.host}`)
 
   // Only handle the callback path
-  if (url.pathname !== OAUTH_CALLBACK_PATH) {
+  if (url.pathname !== getOAuthCallbackPath()) {
     res.writeHead(404, { "Content-Type": "text/plain" })
     res.end("Not found")
     return

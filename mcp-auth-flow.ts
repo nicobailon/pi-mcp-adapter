@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import open from "open"
-import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
+import { McpOAuthProvider, setOAuthCallbackPath, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -62,6 +62,9 @@ function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     clientId: definition.oauth?.clientId,
     clientSecret: definition.oauth?.clientSecret,
     scope: definition.oauth?.scope,
+    redirectUri: definition.oauth?.redirectUri,
+    clientName: definition.oauth?.clientName,
+    clientUri: definition.oauth?.clientUri,
   }
 }
 
@@ -97,8 +100,12 @@ export async function startAuth(
   }
 
   // Start the callback server.
-  // Pre-registered OAuth clients require an exact redirect URI, so enforce strict port binding.
-  await ensureCallbackServer({ strictPort: Boolean(config.clientId) })
+  // Pre-registered OAuth clients and explicit redirect URIs require an exact redirect URI, so enforce strict port binding.
+  if (config.redirectUri) {
+    const redirect = new URL(config.redirectUri)
+    setOAuthCallbackPath(redirect.pathname)
+  }
+  await ensureCallbackServer({ strictPort: Boolean(config.clientId || config.redirectUri) })
 
   const oauthState = generateState()
   await updateOAuthState(serverName, oauthState, serverUrl)
