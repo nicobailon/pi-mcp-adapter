@@ -128,7 +128,7 @@ describe("direct tools auto auth", () => {
     const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
-    expect(result.content[0].text).toContain("interactive session");
+    expect(result.content[0].text).toContain("auth-start");
     expect(result.content[0].text).toContain("/mcp-auth demo");
   });
 

@@ -76,6 +76,38 @@ describe("mcp-auth-flow explicit auth", () => {
     }
   });
 
+  it("parses manual OAuth redirect URL and code input", async () => {
+    const { parseAuthorizationCodeInput } = await import("../mcp-auth-flow.ts");
+
+    expect(parseAuthorizationCodeInput(
+      "http://localhost:19876/callback?code=abc123&state=state123",
+      "state123",
+    )).toBe("abc123");
+    expect(parseAuthorizationCodeInput("code=abc123&state=state123", "state123")).toBe("abc123");
+    expect(parseAuthorizationCodeInput(
+      "http://localhost:19876/callback#code=abc123&state=state123",
+      "state123",
+    )).toBe("abc123");
+    expect(parseAuthorizationCodeInput("abc123")).toBe("abc123");
+  });
+
+  it("rejects invalid manual OAuth redirect input", async () => {
+    const { parseAuthorizationCodeInput } = await import("../mcp-auth-flow.ts");
+
+    expect(() => parseAuthorizationCodeInput(
+      "http://localhost:19876/callback?error=access_denied&error_description=Denied&state=state123",
+      "state123",
+    )).toThrow("access_denied: Denied");
+    expect(() => parseAuthorizationCodeInput(
+      "http://localhost:19876/callback?code=abc123",
+      "state123",
+    )).toThrow("state missing");
+    expect(() => parseAuthorizationCodeInput(
+      "http://localhost:19876/callback?code=abc123&state=wrong",
+      "state123",
+    )).toThrow("state mismatch");
+  });
+
   it("does not start the callback server during OAuth initialization", async () => {
     const { initializeOAuth } = await import("../mcp-auth-flow.ts");
 
@@ -456,21 +488,23 @@ describe("mcp-auth-flow explicit auth", () => {
     }));
   });
 
-  it("cleans up pending auth when the browser cannot open", async () => {
+  it("continues waiting for the OAuth callback when the browser cannot open", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
     mocks.open.mockRejectedValueOnce(new Error("no browser"));
+    mocks.waitForCallback.mockResolvedValueOnce("manual-code");
     const { authenticate } = await import("../mcp-auth-flow.ts");
     const { getOAuthState } = await import("../mcp-auth.ts");
 
     await expect(authenticate("browser-fail", "https://api.example.com/mcp", {
       url: "https://api.example.com/mcp",
       auth: "oauth",
-    })).rejects.toThrow("Could not open browser");
+    })).resolves.toBe("authenticated");
 
-    expect(mocks.cancelPendingCallback).toHaveBeenCalledTimes(1);
+    expect(mocks.finishAuth).toHaveBeenCalledWith("manual-code");
+    expect(mocks.cancelPendingCallback).not.toHaveBeenCalled();
     expect(mocks.transportClose).toHaveBeenCalledTimes(1);
     expect(getOAuthState("browser-fail")).toBeUndefined();
   });

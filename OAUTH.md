@@ -14,7 +14,8 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 ## Features
 
 - ✅ **PKCE (S256)** - Mandatory code challenge method for OAuth 2.1
-- ✅ **Automatic Callback Server** - No URL copying needed, browser redirects automatically
+- ✅ **Automatic Callback Server** - Local browser redirects automatically when available
+- ✅ **Manual Remote Flow** - Copy auth URLs and pasted redirect URLs/codes for headless SSH sessions
 - ✅ **Dynamic Client Registration** - Automatically registers with OAuth servers
 - ✅ **Auto-Discovery** - Discovers OAuth endpoints from server metadata
 - ✅ **Automatic Token Refresh** - SDK handles expired tokens automatically
@@ -123,6 +124,26 @@ This will:
 5. Wait for the automatic callback
 6. Complete the OAuth flow
 7. Store tokens securely
+
+### Remote/headless authentication
+
+When Pi runs over SSH or in a headless environment, use the proxy tool to retrieve the authorization URL instead of relying on OS browser launch:
+
+```
+mcp({ action: "auth-start", server: "my-oauth-server" })
+```
+
+Open the returned URL in your local browser. After approval, copy the full redirected localhost URL from the browser address bar (the page may fail to load locally) and complete the same pending auth flow:
+
+```
+mcp({
+  action: "auth-complete",
+  server: "my-oauth-server",
+  args: '{"redirectUrl":"http://localhost:19876/callback?code=...&state=..."}'
+})
+```
+
+You can also pass only the `code` query parameter with `args: '{"code":"..."}'`. Redirect URL completion validates the saved OAuth state; raw code completion is available for providers that display a code directly.
 
 ### Step 2: Use the Server
 

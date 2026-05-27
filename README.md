@@ -142,6 +142,26 @@ Pi-specific files are the write targets for imported or shared global servers wh
 
 For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
 
+### Remote/headless OAuth
+
+If Pi is running on a remote server and cannot open a local browser, start OAuth through the proxy tool:
+
+```js
+mcp({ action: "auth-start", server: "linear-server" })
+```
+
+Open the returned authorization URL in your local browser. After approval, your browser redirects to a localhost URL. On a remote server that local page may fail to load; copy the full URL from the browser address bar anyway and complete the flow in the same Pi session:
+
+```js
+mcp({
+  action: "auth-complete",
+  server: "linear-server",
+  args: '{"redirectUrl":"http://localhost:19876/callback?code=...&state=..."}'
+})
+```
+
+You can also pass only the `code` query parameter with `args: '{"code":"..."}'`. Treat authorization URLs and codes as sensitive; they can grant access to the MCP server until the flow expires or completes.
+
 ### Lifecycle Modes
 
 - **`lazy`** (default) — Don't connect at startup. Connect on first tool call. Disconnect after idle timeout. Cached metadata keeps search/list working without connections.

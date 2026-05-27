@@ -38,9 +38,14 @@ export type AuthStatus = "authenticated" | "expired" | "not_authenticated"
 
 // Track pending transports for auth completion
 const pendingTransports = new Map<string, StreamableHTTPClientTransport>()
+const pendingAuthStates = new Map<string, string>()
+const pendingAuthCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 // Deduplicate concurrent authenticate() calls per server.
 const pendingAuthentications = new Map<string, Promise<AuthStatus>>()
+
+/** Timeout for manual auth completion (5 minutes) */
+const MANUAL_AUTH_TIMEOUT_MS = 5 * 60 * 1000
 
 /**
  * Generate a cryptographically secure random state parameter.
@@ -214,16 +219,122 @@ export async function startAuth(
     if (!capturedUrl) {
       throw new UnauthorizedError("OAuth authorization URL was not provided")
     }
-    pendingTransports.set(
-      serverName,
-      new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider }),
-    )
+    const pendingTransport = new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider })
+    await setPendingTransport(serverName, pendingTransport, oauthState)
     return { authorizationUrl: capturedUrl.toString() }
   } catch (error) {
-    releaseCallbackServer(oauthState)
-    await clearOAuthState(serverName)
+    await clearPendingAuth(serverName, oauthState)
     throw error
   }
+}
+
+async function setPendingTransport(
+  serverName: string,
+  transport: StreamableHTTPClientTransport,
+  oauthState: string,
+): Promise<void> {
+  await clearPendingAuth(serverName)
+  pendingTransports.set(serverName, transport)
+  pendingAuthStates.set(serverName, oauthState)
+  const cleanupTimer = setTimeout(() => {
+    void clearPendingAuth(serverName, oauthState)
+  }, MANUAL_AUTH_TIMEOUT_MS)
+  cleanupTimer.unref?.()
+  pendingAuthCleanupTimers.set(serverName, cleanupTimer)
+}
+
+async function clearPendingAuth(serverName: string, oauthState?: string): Promise<void> {
+  const pendingState = pendingAuthStates.get(serverName)
+  if (oauthState && pendingState && pendingState !== oauthState) return
+
+  const timer = pendingAuthCleanupTimers.get(serverName)
+  if (timer) {
+    clearTimeout(timer)
+    pendingAuthCleanupTimers.delete(serverName)
+  }
+
+  const transport = pendingTransports.get(serverName)
+  pendingTransports.delete(serverName)
+  pendingAuthStates.delete(serverName)
+  const stateToRelease = pendingState ?? oauthState
+  if (stateToRelease) {
+    releaseCallbackServer(stateToRelease)
+    const storedState = await getOAuthState(serverName)
+    if (storedState === stateToRelease) {
+      await clearOAuthState(serverName)
+    }
+  }
+  if (transport) {
+    await transport.close().catch(() => {})
+  }
+}
+
+function getSearchParamsFromInput(input: string): URLSearchParams | undefined {
+  try {
+    const url = new URL(input)
+    const params = new URLSearchParams(url.search)
+    if (url.hash) {
+      const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash
+      const hashParams = new URLSearchParams(hash)
+      for (const [key, value] of hashParams) {
+        if (!params.has(key)) params.set(key, value)
+      }
+    }
+    return params
+  } catch {
+    const query = input.includes("?") ? input.slice(input.indexOf("?") + 1) : input
+    const params = new URLSearchParams(query.startsWith("#") ? query.slice(1) : query)
+    return params.has("code") || params.has("state") || params.has("error") ? params : undefined
+  }
+}
+
+/**
+ * Extract an OAuth authorization code from either a raw code, a query string,
+ * or the full localhost redirect URL copied from the browser address bar.
+ */
+export function parseAuthorizationCodeInput(input: string, expectedState?: string): string {
+  const trimmed = input.trim()
+  if (!trimmed) {
+    throw new Error("Authorization code or redirect URL is required")
+  }
+
+  const params = getSearchParamsFromInput(trimmed)
+  if (params) {
+    const error = params.get("error")
+    if (error) {
+      const description = params.get("error_description")
+      throw new Error(description ? `${error}: ${description}` : error)
+    }
+
+    const state = params.get("state")
+    if (expectedState && !state) {
+      throw new Error("OAuth state missing from redirect URL")
+    }
+    if (expectedState && state !== expectedState) {
+      throw new Error("OAuth state mismatch - potential CSRF attack")
+    }
+
+    const code = params.get("code")
+    if (code) return code
+  }
+
+  if (/^[A-Za-z0-9._~+/=-]+$/.test(trimmed)) {
+    return trimmed
+  }
+
+  throw new Error("Could not find an OAuth authorization code in the provided input")
+}
+
+/**
+ * Complete OAuth authentication from manual user input.
+ */
+export async function completeAuthFromInput(
+  serverName: string,
+  input: string,
+): Promise<AuthStatus> {
+  const oauthState = await getOAuthState(serverName)
+  const code = parseAuthorizationCodeInput(input, oauthState)
+  return completeAuth(serverName, code)
 }
 
 /**
@@ -245,12 +356,7 @@ export async function completeAuth(
     await transport.finishAuth(authorizationCode)
     return "authenticated"
   } finally {
-    if (oauthState) {
-      releaseCallbackServer(oauthState)
-    }
-    await clearOAuthState(serverName)
-    pendingTransports.delete(serverName)
-    await transport.close().catch(() => {})
+    await clearPendingAuth(serverName, oauthState)
   }
 }
 
@@ -291,16 +397,13 @@ export async function authenticate(
     const callbackPromise = waitForCallback(oauthState)
 
     try {
-      // Open browser
-      console.log(`MCP Auth: Opening browser for ${serverName}`)
+      // Open browser. Always print the URL first so remote/headless users can copy it
+      // even when the OS browser handoff is unavailable or invisible.
+      console.log(`MCP Auth: Open this URL to authenticate ${serverName}:\n${authorizationUrl}`)
       try {
         await open(authorizationUrl)
       } catch (error) {
-        console.warn(`MCP Auth: Failed to open browser for ${serverName}`, { error })
-        throw new Error(
-          `Could not open browser. Please open this URL manually: ${authorizationUrl}`,
-          { cause: error },
-        )
+        console.warn(`MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`, { error })
       }
 
       // Wait for callback
@@ -318,12 +421,7 @@ export async function authenticate(
       return await completeAuth(serverName, code)
     } catch (error) {
       cancelPendingCallback(oauthState)
-      await clearOAuthState(serverName)
-      const pendingTransport = pendingTransports.get(serverName)
-      if (pendingTransport) {
-        pendingTransports.delete(serverName)
-        await pendingTransport.close().catch(() => {})
-      }
+      await clearPendingAuth(serverName, oauthState)
       throw error
     }
   })()
@@ -418,11 +516,7 @@ export async function removeAuth(serverName: string): Promise<void> {
   if (oauthState) {
     cancelPendingCallback(oauthState)
   }
-  const pendingTransport = pendingTransports.get(serverName)
-  if (pendingTransport) {
-    pendingTransports.delete(serverName)
-    await pendingTransport.close().catch(() => {})
-  }
+  await clearPendingAuth(serverName, oauthState)
   clearAllCredentials(serverName)
   await clearOAuthState(serverName)
   console.log(`MCP Auth: Removed credentials for ${serverName}`)
@@ -458,5 +552,8 @@ export async function initializeOAuth(): Promise<void> {}
  * Stops the callback server and cancels pending auths.
  */
 export async function shutdownOAuth(): Promise<void> {
+  for (const serverName of Array.from(pendingTransports.keys())) {
+    await clearPendingAuth(serverName)
+  }
   await stopCallbackServer()
 }

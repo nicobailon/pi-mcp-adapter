@@ -112,7 +112,7 @@ describe("proxy auto auth", () => {
     const result = await executeConnect(state, "demo");
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
-    expect(result.content[0].text).toContain("interactive session");
+    expect(result.content[0].text).toContain("auth-start");
     expect(result.content[0].text).toContain("/mcp-auth demo");
   });
 

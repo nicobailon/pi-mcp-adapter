@@ -22,7 +22,7 @@ type DirectAutoAuthResult =
 function getDirectAuthRequiredMessage(
   state: McpExtensionState,
   serverName: string,
-  defaultMessage = `MCP server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} first.`,
+  defaultMessage = `MCP server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
 ): string {
   return formatAuthRequiredMessage(state.config, serverName, defaultMessage);
 }
@@ -32,7 +32,7 @@ function getDirectAuthFailedMessage(state: McpExtensionState, serverName: string
   if (customGuidance) {
     return `OAuth authentication failed for "${serverName}": ${message}. ${getDirectAuthRequiredMessage(state, serverName)}`;
   }
-  return `OAuth authentication failed for "${serverName}": ${message}. Run /mcp-auth ${serverName} first.`;
+  return `OAuth authentication failed for "${serverName}": ${message}. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
 }
 
 async function attemptDirectAutoAuth(
@@ -55,7 +55,7 @@ async function attemptDirectAutoAuth(
       message: getDirectAuthRequiredMessage(
         state,
         serverName,
-        `MCP server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} in an interactive session.`,
+        `MCP server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
       ),
     };
   }
@@ -255,7 +255,9 @@ export function buildProxyDescription(
   desc += `  mcp({ connect: "server-name" })       → Connect to a server and refresh metadata\n`;
   desc += `  mcp({ tool: "name", args: '{"key": "value"}' })    → Call a tool (args is JSON string)\n`;
   desc += `  mcp({ action: "ui-messages" })        → Retrieve accumulated messages from completed UI sessions\n`;
-  desc += `\nMode: tool (call) > connect > describe > search > server (list) > action > nothing (status)`;
+  desc += `  mcp({ action: "auth-start", server: "name" })      → Start manual OAuth and get a browser URL\n`;
+  desc += `  mcp({ action: "auth-complete", server: "name", args: '{"redirectUrl":"..."}' }) → Complete manual OAuth\n`;
+  desc += `\nMode: action > tool (call) > connect > describe > search > server (list) > nothing (status)`;
 
   return desc;
 }

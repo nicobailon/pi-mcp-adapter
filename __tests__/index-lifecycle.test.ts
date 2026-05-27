@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   openMcpAuthPanel: vi.fn(),
   openMcpPanel: vi.fn(),
   openMcpSetup: vi.fn(),
+  executeAuthComplete: vi.fn(),
+  executeAuthStart: vi.fn(),
   executeCall: vi.fn(),
   executeConnect: vi.fn(),
   executeDescribe: vi.fn(),
@@ -69,6 +71,8 @@ vi.mock("../commands.ts", () => ({
 }));
 
 vi.mock("../proxy-modes.ts", () => ({
+  executeAuthComplete: mocks.executeAuthComplete,
+  executeAuthStart: mocks.executeAuthStart,
   executeCall: mocks.executeCall,
   executeConnect: mocks.executeConnect,
   executeDescribe: mocks.executeDescribe,
@@ -210,6 +214,39 @@ describe("mcpAdapter session lifecycle", () => {
       renderResult: expect.any(Function),
     }));
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));
+  });
+
+  it("routes manual auth actions through the proxy tool", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeAuthStart.mockResolvedValue({ content: [{ type: "text", text: "auth url" }] });
+    mocks.executeAuthComplete.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    expect(proxyTool).toBeDefined();
+
+    await proxyTool.execute("call-1", { action: "auth-start", server: "demo" });
+    await proxyTool.execute("call-2", {
+      action: "auth-complete",
+      server: "demo",
+      args: '{"redirectUrl":"http://localhost:19876/callback?code=abc&state=state"}',
+    });
+
+    expect(mocks.executeAuthStart).toHaveBeenCalledWith(state, "demo");
+    expect(mocks.executeAuthComplete).toHaveBeenCalledWith(
+      state,
+      "demo",
+      "http://localhost:19876/callback?code=abc&state=state",
+    );
   });
 
   it("starts a replacement init immediately and shuts down stale init results", async () => {
