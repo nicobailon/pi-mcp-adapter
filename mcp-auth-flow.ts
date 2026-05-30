@@ -347,10 +347,15 @@ export function supportsOAuth(definition: ServerEntry): boolean {
 
 /**
  * Initialize the OAuth system on startup.
- * Starts the callback server if there are any OAuth servers configured.
+ *
+ * Keep startup lazy: do not bind the local OAuth callback port until an
+ * interactive browser OAuth flow actually starts. Multiple long-lived Pi
+ * sessions can otherwise exhaust the callback port scan range before any MCP
+ * tool is used. Browser flows still call ensureCallbackServer() from
+ * startAuth(); client_credentials flows never need the callback server.
  */
 export async function initializeOAuth(): Promise<void> {
-  await ensureCallbackServer()
+  // Intentional no-op. OAuth callback server startup is lazy in startAuth().
 }
 
 /**

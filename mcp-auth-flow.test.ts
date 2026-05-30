@@ -23,6 +23,7 @@ import {
   shutdownOAuth,
   type AuthStatus,
 } from "./mcp-auth-flow.ts"
+import { isCallbackServerRunning } from "./mcp-callback-server.ts"
 import { updateTokens, clearAllCredentials } from "./mcp-auth.ts"
 import type { ServerEntry } from "./types.ts"
 
@@ -120,17 +121,15 @@ describe("mcp-auth-flow", () => {
   })
 
   describe("initializeOAuth / shutdownOAuth", () => {
-    it("should start callback server on initialize", async () => {
+    it("should not eagerly start callback server on initialize", async () => {
       await initializeOAuth()
-      // If we get here without error, server started
-      assert.ok(true)
+      assert.strictEqual(isCallbackServerRunning(), false)
     })
 
-    it("should stop callback server on shutdown", async () => {
+    it("shutdown should remain safe when no callback server was started", async () => {
       await initializeOAuth()
       await shutdownOAuth()
-      // If we get here without error, server stopped
-      assert.ok(true)
+      assert.strictEqual(isCallbackServerRunning(), false)
     })
   })
 

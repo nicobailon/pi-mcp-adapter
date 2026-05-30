@@ -72,6 +72,7 @@ describe("mcp-callback-server", () => {
       const errorMsg = "access_denied"
 
       const callbackPromise = waitForCallback(state)
+      const rejectionAssertion = assert.rejects(callbackPromise, /access_denied/)
 
       // Simulate error callback
       const callbackPort = getOAuthCallbackPort()
@@ -84,7 +85,7 @@ describe("mcp-callback-server", () => {
       assert.ok(html.includes("Authorization Failed"))
 
       // Callback promise should reject
-      await assert.rejects(callbackPromise, /access_denied/)
+      await rejectionAssertion
     })
 
     it("should return 400 for missing state", async () => {
