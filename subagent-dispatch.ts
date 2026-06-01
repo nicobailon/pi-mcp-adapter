@@ -30,24 +30,62 @@ export function isSubagentChild(): boolean {
   return process.env[SUBAGENT_CHILD_ENV] === "1";
 }
 
-/**
- * Locate the agent .md file. Resolution order:
- *   1. ~/.pi/agents/<name>.md (operator override)
- *   2. <pi-subagents npm pkg>/agents/<name>.md (bundled, e.g. delegate.md)
- * Returns the absolute path, or null if not found.
- */
-function resolveAgentFile(agentName: string): string | null {
-  const home = os.homedir();
-  const operatorPath = path.join(home, ".pi", "agents", `${agentName}.md`);
-  if (fs.existsSync(operatorPath)) return operatorPath;
+type PiSettingsPackage = string | { source?: string };
 
-  // Search upward from this file for an installed pi-subagents package.
-  const searchRoots = [
+function resolvePackageSource(source: string, piAgentDir: string): string | null {
+  if (source === "npm:pi-subagents") {
+    return path.join(piAgentDir, "npm", "node_modules", "pi-subagents");
+  }
+  if (source.startsWith("npm:")) return null;
+  return path.isAbsolute(source) ? source : path.resolve(piAgentDir, source);
+}
+
+function configuredPackageAgentRoots(piAgentDir: string): string[] {
+  const settingsPath = path.join(piAgentDir, "settings.json");
+  if (!fs.existsSync(settingsPath)) return [];
+
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as { packages?: PiSettingsPackage[] };
+    const roots: string[] = [];
+    for (const entry of settings.packages ?? []) {
+      const source = typeof entry === "string" ? entry : entry.source;
+      if (!source) continue;
+      const packageDir = resolvePackageSource(source, piAgentDir);
+      if (!packageDir) continue;
+      const root = path.join(packageDir, "agents");
+      if (fs.existsSync(root)) roots.push(root);
+    }
+    return roots;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Locate the agent .md file. Resolution follows trusted active/user paths first,
+ * then bundled pi-subagents package paths as fallback. This dispatcher is MCP
+ * payload isolation, not the official parent-owned `subagent(...)` runtime; it
+ * deliberately does not load arbitrary repo-local `.pi/agents` from cwd.
+ */
+export function resolveAgentFile(agentName: string): string | null {
+  const home = os.homedir();
+  const piAgentDir = process.env.PI_CODING_AGENT_DIR || path.join(home, ".pi", "agent");
+  const roots = [
+    path.join(piAgentDir, "agents"),
+    path.join(home, ".agents"),
+    path.join(home, ".pi", "agents"),
+    ...configuredPackageAgentRoots(piAgentDir),
+    path.join(piAgentDir, "npm", "node_modules", "pi-subagents", "agents"),
+    path.join(home, "forks", "pi-subagents-tutoria-fork", "agents"),
     path.join(home, ".npm-global", "lib", "node_modules", "pi-subagents", "agents"),
     path.join(home, ".npm-global", "lib", "node_modules", "@mjakl", "pi-subagent", "agents"),
   ];
-  for (const root of searchRoots) {
+
+  const seen = new Set<string>();
+  for (const root of roots) {
     const candidate = path.join(root, `${agentName}.md`);
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
     if (fs.existsSync(candidate)) return candidate;
   }
   return null;
