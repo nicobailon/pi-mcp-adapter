@@ -77,6 +77,56 @@ describe("McpServerManager sampling", () => {
     );
   });
 
+  it("advertises elicitation and registers the handler before connecting", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    manager.setElicitationConfig({
+      ui: {} as any,
+      timeoutMs: 300000,
+    });
+
+    await manager.connect("demo", { command: "node", args: ["server.js"] });
+
+    const client = mocks.clients[0];
+    expect(client.options).toEqual({ capabilities: { elicitation: { form: {} } } });
+    expect(client.setRequestHandler).toHaveBeenCalledTimes(1);
+    expect(client.setRequestHandler.mock.invocationCallOrder[0]).toBeLessThan(
+      client.connect.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("advertises sampling and elicitation together when both configs are set", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    manager.setSamplingConfig({
+      autoApprove: true,
+      modelRegistry: {} as any,
+      getCurrentModel: () => undefined,
+      getSignal: () => undefined,
+    });
+    manager.setElicitationConfig({
+      ui: {} as any,
+      timeoutMs: 300000,
+    });
+
+    await manager.connect("demo", { command: "node", args: ["server.js"] });
+
+    const client = mocks.clients[0];
+    expect(client.options).toEqual({
+      capabilities: {
+        sampling: {},
+        elicitation: { form: {} },
+      },
+    });
+    expect(client.setRequestHandler).toHaveBeenCalledTimes(2);
+    expect(client.setRequestHandler.mock.invocationCallOrder[0]).toBeLessThan(
+      client.connect.mock.invocationCallOrder[0],
+    );
+    expect(client.setRequestHandler.mock.invocationCallOrder[1]).toBeLessThan(
+      client.connect.mock.invocationCallOrder[0],
+    );
+  });
+
   it("does not advertise sampling when no sampling config is set", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();

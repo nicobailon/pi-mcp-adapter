@@ -54,6 +54,7 @@
     "config.ts",
     "server-manager.ts",
     "sampling-handler.ts",
+    "elicitation-handler.ts",
     "tool-registrar.ts",
     "tool-result-renderer.ts",
     "resource-tools.ts",

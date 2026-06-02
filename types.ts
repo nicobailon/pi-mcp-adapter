@@ -326,6 +326,8 @@ export interface McpSettings {
   autoAuth?: boolean;
   sampling?: boolean;
   samplingAutoApprove?: boolean;
+  elicitation?: boolean;
+  elicitationTimeoutMs?: number;
   /**
    * Message returned in tool results when a server needs (re-)authentication.
    * "${server}" is substituted with the server name. Defaults to a TUI

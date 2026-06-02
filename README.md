@@ -169,8 +169,12 @@ For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact c
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
 | `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
+| `elicitation` | Allow MCP servers to ask for trusted user input through Pi's interactive UI (default: true when UI is available). |
+| `elicitationTimeoutMs` | Timeout for each trusted elicitation UI step in milliseconds (default: 300000). |
 
 Per-server `idleTimeout` overrides the global setting.
+
+MCP elicitation is routed through Pi's trusted UI path, not through model-visible tools. Form elicitation supports simple top-level primitive fields; do not use it to collect secrets.
 
 ### Direct Tools
 
@@ -379,3 +383,4 @@ In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or 
 - Cross-session server sharing not yet implemented (each Pi session runs its own server processes)
 - Compact MCP result rendering summarizes text, but inline images are still controlled by Pi's image display settings and may render below the compact text summary.
 - MCP sampling support is text-only; context inclusion, tools, stop sequences, audio, and image content are rejected with explicit errors.
+- MCP elicitation support is form-only for simple top-level primitive schemas; URL elicitation is cancelled for now.

@@ -43,6 +43,14 @@ export async function initializeMcp(
       getSignal: () => ctx.signal,
     });
   }
+  if (config.settings?.elicitation !== false && ctx.hasUI) {
+    manager.setElicitationConfig({
+      ui: ctx.ui,
+      timeoutMs: typeof config.settings?.elicitationTimeoutMs === "number"
+        ? config.settings.elicitationTimeoutMs
+        : undefined,
+    });
+  }
   const lifecycle = new McpLifecycleManager(manager);
   const toolMetadata = new Map<string, ToolMetadata[]>();
   const failureTracker = new Map<string, number>();

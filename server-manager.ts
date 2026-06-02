@@ -17,6 +17,7 @@ import { logger } from "./logger.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { extractOAuthConfig, supportsOAuth } from "./mcp-auth-flow.ts";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
+import { registerElicitationHandler, type ServerElicitationConfig } from "./elicitation-handler.ts";
 import { interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.ts";
 
 interface ServerConnection {
@@ -37,9 +38,14 @@ export class McpServerManager {
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private uiStreamListeners = new Map<string, UiStreamListener>();
   private samplingConfig: ServerSamplingConfig | undefined;
+  private elicitationConfig: ServerElicitationConfig | undefined;
 
   setSamplingConfig(config: ServerSamplingConfig | undefined): void {
     this.samplingConfig = config;
+  }
+
+  setElicitationConfig(config: ServerElicitationConfig | undefined): void {
+    this.elicitationConfig = config;
   }
   
   async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
@@ -149,14 +155,29 @@ export class McpServerManager {
   }
   
   private createClient(serverName: string): Client {
+    const capabilities = this.createClientCapabilities();
     const client = new Client(
       { name: `pi-mcp-${serverName}`, version: "1.0.0" },
-      this.samplingConfig ? { capabilities: { sampling: {} } } : undefined,
+      capabilities ? { capabilities } : undefined,
     );
     if (this.samplingConfig) {
       registerSamplingHandler(client, { ...this.samplingConfig, serverName });
     }
+    if (this.elicitationConfig) {
+      registerElicitationHandler(client, { ...this.elicitationConfig, serverName });
+    }
     return client;
+  }
+
+  private createClientCapabilities(): Record<string, unknown> | undefined {
+    const capabilities: Record<string, unknown> = {};
+    if (this.samplingConfig) {
+      capabilities.sampling = {};
+    }
+    if (this.elicitationConfig) {
+      capabilities.elicitation = { form: {} };
+    }
+    return Object.keys(capabilities).length > 0 ? capabilities : undefined;
   }
 
   private async createHttpTransport(
