@@ -79,74 +79,172 @@ export function findToolByName(metadata: ToolMetadata[] | undefined, toolName: s
   return metadata.find(m => m.name.replace(/-/g, "_") === normalized);
 }
 
+type JsonSchemaObject = Record<string, unknown>;
+
+function isSchemaObject(schema: unknown): schema is JsonSchemaObject {
+  return !!schema && typeof schema === "object";
+}
+
+function getRequiredProperties(schema: JsonSchemaObject): string[] {
+  return Array.isArray(schema.required)
+    ? schema.required.filter((value): value is string => typeof value === "string")
+    : [];
+}
+
+function getSchemaProperties(schema: JsonSchemaObject): Record<string, unknown> | undefined {
+  return schema.properties && typeof schema.properties === "object"
+    ? schema.properties as Record<string, unknown>
+    : undefined;
+}
+
 export function formatSchema(schema: unknown, indent = "  "): string {
-  if (!schema || typeof schema !== "object") {
+  if (!isSchemaObject(schema)) {
     return `${indent}(no schema)`;
   }
 
-  const s = schema as Record<string, unknown>;
-
-  if (s.type === "object" && s.properties && typeof s.properties === "object") {
-    const props = s.properties as Record<string, unknown>;
-    const required = Array.isArray(s.required) ? s.required as string[] : [];
-
+  const props = getSchemaProperties(schema);
+  if (schema.type === "object" && props) {
     if (Object.keys(props).length === 0) {
       return `${indent}(no parameters)`;
     }
-
-    const lines: string[] = [];
-    for (const [name, propSchema] of Object.entries(props)) {
-      const isRequired = required.includes(name);
-      const propLine = formatProperty(name, propSchema, isRequired, indent);
-      lines.push(propLine);
-    }
-    return lines.join("\n");
+    return formatProperties(props, getRequiredProperties(schema), indent).join("\n");
   }
 
-  if (s.type) {
-    return `${indent}(${s.type})`;
-  }
-
-  return `${indent}(complex schema)`;
+  return formatSchemaNode(schema, indent).join("\n");
 }
 
-function formatProperty(name: string, schema: unknown, required: boolean, indent: string): string {
-  if (!schema || typeof schema !== "object") {
-    return `${indent}${name}${required ? " *required*" : ""}`;
+function formatProperties(props: Record<string, unknown>, required: string[], indent: string): string[] {
+  const lines: string[] = [];
+  for (const [name, propSchema] of Object.entries(props)) {
+    lines.push(...formatProperty(name, propSchema, required.includes(name), indent));
+  }
+  return lines;
+}
+
+function formatProperty(name: string, schema: unknown, required: boolean, indent: string): string[] {
+  if (!isSchemaObject(schema)) {
+    return [`${indent}${name}${required ? " *required*" : ""}`];
   }
 
-  const s = schema as Record<string, unknown>;
-  const parts: string[] = [];
+  const lines = [formatHeader(`${indent}${name}`, schema, required)];
+  lines.push(...formatSchemaChildren(schema, `${indent}  `));
+  return lines;
+}
 
-  let typeStr = "";
-  if (s.type) {
-    if (Array.isArray(s.type)) {
-      typeStr = s.type.join(" | ");
-    } else {
-      typeStr = String(s.type);
+function formatSchemaNode(schema: JsonSchemaObject, indent: string): string[] {
+  const summary = getSchemaSummary(schema);
+  const lines = [`${indent}${summary ? `(${summary})` : "(complex schema)"}`];
+  lines.push(...formatSchemaChildren(schema, `${indent}  `));
+  return lines;
+}
+
+function formatSchemaVariant(schema: unknown, indent: string): string[] {
+  if (!isSchemaObject(schema)) {
+    return [`${indent}- (no schema)`];
+  }
+
+  const summary = getSchemaSummary(schema) || "schema";
+  const lines = [`${indent}- ${summary}`];
+  lines.push(...formatSchemaChildren(schema, `${indent}  `));
+  return lines;
+}
+
+function formatSchemaChildren(schema: JsonSchemaObject, indent: string): string[] {
+  const lines: string[] = [];
+  const unionEntries = getUnionEntries(schema);
+
+  if (unionEntries) {
+    lines.push(`${indent}${unionEntries.label}:`);
+    for (const variant of unionEntries.schemas) {
+      lines.push(...formatSchemaVariant(variant, `${indent}  `));
     }
-  } else if (s.enum) {
-    typeStr = "enum";
-  } else if (s.anyOf || s.oneOf) {
-    typeStr = "union";
   }
 
-  if (Array.isArray(s.enum)) {
-    const enumVals = s.enum.map(v => JSON.stringify(v)).join(", ");
-    typeStr = `enum: ${enumVals}`;
+  const props = getSchemaProperties(schema);
+  if (props && Object.keys(props).length > 0) {
+    lines.push(...formatProperties(props, getRequiredProperties(schema), indent));
   }
 
-  parts.push(`${indent}${name}`);
+  if (schema.type === "array" && schema.items !== undefined) {
+    lines.push(`${indent}items:`);
+    if (Array.isArray(schema.items)) {
+      for (const item of schema.items) {
+        lines.push(...formatSchemaVariant(item, `${indent}  `));
+      }
+    } else {
+      lines.push(...formatSchemaVariant(schema.items, `${indent}  `));
+    }
+  }
+
+  return lines;
+}
+
+function getUnionEntries(schema: JsonSchemaObject): { label: string; schemas: unknown[] } | undefined {
+  if (Array.isArray(schema.anyOf)) {
+    return { label: "anyOf", schemas: schema.anyOf };
+  }
+  if (Array.isArray(schema.oneOf)) {
+    return { label: "oneOf", schemas: schema.oneOf };
+  }
+  if (Array.isArray(schema.allOf)) {
+    return { label: "allOf", schemas: schema.allOf };
+  }
+  return undefined;
+}
+
+function getSchemaSummary(schema: JsonSchemaObject): string {
+  if (schema.const !== undefined) {
+    return `const: ${JSON.stringify(schema.const)}`;
+  }
+
+  if (Array.isArray(schema.enum)) {
+    return `enum: ${schema.enum.map(v => JSON.stringify(v)).join(", ")}`;
+  }
+
+  if (schema.type) {
+    if (Array.isArray(schema.type)) {
+      return schema.type.join(" | ");
+    }
+    return String(schema.type);
+  }
+
+  if (schema.anyOf || schema.oneOf) {
+    return "union";
+  }
+
+  if (schema.allOf) {
+    return "intersection";
+  }
+
+  return "";
+}
+
+function formatHeader(prefix: string, schema: JsonSchemaObject, required: boolean): string {
+  const parts: string[] = [prefix];
+  const typeStr = getSchemaSummary(schema);
+
   if (typeStr) parts.push(`(${typeStr})`);
   if (required) parts.push("*required*");
 
-  if (s.description && typeof s.description === "string") {
-    parts.push(`- ${s.description}`);
+  const constraints = formatConstraints(schema);
+  if (constraints.length > 0) {
+    parts.push(`[${constraints.join(", ")}]`);
   }
 
-  if (s.default !== undefined) {
-    parts.push(`[default: ${JSON.stringify(s.default)}]`);
+  if (schema.default !== undefined) {
+    parts.push(`[default: ${JSON.stringify(schema.default)}]`);
+  }
+
+  if (schema.description && typeof schema.description === "string") {
+    parts.push(`- ${schema.description}`);
   }
 
   return parts.join(" ");
+}
+
+function formatConstraints(schema: JsonSchemaObject): string[] {
+  const keys = ["minLength", "maxLength", "minimum", "maximum", "pattern"];
+  return keys
+    .filter(key => schema[key] !== undefined)
+    .map(key => `${key}: ${JSON.stringify(schema[key])}`);
 }
