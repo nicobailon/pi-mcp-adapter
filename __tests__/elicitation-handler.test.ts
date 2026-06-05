@@ -13,7 +13,8 @@ function formRequest(params: ElicitRequest["params"]): ElicitRequest {
 
 describe("elicitation handler", () => {
   beforeEach(() => {
-    mocks.open.mockClear();
+    mocks.open.mockReset();
+    mocks.open.mockResolvedValue(undefined);
   });
 
   it("converts form elicitation schemas to Pi forms and returns accepted content", async () => {
@@ -144,7 +145,7 @@ describe("elicitation handler", () => {
     expect(result).toEqual({ action: "accept" });
   });
 
-  it("rejects non-browser URL elicitation schemes before prompting or opening", async () => {
+  it("cancels non-browser URL elicitation schemes before prompting or opening", async () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = {
       form: vi.fn(async () => ({ action: "submit", values: {} })),
@@ -161,11 +162,134 @@ describe("elicitation handler", () => {
           url: "file:///etc/passwd",
         }),
       ),
-    ).rejects.toThrow("MCP URL elicitation only supports http/https URLs: file:");
+    ).resolves.toEqual({ action: "cancel" });
 
     expect(ui.form).not.toHaveBeenCalled();
     expect(mocks.open).not.toHaveBeenCalled();
     expect(ui.notify).not.toHaveBeenCalled();
+  });
+
+  it("cancels form elicitations when the UI form fails", async () => {
+    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    const ui = {
+      form: vi.fn(async () => {
+        throw new Error("form unavailable");
+      }),
+    };
+
+    const result = await handleElicitationRequest(
+      { serverName: "demo", ui: ui as any, autoOpenUrls: false },
+      formRequest({
+        mode: "form",
+        message: "Collect input",
+        requestedSchema: {
+          type: "object",
+          properties: {
+            note: { type: "string", title: "Note" },
+          },
+        },
+      }),
+    );
+
+    expect(result).toEqual({ action: "cancel" });
+  });
+
+  it("cancels form elicitations when submitted values fail validation", async () => {
+    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    const ui = {
+      form: vi.fn(async () => ({
+        action: "submit",
+        values: { count: "not a number" },
+      })),
+    };
+
+    const result = await handleElicitationRequest(
+      { serverName: "demo", ui: ui as any, autoOpenUrls: false },
+      formRequest({
+        mode: "form",
+        message: "Collect count",
+        requestedSchema: {
+          type: "object",
+          properties: {
+            count: { type: "number", title: "Count" },
+          },
+          required: ["count"],
+        },
+      }),
+    );
+
+    expect(result).toEqual({ action: "cancel" });
+  });
+
+  it("cancels URL elicitations when the prompt fails before opening", async () => {
+    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    const ui = {
+      form: vi.fn(async () => {
+        throw new Error("form unavailable");
+      }),
+      notify: vi.fn(),
+    };
+
+    const result = await handleElicitationRequest(
+      { serverName: "demo", ui: ui as any, autoOpenUrls: false },
+      formRequest({
+        mode: "url",
+        message: "Approve access",
+        elicitationId: "elicit_prompt_error",
+        url: "https://example.com/approve",
+      }),
+    );
+
+    expect(result).toEqual({ action: "cancel" });
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(ui.notify).not.toHaveBeenCalled();
+  });
+
+  it("cancels URL elicitations when opening the accepted URL fails", async () => {
+    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    mocks.open.mockRejectedValueOnce(new Error("browser unavailable"));
+    const ui = {
+      form: vi.fn(async () => ({ action: "submit", values: {} })),
+      notify: vi.fn(),
+    };
+
+    const result = await handleElicitationRequest(
+      { serverName: "demo", ui: ui as any, autoOpenUrls: false },
+      formRequest({
+        mode: "url",
+        message: "Approve access",
+        elicitationId: "elicit_open_error",
+        url: "https://example.com/approve",
+      }),
+    );
+
+    expect(result).toEqual({ action: "cancel" });
+    expect(mocks.open).toHaveBeenCalledWith("https://example.com/approve");
+    expect(ui.notify).not.toHaveBeenCalled();
+  });
+
+  it("ignores notification failures after opening an accepted URL", async () => {
+    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    const ui = {
+      form: vi.fn(async () => ({ action: "submit", values: {} })),
+      notify: vi.fn(() => {
+        throw new Error("notification unavailable");
+      }),
+    };
+
+    const result = await handleElicitationRequest(
+      { serverName: "demo", ui: ui as any, autoOpenUrls: false },
+      formRequest({
+        mode: "url",
+        message: "Approve access",
+        elicitationId: "elicit_notify_error",
+        url: "https://example.com/approve",
+      }),
+    );
+
+    expect(result).toEqual({ action: "accept" });
+    expect(mocks.open).toHaveBeenCalledWith("https://example.com/approve");
+    expect(ui.notify).toHaveBeenCalledWith("Opened browser for MCP elicitation.", "info");
   });
 
   it("preserves empty strings for string fields unless schema constraints reject them", async () => {

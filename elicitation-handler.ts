@@ -113,46 +113,60 @@ export async function handleFormElicitation(
   options: ElicitationHandlerOptions,
   params: ElicitRequestFormParams,
 ): Promise<ElicitResult> {
-  const form = convertMcpSchemaToPiForm(options.serverName, params);
-  const result = await options.ui.form(form);
-  if (result.action !== "submit") {
-    return convertPiFormResultToMcpResult(result);
+  try {
+    const form = convertMcpSchemaToPiForm(options.serverName, params);
+    const result = await options.ui.form(form);
+    if (result.action !== "submit") {
+      return convertPiFormResultToMcpResult(result);
+    }
+    return {
+      action: "accept",
+      content: coerceAndValidateFormValues(params, result.values),
+    };
+  } catch {
+    return { action: "cancel" };
   }
-  return {
-    action: "accept",
-    content: coerceAndValidateFormValues(params, result.values),
-  };
 }
 
 export async function handleUrlElicitation(
   options: ElicitationHandlerOptions,
   params: ElicitRequestURLParams,
 ): Promise<ElicitResult> {
-  const browserUrl = getBrowserElicitationUrl(params.url);
-  if (!options.autoOpenUrls) {
-    const result = await options.ui.form({
-      title: "MCP Browser Request",
-      message: [
-        `Server: ${options.serverName}`,
-        "",
-        params.message,
-        "",
-        `Domain: ${browserUrl.host}`,
-        `URL: ${browserUrl.toString()}`,
-        "",
-        "Open this URL in your browser?",
-      ].join("\n"),
-      fields: [],
-      submitLabel: "Open",
-      secondaryLabel: "Decline",
-      cancelLabel: "Cancel",
-    });
-    if (result.action === "secondary") return { action: "decline" };
-    if (result.action === "cancel") return { action: "cancel" };
+  let browserUrl: URL;
+  try {
+    browserUrl = getBrowserElicitationUrl(params.url);
+    if (!options.autoOpenUrls) {
+      const result = await options.ui.form({
+        title: "MCP Browser Request",
+        message: [
+          `Server: ${options.serverName}`,
+          "",
+          params.message,
+          "",
+          `Domain: ${browserUrl.host}`,
+          `URL: ${browserUrl.toString()}`,
+          "",
+          "Open this URL in your browser?",
+        ].join("\n"),
+        fields: [],
+        submitLabel: "Open",
+        secondaryLabel: "Decline",
+        cancelLabel: "Cancel",
+      });
+      if (result.action === "secondary") return { action: "decline" };
+      if (result.action === "cancel") return { action: "cancel" };
+    }
+
+    await open(browserUrl.toString());
+  } catch {
+    return { action: "cancel" };
   }
 
-  await open(browserUrl.toString());
-  options.ui.notify("Opened browser for MCP elicitation.", "info");
+  try {
+    await Promise.resolve(options.ui.notify("Opened browser for MCP elicitation.", "info"));
+  } catch {
+    // Notification failure should not overturn a browser launch the user already accepted.
+  }
   return { action: "accept" };
 }
 
