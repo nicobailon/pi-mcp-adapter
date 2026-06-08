@@ -73,6 +73,10 @@ function fuzzyScore(query: string, text: string): number {
   return qi === lq.length ? score : 0;
 }
 
+function sanitizeDesc(s: string | undefined | null): string {
+  return (s ?? "").replace(/[\r\n]+/g, " ").trim();
+}
+
 function estimateTokens(tool: CachedTool): number {
   const schemaLen = JSON.stringify(tool.inputSchema ?? {}).length;
   const descLen = tool.description?.length ?? 0;
@@ -167,7 +171,7 @@ class McpPanel {
           const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(tool.name));
           tools.push({
             name: tool.name,
-            description: tool.description ?? "",
+            description: sanitizeDesc(tool.description),
             isDirect,
             wasDirect: isDirect,
             estimatedTokens: estimateTokens(tool),
@@ -184,7 +188,7 @@ class McpPanel {
             const ct: CachedTool = { name: baseName, description: resource.description };
             tools.push({
               name: baseName,
-              description: resource.description ?? `Read resource: ${resource.uri}`,
+              description: sanitizeDesc(resource.description ?? `Read resource: ${resource.uri}`),
               isDirect,
               wasDirect: isDirect,
               estimatedTokens: estimateTokens(ct),
@@ -556,7 +560,7 @@ class McpPanel {
       const isDirect = prev !== undefined ? prev : false;
       newTools.push({
         name: tool.name,
-        description: tool.description ?? "",
+        description: sanitizeDesc(tool.description),
         isDirect,
         wasDirect: prev !== undefined ? server.tools.find((t) => t.name === tool.name)?.wasDirect ?? false : false,
         estimatedTokens: estimateTokens(tool),
@@ -575,7 +579,7 @@ class McpPanel {
         const ct: CachedTool = { name: baseName, description: resource.description };
         newTools.push({
           name: baseName,
-          description: resource.description ?? `Read resource: ${resource.uri}`,
+          description: sanitizeDesc(resource.description ?? `Read resource: ${resource.uri}`),
           isDirect,
           wasDirect: prev !== undefined ? server.tools.find((t) => t.name === baseName)?.wasDirect ?? false : false,
           estimatedTokens: estimateTokens(ct),
