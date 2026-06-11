@@ -135,6 +135,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
+      ...(this.config.scope !== undefined ? { scope: this.config.scope } : {}),
     }
   }
 
@@ -302,6 +303,24 @@ export class McpOAuthProvider implements OAuthClientProvider {
       case "tokens":
         clearTokens(this.serverName)
         break
+    }
+  }
+
+  /**
+   * Inject scope, client_id, and client_secret into token request body.  Some
+   * IdP require these in the POST body for authorization_code flow.  The MCP
+   * SDK's prepareAuthorizationCodeRequest omits them, so this hook is required.
+   */
+  addClientAuthentication = async (_headers: Headers, params: URLSearchParams): Promise<void> => {
+    if (!params.has("scope") && this.config.scope) {
+      params.set("scope", this.config.scope)
+    }
+    const clientInfo = await this.clientInformation()
+    if (clientInfo?.client_id && !params.has("client_id")) {
+      params.set("client_id", clientInfo.client_id)
+    }
+    if (clientInfo?.client_secret && !params.has("client_secret")) {
+      params.set("client_secret", clientInfo.client_secret)
     }
   }
 
