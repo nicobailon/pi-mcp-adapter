@@ -25,7 +25,7 @@ import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 
-export function isLocalTui(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolean {
+export function isTuiMode(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolean {
   return ctx.hasUI && ctx.mode === "tui";
 }
 
@@ -51,7 +51,7 @@ export async function initializeMcp(
   if (elicitationEnabled) {
     manager.setElicitationConfig({
       ui: ctx.ui,
-      allowUrl: isLocalTui(ctx),
+      allowUrl: isTuiMode(ctx),
     });
   }
   const lifecycle = new McpLifecycleManager(manager);

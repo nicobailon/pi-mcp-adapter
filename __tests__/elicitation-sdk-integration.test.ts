@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import type { ExtensionMode, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { createDirectToolExecutor } from "../direct-tools.ts";
-import { isLocalTui } from "../init.ts";
+import { isTuiMode } from "../init.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
@@ -29,7 +29,7 @@ async function createConnectedManager(mode: ExtensionMode, answers: string[] = [
   const manager = new McpServerManager();
   manager.setElicitationConfig({
     ui,
-    allowUrl: isLocalTui({ hasUI: true, mode }),
+    allowUrl: isTuiMode({ hasUI: true, mode }),
   });
   await manager.connect("real", definition);
   managers.push(manager);

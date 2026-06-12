@@ -49,7 +49,7 @@ describe("initializeMcp elicitation config", () => {
     mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: {} });
   });
 
-  it("enables form and URL elicitation in the local TUI", async () => {
+  it("enables form and URL elicitation in TUI mode", async () => {
     const { initializeMcp } = await import("../init.ts");
     const ctx = context();
 
