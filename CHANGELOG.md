@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Included configured OAuth scopes in authorization-code flows while preserving token endpoint authentication method selection. Thanks @carlosdagos for PR #140.
+- Fixed MCP elicitation on stock Pi, including form dialogs with validation and review, consent-based URL handling, URL-required errors, completion notifications, and TUI-only browser navigation. Thanks @dmmulroy for PR #139.
+- Expanded MCP schema formatting for nested `anyOf`/`oneOf` variants, `const` discriminators, nested object properties, and array items.
+
+## [2.9.0] - 2026-06-04
+
+### Added
+- Added MCP elicitation support with Pi form prompts and browser-opening URL requests.
+
+### Fixed
+- Rejected non-http/https MCP URL elicitations before prompting or opening a browser.
+- Preserved empty string form values for MCP string elicitations unless schema constraints reject them.
+
 ## [2.8.0] - 2026-05-25
 
 ### Added

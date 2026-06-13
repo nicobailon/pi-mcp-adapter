@@ -132,6 +132,46 @@ describe("direct tools auto auth", () => {
     expect(result.content[0].text).toContain("/mcp-auth demo");
   });
 
+  it("runs URL elicitations returned by a URL-required tool error", async () => {
+    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/sdk/types.js");
+    const { createDirectToolExecutor } = await import("../direct-tools.ts");
+    const error = new UrlElicitationRequiredError([{
+      mode: "url",
+      message: "Connect your account",
+      elicitationId: "connect-1",
+      url: "https://example.com/connect",
+    }]);
+    const connection = {
+      status: "connected",
+      client: { callTool: vi.fn().mockRejectedValue(error) },
+    };
+    const state = {
+      config: { settings: {}, mcpServers: { demo: { command: "demo" } } },
+      manager: {
+        getConnection: vi.fn(() => connection),
+        handleUrlElicitationRequired: vi.fn().mockResolvedValue("accept"),
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+    mocks.lazyConnect.mockResolvedValue(true);
+
+    const executor = createDirectToolExecutor(() => state, () => null, {
+      serverName: "demo",
+      originalName: "search",
+      prefixedName: "demo_search",
+      description: "Search",
+    });
+    const result = await executor("id", {}, undefined, undefined, undefined as any);
+
+    expect(state.manager.handleUrlElicitationRequired).toHaveBeenCalledWith("demo", error);
+    expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });
+    expect(result.content[0].text).toContain("retry the tool");
+  });
+
   it("uses custom authRequiredMessage in non-ui direct tool auth failures", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
 

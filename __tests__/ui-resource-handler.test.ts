@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
+import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServerManager } from "../server-manager.ts";
 
 // Mock the manager
@@ -20,6 +21,19 @@ describe("UiResourceHandler", () => {
       await expect(handler.readUiResource("server", "https://example.com")).rejects.toThrow(
         /URI must start with ui:\/\//
       );
+    });
+
+    it("preserves URL-required errors for the outer tool adapter", async () => {
+      const error = new UrlElicitationRequiredError([{
+        mode: "url",
+        message: "Connect",
+        elicitationId: "connect-1",
+        url: "https://example.com/connect",
+      }]);
+      const manager = createMockManager({ readResource: vi.fn().mockRejectedValue(error) });
+      const handler = new UiResourceHandler(manager);
+
+      await expect(handler.readUiResource("server", "ui://test/widget")).rejects.toBe(error);
     });
 
     it("reads and returns HTML from text content", async () => {

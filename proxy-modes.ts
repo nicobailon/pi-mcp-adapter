@@ -1,4 +1,5 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
+import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import { checkSync } from "recheck";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
@@ -915,6 +916,17 @@ export async function executeCall(
       details: { mode: "call", mcpResult: result, server: serverName, tool: toolMeta.originalName },
     };
   } catch (error) {
+    if (error instanceof UrlElicitationRequiredError) {
+      const action = await state.manager.handleUrlElicitationRequired(serverName, error);
+      const message = action === "accept"
+        ? "The original MCP tool did not run. Complete the opened browser interaction, then retry the tool."
+        : `The URL interaction was ${action === "decline" ? "declined" : "cancelled"}.`;
+      uiSession?.sendToolCancelled(message);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        details: { mode: "call", error: "url_elicitation_required", server: serverName, action },
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
     uiSession?.sendToolCancelled(message);
 

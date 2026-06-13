@@ -189,8 +189,15 @@ You can also pass only the `code` query parameter with `args: '{"code":"..."}'`.
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
 | `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
+| `elicitation` | Allow MCP servers to request user input through Pi dialogs (default: true when Pi UI is available). |
 
 Per-server `idleTimeout` overrides the global setting.
+
+### MCP Elicitation
+
+When Pi exposes dialog-capable UI, the adapter advertises form elicitation support. Forms use Pi's stock `select()` and `input()` dialogs, validate the response, and provide a review/edit step before submission. Explicit refusal maps to MCP `decline`; dismissing a dialog maps to `cancel`.
+
+URL mode is advertised only in TUI mode. The adapter displays the requesting server, target host, and full URL, and always requires consent before opening the browser. It also handles URL-required tool errors (`-32042`) and completion notifications; after completing the browser interaction, retry the original tool call.
 
 ### Direct Tools
 

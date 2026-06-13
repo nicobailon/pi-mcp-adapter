@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { UrlElicitationRequiredError, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpExtensionState } from "./state.ts";
 import {
   extractUiPromptText,
@@ -373,6 +373,7 @@ export async function maybeStartUiSession(
       },
     };
   } catch (error) {
+    if (error instanceof UrlElicitationRequiredError) throw error;
     const message = error instanceof Error ? error.message : String(error);
     log.error("Failed to start UI session", error instanceof Error ? error : undefined);
     state.ui?.notify(
