@@ -366,6 +366,8 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/mcp.json` only 
 | Call | `mcp({ tool: "...", args: '{"key": "value"}' })` |
 | Connect | `mcp({ connect: "server-name" })` |
 | UI messages | `mcp({ action: "ui-messages" })` |
+| Auth start | `mcp({ action: "auth-start", server: "name" })` |
+| Auth complete | `mcp({ action: "auth-complete", server: "name", args: '{"redirectUrl":"..."}' })` |
 
 MCP proxy and direct-tool results render compactly by default: long text shows the first three lines plus a `Ctrl+O to expand` hint, while the full result remains available when expanded and is still returned unchanged to the model.
 
@@ -388,7 +390,7 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 
 If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`, and direct tool calls automatically run OAuth when needed and retry once.
 
-In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or Enter on a server that needs auth. In non-interactive sessions, browser-based OAuth still requires `/mcp-auth <server>`. `/mcp-auth` without a server only opens a picker in the interactive UI.
+In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or Enter on a server that needs auth. In remote/headless sessions, use the proxy tool's `auth-start` and `auth-complete` actions to copy the authorization URL locally and paste the redirect URL back into Pi. `/mcp-auth` without a server only opens a picker in the interactive UI.
 
 ## How It Works
 

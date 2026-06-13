@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added manual remote/headless OAuth proxy actions for copying authorization URLs and completing pasted redirect URLs or codes. Thanks @Gabrielgvl for PR #120.
+
 ### Fixed
 - Included configured OAuth scopes in authorization-code flows while preserving token endpoint authentication method selection. Thanks @carlosdagos for PR #140.
 - Fixed MCP elicitation on stock Pi, including form dialogs with validation and review, consent-based URL handling, URL-required errors, completion notifications, and TUI-only browser navigation. Thanks @dmmulroy for PR #139.
