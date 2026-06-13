@@ -5,7 +5,7 @@
  * Handles OAuth client registration, token storage, and authorization redirection.
  */
 
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
+import type { AddClientAuthentication, OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import type {
   OAuthClientMetadata,
@@ -135,6 +135,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
+      ...(this.config.scope !== undefined ? { scope: this.config.scope } : {}),
     }
   }
 
@@ -302,6 +303,52 @@ export class McpOAuthProvider implements OAuthClientProvider {
       case "tokens":
         clearTokens(this.serverName)
         break
+    }
+  }
+
+  /**
+   * Adds configured authorization-code scope without replacing the SDK's
+   * default token endpoint authentication behavior.
+   */
+  addClientAuthentication: AddClientAuthentication = async (headers, params, _url, metadata) => {
+    if (params.get("grant_type") === "authorization_code" && !params.has("scope") && this.config.scope) {
+      params.set("scope", this.config.scope)
+    }
+
+    const clientInfo = await this.clientInformation()
+    if (!clientInfo) {
+      return
+    }
+
+    const supportedMethods = metadata?.token_endpoint_auth_methods_supported ?? []
+    const hasClientSecret = clientInfo.client_secret !== undefined
+    let authMethod: "client_secret_basic" | "client_secret_post" | "none"
+
+    if (supportedMethods.length === 0) {
+      authMethod = hasClientSecret ? "client_secret_post" : "none"
+    } else if (hasClientSecret && supportedMethods.includes("client_secret_basic")) {
+      authMethod = "client_secret_basic"
+    } else if (hasClientSecret && supportedMethods.includes("client_secret_post")) {
+      authMethod = "client_secret_post"
+    } else if (supportedMethods.includes("none")) {
+      authMethod = "none"
+    } else {
+      authMethod = hasClientSecret ? "client_secret_post" : "none"
+    }
+
+    if (authMethod === "client_secret_basic") {
+      if (!clientInfo.client_secret) {
+        throw new Error("client_secret_basic authentication requires a client_secret")
+      }
+      headers.set("Authorization", `Basic ${Buffer.from(`${clientInfo.client_id}:${clientInfo.client_secret}`).toString("base64")}`)
+      return
+    }
+
+    if (!params.has("client_id")) {
+      params.set("client_id", clientInfo.client_id)
+    }
+    if (authMethod === "client_secret_post" && clientInfo.client_secret && !params.has("client_secret")) {
+      params.set("client_secret", clientInfo.client_secret)
     }
   }
 
