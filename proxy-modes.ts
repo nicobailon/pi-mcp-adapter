@@ -563,6 +563,9 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
     updateMetadataCache(state, serverName);
     state.failureTracker.delete(serverName);
     updateStatusBar(state);
+    if ((definition.lifecycle ?? "lazy") === "lazy-keep-alive") {
+      state.lifecycle.markKeepAlive(serverName, definition);
+    }
     return executeList(state, serverName);
   } catch (error) {
     state.failureTracker.set(serverName, Date.now());

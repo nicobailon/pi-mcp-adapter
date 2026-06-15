@@ -305,7 +305,7 @@ export interface ServerEntry {
    * Set to false to explicitly disable OAuth for this server.
    */
   oauth?: OAuthConfig | false;
-  lifecycle?: "keep-alive" | "lazy" | "eager";
+  lifecycle?: "keep-alive" | "lazy" | "lazy-keep-alive" | "eager";
   idleTimeout?: number; // minutes, overrides global setting
   // Resource handling
   exposeResources?: boolean;

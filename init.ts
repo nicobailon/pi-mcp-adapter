@@ -100,7 +100,8 @@ export async function initializeMcp(
 
   for (const [name, definition] of serverEntries) {
     const lifecycleMode = definition.lifecycle ?? "lazy";
-    const idleOverride = definition.idleTimeout ?? (lifecycleMode === "eager" ? 0 : undefined);
+    const persistsAfterFirstSpawn = lifecycleMode === "eager" || lifecycleMode === "lazy-keep-alive";
+    const idleOverride = definition.idleTimeout ?? (persistsAfterFirstSpawn ? 0 : undefined);
     lifecycle.registerServer(
       name,
       definition,
@@ -325,6 +326,9 @@ export async function lazyConnect(state: McpExtensionState, serverName: string):
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
     updateStatusBar(state);
+    if ((definition.lifecycle ?? "lazy") === "lazy-keep-alive") {
+      state.lifecycle.markKeepAlive(serverName, definition);
+    }
     return true;
   } catch (error) {
     state.failureTracker.set(serverName, Date.now());
@@ -342,6 +346,6 @@ function getEffectiveIdleTimeoutMinutes(state: McpExtensionState, serverName: st
   }
   if (typeof definition.idleTimeout === "number") return definition.idleTimeout;
   const mode = definition.lifecycle ?? "lazy";
-  if (mode === "eager") return 0;
+  if (mode === "eager" || mode === "lazy-keep-alive") return 0;
   return typeof state.config.settings?.idleTimeout === "number" ? state.config.settings.idleTimeout : 10;
 }
