@@ -139,6 +139,7 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
 | `excludeTools` | `string[]` of tool names to hide (matches original names like `get_screenshot` and prefixed names like `figma_get_screenshot`) |
 | `debug` | Show server stderr (default: false) |
+| `headers` | Headers for HTTP endpoint |
 
 For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
 
@@ -221,6 +222,15 @@ Per-server:
     "huge-server": {
       "command": "npx",
       "args": ["-y", "mega-mcp@latest"]
+    },
+    "stitch": {
+      "url": "https://stitch.googleapis.com/mcp",
+      "headers": {
+        "X-Goog-Api-Key": "${GOOGLE_STITCH_API_KEY}"
+      },
+      "env": {
+        "GOOGLE_STITCH_API_KEY": "GOOGLE_STITCH_API_KEY"
+      }
     }
   }
 }
