@@ -52,14 +52,19 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   const prefix = earlyConfig.settings?.toolPrefix ?? "server";
 
   const envRaw = process.env.MCP_DIRECT_TOOLS;
-  const directSpecs = envRaw === "__none__"
-    ? []
-    : resolveDirectTools(
-        earlyConfig,
-        earlyCache,
-        prefix,
-        envRaw?.split(",").map(s => s.trim()).filter(Boolean),
-      );
+  // Always register cached direct tools. When MCP_DIRECT_TOOLS is set to a
+  // non-__none__ value, use it as an override filter. Otherwise fall back to
+  // per-server directTools / globalDirect from mcp.json config. This fixes
+  // subagents where --tools restricts execution but MCP_DIRECT_TOOLS=__none__
+  // prevented tool registration entirely.
+  const directSpecs = resolveDirectTools(
+    earlyConfig,
+    earlyCache,
+    prefix,
+    envRaw && envRaw !== "__none__"
+      ? envRaw.split(",").map(s => s.trim()).filter(Boolean)
+      : undefined,
+  );
   const missingConfiguredDirectToolServers = getMissingConfiguredDirectToolServers(earlyConfig, earlyCache);
   const shouldRegisterProxyTool =
     earlyConfig.settings?.disableProxyTool !== true
