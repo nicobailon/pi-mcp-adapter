@@ -333,6 +333,15 @@ export interface McpSettings {
    * instruction when unset.
    */
   authRequiredMessage?: string;
+  /**
+   * Override the default OAuth token storage directory.
+   * Relative paths are resolved from the project root (cwd).
+   * Takes precedence over the agent's mcp-oauth/ directory but
+   * can still be overridden by the MCP_OAUTH_DIR env variable.
+   *
+   * Example: ".pi/mcp-oauth" stores tokens in <project>/.pi/mcp-oauth/
+   */
+  oauthDir?: string;
 }
 
 // Root config
