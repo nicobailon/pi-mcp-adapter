@@ -7,14 +7,9 @@ import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDi
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
 import { loadMetadataCache } from "./metadata-cache.ts";
 import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
-import { getConfigPathFromArgv, truncateAtWord } from "./utils.ts";
+import { getConfigPathFromArgv, stripAdditionalProperties, truncateAtWord } from "./utils.ts";
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.ts";
 import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
-
-function stripAdditionalProperties(schema: Record<string, unknown>): Record<string, unknown> {
-  const { additionalProperties, ...rest } = schema;
-  return rest;
-}
 
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
