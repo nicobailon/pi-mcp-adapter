@@ -1,7 +1,7 @@
 // config.ts - Config loading with import support
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, parse } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import type { McpConfig, ServerEntry, McpSettings, ImportKind, ServerProvenance } from "./types.ts";
 
@@ -105,6 +105,38 @@ export function getProjectPiConfigPath(cwd = process.cwd()): string {
   return resolve(cwd, PROJECT_PI_CONFIG_NAME);
 }
 
+/**
+ * Walk up from `cwd` to filesystem root, collecting paths of `.mcp.json`
+ * and `.pi/mcp.json` files along the way. Results are ordered from
+ * root-most to leaf-most (closest to cwd appears last).
+ */
+export function walkUpProjectConfigPaths(
+  cwd = process.cwd()
+): { path: string; kind: "shared" | "pi"; depth: number }[] {
+  const results: { path: string; kind: "shared" | "pi"; depth: number }[] = [];
+  let dir = resolve(cwd);
+  const root = parse(dir).root;
+
+  // Collect all candidates bottom-up, then reverse to get root-first order
+  while (dir !== root && dir !== dirname(dir)) {
+    const mcpJson = join(dir, PROJECT_CONFIG_NAME);
+    const piMcpJson = join(dir, PROJECT_PI_CONFIG_NAME);
+    // Pi configs are more specific, process them after shared so they
+    // appear later in root-first order (higher priority).
+    if (existsSync(mcpJson)) {
+      results.push({ path: mcpJson, kind: "shared", depth: results.length });
+    }
+    if (existsSync(piMcpJson)) {
+      results.push({ path: piMcpJson, kind: "pi", depth: results.length });
+    }
+    dir = dirname(dir);
+  }
+
+  // Reverse: root-most first, leaf-most last → later overrides earlier
+  results.reverse();
+  return results;
+}
+
 export function getConfigDiscoveryPaths(overridePath?: string, cwd = process.cwd()): ConfigDiscoveryPath[] {
   return getConfigSources(overridePath, cwd).map((source) => ({
     label: source.label,
@@ -194,10 +226,9 @@ export function loadMcpConfig(overridePath?: string, cwd = process.cwd()): McpCo
 
 function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
   const userPath = getPiGlobalConfigPath(overridePath);
-  const projectPath = getProjectConfigPath(cwd);
-  const projectPiPath = getProjectPiConfigPath(cwd);
   const sources: ConfigSourceSpec[] = [];
 
+  // 1. Shared global (lowest priority)
   if (GENERIC_GLOBAL_CONFIG_PATH !== userPath) {
     sources.push({
       id: "shared-global",
@@ -211,6 +242,7 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
     });
   }
 
+  // 2. Pi global override
   sources.push({
     id: "pi-global",
     label: "Pi global override",
@@ -221,26 +253,19 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
     scope: "global",
   });
 
-  if (projectPath !== userPath) {
+  // 3. Walk-up project configs (root-first → leaf-last = increasing priority)
+  const walkUpPaths = walkUpProjectConfigPaths(cwd);
+  for (const entry of walkUpPaths) {
+    // Skip duplicates with global paths
+    if (entry.path === userPath || entry.path === GENERIC_GLOBAL_CONFIG_PATH) continue;
+    const isShared = entry.kind === "shared";
     sources.push({
-      id: "shared-project",
-      label: "project standard MCP",
-      readPath: projectPath,
-      writePath: projectPath,
+      id: isShared ? "shared-project" : "pi-project",
+      label: `project ${entry.path}`,
+      readPath: entry.path,
+      writePath: entry.path,
       kind: "project",
-      shared: true,
-      scope: "project",
-    });
-  }
-
-  if (projectPiPath !== userPath && projectPiPath !== projectPath) {
-    sources.push({
-      id: "pi-project",
-      label: "project Pi override",
-      readPath: projectPiPath,
-      writePath: projectPiPath,
-      kind: "project",
-      shared: false,
+      shared: isShared,
       scope: "project",
     });
   }
