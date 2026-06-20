@@ -6,7 +6,7 @@ import type { ToolMetadata, McpContent } from "./types.ts";
 import { getServerPrefix, parseUiPromptHandoff } from "./types.ts";
 import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.ts";
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
-import { transformMcpContent } from "./tool-registrar.ts";
+import { transformMcpContent, resolveMcpResultContent } from "./tool-registrar.ts";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
@@ -860,8 +860,7 @@ export async function executeCall(
     if (toolMeta.uiResourceUri) {
       const result = await resultPromise;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
-      const mcpContent = (result.content ?? []) as McpContent[];
-      const content = transformMcpContent(mcpContent);
+      const content = resolveMcpResultContent(result);
 
       const mcpText = content
         .filter((c) => c.type === "text")
@@ -891,10 +890,9 @@ export async function executeCall(
 
     const result = await resultPromise;
 
-    const mcpContent = (result.content ?? []) as McpContent[];
-    const content = transformMcpContent(mcpContent);
-
     if (result.isError) {
+      const mcpContent = (result.content ?? []) as McpContent[];
+      const content = transformMcpContent(mcpContent);
       const errorText = content
         .filter((c) => c.type === "text")
         .map((c) => (c as { text: string }).text)
@@ -910,6 +908,8 @@ export async function executeCall(
         details: { mode: "call", error: "tool_error", mcpResult: result },
       };
     }
+
+    const content = resolveMcpResultContent(result);
 
     return {
       content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }],

@@ -6,7 +6,7 @@ import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds } from "./init.ts";
 import { isServerCacheValid } from "./metadata-cache.ts";
 import { formatSchema } from "./tool-metadata.ts";
-import { transformMcpContent } from "./tool-registrar.ts";
+import { transformMcpContent, resolveMcpResultContent } from "./tool-registrar.ts";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
 import { formatToolName, isToolExcluded } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
@@ -379,10 +379,9 @@ export function createDirectToolExecutor(
       const result = await resultPromise;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
 
-      const mcpContent = (result.content ?? []) as McpContent[];
-      const content = transformMcpContent(mcpContent);
-
       if (result.isError) {
+        const mcpContent = (result.content ?? []) as McpContent[];
+        const content = transformMcpContent(mcpContent);
         let errorText = content.filter(c => c.type === "text").map(c => (c as { text: string }).text).join("\n") || "Tool execution failed";
         if (spec.inputSchema) {
           errorText += `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}`;
@@ -393,6 +392,7 @@ export function createDirectToolExecutor(
         };
       }
 
+      const content = resolveMcpResultContent(result);
       const resultText = content.filter(c => c.type === "text").map(c => (c as { text: string }).text).join("\n") || "(empty result)";
       if (hasUi) {
         const uiMessage = uiSession?.reused

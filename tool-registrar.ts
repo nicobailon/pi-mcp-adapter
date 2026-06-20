@@ -44,3 +44,26 @@ export function transformMcpContent(content: McpContent[]): ContentBlock[] {
     return { type: "text" as const, text: JSON.stringify(c) };
   });
 }
+
+/**
+ * Resolve a tool result's content blocks, falling back to structuredContent
+ * when content is empty.
+ */
+export function resolveMcpResultContent(result: Record<string, unknown>): ContentBlock[] {
+  const blocks = transformMcpContent((Array.isArray(result.content) ? result.content : []) as McpContent[]);
+  if (blocks.length > 0) return blocks;
+
+  if (result.structuredContent !== undefined && result.structuredContent !== null) {
+    return [{ type: "text" as const, text: stringifyStructuredContent(result.structuredContent) }];
+  }
+
+  return [];
+}
+
+function stringifyStructuredContent(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value); // circular refs / throwing getters
+  }
+}
