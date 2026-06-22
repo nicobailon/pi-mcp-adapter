@@ -168,7 +168,15 @@ export async function authenticateServer(
 
   try {
     ctx.ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
-    const status = await authenticate(serverName, definition.url, definition);
+    const status = await authenticate(serverName, definition.url, definition, {
+      onAuthorizationUrl: (authorizationUrl) => {
+        ctx.ui.notify(
+          `Open this URL to authenticate ${serverName}:\n\n${authorizationUrl}\n\n` +
+          "After approving, return to Pi; the local callback will complete automatically.",
+          "info"
+        );
+      },
+    });
 
     if (status === "authenticated") {
       const message = `OAuth authentication successful for "${serverName}"! Run /mcp reconnect ${serverName} to connect with the new token.`;

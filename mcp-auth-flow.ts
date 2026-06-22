@@ -36,6 +36,14 @@ import type { ServerEntry } from "./types.ts"
 /** Auth status for a server */
 export type AuthStatus = "authenticated" | "expired" | "not_authenticated"
 
+export interface AuthenticateOptions {
+  /**
+   * Called with the exact authorization URL before attempting to open it.
+   * When omitted, the URL is printed to stdout for non-interactive/manual flows.
+   */
+  onAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>
+}
+
 // Track pending transports for auth completion
 const pendingTransports = new Map<string, StreamableHTTPClientTransport>()
 const pendingAuthStates = new Map<string, string>()
@@ -372,6 +380,7 @@ export async function authenticate(
   serverName: string,
   serverUrl: string,
   definition?: ServerEntry,
+  options: AuthenticateOptions = {},
 ): Promise<AuthStatus> {
   const inFlight = pendingAuthentications.get(serverName)
   if (inFlight) {
@@ -397,9 +406,15 @@ export async function authenticate(
     const callbackPromise = waitForCallback(oauthState)
 
     try {
-      // Open browser. Always print the URL first so remote/headless users can copy it
-      // even when the OS browser handoff is unavailable or invisible.
-      console.log(`MCP Auth: Open this URL to authenticate ${serverName}:\n${authorizationUrl}`)
+      // Open browser. Always surface the URL first so remote/headless users can copy it
+      // even when the OS browser handoff is unavailable or invisible. Interactive UI
+      // callers can provide their own renderer to avoid raw console output corrupting
+      // long OAuth URLs while the TUI owns the terminal.
+      if (options.onAuthorizationUrl) {
+        await options.onAuthorizationUrl(authorizationUrl)
+      } else {
+        console.log(`MCP Auth: Open this URL to authenticate ${serverName}:\n${authorizationUrl}`)
+      }
       try {
         await open(authorizationUrl)
       } catch (error) {
