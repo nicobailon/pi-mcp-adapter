@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Forwarded the agent's abort signal to MCP `callTool`/`readResource` requests so pressing `Esc`/`Ctrl+C` cancels in-flight tool calls (the SDK now emits `notifications/cancelled`) instead of running them to completion. Fixes #40.
+
 ## [2.10.0] - 2026-06-13
 
 ### Added

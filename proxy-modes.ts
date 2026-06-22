@@ -581,6 +581,7 @@ export async function executeCall(
   args?: Record<string, unknown>,
   serverOverride?: string,
   getPiTools?: () => ToolInfo[],
+  signal?: AbortSignal,
 ): Promise<ProxyToolResult> {
   let serverName: string | undefined = serverOverride;
   let toolMeta: ToolMetadata | undefined;
@@ -830,7 +831,7 @@ export async function executeCall(
     state.manager.incrementInFlight(serverName);
 
     if (toolMeta.resourceUri) {
-      const result = await connection.client.readResource({ uri: toolMeta.resourceUri });
+      const result = await connection.client.readResource({ uri: toolMeta.resourceUri }, { signal });
       const content = (result.contents ?? []).map(c => ({
         type: "text" as const,
         text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
@@ -855,7 +856,7 @@ export async function executeCall(
       name: toolMeta.originalName,
       arguments: args ?? {},
       _meta: uiSession?.requestMeta,
-    });
+    }, undefined, { signal });
 
     if (toolMeta.uiResourceUri) {
       const result = await resultPromise;
