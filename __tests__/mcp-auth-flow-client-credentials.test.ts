@@ -509,6 +509,31 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(getOAuthState("browser-fail")).toBeUndefined();
   });
 
+  it("uses a custom authorization URL handler instead of raw console output", async () => {
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp"));
+      return "REDIRECT";
+    });
+    mocks.waitForCallback.mockResolvedValueOnce("manual-code");
+    const onAuthorizationUrl = vi.fn();
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { authenticate } = await import("../mcp-auth-flow.ts");
+
+    try {
+      await expect(authenticate("ui-auth", "https://api.example.com/mcp", {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+      }, { onAuthorizationUrl })).resolves.toBe("authenticated");
+    } finally {
+      consoleLog.mockRestore();
+    }
+
+    const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
+    expect(onAuthorizationUrl).toHaveBeenCalledWith(authorizationUrl);
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(mocks.open).toHaveBeenCalledWith(authorizationUrl);
+  });
+
   it("releases reserved callback state after direct completeAuth", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
