@@ -106,6 +106,11 @@ export function truncateAtWord(text: string, target: number): string {
   return truncated + "...";
 }
 
+export function stripAdditionalProperties(schema: Record<string, unknown>): Record<string, unknown> {
+  const { additionalProperties, ...rest } = schema;
+  return rest;
+}
+
 export function formatAuthRequiredMessage(
   config: Pick<McpConfig, "settings">,
   serverName: string,
