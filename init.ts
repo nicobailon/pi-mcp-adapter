@@ -36,7 +36,7 @@ export async function initializeMcp(
   const configPath = pi.getFlag("mcp-config") as string | undefined;
   const config = loadMcpConfig(configPath, ctx.cwd);
 
-  const manager = new McpServerManager();
+  const manager = new McpServerManager(ctx.cwd);
   const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
   if (config.settings?.sampling !== false && (ctx.hasUI || samplingAutoApprove)) {
     manager.setSamplingConfig({

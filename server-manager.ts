@@ -49,6 +49,17 @@ export class McpServerManager {
   private elicitationConfig: ServerElicitationConfig | undefined;
   private acceptedUrlElicitations = new Map<string, Set<string>>();
 
+  /**
+   * @param defaultCwd Working directory for stdio MCP servers that don't set
+   * their own `cwd` in config. Defaults to the session's cwd (the adapter
+   * passes `ctx.cwd`). Without it, stdio servers inherit the host process's
+   * `process.cwd()`, which is wrong when pi is embedded in another app whose
+   * process cwd differs from the agent session's cwd (e.g. a GUI host running
+   * many sessions in one process) — screenshots and other server-written
+   * files then land in the host's dir instead of the session's working dir.
+   */
+  constructor(private readonly defaultCwd?: string) {}
+
   setSamplingConfig(config: ServerSamplingConfig | undefined): void {
     this.samplingConfig = config;
   }
@@ -107,7 +118,7 @@ export class McpServerManager {
         command,
         args,
         env: resolveEnv(definition.env),
-        cwd: resolveConfigPath(definition.cwd),
+        cwd: resolveConfigPath(definition.cwd) ?? this.defaultCwd,
         stderr: definition.debug ? "inherit" : "ignore",
       });
     } else if (definition.url) {
