@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import {
   ElicitationCompleteNotificationSchema,
   type ReadResourceResult,
@@ -48,6 +49,7 @@ export class McpServerManager {
   private samplingConfig: ServerSamplingConfig | undefined;
   private elicitationConfig: ServerElicitationConfig | undefined;
   private acceptedUrlElicitations = new Map<string, Set<string>>();
+  private defaultRequestTimeoutMs: number | undefined;
 
   setSamplingConfig(config: ServerSamplingConfig | undefined): void {
     this.samplingConfig = config;
@@ -55,6 +57,38 @@ export class McpServerManager {
 
   setElicitationConfig(config: ServerElicitationConfig | undefined): void {
     this.elicitationConfig = config;
+  }
+
+  setDefaultRequestTimeoutMs(timeoutMs: number | undefined): void {
+    this.defaultRequestTimeoutMs = normalizeRequestTimeoutMs(timeoutMs);
+  }
+
+  getRequestOptions(name: string, signal?: AbortSignal): RequestOptions | undefined {
+    const connection = this.connections.get(name);
+    return this.buildRequestOptions(connection?.definition, signal);
+  }
+
+  private getResolvedRequestTimeoutMs(definition?: ServerDefinition): number | undefined {
+    if (definition?.requestTimeoutMs !== undefined) {
+      return normalizeRequestTimeoutMs(definition.requestTimeoutMs);
+    }
+    return this.defaultRequestTimeoutMs;
+  }
+
+  private buildRequestOptions(
+    definition?: ServerDefinition,
+    signal?: AbortSignal,
+  ): RequestOptions | undefined {
+    const timeout = this.getResolvedRequestTimeoutMs(definition);
+
+    if (!signal && timeout === undefined) {
+      return undefined;
+    }
+
+    return {
+      ...(signal ? { signal } : {}),
+      ...(timeout !== undefined ? { timeout } : {}),
+    };
   }
 
   async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
@@ -117,14 +151,16 @@ export class McpServerManager {
       throw new Error(`Server ${name} has no command or url`);
     }
 
+    const requestOptions = this.buildRequestOptions(definition);
+
     try {
-      await client.connect(transport);
+      await client.connect(transport, requestOptions);
       this.attachAdapterNotificationHandlers(name, client);
 
       // Discover tools and resources
       const [tools, resources] = await Promise.all([
-        this.fetchAllTools(client),
-        this.fetchAllResources(client),
+        this.fetchAllTools(client, requestOptions),
+        this.fetchAllResources(client, requestOptions),
       ]);
 
       return {
@@ -276,7 +312,7 @@ export class McpServerManager {
     try {
       // Create a test client to verify the transport works
       const testClient = new Client({ name: "pi-mcp-probe", version: "2.1.2" });
-      await testClient.connect(streamableTransport);
+      await testClient.connect(streamableTransport, this.buildRequestOptions(definition));
       await testClient.close().catch(() => {});
       // Close probe transport before creating fresh one
       await streamableTransport.close().catch(() => {});
@@ -297,12 +333,12 @@ export class McpServerManager {
     }
   }
 
-  private async fetchAllTools(client: Client): Promise<McpTool[]> {
+  private async fetchAllTools(client: Client, requestOptions?: RequestOptions): Promise<McpTool[]> {
     const allTools: McpTool[] = [];
     let cursor: string | undefined;
 
     do {
-      const result = await client.listTools(cursor ? { cursor } : undefined);
+      const result = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
       allTools.push(...(result.tools ?? []));
       cursor = result.nextCursor;
     } while (cursor);
@@ -310,13 +346,13 @@ export class McpServerManager {
     return allTools;
   }
 
-  private async fetchAllResources(client: Client): Promise<McpResource[]> {
+  private async fetchAllResources(client: Client, requestOptions?: RequestOptions): Promise<McpResource[]> {
     try {
       const allResources: McpResource[] = [];
       let cursor: string | undefined;
 
       do {
-        const result = await client.listResources(cursor ? { cursor } : undefined);
+        const result = await client.listResources(cursor ? { cursor } : undefined, requestOptions);
         allResources.push(...(result.resources ?? []));
         cursor = result.nextCursor;
       } while (cursor);
@@ -344,7 +380,7 @@ export class McpServerManager {
     this.uiStreamListeners.delete(streamToken);
   }
 
-  async readResource(name: string, uri: string): Promise<ReadResourceResult> {
+  async readResource(name: string, uri: string, signal?: AbortSignal): Promise<ReadResourceResult> {
     const connection = this.connections.get(name);
     if (!connection || connection.status !== "connected") {
       throw new Error(`Server "${name}" is not connected`);
@@ -353,7 +389,7 @@ export class McpServerManager {
     try {
       this.touch(name);
       this.incrementInFlight(name);
-      return await connection.client.readResource({ uri });
+      return await connection.client.readResource({ uri }, this.getRequestOptions(name, signal));
     } finally {
       this.decrementInFlight(name);
       this.touch(name);
@@ -439,4 +475,10 @@ function resolveEnv(env?: Record<string, string>): Record<string, string> {
  */
 function resolveHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
   return interpolateEnvRecord(headers);
+}
+
+function normalizeRequestTimeoutMs(timeoutMs: number | undefined): number | undefined {
+  return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : undefined;
 }

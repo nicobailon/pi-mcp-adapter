@@ -340,7 +340,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
           return executeAuthComplete(state, params.server, input);
         }
         if (params.tool) {
-          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools);
+          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, _signal);
         }
         if (params.connect) {
           return executeConnect(state, params.connect);
