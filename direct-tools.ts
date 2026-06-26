@@ -276,7 +276,7 @@ export function createDirectToolExecutor(
   getInitPromise: () => Promise<McpExtensionState> | null,
   spec: DirectToolSpec
 ): DirectToolExecute {
-  return async function execute(_toolCallId, params) {
+  return async function execute(_toolCallId, params, signal) {
     let state = getState();
     const initPromise = getInitPromise();
 
@@ -342,13 +342,14 @@ export function createDirectToolExecutor(
     }
 
     let uiSession: UiSessionRuntime | null = null;
+    const requestOptions = state.manager.getRequestOptions?.(spec.serverName, signal);
 
     try {
       state.manager.touch(spec.serverName);
       state.manager.incrementInFlight(spec.serverName);
 
       if (spec.resourceUri) {
-        const result = await connection.client.readResource({ uri: spec.resourceUri });
+        const result = await connection.client.readResource({ uri: spec.resourceUri }, requestOptions);
         const content = (result.contents ?? []).map(c => ({
           type: "text" as const,
           text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
@@ -374,7 +375,7 @@ export function createDirectToolExecutor(
         name: spec.originalName,
         arguments: params ?? {},
         _meta: uiSession?.requestMeta,
-      });
+      }, undefined, requestOptions);
 
       const result = await resultPromise;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);

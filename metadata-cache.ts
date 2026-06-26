@@ -83,7 +83,7 @@ export function saveMetadataCache(cache: MetadataCache): void {
 
 export function computeServerHash(definition: ServerEntry): string {
   // Hash only fields that affect server identity and tool/resource output.
-  // Exclude lifecycle, idleTimeout, debug — those are runtime behavior settings
+  // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
   // that don't change which tools a server exposes.
   const identity: Record<string, unknown> = {
     command: definition.command,

@@ -29,7 +29,7 @@ describe("config discovery", () => {
     const realProject = realpathSync(project);
 
     writeJson(join(home, ".config", "mcp", "mcp.json"), {
-      settings: { idleTimeout: 5 },
+      settings: { idleTimeout: 5, requestTimeoutMs: 1500 },
       mcpServers: {
         shared: { command: "generic" },
         genericOnly: { command: "generic-only" },
@@ -70,6 +70,7 @@ describe("config discovery", () => {
     expect(config.mcpServers.projectPiOnly).toMatchObject({ command: "project-pi-only" });
     expect(config.settings).toEqual({
       idleTimeout: 5,
+      requestTimeoutMs: 1500,
       toolPrefix: "none",
       directTools: true,
       autoAuth: true,

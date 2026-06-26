@@ -37,6 +37,7 @@ export async function initializeMcp(
   const config = loadMcpConfig(configPath, ctx.cwd);
 
   const manager = new McpServerManager();
+  manager.setDefaultRequestTimeoutMs(config.settings?.requestTimeoutMs);
   const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
   if (config.settings?.sampling !== false && (ctx.hasUI || samplingAutoApprove)) {
     manager.setSamplingConfig({

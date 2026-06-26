@@ -101,6 +101,8 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 
 Pi-specific files are the write targets for imported or shared global servers when Pi needs to persist adapter-only settings such as `directTools`.
 
+In the configuration examples below, `30000` is illustrative only. If `requestTimeoutMs` is omitted or set to `<= 0`, the MCP SDK default timeout is used.
+
 ### Server Options
 
 ```json
@@ -110,7 +112,8 @@ Pi-specific files are the write targets for imported or shared global servers wh
       "command": "npx",
       "args": ["-y", "some-mcp-server"],
       "lifecycle": "lazy",
-      "idleTimeout": 10
+      "idleTimeout": 10,
+      "requestTimeoutMs": 30000
     }
   }
 }
@@ -135,6 +138,7 @@ Pi-specific files are the write targets for imported or shared global servers wh
 | `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation |
 | `lifecycle` | `"lazy"` (default), `"eager"`, or `"keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
+| `requestTimeoutMs` | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used) |
 | `exposeResources` | Expose MCP resources as tools (default: true) |
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
 | `excludeTools` | `string[]` of tool names to hide (matches original names like `get_screenshot` and prefixed names like `figma_get_screenshot`) |
@@ -174,7 +178,8 @@ You can also pass only the `code` query parameter with `args: '{"code":"..."}'`.
 {
   "settings": {
     "toolPrefix": "server",
-    "idleTimeout": 10
+    "idleTimeout": 10,
+    "requestTimeoutMs": 30000
   },
   "mcpServers": { }
 }
@@ -184,6 +189,7 @@ You can also pass only the `code` query parameter with `args: '{"code":"..."}'`.
 |---------|-------------|
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), or `"none"` |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
+| `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
@@ -191,7 +197,7 @@ You can also pass only the `code` query parameter with `args: '{"code":"..."}'`.
 | `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
 | `elicitation` | Allow MCP servers to request user input through Pi dialogs (default: true when Pi UI is available). |
 
-Per-server `idleTimeout` overrides the global setting.
+Per-server `idleTimeout` and `requestTimeoutMs` override the global settings.
 
 ### MCP Elicitation
 

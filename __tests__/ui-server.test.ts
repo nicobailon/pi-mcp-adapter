@@ -121,6 +121,7 @@ function createMockManager(overrides: Partial<McpServerManager> = {}): McpServer
     incrementInFlight: vi.fn(),
     decrementInFlight: vi.fn(),
     readResource: vi.fn(),
+    getRequestOptions: vi.fn().mockReturnValue(undefined),
     ...overrides,
   } as unknown as McpServerManager;
 }
@@ -433,8 +434,10 @@ describe("UiServer", () => {
       const mockClient = {
         callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }),
       };
+      const requestOptions = { timeout: 4321 };
       const manager = createMockManager({
         getConnection: vi.fn().mockReturnValue({ status: "connected", client: mockClient }),
+        getRequestOptions: vi.fn().mockReturnValue(requestOptions),
       });
       handle = await startUiServer(createServerOptions({ manager }));
 
@@ -451,10 +454,15 @@ describe("UiServer", () => {
         ok: true,
         result: { content: [{ type: "text", text: "tool result" }] },
       });
-      expect(mockClient.callTool).toHaveBeenCalledWith({
-        name: "some_tool",
-        arguments: { arg1: "value1" },
-      });
+      expect(manager.getRequestOptions).toHaveBeenCalledWith("test-server");
+      expect(mockClient.callTool).toHaveBeenCalledWith(
+        {
+          name: "some_tool",
+          arguments: { arg1: "value1" },
+        },
+        undefined,
+        requestOptions,
+      );
     });
 
     it("checks consent before calling tool", async () => {

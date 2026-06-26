@@ -59,6 +59,7 @@ describe("direct tools auto auth", () => {
           connection = undefined;
         }),
         getConnection: vi.fn(() => connection),
+        getRequestOptions: vi.fn(() => ({ timeout: 4321 })),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
@@ -79,7 +80,8 @@ describe("direct tools auto auth", () => {
       },
     );
 
-    const result = await executor("id", { q: "hello" }, undefined as any, () => {}, undefined as any);
+    const controller = new AbortController();
+    const result = await executor("id", { q: "hello" }, controller.signal, () => {}, undefined as any);
 
     expect(mocks.authenticate).toHaveBeenCalledWith(
       "demo",
@@ -87,7 +89,67 @@ describe("direct tools auto auth", () => {
       state.config.mcpServers.demo,
     );
     expect(state.manager.close).toHaveBeenCalledWith("demo");
+    expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
+    expect(connected.client.callTool).toHaveBeenCalledWith(
+      {
+        name: "search",
+        arguments: { q: "hello" },
+        _meta: undefined,
+      },
+      undefined,
+      { timeout: 4321 },
+    );
     expect(result.content[0].text).toContain("ok");
+  });
+
+  it("surfaces aborted direct tool calls via the forwarded AbortSignal", async () => {
+    const { createDirectToolExecutor } = await import("../direct-tools.ts");
+    const controller = new AbortController();
+    controller.abort();
+
+    const requestOptions = { signal: controller.signal, timeout: 4321 };
+    const connection = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async (_params: unknown, _schema: unknown, options: { signal?: AbortSignal }) => {
+          if (options.signal?.aborted) {
+            throw new Error("request aborted");
+          }
+          return { isError: false, content: [{ type: "text", text: "ok" }] };
+        }),
+      },
+    };
+    const state = {
+      config: { settings: {}, mcpServers: { demo: { command: "demo" } } },
+      manager: {
+        getConnection: vi.fn(() => connection),
+        getRequestOptions: vi.fn(() => requestOptions),
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+    mocks.lazyConnect.mockResolvedValue(true);
+
+    const executor = createDirectToolExecutor(() => state, () => null, {
+      serverName: "demo",
+      originalName: "search",
+      prefixedName: "demo_search",
+      description: "Search",
+    });
+
+    const result = await executor("id", {}, controller.signal, undefined, undefined as any);
+
+    expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
+    expect(connection.client.callTool).toHaveBeenCalledWith(
+      { name: "search", arguments: {}, _meta: undefined },
+      undefined,
+      requestOptions,
+    );
+    expect(result.details).toMatchObject({ error: "call_failed", server: "demo" });
+    expect(result.content[0].text).toContain("request aborted");
   });
 
   it("fails fast in non-ui context for browser-based OAuth", async () => {

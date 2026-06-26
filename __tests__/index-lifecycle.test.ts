@@ -249,6 +249,40 @@ describe("mcpAdapter session lifecycle", () => {
     );
   });
 
+  it("forwards the proxy tool AbortSignal into executeCall", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    expect(proxyTool).toBeDefined();
+
+    const controller = new AbortController();
+    await proxyTool.execute(
+      "call-1",
+      { tool: "demo_search", args: '{"q":"hello"}' },
+      controller.signal,
+    );
+
+    expect(mocks.executeCall).toHaveBeenCalledWith(
+      state,
+      "demo_search",
+      { q: "hello" },
+      undefined,
+      expect.any(Function),
+      controller.signal,
+    );
+  });
+
   it("starts a replacement init immediately and shuts down stale init results", async () => {
     const first = createDeferred<any>();
     const second = createDeferred<any>();

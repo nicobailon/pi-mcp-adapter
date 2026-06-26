@@ -8,6 +8,12 @@ const mocks = vi.hoisted(() => ({
   updateMetadataCache: vi.fn(),
   getFailureAgeSeconds: vi.fn(),
   updateStatusBar: vi.fn(),
+  clients: [] as any[],
+  transports: [] as any[],
+  connectImpl: vi.fn(),
+  listToolsImpl: vi.fn(),
+  listResourcesImpl: vi.fn(),
+  callToolImpl: vi.fn(),
 }));
 
 vi.mock("../mcp-auth-flow.ts", () => ({
@@ -23,6 +29,49 @@ vi.mock("../init.ts", () => ({
   updateStatusBar: mocks.updateStatusBar,
 }));
 
+vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
+  Client: vi.fn().mockImplementation(function (this: any, info: unknown, options: unknown) {
+    this.info = info;
+    this.options = options;
+    this.setRequestHandler = vi.fn();
+    this.setNotificationHandler = vi.fn();
+    this.connect = vi.fn((transport: unknown, requestOptions: unknown) =>
+      mocks.connectImpl(transport, requestOptions)
+    );
+    this.listTools = vi.fn((params: unknown, requestOptions: unknown) =>
+      mocks.listToolsImpl(params, requestOptions)
+    );
+    this.listResources = vi.fn((params: unknown, requestOptions: unknown) =>
+      mocks.listResourcesImpl(params, requestOptions)
+    );
+    this.callTool = vi.fn((params: unknown, schema: unknown, requestOptions: unknown) =>
+      mocks.callToolImpl(params, schema, requestOptions)
+    );
+    this.close = vi.fn(async () => undefined);
+    mocks.clients.push(this);
+  }),
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+  StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
+    this.options = options;
+    this.close = vi.fn(async () => undefined);
+    mocks.transports.push(this);
+  }),
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+  StreamableHTTPClientTransport: vi.fn(),
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
+  SSEClientTransport: vi.fn(),
+}));
+
+vi.mock("../npx-resolver.ts", () => ({
+  resolveNpxBinary: vi.fn(async () => null),
+}));
+
 describe("proxy auto auth", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -33,6 +82,15 @@ describe("proxy auto auth", () => {
     mocks.updateMetadataCache.mockReset();
     mocks.getFailureAgeSeconds.mockReset().mockReturnValue(null);
     mocks.updateStatusBar.mockReset();
+    mocks.clients.length = 0;
+    mocks.transports.length = 0;
+    mocks.connectImpl.mockReset().mockResolvedValue(undefined);
+    mocks.listToolsImpl.mockReset().mockResolvedValue({ tools: [] });
+    mocks.listResourcesImpl.mockReset().mockResolvedValue({ resources: [] });
+    mocks.callToolImpl.mockReset().mockResolvedValue({
+      isError: false,
+      content: [{ type: "text", text: "ok" }],
+    });
   });
 
   it("auto-authenticates and retries executeConnect once", async () => {
@@ -209,6 +267,7 @@ describe("proxy auto auth", () => {
         current = undefined;
       }),
       getConnection: vi.fn(() => current),
+      getRequestOptions: vi.fn(() => ({ timeout: 1234 })),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -240,7 +299,8 @@ describe("proxy auto auth", () => {
       completedUiSessions: [],
     } as any;
 
-    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo");
+    const controller = new AbortController();
+    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo", undefined, controller.signal);
 
     expect(mocks.authenticate).toHaveBeenCalledWith(
       "demo",
@@ -248,6 +308,145 @@ describe("proxy auto auth", () => {
       state.config.mcpServers.demo,
     );
     expect(manager.connect).toHaveBeenCalledTimes(1);
+    expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
+    expect(connected.client.callTool).toHaveBeenCalledWith(
+      {
+        name: "search",
+        arguments: { q: "hello" },
+        _meta: undefined,
+      },
+      undefined,
+      { timeout: 1234 },
+    );
     expect(result.content[0].text).toContain("ok");
+  });
+
+  it("surfaces aborted proxy tool calls via the forwarded AbortSignal", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+    const controller = new AbortController();
+    controller.abort();
+
+    const requestOptions = { signal: controller.signal, timeout: 1234 };
+    const connection = {
+      status: "connected",
+      client: {
+        callTool: vi.fn(async (_params: unknown, _schema: unknown, options: { signal?: AbortSignal }) => {
+          if (options.signal?.aborted) {
+            throw new Error("request aborted");
+          }
+          return { isError: false, content: [{ type: "text", text: "ok" }] };
+        }),
+      },
+    };
+    const manager = {
+      getConnection: vi.fn(() => connection),
+      getRequestOptions: vi.fn(() => requestOptions),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+    };
+    const state = {
+      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
+      manager,
+      toolMetadata: new Map([["demo", [{
+        name: "demo_search",
+        originalName: "search",
+        description: "Search",
+        inputSchema: { type: "object", properties: {} },
+      }]]]),
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "demo_search", {}, "demo", undefined, controller.signal);
+
+    expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
+    expect(connection.client.callTool).toHaveBeenCalledWith(
+      { name: "search", arguments: {}, _meta: undefined },
+      undefined,
+      requestOptions,
+    );
+    expect(result.details).toMatchObject({ error: "call_failed", message: "request aborted" });
+    expect(result.content[0].text).toContain("request aborted");
+  });
+
+  it("shares one cold connect across concurrent proxy calls and applies timeout during bootstrap", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+    const { McpServerManager } = await import("../server-manager.ts");
+
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 10));
+    mocks.connectImpl.mockImplementation(async () => {
+      await pause();
+    });
+    mocks.listToolsImpl.mockImplementation(async () => {
+      await pause();
+      return {
+        tools: [{
+          name: "search",
+          description: "Search",
+          inputSchema: { type: "object", properties: {} },
+        }],
+      };
+    });
+    mocks.listResourcesImpl.mockImplementation(async () => {
+      await pause();
+      return { resources: [] };
+    });
+    mocks.lazyConnect.mockImplementation(async (state: any, serverName: string) => {
+      const connection = await state.manager.connect(serverName, state.config.mcpServers[serverName]);
+      if (connection.status !== "connected") {
+        return false;
+      }
+      state.toolMetadata.set(serverName, [{
+        name: "demo_search",
+        originalName: "search",
+        description: "Search",
+        inputSchema: { type: "object", properties: {} },
+      }]);
+      return true;
+    });
+
+    const manager = new McpServerManager();
+    manager.setDefaultRequestTimeoutMs(2500);
+    const state = {
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: {
+          demo: { command: "node", args: ["server.js"], requestTimeoutMs: 5000 },
+        },
+      },
+      manager,
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+
+    const [first, second] = await Promise.all([
+      executeCall(state, "demo_search", { q: "one" }),
+      executeCall(state, "demo_search", { q: "two" }),
+    ]);
+
+    expect(mocks.clients).toHaveLength(1);
+    const client = mocks.clients[0];
+    expect(client.connect).toHaveBeenCalledTimes(1);
+    expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 5000 });
+    expect(client.listTools).toHaveBeenCalledTimes(1);
+    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000 });
+    expect(client.listResources).toHaveBeenCalledTimes(1);
+    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000 });
+    expect(client.callTool).toHaveBeenNthCalledWith(
+      1,
+      { name: "search", arguments: { q: "one" }, _meta: undefined },
+      undefined,
+      { timeout: 5000 },
+    );
+    expect(client.callTool).toHaveBeenNthCalledWith(
+      2,
+      { name: "search", arguments: { q: "two" }, _meta: undefined },
+      undefined,
+      { timeout: 5000 },
+    );
+    expect(first.content[0].text).toContain("ok");
+    expect(second.content[0].text).toContain("ok");
   });
 });

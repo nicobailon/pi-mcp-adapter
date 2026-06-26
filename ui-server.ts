@@ -346,7 +346,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               callParams.arguments && typeof callParams.arguments === "object" && !Array.isArray(callParams.arguments)
                 ? callParams.arguments
                 : {},
-          });
+          }, undefined, options.manager.getRequestOptions?.(options.serverName));
           sendJson(res, 200, { ok: true, result });
         } finally {
           options.manager.decrementInFlight(options.serverName);
