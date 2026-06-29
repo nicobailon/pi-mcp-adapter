@@ -10,6 +10,7 @@ import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, exe
 import { getConfigPathFromArgv, truncateAtWord } from "./utils.ts";
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.ts";
 import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
+import { toolErrorOverride } from "./error-signal.ts";
 
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
@@ -152,6 +153,9 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       console.error("MCP: session shutdown cleanup failed", error);
     }
   });
+
+  // Re-flag returned MCP tool failures so pi registers them as errors (see toolErrorOverride).
+  pi.on("tool_result", (event) => toolErrorOverride(event.details));
 
   pi.registerCommand("mcp", {
     description: "Show MCP server status",

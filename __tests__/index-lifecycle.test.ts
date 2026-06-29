@@ -481,4 +481,20 @@ describe("mcpAdapter session lifecycle", () => {
       consoleError.mockRestore();
     }
   });
+
+  it("registers a tool_result handler that re-flags returned MCP tool failures (and leaves other results alone)", async () => {
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const toolResult = handlers.get("tool_result");
+    expect(toolResult).toBeDefined();
+
+    // server returned an error result (direct path) -> tagged tool_error
+    expect(toolResult?.({ details: { error: "tool_error", server: "demo" } })).toEqual({ isError: true });
+    // the call itself threw and was caught (proxy path) -> tagged call_failed
+    expect(toolResult?.({ details: { mode: "call", error: "call_failed", message: "boom" } })).toEqual({ isError: true });
+    // a precondition code is not a tool-execution failure -> left untouched
+    expect(toolResult?.({ details: { error: "auth_required", server: "demo" } })).toBeUndefined();
+  });
 });

@@ -39,6 +39,7 @@
     "cli.js",
     "agent-dir.ts",
     "index.ts",
+    "error-signal.ts",
     "state.ts",
     "utils.ts",
     "tool-metadata.ts",
