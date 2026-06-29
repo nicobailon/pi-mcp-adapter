@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   sdkAuth: vi.fn(),
   finishAuth: vi.fn(),
   transportClose: vi.fn(),
+  fetch: vi.fn(),
 }));
 
 class MockUnauthorizedError extends Error {}
@@ -25,7 +26,8 @@ class MockStreamableHTTPClientTransport {
   finishAuth = mocks.finishAuth;
 }
 
-vi.mock("@modelcontextprotocol/sdk/client/auth.js", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/auth.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   auth: mocks.sdkAuth,
   UnauthorizedError: MockUnauthorizedError,
 }));
@@ -47,6 +49,11 @@ vi.mock("open", () => ({
   default: mocks.open,
 }));
 
+/** Build a real Response exposing only the WWW-Authenticate header. */
+function wwwAuthenticateResponse(headerValue?: string) {
+  return new Response(null, headerValue ? { headers: { "www-authenticate": headerValue } } : undefined);
+}
+
 describe("mcp-auth-flow explicit auth", () => {
   const originalOAuthDir = process.env.MCP_OAUTH_DIR;
   let authDir: string;
@@ -65,9 +72,13 @@ describe("mcp-auth-flow explicit auth", () => {
     mocks.sdkAuth.mockReset().mockResolvedValue("AUTHORIZED");
     mocks.finishAuth.mockReset().mockResolvedValue(undefined);
     mocks.transportClose.mockReset().mockResolvedValue(undefined);
+    // Default probe: server advertises no resource_metadata header.
+    mocks.fetch.mockReset().mockResolvedValue(wwwAuthenticateResponse(undefined));
+    vi.stubGlobal("fetch", mocks.fetch);
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     rmSync(authDir, { recursive: true, force: true });
     if (originalOAuthDir === undefined) {
       delete process.env.MCP_OAUTH_DIR;
@@ -633,5 +644,57 @@ describe("mcp-auth-flow explicit auth", () => {
     }));
     expect(mocks.reserveCallbackServer).not.toHaveBeenCalled();
     expect(mocks.open).not.toHaveBeenCalled();
+  });
+
+  it("passes the advertised resource_metadata URL to the SDK so discovery targets the real auth server", async () => {
+    const serverUrl =
+      "https://bedrock-agentcore.us-west-2.amazonaws.com/runtimes/runtime%2Fpostgresql_mcp/invocations?qualifier=DEFAULT";
+    const resourceMetadataUrl =
+      "https://bedrock-agentcore.us-west-2.amazonaws.com/runtimes/runtime%2Fpostgresql_mcp/invocations/.well-known/oauth-protected-resource?qualifier=DEFAULT";
+    mocks.fetch.mockResolvedValueOnce(
+      wwwAuthenticateResponse(`Bearer resource_metadata="${resourceMetadataUrl}"`),
+    );
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await provider.redirectToAuthorization(new URL("https://dev.okta.com/oauth2/aus83081cb9fa0a5d4967/v1/authorize"));
+      return "REDIRECT";
+    });
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    const result = await startAuth("bedrock", serverUrl, { url: serverUrl, auth: "oauth" });
+
+    expect(result.authorizationUrl).toBe("https://dev.okta.com/oauth2/aus83081cb9fa0a5d4967/v1/authorize");
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      new URL(serverUrl),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(mocks.sdkAuth).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ serverUrl, resourceMetadataUrl: new URL(resourceMetadataUrl) }),
+    );
+  });
+
+  it("threads the resource_metadata URL through completeAuth token exchange", async () => {
+    const serverUrl =
+      "https://bedrock-agentcore.us-west-2.amazonaws.com/runtimes/runtime%2Fpostgresql_mcp/invocations?qualifier=DEFAULT";
+    const resourceMetadataUrl =
+      "https://bedrock-agentcore.us-west-2.amazonaws.com/runtimes/runtime%2Fpostgresql_mcp/invocations/.well-known/oauth-protected-resource?qualifier=DEFAULT";
+    mocks.fetch.mockResolvedValueOnce(
+      wwwAuthenticateResponse(`Bearer resource_metadata="${resourceMetadataUrl}"`),
+    );
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await provider.redirectToAuthorization(new URL("https://dev.okta.com/authorize"));
+      return "REDIRECT";
+    });
+    const capturedThis: { _resourceMetadataUrl?: URL }[] = [];
+    mocks.finishAuth.mockImplementationOnce(function (this: { _resourceMetadataUrl?: URL }) {
+      capturedThis.push(this);
+      return Promise.resolve(undefined);
+    });
+    const { startAuth, completeAuth } = await import("../mcp-auth-flow.ts");
+
+    await startAuth("bedrock-complete", serverUrl, { url: serverUrl, auth: "oauth" });
+    await expect(completeAuth("bedrock-complete", "auth-code")).resolves.toBe("authenticated");
+
+    expect(capturedThis[0]?._resourceMetadataUrl).toEqual(new URL(resourceMetadataUrl));
   });
 });

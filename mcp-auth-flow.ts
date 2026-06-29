@@ -6,6 +6,7 @@
 
 import {
   auth as runSdkAuth,
+  extractWWWAuthenticateParams,
   UnauthorizedError,
 } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
@@ -44,6 +45,53 @@ export interface AuthenticateOptions {
 const pendingTransports = new Map<string, StreamableHTTPClientTransport>()
 const pendingAuthStates = new Map<string, string>()
 const pendingAuthCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+// Carry the protected-resource metadata URL (from the server's 401
+// WWW-Authenticate header) from startAuth() through to completeAuth(), so the
+// SDK resolves the real authorization server instead of falling back to the
+// MCP server origin. See OAUTH.md "Auto-Discovery".
+const pendingResourceMetadataUrls = new Map<string, URL>()
+
+/**
+ * Probe an MCP server for the RFC 9728 protected-resource metadata URL it
+ * advertises in the 401 `WWW-Authenticate: Bearer resource_metadata="..."`
+ * header. Returns undefined when the server does not advertise one (the SDK
+ * then falls back to its own well-known discovery).
+ *
+ * The header is only emitted on the POST initialize request, so we replicate
+ * the transport's initialize probe here. All errors are swallowed; this is a
+ * best-effort hint to the SDK.
+ */
+async function probeResourceMetadataUrl(serverUrl: string): Promise<URL | undefined> {
+  let target: URL
+  try {
+    target = new URL(serverUrl)
+  } catch {
+    return undefined
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5000)
+  try {
+    const res = await fetch(target, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }),
+      signal: controller.signal,
+    })
+    const { resourceMetadataUrl } = extractWWWAuthenticateParams(res)
+    // metadata is in headers; release the connection without waiting for the body
+    await res.body?.cancel().catch(() => {})
+    return resourceMetadataUrl
+  } catch {
+    return undefined
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 // Deduplicate concurrent authenticate() calls per server.
 const pendingAuthentications = new Map<string, Promise<AuthStatus>>()
@@ -165,7 +213,8 @@ export async function startAuth(
         throw new Error("Browser redirect is not used for client_credentials flow")
       },
     })
-    const result = await runSdkAuth(authProvider, { serverUrl })
+    const resourceMetadataUrl = await probeResourceMetadataUrl(serverUrl)
+    const result = await runSdkAuth(authProvider, { serverUrl, ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}) })
     if (result !== "AUTHORIZED") {
       throw new UnauthorizedError("Failed to authorize")
     }
@@ -214,7 +263,9 @@ export async function startAuth(
 
     await updateOAuthState(serverName, oauthState, serverUrl)
 
-    const result = await runSdkAuth(authProvider, { serverUrl })
+    const resourceMetadataUrl = await probeResourceMetadataUrl(serverUrl)
+
+    const result = await runSdkAuth(authProvider, { serverUrl, ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}) })
     if (result === "AUTHORIZED") {
       releaseCallbackServer(oauthState)
       await clearOAuthState(serverName)
@@ -225,6 +276,11 @@ export async function startAuth(
     }
     const pendingTransport = new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider })
     await setPendingTransport(serverName, pendingTransport, oauthState)
+    // Set after setPendingTransport(): it calls clearPendingAuth() internally,
+    // which clears pendingResourceMetadataUrls for this server.
+    if (resourceMetadataUrl) {
+      pendingResourceMetadataUrls.set(serverName, resourceMetadataUrl)
+    }
     return { authorizationUrl: capturedUrl.toString() }
   } catch (error) {
     await clearPendingAuth(serverName, oauthState)
@@ -259,6 +315,7 @@ async function clearPendingAuth(serverName: string, oauthState?: string): Promis
 
   const transport = pendingTransports.get(serverName)
   pendingTransports.delete(serverName)
+  pendingResourceMetadataUrls.delete(serverName)
   pendingAuthStates.delete(serverName)
   const stateToRelease = pendingState ?? oauthState
   if (stateToRelease) {
@@ -354,8 +411,19 @@ export async function completeAuth(
   }
 
   const oauthState = await getOAuthState(serverName)
+  const resourceMetadataUrl = pendingResourceMetadataUrls.get(serverName)
 
   try {
+    // finishAuth() exchanges the code via the SDK, which re-discovers the
+    // authorization server. Seed the transport with the protected-resource
+    // metadata URL captured during startAuth so token exchange targets the
+    // correct (e.g. Okta) endpoints instead of the MCP server origin.
+    if (resourceMetadataUrl) {
+      // No public constructor option exists for resourceMetadataUrl yet — tracked upstream.
+      // Validated against @modelcontextprotocol/sdk@1.29.0.
+      const pendingAuthTransport = transport as unknown as { _resourceMetadataUrl?: URL }
+      pendingAuthTransport._resourceMetadataUrl = resourceMetadataUrl
+    }
     // Complete the auth using the transport's finishAuth method
     await transport.finishAuth(authorizationCode)
     return "authenticated"
@@ -485,7 +553,8 @@ export async function getValidToken(
         return null
       }
 
-      const result = await runSdkAuth(authProvider, { serverUrl })
+      const resourceMetadataUrl = await probeResourceMetadataUrl(serverUrl)
+      const result = await runSdkAuth(authProvider, { serverUrl, ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}) })
       if (result !== "AUTHORIZED") {
         return null
       }
