@@ -27,6 +27,7 @@ import {
   type ServerElicitationConfig,
 } from "./elicitation-handler.ts";
 import { interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 
 interface ServerConnection {
   client: Client;
@@ -57,10 +58,11 @@ export class McpServerManager {
     this.elicitationConfig = config;
   }
 
-  async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
+  async connect(name: string, definition: ServerDefinition, signal?: AbortSignal): Promise<ServerConnection> {
+    throwIfAborted(signal);
     // Dedupe concurrent connection attempts
     if (this.connectPromises.has(name)) {
-      return this.connectPromises.get(name)!;
+      return abortable(this.connectPromises.get(name)!, signal);
     }
 
     // Reuse existing connection if healthy
@@ -70,7 +72,7 @@ export class McpServerManager {
       return existing;
     }
 
-    const promise = this.createConnection(name, definition);
+    const promise = this.createConnection(name, definition, signal);
     this.connectPromises.set(name, promise);
 
     try {
@@ -84,8 +86,10 @@ export class McpServerManager {
 
   private async createConnection(
     name: string,
-    definition: ServerDefinition
+    definition: ServerDefinition,
+    signal?: AbortSignal,
   ): Promise<ServerConnection> {
+    throwIfAborted(signal);
     const client = this.createClient(name);
 
     let transport: Transport;
@@ -112,19 +116,19 @@ export class McpServerManager {
       });
     } else if (definition.url) {
       // HTTP transport with fallback
-      transport = await this.createHttpTransport(definition, name);
+      transport = await this.createHttpTransport(definition, name, signal);
     } else {
       throw new Error(`Server ${name} has no command or url`);
     }
 
     try {
-      await client.connect(transport);
+      await client.connect(transport, { signal });
       this.attachAdapterNotificationHandlers(name, client);
 
       // Discover tools and resources
       const [tools, resources] = await Promise.all([
-        this.fetchAllTools(client),
-        this.fetchAllResources(client),
+        this.fetchAllTools(client, signal),
+        this.fetchAllResources(client, signal),
       ]);
 
       return {
@@ -233,8 +237,10 @@ export class McpServerManager {
 
   private async createHttpTransport(
     definition: ServerDefinition,
-    serverName: string
+    serverName: string,
+    signal?: AbortSignal,
   ): Promise<Transport> {
+    throwIfAborted(signal);
     const url = new URL(definition.url!);
 
     // Build headers first (including any bearer token)
@@ -276,7 +282,7 @@ export class McpServerManager {
     try {
       // Create a test client to verify the transport works
       const testClient = new Client({ name: "pi-mcp-probe", version: "2.1.2" });
-      await testClient.connect(streamableTransport);
+      await testClient.connect(streamableTransport, { signal });
       await testClient.close().catch(() => {});
       // Close probe transport before creating fresh one
       await streamableTransport.close().catch(() => {});
@@ -286,6 +292,12 @@ export class McpServerManager {
     } catch (error) {
       // StreamableHTTP failed, close and try SSE fallback
       await streamableTransport.close().catch(() => {});
+
+      // Host cancellation is not transport capability evidence; do not fall
+      // through to SSE when the caller is trying to cancel the connect.
+      if (signal?.aborted) {
+        throwIfAborted(signal);
+      }
 
       // If this was an UnauthorizedError, don't try SSE - the server needs auth
       if (error instanceof UnauthorizedError) {
@@ -297,12 +309,12 @@ export class McpServerManager {
     }
   }
 
-  private async fetchAllTools(client: Client): Promise<McpTool[]> {
+  private async fetchAllTools(client: Client, signal?: AbortSignal): Promise<McpTool[]> {
     const allTools: McpTool[] = [];
     let cursor: string | undefined;
 
     do {
-      const result = await client.listTools(cursor ? { cursor } : undefined);
+      const result = await client.listTools(cursor ? { cursor } : undefined, { signal });
       allTools.push(...(result.tools ?? []));
       cursor = result.nextCursor;
     } while (cursor);
@@ -310,19 +322,22 @@ export class McpServerManager {
     return allTools;
   }
 
-  private async fetchAllResources(client: Client): Promise<McpResource[]> {
+  private async fetchAllResources(client: Client, signal?: AbortSignal): Promise<McpResource[]> {
     try {
       const allResources: McpResource[] = [];
       let cursor: string | undefined;
 
       do {
-        const result = await client.listResources(cursor ? { cursor } : undefined);
+        const result = await client.listResources(cursor ? { cursor } : undefined, { signal });
         allResources.push(...(result.resources ?? []));
         cursor = result.nextCursor;
       } while (cursor);
 
       return allResources;
     } catch {
+      if (signal?.aborted) {
+        throwIfAborted(signal);
+      }
       // Server may not support resources
       return [];
     }
@@ -344,7 +359,7 @@ export class McpServerManager {
     this.uiStreamListeners.delete(streamToken);
   }
 
-  async readResource(name: string, uri: string): Promise<ReadResourceResult> {
+  async readResource(name: string, uri: string, signal?: AbortSignal): Promise<ReadResourceResult> {
     const connection = this.connections.get(name);
     if (!connection || connection.status !== "connected") {
       throw new Error(`Server "${name}" is not connected`);
@@ -353,7 +368,7 @@ export class McpServerManager {
     try {
       this.touch(name);
       this.incrementInFlight(name);
-      return await connection.client.readResource({ uri });
+      return await connection.client.readResource({ uri }, { signal });
     } finally {
       this.decrementInFlight(name);
       this.touch(name);

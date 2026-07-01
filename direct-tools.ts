@@ -4,6 +4,7 @@ import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpConfig, McpContent } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds } from "./init.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerCacheValid } from "./metadata-cache.ts";
 import { formatSchema } from "./tool-metadata.ts";
 import { transformMcpContent } from "./tool-registrar.ts";
@@ -276,7 +277,8 @@ export function createDirectToolExecutor(
   getInitPromise: () => Promise<McpExtensionState> | null,
   spec: DirectToolSpec
 ): DirectToolExecute {
-  return async function execute(_toolCallId, params) {
+  return async function execute(_toolCallId, params, signal) {
+    throwIfAborted(signal);
     let state = getState();
     const initPromise = getInitPromise();
 
@@ -298,7 +300,7 @@ export function createDirectToolExecutor(
       };
     }
 
-    let connected = await lazyConnect(state, spec.serverName);
+    let connected = await lazyConnect(state, spec.serverName, signal);
     let autoAuthAttempted = false;
 
     if (!connected && state.manager.getConnection(spec.serverName)?.status === "needs-auth") {
@@ -313,7 +315,7 @@ export function createDirectToolExecutor(
       if (autoAuth.status === "success") {
         await state.manager.close(spec.serverName);
         state.failureTracker.delete(spec.serverName);
-        connected = await lazyConnect(state, spec.serverName);
+        connected = await lazyConnect(state, spec.serverName, signal);
       }
     }
 
@@ -348,7 +350,7 @@ export function createDirectToolExecutor(
       state.manager.incrementInFlight(spec.serverName);
 
       if (spec.resourceUri) {
-        const result = await connection.client.readResource({ uri: spec.resourceUri });
+        const result = await connection.client.readResource({ uri: spec.resourceUri }, { signal });
         const content = (result.contents ?? []).map(c => ({
           type: "text" as const,
           text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
@@ -374,9 +376,9 @@ export function createDirectToolExecutor(
         name: spec.originalName,
         arguments: params ?? {},
         _meta: uiSession?.requestMeta,
-      });
+      }, undefined, { signal });
 
-      const result = await resultPromise;
+      const result = await abortable(resultPromise, signal);
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
 
       const mcpContent = (result.content ?? []) as McpContent[];
