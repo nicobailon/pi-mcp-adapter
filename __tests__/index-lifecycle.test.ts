@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => ({
   executeStatus: vi.fn(),
   executeUiMessages: vi.fn(),
   getConfigPathFromArgv: vi.fn(() => undefined),
+  normalizeDirectToolInputSchema: vi.fn((schema: unknown) => schema && typeof schema === "object" && !Array.isArray(schema)
+    ? Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "$schema" && key !== "additionalProperties"))
+    : { type: "object", properties: {} }),
   truncateAtWord: vi.fn((text: string) => text),
 }));
 
@@ -84,6 +87,7 @@ vi.mock("../proxy-modes.ts", () => ({
 
 vi.mock("../utils.ts", () => ({
   getConfigPathFromArgv: mocks.getConfigPathFromArgv,
+  normalizeDirectToolInputSchema: mocks.normalizeDirectToolInputSchema,
   truncateAtWord: mocks.truncateAtWord,
 }));
 
@@ -147,6 +151,9 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue([]);
     mocks.resolveDirectTools.mockReturnValue([]);
     mocks.getConfigPathFromArgv.mockReturnValue(undefined);
+    mocks.normalizeDirectToolInputSchema.mockImplementation((schema: unknown) => schema && typeof schema === "object" && !Array.isArray(schema)
+      ? Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "$schema" && key !== "additionalProperties"))
+      : { type: "object", properties: {} });
     mocks.truncateAtWord.mockImplementation((text: string) => text);
   });
 
@@ -187,6 +194,51 @@ describe("mcpAdapter session lifecycle", () => {
       name: "mcp",
       renderResult: expect.any(Function),
     }));
+  });
+
+  it("normalizes direct MCP tool schemas before registration", async () => {
+    const schema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        nested: {
+          type: "object",
+          additionalProperties: false,
+        },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    };
+    mocks.resolveDirectTools.mockReturnValue([
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search demo",
+        inputSchema: schema,
+      },
+    ]);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    mcpAdapter(api);
+
+    expect(mocks.normalizeDirectToolInputSchema).toHaveBeenCalledWith(schema);
+    const directTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "demo_search")?.[0];
+    expect(directTool.parameters).toMatchObject({
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        nested: {
+          type: "object",
+          additionalProperties: false,
+        },
+      },
+      required: ["query"],
+    });
+    expect(directTool.parameters).not.toHaveProperty("$schema");
+    expect(directTool.parameters).not.toHaveProperty("additionalProperties");
   });
 
   it("skips the proxy tool once direct tools are fully available", async () => {
