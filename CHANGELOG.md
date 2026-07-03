@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Restored the tracked npm lockfile for reproducible installs and downstream packaging.
+
 ### Added
 - Added default-on MCP output guarding with temp-file spillover for oversized text results, compact summaries for large proxy result details, and `settings.outputGuard` tuning. Thanks @tmustier for PR #160.
 

@@ -3,7 +3,6 @@ node_modules/
 *.log
 .DS_Store
 
-package-lock.json
 progress.md
 worker-summary.md
 worker-*.md
