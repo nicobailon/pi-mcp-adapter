@@ -317,6 +317,16 @@ export interface ServerEntry {
   debug?: boolean;  // Show server stderr (default: false)
 }
 
+// Output guard tuning (settings.outputGuard object form)
+export interface McpOutputGuardSettings {
+  /** Maximum inline MCP text output bytes before truncation/spill-to-disk. Defaults to 51200 (50 KiB). */
+  maxBytes?: number;
+  /** Maximum inline MCP text output lines before truncation/spill-to-disk. Defaults to 2000. */
+  maxLines?: number;
+  /** Maximum details.mcpResult JSON bytes kept raw; larger results are summarized and spilled to disk. Defaults to 16384 (16 KiB). */
+  detailsMaxBytes?: number;
+}
+
 // Settings
 export interface McpSettings {
   toolPrefix?: "server" | "none" | "short";
@@ -327,6 +337,13 @@ export interface McpSettings {
   sampling?: boolean;
   samplingAutoApprove?: boolean;
   elicitation?: boolean;
+  /**
+   * Guard oversized MCP tool/resource output before it is returned to the model.
+   * Defaults to true (50 KiB / 2,000 lines inline text, 16 KiB details.mcpResult).
+   * Set to false to restore raw MCP output behavior, or pass an object to tune
+   * the limits. Env kill switch: MCP_OUTPUT_GUARD=0.
+   */
+  outputGuard?: boolean | McpOutputGuardSettings;
   /**
    * Message returned in tool results when a server needs (re-)authentication.
    * "${server}" is substituted with the server name. Defaults to a TUI

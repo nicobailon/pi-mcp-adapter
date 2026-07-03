@@ -5,8 +5,10 @@ import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
 import { getServerPrefix, parseUiPromptHandoff } from "./types.ts";
 import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
 import { transformMcpContent } from "./tool-registrar.ts";
+import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
@@ -523,7 +525,8 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
   };
 }
 
-export async function executeConnect(state: McpExtensionState, serverName: string): Promise<ProxyToolResult> {
+export async function executeConnect(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<ProxyToolResult> {
+  throwIfAborted(signal);
   const definition = state.config.mcpServers[serverName];
   if (!definition) {
     return {
@@ -536,7 +539,7 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
     if (state.ui) {
       state.ui.setStatus("mcp", `MCP: connecting to ${serverName}...`);
     }
-    let connection = await state.manager.connect(serverName, definition);
+    let connection = await state.manager.connect(serverName, definition, signal);
     if (connection.status === "needs-auth") {
       const autoAuth = await attemptAutoAuth(state, serverName);
       if (autoAuth.status === "failed") {
@@ -547,7 +550,7 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
       }
       if (autoAuth.status === "success") {
         await state.manager.close(serverName);
-        connection = await state.manager.connect(serverName, definition);
+        connection = await state.manager.connect(serverName, definition, signal);
       }
       if (connection.status === "needs-auth") {
         const message = getAuthRequiredMessage(state, serverName);
@@ -565,12 +568,14 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
     updateStatusBar(state);
     return executeList(state, serverName);
   } catch (error) {
-    state.failureTracker.set(serverName, Date.now());
+    if (!signal?.aborted) {
+      state.failureTracker.set(serverName, Date.now());
+    }
     updateStatusBar(state);
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: "text" as const, text: `Failed to connect to "${serverName}": ${message}` }],
-      details: { mode: "connect", error: "connect_failed", server: serverName, message },
+      details: { mode: "connect", error: signal?.aborted ? "aborted" : "connect_failed", server: serverName, message },
     };
   }
 }
@@ -581,7 +586,9 @@ export async function executeCall(
   args?: Record<string, unknown>,
   serverOverride?: string,
   getPiTools?: () => ToolInfo[],
+  signal?: AbortSignal,
 ): Promise<ProxyToolResult> {
+  throwIfAborted(signal);
   let serverName: string | undefined = serverOverride;
   let toolMeta: ToolMetadata | undefined;
   let autoAuthAttempted = false;
@@ -608,7 +615,7 @@ export async function executeCall(
   }
 
   if (serverName && !toolMeta) {
-    const connected = await lazyConnect(state, serverName);
+    const connected = await lazyConnect(state, serverName, signal);
     if (connected) {
       toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
     } else {
@@ -626,7 +633,7 @@ export async function executeCall(
           if (autoAuth.status === "success") {
             await state.manager.close(serverName);
             state.failureTracker.delete(serverName);
-            const connectedAfterAuth = await lazyConnect(state, serverName);
+            const connectedAfterAuth = await lazyConnect(state, serverName, signal);
             if (connectedAfterAuth) {
               toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
               if (!toolMeta) {
@@ -673,7 +680,7 @@ export async function executeCall(
       const failedAgo = getFailureAgeSeconds(state, configuredServer);
       if (failedAgo !== null && existingConnection?.status !== "needs-auth") continue;
 
-      let connected = await lazyConnect(state, configuredServer);
+      let connected = await lazyConnect(state, configuredServer, signal);
       if (!connected && state.manager.getConnection(configuredServer)?.status === "needs-auth" && !autoAuthAttempted) {
         autoAuthAttempted = true;
         const autoAuth = await attemptAutoAuth(state, configuredServer);
@@ -686,7 +693,7 @@ export async function executeCall(
         if (autoAuth.status === "success") {
           await state.manager.close(configuredServer);
           state.failureTracker.delete(configuredServer);
-          connected = await lazyConnect(state, configuredServer);
+          connected = await lazyConnect(state, configuredServer, signal);
         }
       }
 
@@ -772,7 +779,7 @@ export async function executeCall(
       if (state.ui) {
         state.ui.setStatus("mcp", `MCP: connecting to ${serverName}...`);
       }
-      connection = await state.manager.connect(serverName, definition);
+      connection = await state.manager.connect(serverName, definition, signal);
       if (connection.status === "needs-auth") {
         if (!autoAuthAttempted) {
           autoAuthAttempted = true;
@@ -785,7 +792,7 @@ export async function executeCall(
           }
           if (autoAuth.status === "success") {
             await state.manager.close(serverName);
-            connection = await state.manager.connect(serverName, definition);
+            connection = await state.manager.connect(serverName, definition, signal);
           }
         }
 
@@ -813,31 +820,36 @@ export async function executeCall(
         };
       }
     } catch (error) {
-      state.failureTracker.set(serverName, Date.now());
+      if (!signal?.aborted) {
+        state.failureTracker.set(serverName, Date.now());
+      }
       updateStatusBar(state);
       const message = error instanceof Error ? error.message : String(error);
       return {
         content: [{ type: "text" as const, text: `Failed to connect to "${serverName}": ${message}` }],
-        details: { mode: "call", error: "connect_failed", message },
+        details: { mode: "call", error: signal?.aborted ? "aborted" : "connect_failed", message },
       };
     }
   }
 
   let uiSession: UiSessionRuntime | null = null;
 
+  const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
+
   try {
     state.manager.touch(serverName);
     state.manager.incrementInFlight(serverName);
 
     if (toolMeta.resourceUri) {
-      const result = await connection.client.readResource({ uri: toolMeta.resourceUri });
+      const result = await connection.client.readResource({ uri: toolMeta.resourceUri }, { signal });
       const content = (result.contents ?? []).map(c => ({
         type: "text" as const,
         text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
       }));
+      const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
       return {
-        content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }],
-        details: { mode: "call", resourceUri: toolMeta.resourceUri, server: serverName },
+        content: guarded.content,
+        details: { mode: "call", resourceUri: toolMeta.resourceUri, server: serverName, ...guardedMcpDetails(guarded) },
       };
     }
 
@@ -855,65 +867,53 @@ export async function executeCall(
       name: toolMeta.originalName,
       arguments: args ?? {},
       _meta: uiSession?.requestMeta,
-    });
+    }, undefined, { signal });
 
     if (toolMeta.uiResourceUri) {
-      const result = await resultPromise;
+      const result = await abortable(resultPromise, signal);
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
       const mcpContent = (result.content ?? []) as McpContent[];
       const content = transformMcpContent(mcpContent);
-
-      const mcpText = content
-        .filter((c) => c.type === "text")
-        .map((c) => (c as { text: string }).text)
-        .join("\n");
+      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
       if (result.isError) {
-        let errorWithSchema = `Error: ${mcpText || "Tool execution failed"}`;
-        if (toolMeta.inputSchema) {
-          errorWithSchema += `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
-        }
+        const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed", rawMcpResult: result });
         return {
-          content: [{ type: "text" as const, text: errorWithSchema }],
-          details: { mode: "call", error: "tool_error", mcpResult: result },
+          content: guarded.content,
+          details: { mode: "call", error: "tool_error", ...guardedMcpDetails(guarded) },
         };
       }
 
-      const resultText = mcpText || "(empty result)";
       const uiMessage = uiSession?.reused
         ? "Updated the open UI."
         : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
+      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiMessage}`, rawMcpResult: result });
       return {
-        content: [{ type: "text" as const, text: `${resultText}\n\n${uiMessage}` }],
-        details: { mode: "call", mcpResult: result, server: serverName, tool: toolMeta.originalName, uiOpen: true },
+        content: guarded.content,
+        details: { mode: "call", ...guardedMcpDetails(guarded), server: serverName, tool: toolMeta.originalName, uiOpen: true },
       };
     }
 
-    const result = await resultPromise;
+    const result = await abortable(resultPromise, signal);
 
     const mcpContent = (result.content ?? []) as McpContent[];
     const content = transformMcpContent(mcpContent);
+    const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
     if (result.isError) {
-      const errorText = content
-        .filter((c) => c.type === "text")
-        .map((c) => (c as { text: string }).text)
-        .join("\n") || "Tool execution failed";
-
-      let errorWithSchema = `Error: ${errorText}`;
-      if (toolMeta.inputSchema) {
-        errorWithSchema += `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
-      }
-
+      const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed", rawMcpResult: result });
       return {
-        content: [{ type: "text" as const, text: errorWithSchema }],
-        details: { mode: "call", error: "tool_error", mcpResult: result },
+        content: guarded.content,
+        details: { mode: "call", error: "tool_error", ...guardedMcpDetails(guarded) },
       };
     }
 
+    const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: result });
     return {
-      content: content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }],
-      details: { mode: "call", mcpResult: result, server: serverName, tool: toolMeta.originalName },
+      content: guarded.content,
+      details: { mode: "call", ...guardedMcpDetails(guarded), server: serverName, tool: toolMeta.originalName },
     };
   } catch (error) {
     if (error instanceof UrlElicitationRequiredError) {
@@ -930,14 +930,12 @@ export async function executeCall(
     const message = error instanceof Error ? error.message : String(error);
     uiSession?.sendToolCancelled(message);
 
-    let errorWithSchema = `Failed to call tool: ${message}`;
-    if (toolMeta.inputSchema) {
-      errorWithSchema += `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
-    }
+    const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+    const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaText });
 
     return {
-      content: [{ type: "text" as const, text: errorWithSchema }],
-      details: { mode: "call", error: "call_failed", message },
+      content: guarded.content,
+      details: { mode: "call", error: "call_failed", message: guarded.outputGuard ? "output truncated; see outputGuard.fullOutputPath" : message, ...guardedMcpDetails(guarded) },
     };
   } finally {
     if (uiSession?.reused) {
