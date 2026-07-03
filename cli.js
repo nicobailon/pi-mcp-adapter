@@ -172,7 +172,8 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
   return 1;
 }
 
-const isEntrypoint = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const resolvedEntrypoint = process.argv[1] ? fs.realpathSync(process.argv[1]) : undefined;
+const isEntrypoint = resolvedEntrypoint && import.meta.url === pathToFileURL(resolvedEntrypoint).href;
 
 if (isEntrypoint) {
   main().then((code) => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 
 function writeJson(path: string, value: unknown): void {
@@ -82,6 +83,28 @@ describe("cli init helper", () => {
     const config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
     expect(config.imports).toContain("claude-code");
     expect(logs.join("\n")).toContain(piConfigPath);
+  });
+
+  it("runs when invoked through a symlinked bin path", () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-home-"));
+    const binDir = mkdtempSync(join(tmpdir(), "pi-mcp-cli-bin-"));
+    const symlinkPath = join(binDir, "pi-mcp-adapter");
+    symlinkSync(resolve("cli.js"), symlinkPath);
+
+    const result = spawnSync(process.execPath, [symlinkPath, "init", "--dry-run"], {
+      cwd: mkdtempSync(join(tmpdir(), "pi-mcp-cli-project-")),
+      env: {
+        ...process.env,
+        HOME: home,
+        PI_CODING_AGENT_DIR: join(home, ".pi", "agent"),
+      },
+      encoding: "utf-8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Config discovery:");
+    expect(result.stdout).toContain("No Pi config changes needed.");
   });
 
   it("explains that install now goes through `pi install`", async () => {
