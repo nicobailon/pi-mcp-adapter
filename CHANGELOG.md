@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Propagated Pi abort signals into MCP connect, resource, and tool requests so cancelled calls settle promptly. Thanks @xz-dev for PR #159.
 - Re-flagged failed MCP tool calls (`tool_error`/`call_failed`) as errors so they are recorded as failures (`isError: true`) instead of successes. Thanks @ishinder for PR #157.
 - Honored configured `requestTimeoutMs` during MCP connection, discovery, tool, resource, and UI proxy requests. Thanks @mizuikki for PR #155.
+- Rendered successful MCP `structuredContent` when servers return it without `content`. Thanks @dovixman for PR #146.
 
 ## [2.10.0] - 2026-06-13
 

@@ -7,7 +7,7 @@ import { getServerPrefix, parseUiPromptHandoff } from "./types.ts";
 import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
-import { transformMcpContent } from "./tool-registrar.ts";
+import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, truncateAtWord } from "./utils.ts";
@@ -873,11 +873,11 @@ export async function executeCall(
     if (toolMeta.uiResourceUri) {
       const result = await abortable(resultPromise, signal);
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
-      const mcpContent = (result.content ?? []) as McpContent[];
-      const content = transformMcpContent(mcpContent);
-      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
       if (result.isError) {
+        const mcpContent = (result.content ?? []) as McpContent[];
+        const content = transformMcpContent(mcpContent);
+        const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
         const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
         const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed", rawMcpResult: result });
         return {
@@ -886,6 +886,8 @@ export async function executeCall(
         };
       }
 
+      const content = resolveMcpResultContent(result as Record<string, unknown>);
+      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
       const uiMessage = uiSession?.reused
         ? "Updated the open UI."
         : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
@@ -898,11 +900,10 @@ export async function executeCall(
 
     const result = await abortable(resultPromise, signal);
 
-    const mcpContent = (result.content ?? []) as McpContent[];
-    const content = transformMcpContent(mcpContent);
-    const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-
     if (result.isError) {
+      const mcpContent = (result.content ?? []) as McpContent[];
+      const content = transformMcpContent(mcpContent);
+      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
       const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
       const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed", rawMcpResult: result });
       return {
@@ -911,6 +912,8 @@ export async function executeCall(
       };
     }
 
+    const content = resolveMcpResultContent(result as Record<string, unknown>);
+    const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
     const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: result });
     return {
       content: guarded.content,

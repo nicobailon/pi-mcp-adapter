@@ -7,7 +7,7 @@ import { lazyConnect, getFailureAgeSeconds } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerCacheValid } from "./metadata-cache.ts";
 import { formatSchema } from "./tool-metadata.ts";
-import { transformMcpContent } from "./tool-registrar.ts";
+import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
 import { formatToolName, isToolExcluded } from "./types.ts";
@@ -386,11 +386,10 @@ export function createDirectToolExecutor(
       const result = await abortable(resultPromise, signal);
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
 
-      const mcpContent = (result.content ?? []) as McpContent[];
-      const content = transformMcpContent(mcpContent);
-      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-
       if (result.isError) {
+        const mcpContent = (result.content ?? []) as McpContent[];
+        const content = transformMcpContent(mcpContent);
+        const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
         const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
         const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed" });
         return {
@@ -399,6 +398,8 @@ export function createDirectToolExecutor(
         };
       }
 
+      const content = resolveMcpResultContent(result as Record<string, unknown>);
+      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
       if (hasUi) {
         const uiMessage = uiSession?.reused
           ? "Updated the open UI."
