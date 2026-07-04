@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import { Type } from "typebox";
 import { showStatus, showTools, reconnectServers, authenticateServer, logoutServer, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
@@ -11,6 +11,40 @@ import { getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord }
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.ts";
 import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
 import { toolErrorOverride } from "./error-signal.ts";
+
+const INIT_WAIT_TIMEOUT_MS = 30_000;
+
+const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
+
+async function awaitWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number
+): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof INIT_WAIT_TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(INIT_WAIT_TIMED_OUT), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Minimal headless context for load-time initialization. Only the fields
+// initializeMcp reads are provided; every UI-dependent path is gated on hasUI.
+function createLoadContext(): ExtensionContext {
+  return {
+    mode: "print",
+    hasUI: false,
+    cwd: process.cwd(),
+    model: undefined,
+    signal: undefined,
+  } as unknown as ExtensionContext;
+}
 
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
@@ -87,29 +121,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     type: "string",
   });
 
-  pi.on("session_start", async (_event, ctx) => {
-    const generation = ++lifecycleGeneration;
-    const previousState = state;
-    state = null;
-    initPromise = null;
-
-    try {
-      await Promise.all([
-        shutdownState(previousState, "session_restart"),
-        shutdownOAuth(),
-      ]);
-    } catch (error) {
-      console.error("MCP: failed to shut down previous session state", error);
-    }
-
-    if (generation !== lifecycleGeneration) {
-      return;
-    }
-
-    await initializeOAuth().catch(err => {
-      console.error("MCP OAuth initialization failed:", err);
-    });
-
+  function startInitialization(ctx: ExtensionContext, generation: number): void {
     const promise = initializeMcp(pi, ctx);
     initPromise = promise;
 
@@ -136,7 +148,56 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       console.error("MCP initialization failed:", err);
       initPromise = null;
     });
+  }
+
+  pi.on("session_start", async (_event, ctx) => {
+    const generation = ++lifecycleGeneration;
+    const previousState = state;
+    state = null;
+    initPromise = null;
+
+    try {
+      await Promise.all([
+        shutdownState(previousState, "session_restart"),
+        shutdownOAuth(),
+      ]);
+    } catch (error) {
+      console.error("MCP: failed to shut down previous session state", error);
+    }
+
+    if (generation !== lifecycleGeneration) {
+      return;
+    }
+
+    await initializeOAuth().catch(err => {
+      console.error("MCP OAuth initialization failed:", err);
+    });
+
+    startInitialization(ctx, generation);
   });
+
+  // Hosts that embed pi programmatically (e.g. web harnesses driving sessions
+  // through the session API) never emit session_start, which would leave MCP
+  // permanently uninitialized. When the config requests startup connections
+  // (lifecycle "eager" or "keep-alive"), kick off initialization at extension
+  // load; a session_start (interactive, print, and RPC modes) supersedes it
+  // through the usual generation handoff.
+  const hasStartupServers = Object.values(earlyConfig.mcpServers).some((definition) => {
+    const mode = definition.lifecycle ?? "lazy";
+    return mode === "eager" || mode === "keep-alive";
+  });
+
+  if (hasStartupServers) {
+    const generation = lifecycleGeneration;
+    void initializeOAuth().catch(err => {
+      console.error("MCP OAuth initialization failed:", err);
+    }).then(() => {
+      if (generation !== lifecycleGeneration || state !== null || initPromise !== null) {
+        return;
+      }
+      startInitialization(createLoadContext(), generation);
+    });
+  }
 
   pi.on("session_shutdown", async () => {
     ++lifecycleGeneration;
@@ -299,7 +360,14 @@ export default function mcpAdapter(pi: ExtensionAPI) {
 
         if (!state && initPromise) {
           try {
-            state = await initPromise;
+            const settled = await awaitWithTimeout(initPromise, INIT_WAIT_TIMEOUT_MS);
+            if (settled === INIT_WAIT_TIMED_OUT) {
+              return {
+                content: [{ type: "text" as const, text: `MCP initialization is still in progress (waited ${INIT_WAIT_TIMEOUT_MS / 1000}s); try again shortly` }],
+                details: { error: "init_timeout" },
+              };
+            }
+            state = settled;
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return {
