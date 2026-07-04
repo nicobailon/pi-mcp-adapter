@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Started MCP initialization at extension load when any server is configured with `lifecycle: "eager"` or `"keep-alive"`, so hosts that drive Pi programmatically and never emit `session_start` no longer end up with a permanently uninitialized adapter. `session_start` still re-initializes and supersedes the load-time state in interactive, print, and RPC modes.
+- Bounded the proxy tool's wait on an in-flight initialization (30s, returning `init_timeout`) instead of blocking indefinitely.
+
 ## [2.11.0] - 2026-07-03
 
 ### Changed

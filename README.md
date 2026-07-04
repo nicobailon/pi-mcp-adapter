@@ -172,6 +172,8 @@ You can also pass only the `code` query parameter with `args: '{"code":"..."}'`.
 - **`eager`** — Connect at startup but don't auto-reconnect if the connection drops. No idle timeout by default (set `idleTimeout` explicitly to enable).
 - **`keep-alive`** — Connect at startup. Auto-reconnect via health checks. No idle timeout. Use for servers you always need available.
 
+When any server uses `eager` or `keep-alive`, initialization also starts when the extension loads. This matters for hosts that embed Pi programmatically and never emit `session_start`: startup connections still happen, and the proxy tool waits for an in-flight initialization instead of failing immediately. When `session_start` does fire (interactive, print, and RPC modes), it re-initializes as before and supersedes the load-time state.
+
 ### Settings
 
 ```json
