@@ -26,6 +26,7 @@ class MockStreamableHTTPClientTransport {
   finishAuth = mocks.finishAuth;
 }
 
+// Keep real exports (e.g. extractWWWAuthenticateParams) intact; only override auth/UnauthorizedError.
 vi.mock("@modelcontextprotocol/sdk/client/auth.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   auth: mocks.sdkAuth,
