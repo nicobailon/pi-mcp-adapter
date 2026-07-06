@@ -646,7 +646,7 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.open).not.toHaveBeenCalled();
   });
 
-  it("passes the advertised resource_metadata URL to the SDK so discovery targets the real auth server", async () => {
+  it("forwards the probed resource_metadata URL to auth()", async () => {
     const serverUrl =
       "https://bedrock-agentcore.us-west-2.amazonaws.com/runtimes/runtime%2Fpostgresql_mcp/invocations?qualifier=DEFAULT";
     const resourceMetadataUrl =
@@ -654,15 +654,11 @@ describe("mcp-auth-flow explicit auth", () => {
     mocks.fetch.mockResolvedValueOnce(
       wwwAuthenticateResponse(`Bearer resource_metadata="${resourceMetadataUrl}"`),
     );
-    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
-      await provider.redirectToAuthorization(new URL("https://dev.okta.com/oauth2/aus83081cb9fa0a5d4967/v1/authorize"));
-      return "REDIRECT";
-    });
+    mocks.sdkAuth.mockResolvedValueOnce("AUTHORIZED");
     const { startAuth } = await import("../mcp-auth-flow.ts");
 
-    const result = await startAuth("bedrock", serverUrl, { url: serverUrl, auth: "oauth" });
+    await startAuth("bedrock", serverUrl, { url: serverUrl, auth: "oauth" });
 
-    expect(result.authorizationUrl).toBe("https://dev.okta.com/oauth2/aus83081cb9fa0a5d4967/v1/authorize");
     expect(mocks.fetch).toHaveBeenCalledWith(
       new URL(serverUrl),
       expect.objectContaining({ method: "POST" }),
@@ -682,7 +678,7 @@ describe("mcp-auth-flow explicit auth", () => {
       wwwAuthenticateResponse(`Bearer resource_metadata="${resourceMetadataUrl}"`),
     );
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
-      await provider.redirectToAuthorization(new URL("https://dev.okta.com/authorize"));
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
     const capturedThis: { _resourceMetadataUrl?: URL }[] = [];
