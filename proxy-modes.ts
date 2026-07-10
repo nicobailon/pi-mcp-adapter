@@ -1,6 +1,6 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
-import { checkSync } from "recheck";
+import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
 import { getServerPrefix, parseUiPromptHandoff } from "./types.ts";
@@ -16,6 +16,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 
+const require = createRequire(import.meta.url);
 const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
 const INSTRUCTIONS_PREVIEW_LENGTH = 300;
 const REGEX_SAFETY_CHECK_PARAMS = {
@@ -392,6 +393,7 @@ export function executeSearch(
       pattern = new RegExp(query, "i");
       let safety;
       try {
+        const { checkSync } = require("recheck") as typeof import("recheck");
         safety = checkSync(query, "i", REGEX_SAFETY_CHECK_PARAMS);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
