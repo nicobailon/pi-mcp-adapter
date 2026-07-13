@@ -84,6 +84,17 @@ describe("MCP tool result renderer", () => {
     });
   });
 
+  it("collapses a long newline-free result", () => {
+    const display = formatMcpToolResultLines(result([
+      { type: "text", text: "x".repeat(20) },
+    ]), false, 3, 10);
+
+    expect(display).toEqual({
+      lines: ["xxxxxxxxx…"],
+      truncated: true,
+    });
+  });
+
   it("shows full text when expanded", () => {
     const display = formatMcpToolResultLines(result([
       { type: "text", text: "one\ntwo\nthree\nfour" },

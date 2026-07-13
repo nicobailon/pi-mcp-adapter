@@ -31,6 +31,7 @@ export interface McpToolResultDisplay {
 }
 
 const DEFAULT_MAX_CALL_INPUT_CHARS = 1500;
+const DEFAULT_MAX_COLLAPSED_LINE_CHARS = 500;
 
 function truncateText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
@@ -124,16 +125,27 @@ export function formatMcpToolResultLines(
   result: Pick<AgentToolResult<McpToolResultDetails>, "content">,
   expanded: boolean,
   maxCollapsedLines = 3,
+  maxCollapsedLineChars = DEFAULT_MAX_COLLAPSED_LINE_CHARS,
 ): McpToolResultDisplay {
   const allLines = result.content.flatMap(blockToLines);
   const lines = allLines.length > 0 ? allLines : ["(empty result)"];
 
-  if (expanded || lines.length <= maxCollapsedLines) {
+  if (expanded) {
+    return { lines, truncated: false };
+  }
+
+  const collapsedLines = lines.slice(0, maxCollapsedLines);
+  const hasLongLine = collapsedLines.some(line => line.length > maxCollapsedLineChars);
+  const hasMoreLines = lines.length > maxCollapsedLines;
+  if (!hasLongLine && !hasMoreLines) {
     return { lines, truncated: false };
   }
 
   return {
-    lines: [...lines.slice(0, maxCollapsedLines), "…"],
+    lines: [
+      ...collapsedLines.map(line => truncateText(line, maxCollapsedLineChars)),
+      ...(hasMoreLines ? ["…"] : []),
+    ],
     truncated: true,
   };
 }
