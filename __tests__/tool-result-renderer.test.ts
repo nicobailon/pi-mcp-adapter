@@ -1,9 +1,11 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
+  createMcpDirectToolCallRenderer,
   formatMcpDirectToolCallLines,
   formatMcpProxyToolCallLines,
   formatMcpToolResultLines,
+  renderMcpProxyToolCall,
   renderMcpToolResult,
 } from "../tool-result-renderer.ts";
 
@@ -143,5 +145,31 @@ describe("MCP tool result renderer", () => {
     expect(output).toContain("line 4");
     expect(output).not.toContain("Ctrl+O to expand");
     expect(output).not.toContain("…");
+  });
+
+  it("does not throw when theme is undefined (headless mode)", () => {
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "hello world" }]),
+      collapsedOptions,
+    ).render(80).join("\n");
+
+    expect(output).toContain("hello world");
+  });
+});
+
+describe("MCP tool call renderer with theme fallback", () => {
+  it("renderMcpProxyToolCall does not throw when theme is undefined", () => {
+    const component = renderMcpProxyToolCall(
+      { tool: "test_tool", server: "test-server", args: JSON.stringify({ key: "value" }) },
+    );
+    const output = component.render(80).join("\n");
+    expect(output).toContain("mcp call test_tool @ test-server");
+  });
+
+  it("createMcpDirectToolCallRenderer does not throw when theme is undefined", () => {
+    const renderer = createMcpDirectToolCallRenderer("test_tool");
+    const component = renderer({ key: "value" });
+    const output = component.render(80).join("\n");
+    expect(output).toContain("test_tool");
   });
 });

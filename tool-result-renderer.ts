@@ -5,7 +5,9 @@ type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
 
 interface RenderTheme {
+  /** Colorize text using a named semantic color (e.g. "toolTitle", "muted", "warning"). */
   fg: (name: string, text: string) => string;
+  /** Optional bold wrapper — applied to the title line. */
   bold?: (text: string) => string;
 }
 
@@ -31,6 +33,11 @@ export interface McpToolResultDisplay {
 }
 
 const DEFAULT_MAX_CALL_INPUT_CHARS = 1500;
+
+// Plain pass-through theme used as default when no theme is provided.
+// theme parameters are optional across all render functions to support
+// callers that don't depend on TUI styling (e.g. tests, headless mode).
+const plainTheme: RenderTheme = { fg: (_name: string, text: string) => text };
 
 function truncateText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
@@ -96,23 +103,26 @@ export function formatMcpDirectToolCallLines(
   return [displayName, formatJsonish(args, maxInputChars)];
 }
 
-function renderToolCallLines(lines: string[], theme: RenderTheme) {
+/** Shared rendering core for tool call display — styles the title and detail lines. */
+function renderToolCallLines(lines: string[], theme?: RenderTheme) {
+  const activeTheme = theme ?? plainTheme;
   const [title = "mcp", ...rest] = lines;
-  const styledTitle = theme.fg("toolTitle", theme.bold ? theme.bold(title) : title);
-  const styledRest = rest.map(line => theme.fg("muted", line));
+  const styledTitle = activeTheme.fg("toolTitle", activeTheme.bold ? activeTheme.bold(title) : title);
+  const styledRest = rest.map(line => activeTheme.fg("muted", line));
   return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
 }
 
-export function renderMcpProxyToolCall(args: McpProxyToolCallInput, theme: RenderTheme) {
+export function renderMcpProxyToolCall(args: McpProxyToolCallInput, theme?: RenderTheme) {
   return renderToolCallLines(formatMcpProxyToolCallLines(args), theme);
 }
 
 export function createMcpDirectToolCallRenderer(displayName: string) {
-  return (args: Record<string, unknown>, theme: RenderTheme) => {
+  return (args: Record<string, unknown>, theme?: RenderTheme) => {
     return renderToolCallLines(formatMcpDirectToolCallLines(displayName, args), theme);
   };
 }
 
+/** Convert MCP content blocks (text or image) into display lines. */
 function blockToLines(block: McpToolContentBlock): string[] {
   if (block.type === "text") {
     return block.text.split("\n");
@@ -120,6 +130,7 @@ function blockToLines(block: McpToolContentBlock): string[] {
   return [`[image: ${block.mimeType}]`];
 }
 
+/** Format MCP content blocks into display lines, collapsing long output when not expanded. */
 export function formatMcpToolResultLines(
   result: Pick<AgentToolResult<McpToolResultDetails>, "content">,
   expanded: boolean,
@@ -141,20 +152,25 @@ export function formatMcpToolResultLines(
 export function renderMcpToolResult(
   result: AgentToolResult<McpToolResultDetails>,
   options: ToolRenderResultOptions,
-  theme: RenderTheme,
+  theme?: RenderTheme,
   context?: McpToolRenderContext,
 ) {
+  const activeTheme = theme ?? plainTheme;
+
+  // Stream partial → show a simple "running" indicator.
   if (options.isPartial) {
-    return new Text(theme.fg("warning", "Running MCP tool..."), 0, 0);
+    return new Text(activeTheme.fg("warning", "Running MCP tool..."), 0, 0);
   }
 
+  // Auto-expand the result when the tool reported an error or the caller
+  // signals an error context, so the user can see failure details immediately.
   const hasErrorDetails = Boolean(result.details.error);
   const display = formatMcpToolResultLines(result, options.expanded || context?.isError === true || hasErrorDetails);
   const output = display.lines
-    .map((line) => line === "…" ? theme.fg("muted", line) : theme.fg("toolOutput", line))
+    .map((line) => line === "…" ? activeTheme.fg("muted", line) : activeTheme.fg("toolOutput", line))
     .join("\n");
   const hint = display.truncated && !options.expanded
-    ? `\n${theme.fg("muted", "(Ctrl+O to expand)")}`
+    ? `\n${activeTheme.fg("muted", "(Ctrl+O to expand)")}`
     : "";
 
   return new Text(`${output}${hint}`, 0, 0);

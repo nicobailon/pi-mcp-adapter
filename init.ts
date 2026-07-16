@@ -281,7 +281,7 @@ export function flushMetadataCache(state: McpExtensionState): void {
 
 export function updateStatusBar(state: McpExtensionState): void {
   const ui = state.ui;
-  if (!ui) return;
+  if (!ui || !ui.theme) return;
   const total = Object.keys(state.config.mcpServers).length;
   if (total === 0) {
     ui.setStatus("mcp", undefined);
