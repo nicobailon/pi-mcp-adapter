@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata } from "./types.ts";
+import { resolveToolNaming } from "./types.ts";
 import { existsSync } from "node:fs";
 import { loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
@@ -113,7 +114,13 @@ export async function initializeMcp(
     }
 
     if (cache?.servers?.[name] && isServerCacheValid(cache.servers[name], definition)) {
-      const metadata = reconstructToolMetadata(name, cache.servers[name], prefix, definition);
+      const metadata = reconstructToolMetadata(
+        name,
+        cache.servers[name],
+        prefix,
+        definition,
+        resolveToolNaming(definition, config.settings),
+      );
       toolMetadata.set(name, metadata);
     }
   }
@@ -151,7 +158,14 @@ export async function initializeMcp(
       continue;
     }
 
-    const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
+    const { metadata, failedTools } = buildToolMetadata(
+      connection.tools,
+      connection.resources,
+      definition,
+      name,
+      prefix,
+      resolveToolNaming(definition, config.settings),
+    );
     toolMetadata.set(name, metadata);
     updateMetadataCache(state, name);
 
@@ -189,7 +203,14 @@ export async function initializeMcp(
             if (connection.status === "needs-auth") {
               return { name, ok: false };
             }
-            const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
+            const { metadata } = buildToolMetadata(
+              connection.tools,
+              connection.resources,
+              definition,
+              name,
+              prefix,
+              resolveToolNaming(definition, config.settings),
+            );
             toolMetadata.set(name, metadata);
             updateMetadataCache(state, name);
             return { name, ok: true };
@@ -234,7 +255,14 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
 
   const prefix = state.config.settings?.toolPrefix ?? "server";
 
-  const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
+  const { metadata } = buildToolMetadata(
+    connection.tools,
+    connection.resources,
+    definition,
+    serverName,
+    prefix,
+    resolveToolNaming(definition, state.config.settings),
+  );
   state.toolMetadata.set(serverName, metadata);
 }
 

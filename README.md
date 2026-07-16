@@ -141,6 +141,8 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `requestTimeoutMs` | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used) |
 | `exposeResources` | Expose MCP resources as tools (default: true) |
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
+| `toolNaming` | `"legacy"` or `"canonical"` — override the model-visible naming convention for this server |
+| `progressiveDirectTools` | Override whether this server's direct tools start inactive and load through discovery |
 | `excludeTools` | `string[]` of tool names to hide (matches original names like `get_screenshot` and prefixed names like `figma_get_screenshot`) |
 | `debug` | Show server stderr (default: false) |
 
@@ -188,6 +190,10 @@ You can also pass only the `code` query parameter with `args: '{"code":"..."}'`.
 | Setting | Description |
 |---------|-------------|
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), or `"none"` |
+| `toolNaming` | `"legacy"` (default) or `"canonical"` for stable `mcp__<server>__<tool>` identities |
+| `progressiveDirectTools` | Register configured direct tools inactive and activate matching schemas through `mcp` search/describe (default: false) |
+| `directActivationLimit` | Hard maximum schemas activated by one progressive search (default: 5) |
+| `codeModeTool` | Eager Code Mode control tool that shares canonical names, for example `code_mode_exec` |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
@@ -295,6 +301,45 @@ To exclude specific tools while still using `directTools: true`, add `excludeToo
 Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`.
 
 Direct tools register from the metadata cache in the Pi agent dir (`~/.pi/agent/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. To force it: `/mcp reconnect <server>`.
+
+#### Progressive canonical discovery with Code Mode
+
+Large catalogs can register every direct tool without loading every schema into the initial model context:
+
+```json
+{
+  "settings": {
+    "directTools": true,
+    "toolNaming": "canonical",
+    "progressiveDirectTools": true,
+    "directActivationLimit": 5,
+    "codeModeTool": "code_mode_exec"
+  },
+  "mcpServers": {
+    "large-api": {
+      "command": "large-api-mcp"
+    },
+    "code_mode": {
+      "command": "code-mode-mcp",
+      "directTools": ["exec"],
+      "toolNaming": "legacy",
+      "progressiveDirectTools": false
+    }
+  }
+}
+```
+
+With this mode:
+
+- `mcp({ search: "..." })` uses the same recall-oriented ranker as Code Mode, returns a bounded result set and additively activates matching native schemas;
+- `mcp({ describe: "name" })` activates one exact schema;
+- one canonical name works as a native Pi tool and as `tools.<name>(args)` inside Code Mode;
+- unsafe or ambiguous raw identities receive a deterministic 16-hex hash suffix within a 64-character limit;
+- old names remain hidden string aliases only when they resolve unambiguously;
+- the progressive `mcp` schema omits proxy execution fields, so activated tools are called directly;
+- the Code Mode control tool stays eager and is omitted from capability-search results.
+
+Progressive discovery adds a model turn before the first cold call. Use it for large or mixed catalogs where schema savings justify that cost. Keep small, frequently used, interactive or latency-sensitive toolsets eager by setting `progressiveDirectTools: false` on those servers.
 
 When you change direct-tool toggles in `/mcp` or write new config through `/mcp setup`, the extension triggers Pi's normal reload flow automatically. That refreshes extensions, prompts, skills, and MCP tool registration in one shot, so newly configured direct tools can appear without a manual restart.
 

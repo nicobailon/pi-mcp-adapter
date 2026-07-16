@@ -1,12 +1,13 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import { checkSync } from "recheck";
+import { createCatalogSearchPage } from "@tmustier/code-mode-mcp";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
-import { getServerPrefix, parseUiPromptHandoff } from "./types.ts";
+import { formatToolName, getServerPrefix, parseUiPromptHandoff, resolveToolNaming } from "./types.ts";
 import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
-import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
+import { buildToolMetadata, getToolNames, formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
@@ -14,6 +15,39 @@ import { formatAuthRequiredMessage, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
+
+export interface ProgressiveToolActivation {
+  activate(names: string[]): { added: string[]; active: string[] };
+  codeModeTool?: string;
+}
+
+function resolveToolReference(
+  state: McpExtensionState,
+  requested: string,
+  serverOverride?: string,
+): { server: string; tool: ToolMetadata } | undefined {
+  const entries = serverOverride
+    ? [[serverOverride, state.toolMetadata.get(serverOverride) ?? []] as const]
+    : [...state.toolMetadata.entries()];
+  const exact = entries.flatMap(([server, tools]) => tools
+    .filter(tool => tool.name === requested || tool.name.replace(/-/g, "_") === requested.replace(/-/g, "_"))
+    .map(tool => ({ server, tool })));
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return undefined;
+
+  const prefix = state.config.settings?.toolPrefix ?? "server";
+  const aliases = entries.flatMap(([server, tools]) => tools
+    .filter(tool => {
+      const candidates = [
+        tool.originalName,
+        `${server}.${tool.originalName}`,
+        formatToolName(tool.originalName, server, prefix, "legacy"),
+      ];
+      return candidates.includes(requested);
+    })
+    .map(tool => ({ server, tool })));
+  return aliases.length === 1 ? aliases[0] : undefined;
+}
 
 const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
 const REGEX_SAFETY_CHECK_PARAMS = {
@@ -317,18 +351,14 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
   }
 }
 
-export function executeDescribe(state: McpExtensionState, toolName: string): ProxyToolResult {
-  let serverName: string | undefined;
-  let toolMeta: ToolMetadata | undefined;
-
-  for (const [server, metadata] of state.toolMetadata.entries()) {
-    const found = findToolByName(metadata, toolName);
-    if (found) {
-      serverName = server;
-      toolMeta = found;
-      break;
-    }
-  }
+export function executeDescribe(
+  state: McpExtensionState,
+  toolName: string,
+  activation?: ProgressiveToolActivation,
+): ProxyToolResult {
+  const resolved = resolveToolReference(state, toolName);
+  const serverName = resolved?.server;
+  const toolMeta = resolved?.tool;
 
   if (!serverName || !toolMeta) {
     return {
@@ -337,7 +367,8 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
     };
   }
 
-  let text = `${toolMeta.name}\n`;
+  const activationResult = activation?.activate([toolMeta.name]);
+  let text = `${toolMeta.name}${activationResult?.active.includes(toolMeta.name) ? " [activated]" : ""}\n`;
   text += `Server: ${serverName}\n`;
   if (toolMeta.resourceUri) {
     text += `Type: Resource (reads from ${toolMeta.resourceUri})\n`;
@@ -354,7 +385,12 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "describe", tool: toolMeta, server: serverName },
+    details: {
+      mode: "describe",
+      tool: toolMeta,
+      server: serverName,
+      ...(activationResult ? { added: activationResult.added, active: activationResult.active } : {}),
+    },
   };
 }
 
@@ -364,12 +400,21 @@ export function executeSearch(
   regex?: boolean,
   server?: string,
   includeSchemas?: boolean,
+  limit = 5,
+  activation?: ProgressiveToolActivation,
 ): ProxyToolResult {
   const showSchemas = includeSchemas !== false;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+    return {
+      content: [{ type: "text" as const, text: "Search limit must be an integer from 1 to 20." }],
+      details: { mode: "search", error: "invalid_limit", query, limit },
+    };
+  }
 
-  const matches: Array<{ server: string; tool: ToolMetadata }> = [];
+  let matches: Array<{ server: string; tool: ToolMetadata }> = [];
+  let totalCount = 0;
 
-  let pattern: RegExp;
+  let pattern: RegExp | undefined;
   try {
     if (regex) {
       if (query.length > MAX_REGEX_SEARCH_QUERY_LENGTH) {
@@ -396,16 +441,11 @@ export function executeSearch(
           details: { mode: "search", error: "unsafe_pattern", query, safetyStatus: safety.status },
         };
       }
-    } else {
-      const terms = query.trim().split(/\s+/).filter(t => t.length > 0);
-      if (terms.length === 0) {
-        return {
-          content: [{ type: "text" as const, text: "Search query cannot be empty" }],
-          details: { mode: "search", error: "empty_query" },
-        };
-      }
-      const escaped = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-      pattern = new RegExp(escaped.join("|"), "i");
+    } else if (!query.trim()) {
+      return {
+        content: [{ type: "text" as const, text: "Search query cannot be empty" }],
+        details: { mode: "search", error: "empty_query" },
+      };
     }
   } catch {
     return {
@@ -414,19 +454,48 @@ export function executeSearch(
     };
   }
 
-  for (const [serverName, metadata] of state.toolMetadata.entries()) {
-    if (server && serverName !== server) continue;
-    for (const tool of metadata) {
-      if (pattern.test(tool.name) || pattern.test(tool.description)) {
-        matches.push({
-          server: serverName,
-          tool,
-        });
+  if (regex) {
+    for (const [serverName, metadata] of state.toolMetadata.entries()) {
+      if (server && serverName !== server) continue;
+      for (const tool of metadata) {
+        if (activation?.codeModeTool === tool.name) continue;
+        if (pattern!.test(tool.name) || pattern!.test(tool.originalName) || pattern!.test(tool.description)) {
+          matches.push({ server: serverName, tool });
+        }
       }
     }
+    totalCount = matches.length;
+  } else {
+    const byIdentity = new Map<string, { server: string; tool: ToolMetadata }>();
+    const catalog = [...state.toolMetadata.entries()].flatMap(([serverName, metadata]) => metadata
+      .filter(tool => activation?.codeModeTool !== tool.name)
+      .map(tool => {
+        byIdentity.set(`${serverName}\0${tool.name}`, { server: serverName, tool });
+        return {
+          name: tool.name,
+          server: serverName,
+          tool: tool.originalName,
+          description: tool.description,
+          inputSchema: tool.inputSchema ?? { type: "object", properties: {} },
+        };
+      }));
+    try {
+      const page = createCatalogSearchPage(catalog as Parameters<typeof createCatalogSearchPage>[0])(
+        query,
+        { ...(server ? { server } : {}), limit },
+      );
+      totalCount = page.total;
+      matches = page.items
+        .map(item => byIdentity.get(`${item.server}\0${item.name}`))
+        .filter((item): item is { server: string; tool: ToolMetadata } => item !== undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        details: { mode: "search", error: "invalid_search", query, server, message },
+      };
+    }
   }
-
-  const totalCount = matches.length;
 
   if (totalCount === 0) {
     const msg = server
@@ -438,11 +507,16 @@ export function executeSearch(
     };
   }
 
-  let text = `Found ${totalCount} tool${totalCount === 1 ? "" : "s"} matching "${query}":\n\n`;
+  const displayedMatches = matches.slice(0, limit);
+  const activationResult = activation?.activate(displayedMatches.map(match => match.tool.name));
+  const activeNames = new Set(activationResult?.active ?? []);
+  let text = `Found ${totalCount} tool${totalCount === 1 ? "" : "s"} matching "${query}"`;
+  if (displayedMatches.length < totalCount) text += ` (showing ${displayedMatches.length})`;
+  text += ":\n\n";
 
-  for (const match of matches) {
+  for (const match of displayedMatches) {
     if (showSchemas) {
-      text += `${match.tool.name}\n`;
+      text += `${match.tool.name}${activeNames.has(match.tool.name) ? " [activated]" : ""}\n`;
       text += `  ${match.tool.description || "(no description)"}\n`;
       if (match.tool.inputSchema && !match.tool.resourceUri) {
         text += `\n  Parameters:\n${formatSchema(match.tool.inputSchema, "    ")}\n`;
@@ -451,7 +525,7 @@ export function executeSearch(
       }
       text += "\n";
     } else {
-      text += `- ${match.tool.name}`;
+      text += `- ${match.tool.name}${activeNames.has(match.tool.name) ? " [activated]" : ""}`;
       if (match.tool.description) {
         text += ` - ${truncateAtWord(match.tool.description, 50)}`;
       }
@@ -459,13 +533,19 @@ export function executeSearch(
     }
   }
 
+  if (activationResult && activationResult.active.length > 0) {
+    text += `\nLoaded as direct tools. The same names work${activation?.codeModeTool ? ` in ${activation.codeModeTool}` : " in Code Mode"} as tools.<name>(args).`;
+  }
+
   return {
     content: [{ type: "text" as const, text: text.trim() }],
     details: {
       mode: "search",
-      matches: matches.map(m => ({ server: m.server, tool: m.tool.name })),
+      matches: displayedMatches.map(m => ({ server: m.server, tool: m.tool.name, originalName: m.tool.originalName })),
       count: totalCount,
+      displayed: displayedMatches.length,
       query,
+      ...(activationResult ? { added: activationResult.added, active: activationResult.active } : {}),
     },
   };
 }
@@ -561,7 +641,14 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
       }
     }
     const prefix = state.config.settings?.toolPrefix ?? "server";
-    const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
+    const { metadata } = buildToolMetadata(
+      connection.tools,
+      connection.resources,
+      definition,
+      serverName,
+      prefix,
+      resolveToolNaming(definition, state.config.settings),
+    );
     state.toolMetadata.set(serverName, metadata);
     updateMetadataCache(state, serverName);
     state.failureTracker.delete(serverName);
@@ -601,23 +688,16 @@ export async function executeCall(
     };
   }
 
-  if (serverName) {
-    toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
-  } else {
-    for (const [server, metadata] of state.toolMetadata.entries()) {
-      const found = findToolByName(metadata, toolName);
-      if (found) {
-        serverName = server;
-        toolMeta = found;
-        break;
-      }
-    }
+  const initiallyResolved = resolveToolReference(state, toolName, serverName);
+  if (initiallyResolved) {
+    serverName = initiallyResolved.server;
+    toolMeta = initiallyResolved.tool;
   }
 
   if (serverName && !toolMeta) {
     const connected = await lazyConnect(state, serverName, signal);
     if (connected) {
-      toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
+      toolMeta = resolveToolReference(state, toolName, serverName)?.tool;
     } else {
       const needsAuthConnection = state.manager.getConnection(serverName);
       if (needsAuthConnection?.status === "needs-auth") {
@@ -635,7 +715,7 @@ export async function executeCall(
             state.failureTracker.delete(serverName);
             const connectedAfterAuth = await lazyConnect(state, serverName, signal);
             if (connectedAfterAuth) {
-              toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
+              toolMeta = resolveToolReference(state, toolName, serverName)?.tool;
               if (!toolMeta) {
                 return {
                   content: [{ type: "text" as const, text: `Tool "${toolName}" not found on "${serverName}" after reconnect.` }],
@@ -699,7 +779,7 @@ export async function executeCall(
 
       if (!connected) continue;
       if (!prefixMatchedServer) prefixMatchedServer = configuredServer;
-      toolMeta = findToolByName(state.toolMetadata.get(configuredServer), toolName);
+      toolMeta = resolveToolReference(state, toolName, configuredServer)?.tool;
       if (toolMeta) {
         serverName = configuredServer;
         break;
@@ -808,7 +888,7 @@ export async function executeCall(
       updateServerMetadata(state, serverName);
       updateMetadataCache(state, serverName);
       updateStatusBar(state);
-      toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
+      toolMeta = resolveToolReference(state, toolName, serverName)?.tool;
       if (!toolMeta) {
         const available = getToolNames(state, serverName);
         const hint = available.length > 0

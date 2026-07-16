@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import type { McpAuthResult, McpConfig, ServerEntry, McpPanelCallbacks, McpPanelResult, ImportKind } from "./types.ts";
+import { resolveToolNaming } from "./types.ts";
 import {
   ensureCompatibilityImports,
   getMcpDiscoverySummary,
@@ -110,7 +111,14 @@ export async function reconnectServers(
       }
       const prefix = state.config.settings?.toolPrefix ?? "server";
 
-      const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
+      const { metadata, failedTools } = buildToolMetadata(
+        connection.tools,
+        connection.resources,
+        definition,
+        name,
+        prefix,
+        resolveToolNaming(definition, state.config.settings),
+      );
       state.toolMetadata.set(name, metadata);
       updateMetadataCache(state, name);
       state.failureTracker.delete(name);

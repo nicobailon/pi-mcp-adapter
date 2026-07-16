@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { createHash } from "node:crypto";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { McpTool, McpResource, ServerEntry, ToolMetadata } from "./types.ts";
+import type { McpTool, McpResource, ServerEntry, ToolMetadata, ToolNaming } from "./types.ts";
 import { formatToolName, isToolExcluded } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolUiStreamMode, interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.ts";
@@ -117,7 +117,8 @@ export function reconstructToolMetadata(
   serverName: string,
   entry: ServerCacheEntry,
   prefix: "server" | "none" | "short",
-  definition: Pick<ServerEntry, "exposeResources" | "excludeTools">
+  definition: Pick<ServerEntry, "exposeResources" | "excludeTools">,
+  naming: ToolNaming = "legacy",
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
 
@@ -128,7 +129,7 @@ export function reconstructToolMetadata(
     }
 
     metadata.push({
-      name: formatToolName(tool.name, serverName, prefix),
+      name: formatToolName(tool.name, serverName, prefix, naming),
       originalName: tool.name,
       description: tool.description ?? "",
       inputSchema: tool.inputSchema,
@@ -146,7 +147,7 @@ export function reconstructToolMetadata(
       }
 
       metadata.push({
-        name: formatToolName(baseName, serverName, prefix),
+        name: formatToolName(baseName, serverName, prefix, naming),
         originalName: baseName,
         description: resource.description ?? `Read resource: ${resource.uri}`,
         resourceUri: resource.uri,

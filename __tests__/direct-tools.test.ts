@@ -264,6 +264,77 @@ describe("excludeTools filtering", () => {
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes"]);
   });
 
+  it("registers one canonical progressive name shared with Code Mode", () => {
+    const definition = {
+      command: "node",
+      directTools: true,
+    };
+    const config: McpConfig = {
+      settings: {
+        toolNaming: "canonical",
+        progressiveDirectTools: true,
+        codeModeTool: "code_mode_exec",
+      },
+      mcpServers: { linear: definition },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        linear: {
+          configHash: computeServerHash(definition),
+          cachedAt: Date.now(),
+          tools: [{ name: "create_issue", description: "Create an issue" }],
+          resources: [],
+        },
+      },
+    };
+
+    const specs = resolveDirectTools(config, cache, "server");
+    expect(specs).toMatchObject([{
+      serverName: "linear",
+      originalName: "create_issue",
+      prefixedName: "mcp__linear__create_issue",
+      progressive: true,
+    }]);
+    const description = buildProxyDescription(config, cache, specs);
+    expect(description).toContain("Discovered MCP tools keep one name everywhere");
+    expect(description).toContain("large reductions, large fan-outs, or long deterministic chains");
+    expect(description).not.toContain('mcp({ tool: "name"');
+    expect(description).toContain("Mode: action > connect > describe > search > server (list) > nothing (status)");
+  });
+
+  it("allows a control-plane server to retain a stable eager legacy name", () => {
+    const definition = {
+      command: "node",
+      directTools: ["exec"],
+      toolNaming: "legacy" as const,
+      progressiveDirectTools: false,
+    };
+    const config: McpConfig = {
+      settings: {
+        toolNaming: "canonical",
+        progressiveDirectTools: true,
+      },
+      mcpServers: { code_mode: definition },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        code_mode: {
+          configHash: computeServerHash(definition),
+          cachedAt: Date.now(),
+          tools: [{ name: "exec", description: "Execute code" }],
+          resources: [],
+        },
+      },
+    };
+
+    expect(resolveDirectTools(config, cache, "server")).toMatchObject([{
+      prefixedName: "code_mode_exec",
+      progressive: false,
+    }]);
+  });
+
   it("matches prefixed exclusions even when toolPrefix is none", () => {
     const config: McpConfig = {
       settings: { toolPrefix: "none" },

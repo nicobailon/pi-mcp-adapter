@@ -10,7 +10,7 @@ import { formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
-import { formatToolName, isToolExcluded } from "./types.ts";
+import { formatToolName, isToolExcluded, resolveProgressiveDirectTools, resolveToolNaming } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
 import { formatAuthRequiredMessage } from "./utils.ts";
@@ -129,10 +129,13 @@ export function resolveDirectTools(
 
     if (!toolFilter) continue;
 
+    const naming = resolveToolNaming(definition, config.settings);
+    const progressive = resolveProgressiveDirectTools(definition, config.settings);
+
     for (const tool of serverCache.tools ?? []) {
       if (toolFilter !== true && !toolFilter.includes(tool.name)) continue;
       if (isToolExcluded(tool.name, serverName, prefix, definition.excludeTools)) continue;
-      const prefixedName = formatToolName(tool.name, serverName, prefix);
+      const prefixedName = formatToolName(tool.name, serverName, prefix, naming);
       if (BUILTIN_NAMES.has(prefixedName)) {
         console.warn(`MCP: skipping direct tool "${prefixedName}" (collides with builtin)`);
         continue;
@@ -146,6 +149,7 @@ export function resolveDirectTools(
         serverName,
         originalName: tool.name,
         prefixedName,
+        progressive,
         description: tool.description ?? "",
         inputSchema: tool.inputSchema,
         uiResourceUri: tool.uiResourceUri,
@@ -158,7 +162,7 @@ export function resolveDirectTools(
         const baseName = `get_${resourceNameToToolName(resource.name)}`;
         if (toolFilter !== true && !toolFilter.includes(baseName)) continue;
         if (isToolExcluded(baseName, serverName, prefix, definition.excludeTools)) continue;
-        const prefixedName = formatToolName(baseName, serverName, prefix);
+        const prefixedName = formatToolName(baseName, serverName, prefix, naming);
         if (BUILTIN_NAMES.has(prefixedName)) {
           console.warn(`MCP: skipping direct resource tool "${prefixedName}" (collides with builtin)`);
           continue;
@@ -172,6 +176,7 @@ export function resolveDirectTools(
           serverName,
           originalName: baseName,
           prefixedName,
+          progressive,
           description: resource.description ?? `Read resource: ${resource.uri}`,
           resourceUri: resource.uri,
         });
@@ -211,17 +216,30 @@ export function buildProxyDescription(
   directSpecs: DirectToolSpec[],
 ): string {
   const prefix = config.settings?.toolPrefix ?? "server";
-  let desc = `MCP gateway - connect to MCP servers and call their tools. Non-MCP Pi tools should be called directly, not through mcp.\n`;
+  const progressive = directSpecs.some(spec => spec.progressive);
+  let desc = progressive
+    ? `MCP gateway - search configured MCP capabilities, load matching direct tool schemas, and manage connections/auth.\n`
+    : `MCP gateway - connect to MCP servers and call their tools. Non-MCP Pi tools should be called directly, not through mcp.\n`;
 
   const directByServer = new Map<string, number>();
+  const progressiveByServer = new Map<string, number>();
   for (const spec of directSpecs) {
-    directByServer.set(spec.serverName, (directByServer.get(spec.serverName) ?? 0) + 1);
+    const target = spec.progressive ? progressiveByServer : directByServer;
+    target.set(spec.serverName, (target.get(spec.serverName) ?? 0) + 1);
   }
   if (directByServer.size > 0) {
     const parts = [...directByServer.entries()].map(
       ([server, count]) => `${server} (${count})`,
     );
     desc += `\nDirect tools available (call as normal tools): ${parts.join(", ")}\n`;
+  }
+  if (progressiveByServer.size > 0) {
+    const count = [...progressiveByServer.values()].reduce((sum, value) => sum + value, 0);
+    desc += `\n${count} direct MCP tools are registered inactive. Search for each stage's needed capabilities; matching schemas are loaded additively.\n`;
+    if (config.settings?.codeModeTool) {
+      desc += `Discovered MCP tools keep one name everywhere: call the loaded name directly, or use tools.<name>(args) inside ${config.settings.codeModeTool}. `;
+      desc += `Default to direct calls when you must inspect a result to decide the next step. Use ${config.settings.codeModeTool} when a mechanical stage materially avoids intermediate payload: large reductions, large fan-outs, or long deterministic chains. Keep writes, approvals, rich artifacts, and interactive tools direct. Search each stage as needed, but never rediscover a tool already found.\n`;
+    }
   }
 
   const serverSummaries: string[] = [];
@@ -253,14 +271,18 @@ export function buildProxyDescription(
   desc += `\nUsage:\n`;
   desc += `  mcp({ })                              → Show server status\n`;
   desc += `  mcp({ server: "name" })               → List tools from server\n`;
-  desc += `  mcp({ search: "query" })              → Search MCP tools by name/description\n`;
+  desc += `  mcp({ search: "query", limit: 5 })    → Search MCP tools by name/description and load matching direct schemas\n`;
   desc += `  mcp({ describe: "tool_name" })        → Show tool details and parameters\n`;
   desc += `  mcp({ connect: "server-name" })       → Connect to a server and refresh metadata\n`;
-  desc += `  mcp({ tool: "name", args: '{"key": "value"}' })    → Call a tool (args is JSON string)\n`;
+  if (!progressive) {
+    desc += `  mcp({ tool: "name", args: '{"key": "value"}' })    → Call a tool (args is JSON string)\n`;
+  }
   desc += `  mcp({ action: "ui-messages" })        → Retrieve accumulated messages from completed UI sessions\n`;
   desc += `  mcp({ action: "auth-start", server: "name" })      → Start manual OAuth and get a browser URL\n`;
   desc += `  mcp({ action: "auth-complete", server: "name", args: '{"redirectUrl":"..."}' }) → Complete manual OAuth\n`;
-  desc += `\nMode: action > tool (call) > connect > describe > search > server (list) > nothing (status)`;
+  desc += progressive
+    ? `\nMode: action > connect > describe > search > server (list) > nothing (status)`
+    : `\nMode: action > tool (call) > connect > describe > search > server (list) > nothing (status)`;
 
   return desc;
 }

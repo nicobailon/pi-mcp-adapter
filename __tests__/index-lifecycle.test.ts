@@ -116,6 +116,7 @@ function createState() {
 
 function createPi() {
   const handlers = new Map<string, (...args: any[]) => unknown>();
+  let activeTools: string[] = [];
   return {
     handlers,
     api: {
@@ -126,6 +127,8 @@ function createPi() {
         handlers.set(event, handler);
       }),
       getAllTools: vi.fn(() => []),
+      getActiveTools: vi.fn(() => activeTools),
+      setActiveTools: vi.fn((names: string[]) => { activeTools = names; }),
     } as any,
   };
 }
@@ -239,6 +242,69 @@ describe("mcpAdapter session lifecycle", () => {
     });
     expect(directTool.parameters).not.toHaveProperty("$schema");
     expect(directTool.parameters).not.toHaveProperty("additionalProperties");
+  });
+
+  it("keeps progressive discovery primary and constrains the hybrid Code Mode tool", async () => {
+    mocks.loadMcpConfig.mockReturnValue({
+      mcpServers: {
+        demo: { command: "node", directTools: true },
+        code_mode: { command: "node", directTools: ["exec"], progressiveDirectTools: false },
+      },
+      settings: {
+        progressiveDirectTools: true,
+        directActivationLimit: 5,
+        codeModeTool: "code_mode_exec",
+      },
+    });
+    mocks.resolveDirectTools.mockReturnValue([
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "mcp__demo__search",
+        description: "Search demo",
+        inputSchema: { type: "object", properties: {} },
+        progressive: true,
+      },
+      {
+        serverName: "code_mode",
+        originalName: "exec",
+        prefixedName: "code_mode_exec",
+        description: "Run JavaScript. Use search() when names are unknown.",
+        inputSchema: { type: "object", properties: { code: { type: "string" } } },
+        progressive: false,
+      },
+    ]);
+    const activeState = createState();
+    mocks.initializeMcp.mockResolvedValue(activeState);
+    mocks.executeSearch.mockResolvedValue({ content: [{ type: "text", text: "found" }] });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const codeTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "code_mode_exec")?.[0];
+    expect(codeTool.description).toContain("Use mcp({ search:");
+    expect(codeTool.description).toContain("Do not use search(), describe(), ALL_TOOLS, or ALL_SERVERS inside this tool");
+    expect(codeTool.promptSnippet).toContain("Use mcp search before Code Mode");
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    expect(proxyTool.parameters.properties).not.toHaveProperty("tool");
+    expect(proxyTool.parameters.properties).not.toHaveProperty("args");
+
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    await proxyTool.execute("call-1", { search: "demo", limit: 20 });
+
+    expect(mocks.executeSearch).toHaveBeenCalledWith(
+      activeState,
+      "demo",
+      undefined,
+      undefined,
+      false,
+      5,
+      expect.objectContaining({ codeModeTool: "code_mode_exec" }),
+    );
   });
 
   it("skips the proxy tool once direct tools are fully available", async () => {

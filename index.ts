@@ -61,6 +61,27 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         prefix,
         envRaw?.split(",").map(s => s.trim()).filter(Boolean),
       );
+  const progressiveDirectToolNames = new Set(
+    directSpecs.filter(spec => spec.progressive).map(spec => spec.prefixedName),
+  );
+  const progressiveActivation = progressiveDirectToolNames.size > 0
+    ? {
+        codeModeTool: earlyConfig.settings?.codeModeTool,
+        activate(names: string[]) {
+          const requested = names.filter(name => progressiveDirectToolNames.has(name));
+          const current = pi.getActiveTools();
+          const currentSet = new Set(current);
+          const added = requested.filter(name => !currentSet.has(name));
+          if (added.length > 0) {
+            pi.setActiveTools([...new Set([...current, ...added])]);
+          }
+          return {
+            added,
+            active: requested.filter(name => currentSet.has(name) || added.includes(name)),
+          };
+        },
+      }
+    : undefined;
   const missingConfiguredDirectToolServers = getMissingConfiguredDirectToolServers(earlyConfig, earlyCache);
   const shouldRegisterProxyTool =
     earlyConfig.settings?.disableProxyTool !== true
@@ -68,11 +89,22 @@ export default function mcpAdapter(pi: ExtensionAPI) {
     || missingConfiguredDirectToolServers.length > 0;
 
   for (const spec of directSpecs) {
+    const isHybridCodeModeTool = Boolean(
+      progressiveActivation?.codeModeTool
+      && spec.prefixedName === progressiveActivation.codeModeTool,
+    );
+    const description = isHybridCodeModeTool
+      ? `Use mcp({ search: "..." }) to discover each needed capability before calling this tool. Do not use search(), describe(), ALL_TOOLS, or ALL_SERVERS inside this tool for capabilities discoverable through mcp. Use the canonical names returned by mcp directly as tools.<name>(args).\n\n${spec.description || "(no description)"}`
+      : spec.description || "(no description)";
     (pi.registerTool as (tool: unknown) => unknown)({
       name: spec.prefixedName,
-      label: `MCP: ${spec.originalName}`,
-      description: spec.description || "(no description)",
-      promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
+      label: `MCP: ${spec.serverName} / ${spec.originalName}`,
+      description,
+      ...(spec.progressive ? {} : {
+        promptSnippet: isHybridCodeModeTool
+          ? "Use mcp search before Code Mode; reuse returned canonical names and do not rediscover them inside code"
+          : truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
+      }),
       parameters: Type.Unsafe(normalizeDirectToolInputSchema(spec.inputSchema) as never),
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
@@ -88,6 +120,11 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    if (progressiveDirectToolNames.size > 0) {
+      const initialTools = pi.getActiveTools().filter(name => !progressiveDirectToolNames.has(name));
+      pi.setActiveTools(initialTools);
+    }
+
     const generation = ++lifecycleGeneration;
     const previousState = state;
     state = null;
@@ -256,16 +293,21 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       name: "mcp",
       label: "MCP",
       description: buildProxyDescription(earlyConfig, earlyCache, directSpecs),
-      promptSnippet: "MCP gateway - connect to MCP servers and call their tools",
+      promptSnippet: progressiveActivation
+        ? "Search to load needed MCP tools; never rediscover a tool already found; loaded names also work as tools.<name> in Code Mode"
+        : "MCP gateway - connect to MCP servers and call their tools",
       renderCall: renderMcpProxyToolCall,
       parameters: Type.Object({
-        tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
-        args: Type.Optional(Type.String({ description: "Arguments as JSON string (e.g., '{\"key\": \"value\"}')" })),
+        ...(progressiveActivation ? {} : {
+          tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
+          args: Type.Optional(Type.String({ description: "Arguments as JSON string (e.g., '{\"key\": \"value\"}')" })),
+        }),
         connect: Type.Optional(Type.String({ description: "Server name to connect (lazy connect + metadata refresh)" })),
         describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
         regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
-        includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
+        includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (defaults to false with progressive direct tools)" })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum search results and direct schemas to load" })),
         server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages', 'auth-start', or 'auth-complete'" })),
       }),
@@ -278,6 +320,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         search?: string;
         regex?: boolean;
         includeSchemas?: boolean;
+        limit?: number;
         server?: string;
         action?: string;
       }, signal, _onUpdate, _ctx) {
@@ -350,10 +393,24 @@ export default function mcpAdapter(pi: ExtensionAPI) {
           return executeConnect(state, params.connect, signal);
         }
         if (params.describe) {
-          return executeDescribe(state, params.describe);
+          return executeDescribe(state, params.describe, progressiveActivation);
         }
         if (params.search) {
-          return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas);
+          const activationLimit = earlyConfig.settings?.directActivationLimit ?? 5;
+          const requestedLimit = params.limit ?? activationLimit;
+          const effectiveLimit = progressiveActivation
+            ? Math.min(requestedLimit, activationLimit)
+            : requestedLimit;
+          const includeSchemas = params.includeSchemas ?? !progressiveActivation;
+          return executeSearch(
+            state,
+            params.search,
+            params.regex,
+            params.server,
+            includeSchemas,
+            effectiveLimit,
+            progressiveActivation,
+          );
         }
         if (params.server) {
           return executeList(state, params.server);

@@ -4,6 +4,9 @@ import type { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js
 import type { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import type { UiStreamMode } from "./ui-stream-types.ts";
+import { canonicalToolName } from "@tmustier/code-mode-mcp/naming";
+
+export type ToolNaming = "legacy" | "canonical";
 
 // Transport type (stdio + HTTP)
 export type Transport = 
@@ -312,6 +315,10 @@ export interface ServerEntry {
   exposeResources?: boolean;
   // Direct tool registration
   directTools?: boolean | string[];
+  /** Override the model-visible naming convention for this server. */
+  toolNaming?: ToolNaming;
+  /** Override whether this server's direct tools start inactive and load through discovery. */
+  progressiveDirectTools?: boolean;
   // Exclude specific MCP tools/resources by original or prefixed name
   excludeTools?: string[];
   // Debug
@@ -331,6 +338,14 @@ export interface McpOutputGuardSettings {
 // Settings
 export interface McpSettings {
   toolPrefix?: "server" | "none" | "short";
+  /** Use one mcp__<server>__<tool> identity across direct tools, the gateway, and Code Mode. */
+  toolNaming?: ToolNaming;
+  /** Register configured direct tools inactive, then activate matching schemas through search/describe. */
+  progressiveDirectTools?: boolean;
+  /** Maximum matching direct schemas activated by one search. Defaults to 5. */
+  directActivationLimit?: number;
+  /** Active Code Mode control tool whose tools.* namespace uses canonical direct names. */
+  codeModeTool?: string;
   idleTimeout?: number; // minutes, default 10, 0 to disable
   requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
   directTools?: boolean;
@@ -378,6 +393,7 @@ export interface DirectToolSpec {
   serverName: string;
   originalName: string;
   prefixedName: string;
+  progressive: boolean;
   description: string;
   inputSchema?: unknown;
   resourceUri?: string;
@@ -431,10 +447,26 @@ export function getServerPrefix(
 export function formatToolName(
   toolName: string,
   serverName: string,
-  prefix: "server" | "none" | "short"
+  prefix: "server" | "none" | "short",
+  naming: ToolNaming = "legacy",
 ): string {
+  if (naming === "canonical") return canonicalToolName(serverName, toolName);
   const p = getServerPrefix(serverName, prefix);
   return p ? `${p}_${toolName}` : toolName;
+}
+
+export function resolveToolNaming(
+  definition: Pick<ServerEntry, "toolNaming">,
+  settings?: Pick<McpSettings, "toolNaming">,
+): ToolNaming {
+  return definition.toolNaming ?? settings?.toolNaming ?? "legacy";
+}
+
+export function resolveProgressiveDirectTools(
+  definition: Pick<ServerEntry, "progressiveDirectTools">,
+  settings?: Pick<McpSettings, "progressiveDirectTools">,
+): boolean {
+  return definition.progressiveDirectTools ?? settings?.progressiveDirectTools ?? false;
 }
 
 function normalizeToolName(value: string): string {
@@ -454,6 +486,7 @@ export function isToolExcluded(
     normalizeToolName(formatToolName(toolName, serverName, prefix)),
     normalizeToolName(formatToolName(toolName, serverName, "server")),
     normalizeToolName(formatToolName(toolName, serverName, "short")),
+    normalizeToolName(formatToolName(toolName, serverName, prefix, "canonical")),
   ]);
 
   for (const excluded of excludeTools) {
