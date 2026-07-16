@@ -279,16 +279,73 @@ export function flushMetadataCache(state: McpExtensionState): void {
   }
 }
 
+/** Cap list length so the footer stays readable with many servers. */
+function formatNameList(names: string[], max = 3): string {
+  if (names.length <= max) return names.join(", ");
+  const shown = names.slice(0, max).join(", ");
+  return `${shown} +${names.length - max}`;
+}
+
+/**
+ * Footer status: show exceptions and active use, not inventory.
+ *
+ * Lazy servers start disconnected by design, so a permanent `0/N` ratio reads
+ * as broken. Silence is the healthy idle state; connected names, auth needs,
+ * and failures are the only things worth surfacing.
+ *
+ * Priority: fail > auth > connected. Silence when nothing is actionable.
+ * See https://github.com/nicobailon/pi-mcp-adapter/issues/93
+ */
 export function updateStatusBar(state: McpExtensionState): void {
   const ui = state.ui;
   if (!ui) return;
-  const total = Object.keys(state.config.mcpServers).length;
-  if (total === 0) {
+
+  const serverNames = Object.keys(state.config.mcpServers);
+  if (serverNames.length === 0) {
     ui.setStatus("mcp", undefined);
     return;
   }
-  const connectedCount = state.manager.getAllConnections().size;
-  ui.setStatus("mcp", ui.theme.fg("accent", `MCP: ${connectedCount}/${total} servers`));
+
+  const connected: string[] = [];
+  const needsAuth: string[] = [];
+  const failed: string[] = [];
+
+  for (const name of serverNames) {
+    const connection = state.manager.getConnection(name);
+    if (connection?.status === "connected") {
+      connected.push(name);
+      continue;
+    }
+    if (connection?.status === "needs-auth") {
+      needsAuth.push(name);
+      continue;
+    }
+    if (getFailureAgeSeconds(state, name) !== null) {
+      failed.push(name);
+    }
+  }
+
+  // Healthy idle (lazy, not yet used, no errors): hide the status entirely.
+  if (connected.length === 0 && needsAuth.length === 0 && failed.length === 0) {
+    ui.setStatus("mcp", undefined);
+    return;
+  }
+
+  const parts: string[] = [];
+  if (failed.length > 0) {
+    parts.push(`fail: ${formatNameList(failed)}`);
+  }
+  if (needsAuth.length > 0) {
+    parts.push(`auth: ${formatNameList(needsAuth)}`);
+  }
+  if (connected.length > 0) {
+    parts.push(formatNameList(connected));
+  }
+
+  const text = `MCP · ${parts.join(" · ")}`;
+  const color =
+    failed.length > 0 ? "error" : needsAuth.length > 0 ? "warning" : "dim";
+  ui.setStatus("mcp", ui.theme.fg(color, text));
 }
 
 export function getFailureAgeSeconds(state: McpExtensionState, serverName: string): number | null {

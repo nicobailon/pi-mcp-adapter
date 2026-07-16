@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Footer status no longer shows a permanent `MCP: 0/N servers` inventory ratio. Healthy idle (lazy, unused) is silent; active connections show server names in dim; `needs-auth` and recent failures surface as actionable `auth:` / `fail:` warnings. Fixes #93.
+
 ## [2.11.0] - 2026-07-03
 
 ### Changed
