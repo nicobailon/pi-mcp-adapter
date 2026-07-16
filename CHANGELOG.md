@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added stable canonical MCP tool identities shared by native direct tools, gateway discovery, and Code Mode.
+- Added progressive direct-tool registration and bounded additive schema activation through `mcp` search and describe.
+- Added `toolNaming`, `progressiveDirectTools`, `directActivationLimit`, and `codeModeTool` settings with per-server naming and progressive-loading overrides.
+
+### Changed
+- Reused `@tmustier/code-mode-mcp`'s recall-oriented catalog ranker for non-regex gateway search.
+- Removed proxy execution fields from the model-visible `mcp` schema in progressive mode while retaining the compatibility path outside that mode.
+- Kept unambiguous raw, `server.tool`, and old normalized names as hidden string aliases without registering duplicate schemas.
+
 ## [2.11.0] - 2026-07-03
 
 ### Changed

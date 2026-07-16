@@ -89,6 +89,7 @@
     "@earendil-works/pi-tui": "^0.74.0",
     "@modelcontextprotocol/ext-apps": "^1.2.2",
     "@modelcontextprotocol/sdk": "^1.25.1",
+    "@tmustier/code-mode-mcp": "^0.4.0",
     "open": "^10.2.0",
     "recheck": "^4.5.0",
     "typebox": "^1.1.24",
