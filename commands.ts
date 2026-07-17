@@ -112,6 +112,11 @@ export async function reconnectServers(
 
       const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
       state.toolMetadata.set(name, metadata);
+      if (connection.instructions) {
+        state.serverInstructions.set(name, connection.instructions);
+      } else {
+        state.serverInstructions.delete(name);
+      }
       updateMetadataCache(state, name);
       state.failureTracker.delete(name);
 

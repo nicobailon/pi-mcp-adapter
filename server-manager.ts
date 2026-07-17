@@ -36,6 +36,7 @@ interface ServerConnection {
   definition: ServerDefinition;
   tools: McpTool[];
   resources: McpResource[];
+  instructions?: string;
   lastUsedAt: number;
   inFlight: number;
   status: "connected" | "closed" | "needs-auth";
@@ -176,6 +177,7 @@ export class McpServerManager {
         definition,
         tools,
         resources,
+        instructions: client.getInstructions?.(),
         lastUsedAt: Date.now(),
         inFlight: 0,
         status: "connected",

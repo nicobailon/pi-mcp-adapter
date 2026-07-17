@@ -29,6 +29,7 @@ export interface McpExtensionState {
   manager: McpServerManager;
   lifecycle: McpLifecycleManager;
   toolMetadata: Map<string, ToolMetadata[]>;
+  serverInstructions: Map<string, string>;
   config: McpConfig;
   failureTracker: Map<string, number>;
   uiResourceHandler: UiResourceHandler;

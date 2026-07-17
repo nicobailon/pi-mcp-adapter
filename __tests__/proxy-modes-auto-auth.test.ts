@@ -129,6 +129,7 @@ describe("proxy auto auth", () => {
       },
       manager,
       toolMetadata: new Map(),
+      serverInstructions: new Map(),
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
     } as any;

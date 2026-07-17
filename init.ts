@@ -58,6 +58,7 @@ export async function initializeMcp(
   }
   const lifecycle = new McpLifecycleManager(manager);
   const toolMetadata = new Map<string, ToolMetadata[]>();
+  const serverInstructions = new Map<string, string>();
   const failureTracker = new Map<string, number>();
   const uiResourceHandler = new UiResourceHandler(manager);
   const consentManager = new ConsentManager("once-per-server");
@@ -66,6 +67,7 @@ export async function initializeMcp(
     manager,
     lifecycle,
     toolMetadata,
+    serverInstructions,
     config,
     failureTracker,
     uiResourceHandler,
@@ -112,9 +114,13 @@ export async function initializeMcp(
       lifecycle.markKeepAlive(name, definition);
     }
 
-    if (cache?.servers?.[name] && isServerCacheValid(cache.servers[name], definition)) {
-      const metadata = reconstructToolMetadata(name, cache.servers[name], prefix, definition);
+    const cachedEntry = cache?.servers?.[name];
+    if (cachedEntry && isServerCacheValid(cachedEntry, definition)) {
+      const metadata = reconstructToolMetadata(name, cachedEntry, prefix, definition);
       toolMetadata.set(name, metadata);
+      if (cachedEntry.instructions) {
+        serverInstructions.set(name, cachedEntry.instructions);
+      }
     }
   }
 
@@ -153,6 +159,11 @@ export async function initializeMcp(
 
     const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
     toolMetadata.set(name, metadata);
+    if (connection.instructions) {
+      serverInstructions.set(name, connection.instructions);
+    } else {
+      serverInstructions.delete(name);
+    }
     updateMetadataCache(state, name);
 
     if (failedTools.length > 0 && ctx.hasUI) {
@@ -189,8 +200,7 @@ export async function initializeMcp(
             if (connection.status === "needs-auth") {
               return { name, ok: false };
             }
-            const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
-            toolMetadata.set(name, metadata);
+            updateServerMetadata(state, name);
             updateMetadataCache(state, name);
             return { name, ok: true };
           } catch (error) {
@@ -236,6 +246,11 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
 
   const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
   state.toolMetadata.set(serverName, metadata);
+  if (connection.instructions) {
+    state.serverInstructions.set(serverName, connection.instructions);
+  } else {
+    state.serverInstructions.delete(serverName);
+  }
 }
 
 export function updateMetadataCache(state: McpExtensionState, serverName: string): void {
@@ -265,6 +280,7 @@ export function updateMetadataCache(state: McpExtensionState, serverName: string
     configHash,
     tools,
     resources,
+    instructions: connection.instructions,
     cachedAt: Date.now(),
   };
 

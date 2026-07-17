@@ -6,7 +6,7 @@ import { loadMcpConfig } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.ts";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
 import { loadMetadataCache } from "./metadata-cache.ts";
-import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
+import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeInstructions, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
 import { getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.ts";
 import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
@@ -263,6 +263,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         args: Type.Optional(Type.String({ description: "Arguments as JSON string (e.g., '{\"key\": \"value\"}')" })),
         connect: Type.Optional(Type.String({ description: "Server name to connect (lazy connect + metadata refresh)" })),
         describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
+        instructions: Type.Optional(Type.String({ description: "Server name to show that server's usage instructions" })),
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
         regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
@@ -275,6 +276,7 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         args?: string;
         connect?: string;
         describe?: string;
+        instructions?: string;
         search?: string;
         regex?: boolean;
         includeSchemas?: boolean;
@@ -351,6 +353,9 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         }
         if (params.describe) {
           return executeDescribe(state, params.describe);
+        }
+        if (params.instructions) {
+          return executeInstructions(state, params.instructions);
         }
         if (params.search) {
           return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas);

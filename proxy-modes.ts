@@ -16,6 +16,7 @@ import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from ".
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 
 const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
+const INSTRUCTIONS_PREVIEW_LENGTH = 300;
 const REGEX_SAFETY_CHECK_PARAMS = {
   attackTimeout: 50,
   incubationTimeout: 50,
@@ -519,9 +520,48 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     text += "\n";
   }
 
+  const instructions = state.serverInstructions.get(server);
+  if (instructions) {
+    const preview = truncateAtWord(instructions, INSTRUCTIONS_PREVIEW_LENGTH);
+    text += `\nServer instructions:\n${preview}\n`;
+    if (preview !== instructions) {
+      text += `Use mcp({ instructions: "${server}" }) for the full text.\n`;
+    }
+  }
+
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "list", server, tools: toolNames, count: toolNames.length },
+    details: { mode: "list", server, tools: toolNames, count: toolNames.length, hasInstructions: Boolean(instructions) },
+  };
+}
+
+export function executeInstructions(state: McpExtensionState, server: string): ProxyToolResult {
+  if (!state.config.mcpServers[server]) {
+    return {
+      content: [{ type: "text" as const, text: `Server "${server}" not found. Use mcp({}) to see available servers.` }],
+      details: { mode: "instructions", server, error: "not_found" },
+    };
+  }
+
+  const instructions = state.serverInstructions.get(server);
+  if (instructions) {
+    return {
+      content: [{ type: "text" as const, text: `${server} instructions:\n\n${instructions}` }],
+      details: { mode: "instructions", server, length: instructions.length },
+    };
+  }
+
+  const connection = state.manager.getConnection(server);
+  if (connection?.status === "connected") {
+    return {
+      content: [{ type: "text" as const, text: `Server "${server}" does not provide instructions.` }],
+      details: { mode: "instructions", server, error: "no_instructions" },
+    };
+  }
+
+  return {
+    content: [{ type: "text" as const, text: `No instructions cached for "${server}". Use mcp({ connect: "${server}" }) to connect and refresh.` }],
+    details: { mode: "instructions", server, error: "not_connected" },
   };
 }
 
@@ -563,6 +603,11 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
     const prefix = state.config.settings?.toolPrefix ?? "server";
     const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
     state.toolMetadata.set(serverName, metadata);
+    if (connection.instructions) {
+      state.serverInstructions.set(serverName, connection.instructions);
+    } else {
+      state.serverInstructions.delete(serverName);
+    }
     updateMetadataCache(state, serverName);
     state.failureTracker.delete(serverName);
     updateStatusBar(state);

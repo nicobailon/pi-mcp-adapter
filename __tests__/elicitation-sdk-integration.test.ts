@@ -41,6 +41,7 @@ function createState(manager: McpServerManager, metadata: ToolMetadata[]): McpEx
     manager,
     config: { settings: {}, mcpServers: { real: definition } },
     toolMetadata: new Map([["real", metadata]]),
+    serverInstructions: new Map(),
     failureTracker: new Map(),
     uiResourceHandler: new UiResourceHandler(manager),
     completedUiSessions: [],

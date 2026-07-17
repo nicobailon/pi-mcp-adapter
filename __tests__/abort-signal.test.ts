@@ -31,6 +31,7 @@ function connectedState(client: Record<string, unknown>) {
         ],
       ],
     ]),
+    serverInstructions: new Map(),
     failureTracker: new Map(),
     ui: undefined,
   } as any;

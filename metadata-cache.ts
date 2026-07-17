@@ -30,6 +30,7 @@ export interface ServerCacheEntry {
   configHash: string;
   tools: CachedTool[];
   resources: CachedResource[];
+  instructions?: string;
   cachedAt: number;
 }
 

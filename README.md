@@ -390,6 +390,7 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/mcp.json` only 
 | List server | `mcp({ server: "name" })` |
 | Search | `mcp({ search: "screenshot navigate" })` |
 | Describe | `mcp({ describe: "tool_name" })` |
+| Instructions | `mcp({ instructions: "name" })` |
 | Call | `mcp({ tool: "...", args: '{"key": "value"}' })` |
 | Connect | `mcp({ connect: "server-name" })` |
 | UI messages | `mcp({ action: "ui-messages" })` |
@@ -401,6 +402,8 @@ MCP proxy and direct-tool results render compactly by default: long text shows t
 Search includes both MCP tools and Pi tools (from extensions). Pi tools appear first with `[pi tool]` prefix. Space-separated words are OR'd.
 
 Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_library_id` finds `context7_resolve-library-id`.
+
+Servers that provide usage guidance via the MCP `instructions` field get a short preview at the end of `mcp({ server: "name" })` listings; `mcp({ instructions: "name" })` shows the full text. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection.
 
 ## Commands
 
