@@ -443,7 +443,8 @@ export function formatToolName(
   prefix: "server" | "none" | "short"
 ): string {
   const p = getServerPrefix(serverName, prefix);
-  return p ? `${p}_${toolName}` : toolName;
+  const sanitized = toolName.replace(/\./g, "_");
+  return p ? `${p}_${sanitized}` : sanitized;
 }
 
 function normalizeToolName(value: string): string {
