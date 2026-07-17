@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Surfaced MCP server `instructions` from the initialize handshake: captured at connect time, cached alongside tool metadata, previewed in `mcp({ server: "name" })` listings, and available in full via the new `mcp({ instructions: "name" })` mode. Thanks @JeongJuhyeon for issue #188 and PR #189.
+- Surfaced MCP server `instructions` from the initialize handshake: captured at connect time, cached alongside tool metadata, shown as a truncated head in the `mcp` proxy tool description, previewed in `mcp({ server: "name" })` listings, and available in full via the new `mcp({ instructions: "name" })` mode. Thanks @JeongJuhyeon for issue #188 and PR #189.
 
 ### Fixed
 - Used server-advertised OAuth protected-resource metadata during authorization so resource servers can point Pi at the correct authorization server. Thanks @jameswarren for issue #173 and PR #174.

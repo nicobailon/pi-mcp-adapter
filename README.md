@@ -403,7 +403,7 @@ Search includes both MCP tools and Pi tools (from extensions). Pi tools appear f
 
 Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_library_id` finds `context7_resolve-library-id`.
 
-Servers that provide usage guidance via the MCP `instructions` field get a short preview at the end of `mcp({ server: "name" })` listings; `mcp({ instructions: "name" })` shows the full text. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection.
+Servers that provide usage guidance via the MCP `instructions` field surface it at three levels: a truncated head in the `mcp` proxy tool description itself (so the model sees it without any call), a longer preview at the end of `mcp({ server: "name" })` listings, and the full text via `mcp({ instructions: "name" })`. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection.
 
 ## Commands
 

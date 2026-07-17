@@ -96,6 +96,59 @@ describe("buildProxyDescription", () => {
     expect(description).toContain("Servers: figma (1 tools)");
     expect(description).not.toContain("figma (3 tools)");
   });
+
+  it("includes a truncated instructions snippet for servers that provide one", () => {
+    const config: McpConfig = {
+      mcpServers: {
+        demo: { command: "npx", args: ["-y", "demo-server"] },
+      },
+    };
+
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: "hash",
+          cachedAt: Date.now(),
+          tools: [{ name: "read_skill", description: "Read a skill" }],
+          resources: [],
+          instructions: `Skills catalog.\n\nAvailable skills:\n${Array.from({ length: 30 }, (_, i) => `- skill-${i}: does thing ${i}`).join("\n")}`,
+        },
+      },
+    };
+
+    const description = buildProxyDescription(config, cache, []);
+
+    expect(description).toContain('Server instructions (truncated - full text via mcp({ instructions: "name" })):');
+    expect(description).toContain("demo: Skills catalog. Available skills: - skill-0:");
+    expect(description).toContain("...");
+    expect(description).not.toContain("skill-29");
+  });
+
+  it("omits the instructions section when no server provides instructions", () => {
+    const config: McpConfig = {
+      mcpServers: {
+        demo: { command: "npx", args: ["-y", "demo-server"] },
+      },
+    };
+
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: "hash",
+          cachedAt: Date.now(),
+          tools: [{ name: "read_skill", description: "Read a skill" }],
+          resources: [],
+        },
+      },
+    };
+
+    const description = buildProxyDescription(config, cache, []);
+
+    expect(description).not.toContain("Server instructions");
+    expect(description).toContain('mcp({ instructions: "name" })');
+  });
 });
 
 describe("metadata cache hashing", () => {
