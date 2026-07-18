@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added a documented `pi-mcp-adapter/programmatic` package API for isolated, session-scoped MCP sources with initial registration, local validation, exact replacement/removal, redacted inspection, cancellation, late launch values, and explicit capability reporting. Existing CLI and file-based extension behavior remain the default.
+
 ## [2.11.0] - 2026-07-03
 
 ### Changed

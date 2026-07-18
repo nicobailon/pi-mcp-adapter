@@ -86,6 +86,85 @@ Note: `args` is a JSON string, not an object.
 
 Two calls instead of 26 tools cluttering the context.
 
+## Programmatic SDK usage
+
+SDK hosts and Pi extensions can contribute isolated, session-scoped MCP sources
+without creating config files or changing process arguments:
+
+```ts
+import { createMcpAdapter } from "pi-mcp-adapter/programmatic";
+
+const adapter = createMcpAdapter({
+  fileDiscovery: "disabled",
+  initialSources: [{
+    source: {
+      identity: {
+        id: "com.example.audit:session-123",
+        revision: "request-456",
+      },
+      servers: {
+        audit: {
+          transport: "streamable-http",
+          requestTimeoutMs: 30_000,
+        },
+      },
+    },
+    launchValues: {
+      // Called only when the server is about to connect. Return a fresh object.
+      resolve: async (_request, signal) => getSessionConnection(signal),
+      // Called after every connection attempt, including failure/cancellation.
+      dispose: async (values) => disposeSessionConnection(values),
+    },
+  }],
+});
+
+// Pass adapter.extension to the SDK's extensionFactories (or invoke it like any
+// other Pi extension). Lifecycle/status operations are available on runtime.
+await adapter.runtime.inspectSources(new AbortController().signal);
+```
+
+See [`examples/programmatic-source.ts`](examples/programmatic-source.ts) for a
+complete typed factory.
+
+### Why sources instead of a config overlay?
+
+A single in-memory config object solves file avoidance, but not coexistence or
+ownership when several extensions contribute servers. A source has a stable
+caller-owned `id`, an opaque `revision`, and source-local server keys. The
+runtime uses those values to provide:
+
+- initial registration before any Pi tool is registered;
+- exact compare-and-replace, so stale callers cannot overwrite a newer revision;
+- exact, idempotent removal that cannot remove another source;
+- source-qualified process/tool identity even when server names collide;
+- local, redacted inspection separate from remote connection health;
+- cancellable operations and callback-scoped launch values that are never kept
+  in source definitions, status, metadata, or diagnostics.
+
+`fileDiscovery: "disabled"` is the isolated composition mode. It does not invoke
+the default file extension, load MCP files/imports, or read the shared metadata
+cache. It registers one `mcp` gateway for the supplied sources. The default is
+`"enabled"`: existing CLI, file discovery, commands, direct tools, and cache
+behavior stay unchanged, with programmatic sources available through a separate
+`mcp_sources` gateway.
+
+The returned `runtime` documents the complete lifecycle boundary:
+
+| Method | Purpose |
+|--------|---------|
+| `capabilities(signal)` | Report explicit environment-aware lifecycle, transport, OAuth, and feature facts. |
+| `validateSource(source, signal)` | Validate and copy a complete secret-free source without connecting. |
+| `replaceSource(request, signal)` | Atomically add or replace one source under an absent/exact precondition. |
+| `removeSource(identity, signal)` | Remove only the exact current identity and drain active work first. |
+| `inspectSource(identity, signal)` | Inspect one exact local source without definitions, launch values, or native causes. |
+| `inspectSources(signal)` | Inspect all local sources in deterministic source/server order. |
+
+`runtimeLeases` are optional on initial/replacement sources. Hosts that manage
+external launch authority can provide `acquire`, `release`, and `drain` hooks;
+simple extensions can omit them. Programmatic Streamable HTTP is exact and does
+not silently fall back to legacy SSE. Check `capabilities()` rather than
+assuming parity with every file-config feature.
+
 ## Config
 
 ### File Layout
