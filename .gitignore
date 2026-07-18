@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .pi/
 *.log
 .DS_Store

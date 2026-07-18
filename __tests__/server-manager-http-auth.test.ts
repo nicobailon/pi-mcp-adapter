@@ -25,6 +25,8 @@ type HttpTransportMock = {
 const mocks = vi.hoisted(() => ({
   clients: [] as any[],
   httpTransports: [] as HttpTransportMock[],
+  sseTransports: [] as HttpTransportMock[],
+  failStreamableProbe: false,
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
@@ -34,7 +36,11 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
       options,
       setRequestHandler: vi.fn(),
       setNotificationHandler: vi.fn(),
-      connect: vi.fn(async () => undefined),
+      connect: vi.fn(async () => {
+        if ((info as { name?: string })?.name === "pi-mcp-probe" && mocks.failStreamableProbe) {
+          throw new Error("streamable probe failed");
+        }
+      }),
       listTools: vi.fn(async () => ({ tools: [] })),
       listResources: vi.fn(async () => ({ resources: [] })),
       close: vi.fn(async () => undefined),
@@ -57,7 +63,11 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
-  SSEClientTransport: vi.fn(),
+  SSEClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => {
+    const transport = { url, options, close: vi.fn(async () => undefined) };
+    mocks.sseTransports.push(transport);
+    return transport;
+  }),
 }));
 
 vi.mock("../npx-resolver.ts", () => ({
@@ -73,6 +83,8 @@ describe("McpServerManager HTTP bearer auth", () => {
   beforeEach(() => {
     mocks.clients.length = 0;
     mocks.httpTransports.length = 0;
+    mocks.sseTransports.length = 0;
+    mocks.failStreamableProbe = false;
   });
 
   afterEach(() => {
@@ -173,5 +185,53 @@ describe("McpServerManager HTTP bearer auth", () => {
 
     expect(mocks.clients[1].connect).toHaveBeenCalledWith(mocks.httpTransports[0], { timeout: 5000 });
     expect(mocks.clients[0].connect).toHaveBeenCalledWith(mocks.httpTransports[1], { timeout: 5000 });
+  });
+
+  it("uses callback-resolved HTTP values without consulting process.env", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    process.env.MCP_TEST_BEARER_TOKEN = "PROCESS_GLOBAL_CANARY";
+
+    const manager = new McpServerManager();
+    await manager.connect("qualified-source-server", {
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerToken: "CALLBACK_TOKEN",
+      headers: { "X-Source": "CALLBACK_HEADER" },
+    }, undefined, {
+      values: "resolved",
+      allowLegacySseFallback: false,
+      retainedDefinition: { requestTimeoutMs: 1000 },
+    });
+
+    expect(mocks.httpTransports.at(-1)!.options.requestInit?.headers).toEqual({
+      "X-Source": "CALLBACK_HEADER",
+      Authorization: "Bearer CALLBACK_TOKEN",
+    });
+    expect(JSON.stringify(mocks.httpTransports.at(-1)!.options)).not.toContain("PROCESS_GLOBAL_CANARY");
+  });
+
+  it("does not silently turn exact Streamable HTTP into legacy SSE", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    mocks.failStreamableProbe = true;
+
+    const manager = new McpServerManager();
+    await expect(manager.connect("qualified-source-server", {
+      url: "https://example.test/mcp",
+    }, undefined, {
+      values: "resolved",
+      allowLegacySseFallback: false,
+    })).rejects.toThrow("streamable probe failed");
+
+    expect(mocks.sseTransports).toHaveLength(0);
+  });
+
+  it("preserves legacy SSE fallback for ordinary file configuration", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    mocks.failStreamableProbe = true;
+
+    const manager = new McpServerManager();
+    await manager.connect("file-server", { url: "https://example.test/mcp" });
+
+    expect(mocks.sseTransports).toHaveLength(1);
   });
 });

@@ -5,14 +5,29 @@
   "type": "module",
   "license": "MIT",
   "author": "Nico Bailon",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./programmatic": {
+      "types": "./dist/programmatic.d.ts",
+      "import": "./dist/programmatic.js"
+    }
+  },
   "bin": {
     "pi-mcp-adapter": "cli.js"
   },
   "scripts": {
+    "clean:dist": "node -e \"import('node:fs/promises').then(fs => fs.rm('dist', { recursive: true, force: true }))\"",
+    "build": "npm run clean:dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:oauth-provider": "node --import tsx --test mcp-oauth-provider.test.ts"
+    "test:package": "node --import tsx __tests__/packed-package.ts",
+    "test:oauth-provider": "node --import tsx --test mcp-oauth-provider.test.ts",
+    "prepack": "npm run build"
   },
   "repository": {
     "type": "git",
@@ -39,6 +54,10 @@
     "cli.js",
     "agent-dir.ts",
     "index.ts",
+    "programmatic.ts",
+    "programmatic-types.ts",
+    "programmatic-runtime.ts",
+    "programmatic-extension.ts",
     "error-signal.ts",
     "state.ts",
     "utils.ts",
@@ -79,6 +98,8 @@
     "logger.ts",
     "errors.ts",
     "app-bridge.bundle.js",
+    "dist",
+    "examples/programmatic-source.ts",
     "banner.png",
     "README.md",
     "CHANGELOG.md",

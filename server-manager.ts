@@ -43,6 +43,15 @@ interface ServerConnection {
 
 type UiStreamListener = (serverName: string, notification: ServerStreamResultPatchNotification["params"]) => void;
 
+interface ConnectOptions {
+  /** Programmatic Streamable HTTP sources must never silently become legacy SSE. */
+  allowLegacySseFallback?: boolean;
+  /** Secret-free definition retained after launch for request/runtime policy. */
+  retainedDefinition?: ServerDefinition;
+  /** Programmatic values are callback-resolved and must not consult process.env. */
+  values?: "config" | "resolved";
+}
+
 export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
@@ -95,7 +104,12 @@ export class McpServerManager {
     };
   }
 
-  async connect(name: string, definition: ServerDefinition, signal?: AbortSignal): Promise<ServerConnection> {
+  async connect(
+    name: string,
+    definition: ServerDefinition,
+    signal?: AbortSignal,
+    options: ConnectOptions = {},
+  ): Promise<ServerConnection> {
     throwIfAborted(signal);
     // Dedupe concurrent connection attempts
     if (this.connectPromises.has(name)) {
@@ -109,7 +123,7 @@ export class McpServerManager {
       return existing;
     }
 
-    const promise = this.createConnection(name, definition, signal);
+    const promise = this.createConnection(name, definition, signal, options);
     this.connectPromises.set(name, promise);
 
     try {
@@ -125,6 +139,7 @@ export class McpServerManager {
     name: string,
     definition: ServerDefinition,
     signal?: AbortSignal,
+    options: ConnectOptions = {},
   ): Promise<ServerConnection> {
     throwIfAborted(signal);
     const client = this.createClient(name);
@@ -147,13 +162,16 @@ export class McpServerManager {
       transport = new StdioClientTransport({
         command,
         args,
-        env: resolveEnv(definition.env),
-        cwd: resolveConfigPath(definition.cwd) ?? this.defaultCwd,
+        env: options.values === "resolved" ? definition.env : resolveEnv(definition.env),
+        cwd: options.values === "resolved"
+          ? definition.cwd ?? this.defaultCwd
+          : resolveConfigPath(definition.cwd) ?? this.defaultCwd,
         stderr: definition.debug ? "inherit" : "ignore",
       });
     } else if (definition.url) {
-      // HTTP transport with fallback
-      transport = await this.createHttpTransport(definition, name, signal);
+      // HTTP transport with fallback for file-config users. Programmatic
+      // Streamable HTTP sources explicitly disable fallback.
+      transport = await this.createHttpTransport(definition, name, signal, options);
     } else {
       throw new Error(`Server ${name} has no command or url`);
     }
@@ -173,7 +191,7 @@ export class McpServerManager {
       return {
         client,
         transport,
-        definition,
+        definition: options.retainedDefinition ?? definition,
         tools,
         resources,
         lastUsedAt: Date.now(),
@@ -190,7 +208,7 @@ export class McpServerManager {
         return {
           client,
           transport,
-          definition,
+          definition: options.retainedDefinition ?? definition,
           tools: [],
           resources: [],
           lastUsedAt: Date.now(),
@@ -278,16 +296,21 @@ export class McpServerManager {
     definition: ServerDefinition,
     serverName: string,
     signal?: AbortSignal,
+    options: ConnectOptions = {},
   ): Promise<Transport> {
     throwIfAborted(signal);
     const url = new URL(definition.url!);
 
     // Build headers first (including any bearer token)
-    const headers = resolveHeaders(definition.headers) ?? {};
+    const headers = options.values === "resolved"
+      ? { ...(definition.headers ?? {}) }
+      : resolveHeaders(definition.headers) ?? {};
 
     // For bearer auth, add the token to headers BEFORE creating requestInit
     if (definition.auth === "bearer") {
-      const token = resolveBearerToken(definition);
+      const token = options.values === "resolved"
+        ? definition.bearerToken
+        : resolveBearerToken(definition);
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
       }
@@ -338,12 +361,13 @@ export class McpServerManager {
         throwIfAborted(signal);
       }
 
-      // If this was an UnauthorizedError, don't try SSE - the server needs auth
-      if (error instanceof UnauthorizedError) {
+      // If this was an UnauthorizedError, don't try SSE - the server needs auth.
+      // Programmatic Streamable HTTP declarations are exact and never fall back.
+      if (error instanceof UnauthorizedError || options.allowLegacySseFallback === false) {
         throw error;
       }
 
-      // SSE is the legacy transport
+      // SSE is the legacy transport for ordinary file configuration only.
       return new SSEClientTransport(url, { requestInit, authProvider });
     }
   }
