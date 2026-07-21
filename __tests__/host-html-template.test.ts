@@ -158,44 +158,136 @@ describe("buildHostHtmlTemplate", () => {
   });
 
   describe("CSP handling", () => {
-    it("buildCspMetaContent generates correct CSP directives", async () => {
+    it("maps standard resourceDomains to static resource directives", async () => {
       const { buildCspMetaContent } = await import("../host-html-template.ts");
+
       const csp = buildCspMetaContent({
-        scriptDomains: ["'self'", "cdn.example.com"],
-        styleDomains: ["'self'"],
+        resourceDomains: ["https://esm.sh"],
+        connectDomains: ["https://api.example.com"],
       });
 
-      expect(csp).toContain("script-src 'self' cdn.example.com");
-      expect(csp).toContain("style-src 'self'");
-      expect(csp).toContain("default-src 'none'");
+      expect(csp).toBe([
+        "default-src 'none'",
+        "script-src 'self' 'unsafe-inline' https://esm.sh",
+        "style-src 'self' 'unsafe-inline' https://esm.sh",
+        "font-src 'self' https://esm.sh",
+        "img-src 'self' data: https://esm.sh",
+        "media-src 'self' data: https://esm.sh",
+        "connect-src 'self' https://api.example.com",
+        "frame-src 'none'",
+        "worker-src 'self' blob: https://esm.sh",
+        "object-src 'none'",
+        "base-uri 'self'",
+      ].join("; "));
+      expect(csp).not.toContain("'unsafe-eval'");
     });
 
-    it("applyCspMeta injects CSP meta into HTML head", async () => {
-      const { applyCspMeta } = await import("../host-html-template.ts");
-      const html = applyCspMeta(
-        "<html><head></head><body>Content</body></html>",
-        "default-src 'none'; script-src 'self'"
+    it("merges legacy granular fields with resourceDomains", async () => {
+      const { buildCspMetaContent } = await import("../host-html-template.ts");
+
+      const csp = buildCspMetaContent({
+        resourceDomains: ["https://shared.example.com"],
+        scriptDomains: ["https://scripts.example.com"],
+        styleDomains: ["https://styles.example.com"],
+        fontDomains: ["https://fonts.example.com"],
+        imgDomains: ["https://images.example.com"],
+        mediaDomains: ["https://media.example.com"],
+        workerDomains: ["https://workers.example.com"],
+      });
+
+      expect(csp).toContain(
+        "script-src 'self' 'unsafe-inline' https://shared.example.com https://scripts.example.com",
       );
-
-      expect(html).toContain("Content-Security-Policy");
-      expect(html).toContain("script-src");
+      expect(csp).toContain(
+        "style-src 'self' 'unsafe-inline' https://shared.example.com https://styles.example.com",
+      );
+      expect(csp).toContain(
+        "font-src 'self' https://shared.example.com https://fonts.example.com",
+      );
+      expect(csp).toContain(
+        "img-src 'self' data: https://shared.example.com https://images.example.com",
+      );
+      expect(csp).toContain(
+        "media-src 'self' data: https://shared.example.com https://media.example.com",
+      );
+      expect(csp).toContain(
+        "worker-src 'self' blob: https://shared.example.com https://workers.example.com",
+      );
     });
 
-    it("applyCspMeta preserves existing CSP in resource HTML", async () => {
-      const { applyCspMeta } = await import("../host-html-template.ts");
-      const resourceWithCsp = `<html>
-        <head>
-          <meta http-equiv="Content-Security-Policy" content="default-src 'self'">
-        </head>
-        <body>Content</body>
-      </html>`;
+    it("rejects CSP source expressions that can inject directives", async () => {
+      const { buildCspMetaContent } = await import("../host-html-template.ts");
 
-      const html = applyCspMeta(resourceWithCsp, "script-src 'self'");
+      const csp = buildCspMetaContent({
+        resourceDomains: [
+          "https://safe.example.com",
+          "https://safe.example.com",
+          "https://evil.example.com; script-src *",
+          "https://evil.example.com\nimg-src",
+          "https://evil.example.com\rimg-src",
+          "https://evil.example.com\timg-src",
+          "https://evil.example.com\fimg-src",
+          "https://nul-evil.example.com\0img-src",
+          "https://del-evil.example.com\x7Fimg-src",
+          "https://two sources.example.com",
+          "https://evil.example.com\"img-src",
+          "'unsafe-eval'",
+          42 as unknown as string,
+        ],
+      });
 
-      // Should not duplicate CSP meta - applyCspMeta should detect existing CSP and skip injection
-      const cspMatches = html.match(/Content-Security-Policy/g) ?? [];
-      expect(cspMatches.length).toBe(1);
+      expect(csp).toContain("https://safe.example.com");
+      expect(csp?.match(/https:\/\/safe\.example\.com/g)).toHaveLength(6);
+      expect(csp).not.toContain("evil.example.com");
+      expect(csp).not.toContain("nul-evil.example.com");
+      expect(csp).not.toContain("del-evil.example.com");
+      expect(csp).not.toContain("https://two sources.example.com");
+      expect(csp).not.toContain("'unsafe-eval'");
     });
+
+    it("fails closed for malformed CSP domain containers", async () => {
+      const { buildCspMetaContent } = await import("../host-html-template.ts");
+
+      const csp = buildCspMetaContent({
+        resourceDomains: {} as unknown as string[],
+        connectDomains: "https://api.example.com" as unknown as string[],
+      });
+
+      expect(csp).toBe([
+        "default-src 'none'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "font-src 'self'",
+        "img-src 'self' data:",
+        "media-src 'self' data:",
+        "connect-src 'self'",
+        "frame-src 'none'",
+        "worker-src 'self' blob:",
+        "object-src 'none'",
+        "base-uri 'self'",
+      ].join("; "));
+    });
+
+    it("deduplicates frame and base URI domains", async () => {
+      const { buildCspMetaContent } = await import("../host-html-template.ts");
+
+      const csp = buildCspMetaContent({
+        frameDomains: ["https://frames.example.com", "https://frames.example.com"],
+        baseUriDomains: ["https://base.example.com", "https://base.example.com"],
+      });
+
+      expect(csp).toContain("frame-src https://frames.example.com");
+      expect(csp).toContain("base-uri https://base.example.com");
+      expect(csp?.match(/https:\/\/frames\.example\.com/g)).toHaveLength(1);
+      expect(csp?.match(/https:\/\/base\.example\.com/g)).toHaveLength(1);
+    });
+
+    it("returns undefined when the app declares no CSP metadata", async () => {
+      const { buildCspMetaContent } = await import("../host-html-template.ts");
+
+      expect(buildCspMetaContent(undefined)).toBeUndefined();
+    });
+
   });
 
   describe("module loading", () => {

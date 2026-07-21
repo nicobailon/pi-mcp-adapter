@@ -225,6 +225,36 @@ describe("UiResourceHandler", () => {
       });
     });
 
+    it("extracts standard resourceDomains CSP metadata", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [
+            {
+              uri: "ui://test/widget",
+              mimeType: "text/html",
+              text: "<h1>Content</h1>",
+              _meta: {
+                ui: {
+                  csp: {
+                    resourceDomains: ["https://esm.sh"],
+                    connectDomains: ["https://esm.sh"],
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({
+        resourceDomains: ["https://esm.sh"],
+        connectDomains: ["https://esm.sh"],
+      });
+    });
+
     it("extracts permissions meta", async () => {
       const manager = createMockManager({
         readResource: vi.fn().mockResolvedValue({

@@ -350,6 +350,7 @@ Returns accumulated messages from UI sessions. Each message includes `type`, `se
 - Tool consent gates whether UIs can call MCP tools (never/once-per-server/always)
 - Works with both stdio and HTTP MCP servers
 - Uses a local 408KB AppBridge bundle (MCP SDK + Zod) for browser↔server communication
+- Enforces standard `_meta.ui.csp` metadata, including `resourceDomains` for scripts, styles, images, fonts, media, and workers, while retaining granular legacy domain fields.
 
 ### Local Example: Interactive Visualizer
 

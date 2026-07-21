@@ -243,6 +243,56 @@ describe("UiServer", () => {
     });
   });
 
+  describe("GET /ui-app", () => {
+    it("enforces metadata CSP with a response header while preserving app HTML", async () => {
+      const appHtml = `<!-- decoy <head><meta http-equiv="Content-Security-Policy" content="default-src *"></head> -->
+<!doctype html>
+<html>
+<head>
+  <meta http-equiv="Content-Security-Policy" content="img-src https://images.example.com">
+  <style>body { margin: 0; }</style>
+</head>
+<body>
+  <script type="module">import "https://esm.sh/example";</script>
+</body>
+</html>`;
+      handle = await startUiServer(createServerOptions({
+        resource: createMockResource({
+          html: appHtml,
+          meta: {
+            permissions: [],
+            csp: {
+              resourceDomains: ["https://esm.sh"],
+              connectDomains: ["https://api.excalidraw.com"],
+            },
+          },
+        }),
+      }));
+      const url = `http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`;
+
+      const res = await request(url);
+      const cspHeader = res.headers["content-security-policy"];
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(cspHeader).toContain("default-src 'none'");
+      expect(cspHeader).toContain("script-src 'self' 'unsafe-inline' https://esm.sh");
+      expect(cspHeader).toContain("style-src 'self' 'unsafe-inline' https://esm.sh");
+      expect(cspHeader).toContain("connect-src 'self' https://api.excalidraw.com");
+      expect(res.body).toBe(appHtml);
+    });
+
+    it("omits the CSP response header when metadata is undefined", async () => {
+      handle = await startUiServer(createServerOptions());
+      const url = `http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`;
+
+      const res = await request(url);
+
+      expect(res.headers["content-security-policy"]).toBeUndefined();
+      expect(res.body).toBe("<h1>Test App</h1>");
+    });
+  });
+
   describe("GET /health", () => {
     it("returns healthy status", async () => {
       handle = await startUiServer(createServerOptions());
