@@ -140,6 +140,7 @@ interface ServerState {
   excludeTools?: string[];
   exposeResources: boolean;
   connectionStatus: ConnectionStatus;
+  failureMessage?: string | null;
   tools: ToolState[];
   hasCachedData: boolean;
 }
@@ -239,6 +240,7 @@ class McpPanel {
       }
 
       const status = callbacks.getConnectionStatus(serverName);
+      const failureMessage = callbacks.getFailureMessage?.(serverName) ?? null;
 
       this.servers.push({
         name: serverName,
@@ -248,6 +250,7 @@ class McpPanel {
         excludeTools: definition.excludeTools,
         exposeResources: definition.exposeResources !== false,
         connectionStatus: status,
+        failureMessage,
         tools,
         hasCachedData: !!serverCache,
       });
@@ -458,6 +461,7 @@ class McpPanel {
       server.connectionStatus = "connecting";
       this.callbacks.reconnect(server.name).then(() => {
         server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
+        server.failureMessage = this.callbacks.getFailureMessage?.(server.name) ?? null;
         if (server.connectionStatus === "connected") {
           const entry = this.callbacks.refreshCacheAfterReconnect(server.name);
           if (entry) {
@@ -469,6 +473,7 @@ class McpPanel {
       }).catch((error) => {
         server.connectionStatus = "failed";
         const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
+        server.failureMessage = message;
         const serverName = sanitizeDisplayText(server.name);
         this.authNotice = `Reconnect failed for ${serverName}: ${message}`;
         this.tui.requestRender();
@@ -695,6 +700,11 @@ class McpPanel {
 
         if (item.type === "server") {
           lines.push(row(this.renderServerRow(server, isCursor)));
+          if (isCursor && server.connectionStatus === "failed" && server.failureMessage) {
+            for (const wl of this.wrapText(sanitizeDisplayText(server.failureMessage), innerW - 6)) {
+              lines.push(row(`    ${fg(t.cancel, wl)}`));
+            }
+          }
         } else if (item.toolIndex !== undefined) {
           lines.push(row(this.renderToolRow(server.tools[item.toolIndex], isCursor, innerW)));
         }
@@ -825,6 +835,43 @@ class McpPanel {
     }
 
     return `${prefix} ${toggleIcon} ${nameStr}${importLabel}  ${toolInfo}${statusLabel}`;
+  }
+
+  private wrapText(text: string, width: number): string[] {
+    const max = Math.max(8, width);
+    const words = text.split(/\s+/).filter(Boolean);
+    const lines: string[] = [];
+    let cur = "";
+    const flushLong = (w: string) => {
+      let rest = w;
+      while (visibleWidth(rest) > max) {
+        // Consume source characters up to `max` visible columns.
+        let take = "";
+        let i = 0;
+        while (i < rest.length && visibleWidth(take + rest[i]) <= max) {
+          take += rest[i];
+          i++;
+        }
+        if (take === "") {
+          // A single character wider than `max`; emit it to guarantee progress.
+          take = rest[0];
+        }
+        lines.push(take);
+        rest = rest.slice(take.length);
+      }
+      return rest;
+    };
+    for (const word of words) {
+      const candidate = cur ? `${cur} ${word}` : word;
+      if (visibleWidth(candidate) <= max) {
+        cur = candidate;
+      } else {
+        if (cur) lines.push(cur);
+        cur = flushLong(word);
+      }
+    }
+    if (cur) lines.push(cur);
+    return lines.length > 0 ? lines : [text];
   }
 
   private renderConnectionStatus(server: ServerState): string {

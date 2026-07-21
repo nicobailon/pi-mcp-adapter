@@ -45,6 +45,31 @@ function createCache(config: McpConfig): MetadataCache {
   };
 }
 
+function createFailedPanel(
+  connectionStatus: "failed" | "idle",
+  failureMessage: string | null,
+  width: number,
+): string {
+  const config = createConfig();
+  const callbacks: McpPanelCallbacks = {
+    ...createCallbacks(),
+    getConnectionStatus: () => connectionStatus,
+    getFailureMessage: () => failureMessage,
+  };
+  const panel = createMcpPanel(
+    config,
+    createCache(config),
+    new Map(),
+    callbacks,
+    { requestRender: () => {} },
+    () => {},
+  );
+  // The single server is under the cursor by default.
+  const output = stripAnsi(panel.render(width).join("\n"));
+  panel.dispose();
+  return output;
+}
+
 describe("mcp-panel rendering", () => {
   it("renders MCP metadata as single-line display text", () => {
     const config = createConfig();
@@ -118,5 +143,37 @@ describe("mcp-panel rendering", () => {
     expect(result.cancelled).toBe(false);
     expect(result.changes.get("atlassian")).toEqual(["search\u0007issues"]);
     panel.dispose();
+  });
+
+  it("renders the full failure reason wrapped under the selected failed server", () => {
+    const reason =
+      "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
+    const output = createFailedPanel("failed", reason, 60);
+
+    expect(output).toContain("failed");
+    // Every word of the reason should be present even though it exceeds the row width.
+    for (const word of reason.split(/\s+/)) {
+      expect(output).toContain(word);
+    }
+    // The message should span multiple lines (wrapped, not truncated onto one).
+    const reasonLines = output.split("\n").filter((line) => /docker/i.test(line));
+    expect(reasonLines.length).toBeGreaterThan(1);
+    expect(output).not.toContain("\u2026");
+  });
+
+  it("hard-breaks an over-long token so nothing is truncated", () => {
+    // Use a character that never appears elsewhere in the panel chrome.
+    const token = "Z".repeat(200);
+    const output = createFailedPanel("failed", token, 40);
+
+    const collapsed = output.replace(/[^Z]/g, "");
+    expect(collapsed.length).toBe(200);
+    expect(output).not.toContain("\u2026");
+  });
+
+  it("does not render a failure reason when the server is not failed", () => {
+    const output = createFailedPanel("idle", "should not appear", 60);
+
+    expect(output).not.toContain("should not appear");
   });
 });

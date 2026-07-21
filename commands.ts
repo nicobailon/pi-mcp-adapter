@@ -12,7 +12,7 @@ import {
   writeSharedServerEntry,
   writeStarterProjectConfig,
 } from "./config.ts";
-import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.ts";
+import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage } from "./init.ts";
 import { loadMetadataCache } from "./metadata-cache.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth } from "./mcp-auth-flow.ts";
@@ -41,7 +41,8 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
       status = "needs auth";
       statusIcon = "⚠";
     } else if (failedAgo !== null) {
-      status = `failed ${failedAgo}s ago`;
+      const reason = getFailureMessage(state, name);
+      status = reason ? `failed ${failedAgo}s ago — ${reason}` : `failed ${failedAgo}s ago`;
       statusIcon = "✗";
       failed = true;
     } else if (metadata !== undefined) {
@@ -114,6 +115,7 @@ export async function reconnectServers(
       state.toolMetadata.set(name, metadata);
       updateMetadataCache(state, name);
       state.failureTracker.delete(name);
+      state.failureMessages.delete(name);
 
       if (ctx.hasUI) {
         ctx.ui.notify(
@@ -127,6 +129,7 @@ export async function reconnectServers(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       state.failureTracker.set(name, Date.now());
+      state.failureMessages.set(name, message);
       if (ctx.hasUI) {
         ctx.ui.notify(`MCP: Failed to reconnect to ${name}: ${message}`, "error");
       }
@@ -336,6 +339,7 @@ function buildMcpPanelCallbacks(
       if (getFailureAgeSeconds(state, serverName) !== null) return "failed";
       return "idle";
     },
+    getFailureMessage: (serverName: string) => getFailureMessage(state, serverName),
     refreshCacheAfterReconnect: (serverName: string) => {
       const freshCache = loadMetadataCache();
       return freshCache?.servers?.[serverName] ?? null;
