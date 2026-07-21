@@ -9,7 +9,7 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { ConsentManager } from "./consent-manager.ts";
 import { ServerError, wrapError } from "./errors.ts";
-import { buildHostHtmlTemplate, buildCspMetaContent, applyCspMeta } from "./host-html-template.ts";
+import { buildHostHtmlTemplate, buildCspMetaContent } from "./host-html-template.ts";
 import { logger } from "./logger.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import {
@@ -284,15 +284,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       if (method === "GET" && url.pathname === "/ui-app") {
         if (!validateTokenQuery(url, sessionToken, res)) return;
         touchHeartbeat();
-        // Serve the MCP app's UI HTML directly (avoids blob URL security issues)
-        // Apply CSP meta tag if specified in resource metadata
+        // Enforce host metadata independently of where app HTML places its document head.
         const cspContent = buildCspMetaContent(options.resource.meta.csp);
-        const appHtml = applyCspMeta(options.resource.html, cspContent);
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
+          ...(cspContent ? { "Content-Security-Policy": cspContent } : {}),
         });
-        res.end(appHtml);
+        res.end(options.resource.html);
         return;
       }
 

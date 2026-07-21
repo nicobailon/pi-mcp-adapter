@@ -64,15 +64,17 @@ export interface UiProxyResult<T = Record<string, unknown>> {
 }
 
 export interface UiResourceCsp {
+  resourceDomains?: string[];
   connectDomains?: string[];
+  frameDomains?: string[];
+  baseUriDomains?: string[];
+  // Legacy pi-mcp-adapter fields retained while servers migrate to resourceDomains.
   scriptDomains?: string[];
   styleDomains?: string[];
   fontDomains?: string[];
   imgDomains?: string[];
   mediaDomains?: string[];
-  frameDomains?: string[];
   workerDomains?: string[];
-  baseUriDomains?: string[];
 }
 
 export interface UiResourcePermissions {

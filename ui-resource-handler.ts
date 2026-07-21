@@ -3,7 +3,7 @@ import { UrlElicitationRequiredError, type ReadResourceResult } from "@modelcont
 import { ResourceFetchError, ResourceParseError } from "./errors.ts";
 import { logger } from "./logger.ts";
 import type { McpServerManager } from "./server-manager.ts";
-import type { UiResourceContent, UiResourceMeta } from "./types.ts";
+import type { UiResourceContent, UiResourceCsp, UiResourceMeta } from "./types.ts";
 
 interface ResourceContentRecord {
   uri?: string;
@@ -124,23 +124,97 @@ function toHtml(content: ResourceContentRecord): string {
 
 function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMeta {
   if (!meta || typeof meta !== "object") return {};
-  const ui = meta.ui as Record<string, unknown> | undefined;
-  if (!ui || typeof ui !== "object") return {};
 
+  const ui = isRecord(meta.ui) ? meta.ui : undefined;
   const out: UiResourceMeta = {};
+  const openAiCsp = hasOwnProperty(meta, "openai/widgetCSP")
+    ? normalizeOpenAiWidgetCsp(meta["openai/widgetCSP"])
+    : undefined;
+  const hasStandardCsp = !!ui && hasOwnProperty(ui, "csp");
+  const standardCspValue = hasStandardCsp ? ui.csp : undefined;
 
-  if (ui.csp && typeof ui.csp === "object") {
-    out.csp = ui.csp as UiResourceMeta["csp"];
+  if (hasStandardCsp && !isRecord(standardCspValue)) {
+    // A declared canonical container takes precedence even when malformed.
+    out.csp = {};
+  } else {
+    const standardCsp = hasStandardCsp
+      ? normalizeUiResourceCsp(standardCspValue)
+      : undefined;
+    if (openAiCsp || standardCsp) {
+      out.csp = { ...openAiCsp, ...standardCsp };
+      if (isRecord(standardCspValue)) {
+        for (const [, standardField] of OPENAI_CSP_FIELD_MAPPINGS) {
+          if (hasOwnProperty(standardCspValue, standardField) && !copyStringArray(standardCspValue[standardField])) {
+            delete out.csp[standardField];
+          }
+        }
+      }
+    }
   }
-  if (ui.permissions && typeof ui.permissions === "object") {
+  if (ui && isRecord(ui.permissions)) {
     out.permissions = ui.permissions as UiResourceMeta["permissions"];
   }
-  if (typeof ui.domain === "string") {
+  if (ui && typeof ui.domain === "string") {
     out.domain = ui.domain;
   }
-  if (typeof ui.prefersBorder === "boolean") {
+  if (ui && typeof ui.prefersBorder === "boolean") {
     out.prefersBorder = ui.prefersBorder;
   }
 
   return out;
+}
+
+const OPENAI_CSP_FIELD_MAPPINGS = [
+  ["resource_domains", "resourceDomains"],
+  ["connect_domains", "connectDomains"],
+  ["frame_domains", "frameDomains"],
+] as const;
+
+const UI_CSP_DOMAIN_FIELDS: readonly (keyof UiResourceCsp)[] = [
+  "resourceDomains",
+  "connectDomains",
+  "frameDomains",
+  "baseUriDomains",
+  "scriptDomains",
+  "styleDomains",
+  "fontDomains",
+  "imgDomains",
+  "mediaDomains",
+  "workerDomains",
+];
+
+function normalizeUiResourceCsp(value: unknown): UiResourceCsp {
+  if (!isRecord(value)) return {};
+
+  const csp: UiResourceCsp = {};
+  for (const field of UI_CSP_DOMAIN_FIELDS) {
+    const domains = copyStringArray(value[field]);
+    if (domains) csp[field] = domains;
+  }
+  return csp;
+}
+
+function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp {
+  if (!isRecord(value)) return {};
+
+  const csp: UiResourceCsp = {};
+  for (const [sourceField, targetField] of OPENAI_CSP_FIELD_MAPPINGS) {
+    const domains = copyStringArray(value[sourceField]);
+    if (domains) csp[targetField] = domains;
+  }
+  return csp;
+}
+
+function copyStringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
+    ? [...value]
+    : undefined;
+}
+
+function hasOwnProperty(record: Record<string, unknown>, property: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, property);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
