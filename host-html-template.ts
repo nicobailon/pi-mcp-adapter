@@ -619,6 +619,16 @@ function findHtmlDoctypeEnd(html: string, declarationStart: number): number {
         state = "before-public-identifier";
       } else if (keyword === "system" && isHtmlAsciiWhitespace(html[index])) {
         state = "before-system-identifier";
+      } else if (keyword === "public" && (html[index] === '"' || html[index] === "'")) {
+        // Browsers recover from a missing space before a PUBLIC identifier.
+        quote = html[index];
+        state = "public-identifier";
+        continue;
+      } else if (keyword === "system" && (html[index] === '"' || html[index] === "'")) {
+        // Browsers recover from a missing space before a SYSTEM identifier.
+        quote = html[index];
+        state = "system-identifier";
+        continue;
       } else if (html[index] === ">") {
         return index;
       } else {
@@ -643,6 +653,10 @@ function findHtmlDoctypeEnd(html: string, declarationStart: number): number {
     if (state === "after-public-identifier") {
       if (isHtmlAsciiWhitespace(character)) {
         state = "before-system-identifier";
+      } else if (character === '"' || character === "'") {
+        // Browsers recover from a missing space before a SYSTEM identifier.
+        quote = character;
+        state = "system-identifier";
       } else if (character === ">") {
         return index;
       } else {
@@ -712,6 +726,11 @@ function skipHtmlScriptContent(html: string, index: number): number {
       continue;
     }
 
+    if (html.startsWith("-->", cursor)) {
+      state = "data";
+      cursor += 2;
+      continue;
+    }
     if (isHtmlScriptEndTagAt(html, cursor)) {
       // In double-escaped state, </script> only returns to escaped state.
       state = "escaped";
@@ -878,6 +897,9 @@ function getHtmlAttribute(tag: string, attributeName: string): string | undefine
     }
 
     const nameStart = index;
+    // In before-attribute-name, an unexpected leading equals sign belongs to
+    // the attribute name. Equals only starts a value after a name has begun.
+    if (tag[index] === "=") index++;
     while (!isHtmlAttributeNameBoundary(tag[index])) index++;
     const name = tag.slice(nameStart, index);
 
