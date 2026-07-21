@@ -465,6 +465,14 @@ function findHtmlTag(
       index = skipHtmlComment(html, tagStart);
       continue;
     }
+    if (html[tagStart + 1] === "!" || html[tagStart + 1] === "?") {
+      index = skipHtmlMarkupDeclarationOrBogusComment(html, tagStart);
+      continue;
+    }
+    if (!isHtmlTagOpenAt(html, tagStart)) {
+      index = tagStart + 1;
+      continue;
+    }
 
     const tagEnd = findHtmlTagEnd(html, tagStart);
     if (tagEnd === -1) return undefined;
@@ -499,6 +507,14 @@ function skipHtmlTemplateContent(html: string, index: number): number {
 
     if (html.startsWith("<!--", tagStart)) {
       index = skipHtmlComment(html, tagStart);
+      continue;
+    }
+    if (html[tagStart + 1] === "!" || html[tagStart + 1] === "?") {
+      index = skipHtmlMarkupDeclarationOrBogusComment(html, tagStart);
+      continue;
+    }
+    if (!isHtmlTagOpenAt(html, tagStart)) {
+      index = tagStart + 1;
       continue;
     }
 
@@ -542,6 +558,26 @@ function skipHtmlComment(html: string, index: number): number {
   return html.length;
 }
 
+function skipHtmlMarkupDeclarationOrBogusComment(html: string, index: number): number {
+  if (html.slice(index + 2, index + 9).toLowerCase() === "doctype") {
+    const declarationEnd = findHtmlTagEnd(html, index);
+    return declarationEnd === -1 ? html.length : declarationEnd + 1;
+  }
+
+  const commentEnd = html.indexOf(">", index + 2);
+  return commentEnd === -1 ? html.length : commentEnd + 1;
+}
+
+function isHtmlTagOpenAt(html: string, index: number): boolean {
+  return isHtmlAsciiLetter(html[index + 1]) || (
+    html[index + 1] === "/" && isHtmlAsciiLetter(html[index + 2])
+  );
+}
+
+function isHtmlAsciiLetter(character: string | undefined): boolean {
+  return !!character && /[A-Za-z]/.test(character);
+}
+
 function skipHtmlTextElement(html: string, index: number, name: string): number {
   if (name === "script") return skipHtmlScriptContent(html, index);
 
@@ -570,6 +606,11 @@ function skipHtmlScriptContent(html: string, index: number): number {
     }
 
     if (state === "escaped") {
+      if (html.startsWith("-->", cursor)) {
+        state = "data";
+        cursor += 2;
+        continue;
+      }
       if (isHtmlScriptEndTagAt(html, cursor)) {
         const closingTagEnd = findHtmlTagEnd(html, cursor);
         return closingTagEnd === -1 ? html.length : closingTagEnd + 1;
@@ -602,8 +643,20 @@ function isHtmlScriptEndTagAt(html: string, index: number): boolean {
 function isHtmlTagNameAt(html: string, index: number, name: string): boolean {
   return (
     html.slice(index, index + name.length).toLowerCase() === name &&
-    /[\t\n\f\r />]/.test(html[index + name.length] ?? "")
+    isHtmlTagNameBoundary(html[index + name.length])
   );
+}
+
+function isHtmlAsciiWhitespace(character: string | undefined): boolean {
+  return character === "\t" || character === "\n" || character === "\f" || character === "\r" || character === " ";
+}
+
+function isHtmlTagNameBoundary(character: string | undefined): boolean {
+  return isHtmlAsciiWhitespace(character) || character === "/" || character === ">";
+}
+
+function isHtmlAttributeNameBoundary(character: string | undefined): boolean {
+  return isHtmlTagNameBoundary(character) || character === "=";
 }
 
 function findHtmlTextElementName(tag: string): string | undefined {
@@ -652,40 +705,40 @@ function findHtmlTagEnd(html: string, tagStart: number): number {
 function isHtmlTagNamed(tag: string, name: string): boolean {
   return (
     tag.slice(1, name.length + 1).toLowerCase() === name &&
-    /[\s/>]/.test(tag[name.length + 1] ?? "")
+    isHtmlTagNameBoundary(tag[name.length + 1])
   );
 }
 
 function isClosingHtmlTagNamed(tag: string, name: string): boolean {
   return (
     tag.slice(2, name.length + 2).toLowerCase() === name &&
-    /[\s/>]/.test(tag[name.length + 2] ?? "")
+    isHtmlTagNameBoundary(tag[name.length + 2])
   );
 }
 
 function getHtmlAttribute(tag: string, attributeName: string): string | undefined {
   let index = 1;
-  while (!/[\s/>]/.test(tag[index] ?? "")) index++;
+  while (!isHtmlTagNameBoundary(tag[index])) index++;
 
   while (index < tag.length) {
-    while (/\s/.test(tag[index] ?? "")) index++;
+    while (isHtmlAsciiWhitespace(tag[index])) index++;
     if (tag[index] === ">" || tag[index] === "/" || index >= tag.length) return undefined;
 
     const nameStart = index;
-    while (!/[\s=/>]/.test(tag[index] ?? "")) index++;
+    while (!isHtmlAttributeNameBoundary(tag[index])) index++;
     const name = tag.slice(nameStart, index);
 
-    while (/\s/.test(tag[index] ?? "")) index++;
+    while (isHtmlAsciiWhitespace(tag[index])) index++;
     if (tag[index] !== "=") continue;
     index++;
 
-    while (/\s/.test(tag[index] ?? "")) index++;
+    while (isHtmlAsciiWhitespace(tag[index])) index++;
     const quote = tag[index];
     const valueStart = quote === '"' || quote === "'" ? ++index : index;
     if (quote === '"' || quote === "'") {
       while (tag[index] !== quote && index < tag.length) index++;
     } else {
-      while (!/[\s>]/.test(tag[index] ?? "")) index++;
+      while (!isHtmlAsciiWhitespace(tag[index]) && tag[index] !== ">") index++;
     }
     const value = tag.slice(valueStart, index);
     if (quote === '"' || quote === "'") index++;

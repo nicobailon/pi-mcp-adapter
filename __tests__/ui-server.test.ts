@@ -309,6 +309,23 @@ describe("UiServer", () => {
       expect(res.body).toBe(appHtml);
     });
 
+    it("emits trusted default CSP headers for an empty normalized CSP", async () => {
+      const appHtml = "<h1>Original App</h1>";
+      handle = await startUiServer(createServerOptions({
+        resource: createMockResource({
+          html: appHtml,
+          meta: { permissions: [], csp: {} },
+        }),
+      }));
+
+      const res = await request(`http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-security-policy"]).toContain("default-src 'none'");
+      expect(res.headers["content-security-policy"]).toContain("script-src 'self' 'unsafe-inline'");
+      expect(res.body).toBe(appHtml);
+    });
+
     it("omits the CSP response header when metadata is undefined", async () => {
       handle = await startUiServer(createServerOptions());
       const url = `http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`;

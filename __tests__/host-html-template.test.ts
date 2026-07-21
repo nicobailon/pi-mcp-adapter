@@ -396,6 +396,65 @@ describe("buildHostHtmlTemplate", () => {
       );
     });
 
+    it("applyCspMeta preserves a CSP meta after escaped script text returns to data", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head><script><!-- --> <script></script><meta http-equiv=Content-Security-Policy></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(resourceHtml);
+    });
+
+    it.each([
+      ["NBSP", "\u00a0"],
+      ["vertical tab", "\v"],
+    ])("applyCspMeta injects when %s makes a pseudo-meta tag", async (_description, whitespace) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head><meta${whitespace}http-equiv=Content-Security-Policy></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `<html><head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"><meta${whitespace}http-equiv=Content-Security-Policy></head></html>`,
+      );
+    });
+
+    it.each([
+      ["NBSP", "\u00a0"],
+      ["vertical tab", "\v"],
+    ])("applyCspMeta ignores a %s pseudo-head tag", async (_description, whitespace) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head${whitespace} data-decoy></head${whitespace}><head data-real></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `<html><head${whitespace} data-decoy></head${whitespace}><head data-real>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"></head></html>`,
+      );
+    });
+
+    it("applyCspMeta preserves a real CSP meta after stray less-than text", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head>1 < 2 <meta http-equiv=Content-Security-Policy></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(resourceHtml);
+    });
+
+    it("applyCspMeta finds a real head after stray less-than text", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html>1 < 2 <head data-real></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `<html>1 < 2 <head data-real>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"></head></html>`,
+      );
+    });
+
+    it.each([
+      ["bogus markup declaration", `<!bogus <meta http-equiv=Content-Security-Policy>`],
+      ["bogus processing instruction", `<?bogus <meta http-equiv=Content-Security-Policy>`],
+    ])("applyCspMeta ignores CSP-meta text in a %s", async (_description, bogusComment) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head>${bogusComment}</head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `<html><head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'">${bogusComment}</head></html>`,
+      );
+    });
+
     it.each([
       ["style raw-text content", `<style>/* <meta http-equiv=Content-Security-Policy> */</style>`],
       ["title RCDATA content", `<title><meta http-equiv=Content-Security-Policy></title>`],

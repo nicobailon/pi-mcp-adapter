@@ -127,8 +127,12 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
 
   const ui = isRecord(meta.ui) ? meta.ui : undefined;
   const out: UiResourceMeta = {};
-  const openAiCsp = normalizeOpenAiWidgetCsp(meta["openai/widgetCSP"]);
-  const standardCsp = ui ? normalizeUiResourceCsp(ui.csp) : undefined;
+  const openAiCsp = hasOwnProperty(meta, "openai/widgetCSP")
+    ? normalizeOpenAiWidgetCsp(meta["openai/widgetCSP"])
+    : undefined;
+  const standardCsp = ui && hasOwnProperty(ui, "csp")
+    ? normalizeUiResourceCsp(ui.csp)
+    : undefined;
 
   if (openAiCsp || standardCsp) {
     out.csp = { ...openAiCsp, ...standardCsp };
@@ -159,8 +163,8 @@ const UI_CSP_DOMAIN_FIELDS: readonly (keyof UiResourceCsp)[] = [
   "workerDomains",
 ];
 
-function normalizeUiResourceCsp(value: unknown): UiResourceCsp | undefined {
-  if (!isRecord(value)) return undefined;
+function normalizeUiResourceCsp(value: unknown): UiResourceCsp {
+  if (!isRecord(value)) return {};
 
   const csp: UiResourceCsp = {};
   for (const field of UI_CSP_DOMAIN_FIELDS) {
@@ -170,8 +174,8 @@ function normalizeUiResourceCsp(value: unknown): UiResourceCsp | undefined {
   return csp;
 }
 
-function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp | undefined {
-  if (!isRecord(value)) return undefined;
+function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp {
+  if (!isRecord(value)) return {};
 
   const csp: UiResourceCsp = {};
   for (const [sourceField, targetField] of [
@@ -189,6 +193,10 @@ function copyStringArray(value: unknown): string[] | undefined {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string")
     ? [...value]
     : undefined;
+}
+
+function hasOwnProperty(record: Record<string, unknown>, property: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, property);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -392,6 +392,59 @@ describe("UiResourceHandler", () => {
       expect(result.meta.csp?.connectDomains).not.toBe(openAiConnectDomains);
     });
 
+    it.each([
+      ["standard array", { ui: { csp: [] } }],
+      ["standard scalar", { ui: { csp: "invalid" } }],
+      ["standard null", { ui: { csp: null } }],
+      ["OpenAI array", { "openai/widgetCSP": [] }],
+      ["OpenAI scalar", { "openai/widgetCSP": "invalid" }],
+      ["OpenAI null", { "openai/widgetCSP": null }],
+    ])("normalizes a declared malformed %s CSP container to an empty policy", async (_description, meta) => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{
+            uri: "ui://test/widget",
+            mimeType: "text/html",
+            text: "<h1>Content</h1>",
+            _meta: meta,
+          }],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({});
+    });
+
+    it("prefers a declared malformed content CSP over resource-list CSP", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{
+            uri: "ui://test/widget",
+            mimeType: "text/html",
+            text: "<h1>Content</h1>",
+            _meta: { ui: { csp: null } },
+          }],
+        }),
+        getConnection: vi.fn().mockReturnValue({
+          resources: [{
+            uri: "ui://test/widget",
+            _meta: {
+              "openai/widgetCSP": {
+                resource_domains: ["https://list.example.com"],
+              },
+            },
+          }],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({});
+    });
+
     it("prefers conflicting content CSP over resource-list CSP", async () => {
       const manager = createMockManager({
         readResource: vi.fn().mockResolvedValue({
