@@ -413,13 +413,108 @@ function sanitizeCspDomains(domains: unknown): string[] {
 
 export function applyCspMeta(html: string, cspContent: string | undefined): string {
   if (!cspContent) return html;
-  if (/http-equiv=["']Content-Security-Policy["']/i.test(html)) return html;
+  if (hasCspMetaTag(html)) return html;
 
   const metaTag = `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(cspContent)}">`;
   if (/<head[^>]*>/i.test(html)) {
     return html.replace(/<head[^>]*>/i, (match) => `${match}\n${metaTag}`);
   }
   return `${metaTag}\n${html}`;
+}
+
+function hasCspMetaTag(html: string): boolean {
+  let index = 0;
+
+  while (index < html.length) {
+    const tagStart = html.indexOf("<", index);
+    if (tagStart === -1) return false;
+
+    if (html.startsWith("<!--", tagStart)) {
+      const commentEnd = html.indexOf("-->", tagStart + 4);
+      index = commentEnd === -1 ? html.length : commentEnd + 3;
+      continue;
+    }
+
+    const tagEnd = findHtmlTagEnd(html, tagStart);
+    if (tagEnd === -1) return false;
+
+    const tag = html.slice(tagStart, tagEnd + 1);
+    if (isHtmlTagNamed(tag, "script")) {
+      const closingScriptTag = /<\/\s*script\s*>/gi;
+      closingScriptTag.lastIndex = tagEnd + 1;
+      const match = closingScriptTag.exec(html);
+      index = match ? closingScriptTag.lastIndex : html.length;
+      continue;
+    }
+
+    if (
+      isHtmlTagNamed(tag, "meta") &&
+      getHtmlAttribute(tag, "http-equiv")?.toLowerCase() === "content-security-policy"
+    ) {
+      return true;
+    }
+
+    index = tagEnd + 1;
+  }
+
+  return false;
+}
+
+function findHtmlTagEnd(html: string, tagStart: number): number {
+  let quote: string | undefined;
+
+  for (let index = tagStart + 1; index < html.length; index++) {
+    const character = html[index];
+    if (quote) {
+      if (character === quote) quote = undefined;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function isHtmlTagNamed(tag: string, name: string): boolean {
+  return (
+    tag.slice(1, name.length + 1).toLowerCase() === name &&
+    /[\s/>]/.test(tag[name.length + 1] ?? "")
+  );
+}
+
+function getHtmlAttribute(tag: string, attributeName: string): string | undefined {
+  let index = 1;
+  while (!/[\s/>]/.test(tag[index] ?? "")) index++;
+
+  while (index < tag.length) {
+    while (/\s/.test(tag[index] ?? "")) index++;
+    if (tag[index] === ">" || tag[index] === "/" || index >= tag.length) return undefined;
+
+    const nameStart = index;
+    while (!/[\s=/>]/.test(tag[index] ?? "")) index++;
+    const name = tag.slice(nameStart, index);
+
+    while (/\s/.test(tag[index] ?? "")) index++;
+    if (tag[index] !== "=") continue;
+    index++;
+
+    while (/\s/.test(tag[index] ?? "")) index++;
+    const quote = tag[index];
+    const valueStart = quote === '"' || quote === "'" ? ++index : index;
+    if (quote === '"' || quote === "'") {
+      while (tag[index] !== quote && index < tag.length) index++;
+    } else {
+      while (!/[\s>]/.test(tag[index] ?? "")) index++;
+    }
+    const value = tag.slice(valueStart, index);
+    if (quote === '"' || quote === "'") index++;
+
+    if (name.toLowerCase() === attributeName) return value;
+  }
+
+  return undefined;
 }
 
 function safeInlineJSON(value: unknown): string {

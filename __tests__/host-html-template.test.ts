@@ -312,6 +312,28 @@ describe("buildHostHtmlTemplate", () => {
       expect(html.match(/Content-Security-Policy/g)).toHaveLength(1);
     });
 
+    it.each([
+      ["whitespace around equals", `<meta http-equiv = "Content-Security-Policy" content="img-src https://images.example.com">`],
+      ["an unquoted value", `<meta http-equiv = Content-Security-Policy content="img-src https://images.example.com">`],
+    ])("applyCspMeta preserves an existing CSP meta tag with %s", async (_description, cspMeta) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head>${cspMeta}</head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(resourceHtml);
+    });
+
+    it.each([
+      ["an HTML comment", `<!-- <meta http-equiv=Content-Security-Policy> -->`],
+      ["script content", `<script>const csp = "<meta http-equiv=Content-Security-Policy>";</script>`],
+    ])("applyCspMeta injects when matching text appears only in %s", async (_description, inertContent) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head>${inertContent}</head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toContain(
+        `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'">${inertContent}`,
+      );
+    });
+
     it("applyCspMeta leaves HTML unchanged when metadata is absent", async () => {
       const { applyCspMeta } = await import("../host-html-template.ts");
       const resourceHtml = "<main>Content</main>";
