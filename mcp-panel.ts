@@ -1,4 +1,5 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { copyToClipboard } from "@earendil-works/pi-coding-agent";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import { isToolExcluded } from "./types.ts";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance } from "./types.ts";
@@ -163,7 +164,7 @@ class McpPanel {
   private confirmingDiscard = false;
   private discardSelected = 1;
   private importNotice: string | null = null;
-  private authNotice: string | null = null;
+  private statusNotice: string | null = null;
   private authInFlight: string | null = null;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private visibleItems: VisibleItem[] = [];
@@ -344,7 +345,7 @@ class McpPanel {
   handleInput(data: string): void {
     this.resetInactivityTimeout();
     this.importNotice = null;
-    if (!this.authInFlight) this.authNotice = null;
+    if (!this.authInFlight) this.statusNotice = null;
 
     if (this.confirmingDiscard) {
       this.handleDiscardInput(data);
@@ -475,9 +476,28 @@ class McpPanel {
         const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
         server.failureMessage = message;
         const serverName = sanitizeDisplayText(server.name);
-        this.authNotice = `Reconnect failed for ${serverName}: ${message}`;
+        this.statusNotice = `Reconnect failed for ${serverName}: ${message}`;
         this.tui.requestRender();
       });
+      return;
+    }
+
+    if (matchesKey(data, "ctrl+y")) {
+      const item = this.visibleItems[this.cursorIndex];
+      if (!item) return;
+      const server = this.servers[item.serverIndex];
+      if (server.connectionStatus !== "failed" || !server.failureMessage) return;
+      const serverName = sanitizeDisplayText(server.name);
+      copyToClipboard(server.failureMessage)
+        .then(() => {
+          this.statusNotice = `Copied error for ${serverName} to clipboard`;
+          this.tui.requestRender();
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.statusNotice = `Failed to copy error for ${serverName}: ${message}`;
+          this.tui.requestRender();
+        });
       return;
     }
 
@@ -509,6 +529,13 @@ class McpPanel {
     }
   }
 
+  private selectedServerHasFailureMessage(): boolean {
+    const item = this.visibleItems[this.cursorIndex];
+    if (!item) return false;
+    const server = this.servers[item.serverIndex];
+    return server.connectionStatus === "failed" && !!server.failureMessage;
+  }
+
   private authenticateSelectedServer(item: VisibleItem): void {
     this.authenticateServer(this.servers[item.serverIndex]);
   }
@@ -517,18 +544,18 @@ class McpPanel {
     if (this.authInFlight) return;
     const serverName = sanitizeDisplayText(server.name);
     if (!this.callbacks.canAuthenticate(server.name)) {
-      this.authNotice = `${serverName} does not use OAuth authentication.`;
+      this.statusNotice = `${serverName} does not use OAuth authentication.`;
       return;
     }
 
     this.authInFlight = server.name;
-    this.authNotice = `Authenticating ${serverName}...`;
+    this.statusNotice = `Authenticating ${serverName}...`;
     this.tui.requestRender();
 
     this.callbacks.authenticate(server.name).then((result) => {
       server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
       const message = sanitizeDisplayText(result.message);
-      this.authNotice = result.ok
+      this.statusNotice = result.ok
         ? `OAuth finished for ${serverName}. Run reconnect if it is still idle.`
         : `OAuth failed for ${serverName}${message ? `: ${message}` : ". Check the notification for details."}`;
       this.authInFlight = null;
@@ -536,7 +563,7 @@ class McpPanel {
     }).catch((error) => {
       const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
       server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
-      this.authNotice = `OAuth failed for ${serverName}: ${message}`;
+      this.statusNotice = `OAuth failed for ${serverName}: ${message}`;
       this.authInFlight = null;
       this.tui.requestRender();
     });
@@ -722,8 +749,8 @@ class McpPanel {
         lines.push(row(fg(t.needsAuth, italic(sanitizeDisplayText(this.importNotice)))));
         lines.push(emptyRow());
       }
-      if (this.authNotice) {
-        lines.push(row(fg(t.needsAuth, italic(sanitizeDisplayText(this.authNotice)))));
+      if (this.statusNotice) {
+        lines.push(row(fg(t.needsAuth, italic(sanitizeDisplayText(this.statusNotice)))));
         lines.push(emptyRow());
       }
     }
@@ -769,6 +796,7 @@ class McpPanel {
           italic("⏎") + " expand/auth",
           italic("ctrl+a") + " auth",
           italic("ctrl+r") + " reconnect",
+          ...(this.selectedServerHasFailureMessage() ? [italic("ctrl+y") + " copy error"] : []),
           italic("?") + " desc search",
           italic("ctrl+s") + " save",
           italic("esc") + " clear/close",
