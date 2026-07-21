@@ -255,6 +255,98 @@ describe("UiResourceHandler", () => {
       });
     });
 
+    it("normalizes OpenAI widget CSP metadata from resource content", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{
+            uri: "ui://test/widget",
+            mimeType: "text/html",
+            text: "<h1>Content</h1>",
+            _meta: {
+              "openai/widgetCSP": {
+                resource_domains: ["https://cdn.example.com"],
+                connect_domains: ["https://api.example.com"],
+                frame_domains: ["https://frames.example.com"],
+              },
+            },
+          }],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({
+        resourceDomains: ["https://cdn.example.com"],
+        connectDomains: ["https://api.example.com"],
+        frameDomains: ["https://frames.example.com"],
+      });
+    });
+
+    it("normalizes OpenAI widget CSP metadata from resources/list", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{
+            uri: "ui://test/widget",
+            mimeType: "text/html",
+            text: "<h1>Content</h1>",
+          }],
+        }),
+        getConnection: vi.fn().mockReturnValue({
+          resources: [{
+            uri: "ui://test/widget",
+            _meta: {
+              "openai/widgetCSP": {
+                resource_domains: ["https://cdn.example.com"],
+                connect_domains: ["https://api.example.com"],
+              },
+            },
+          }],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({
+        resourceDomains: ["https://cdn.example.com"],
+        connectDomains: ["https://api.example.com"],
+      });
+    });
+
+    it("lets standard CSP fields override equivalent OpenAI compatibility fields", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{
+            uri: "ui://test/widget",
+            mimeType: "text/html",
+            text: "<h1>Content</h1>",
+            _meta: {
+              ui: {
+                csp: {
+                  resourceDomains: ["https://standard.example.com"],
+                  scriptDomains: ["https://scripts.example.com"],
+                },
+              },
+              "openai/widgetCSP": {
+                resource_domains: ["https://openai.example.com"],
+                connect_domains: ["https://api.example.com"],
+              },
+            },
+          }],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({
+        resourceDomains: ["https://standard.example.com"],
+        connectDomains: ["https://api.example.com"],
+        scriptDomains: ["https://scripts.example.com"],
+      });
+    });
+
     it("extracts permissions meta", async () => {
       const manager = createMockManager({
         readResource: vi.fn().mockResolvedValue({

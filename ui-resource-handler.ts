@@ -3,7 +3,7 @@ import { UrlElicitationRequiredError, type ReadResourceResult } from "@modelcont
 import { ResourceFetchError, ResourceParseError } from "./errors.ts";
 import { logger } from "./logger.ts";
 import type { McpServerManager } from "./server-manager.ts";
-import type { UiResourceContent, UiResourceMeta } from "./types.ts";
+import type { UiResourceContent, UiResourceCsp, UiResourceMeta } from "./types.ts";
 
 interface ResourceContentRecord {
   uri?: string;
@@ -124,23 +124,46 @@ function toHtml(content: ResourceContentRecord): string {
 
 function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMeta {
   if (!meta || typeof meta !== "object") return {};
-  const ui = meta.ui as Record<string, unknown> | undefined;
-  if (!ui || typeof ui !== "object") return {};
 
+  const ui = isRecord(meta.ui) ? meta.ui : undefined;
   const out: UiResourceMeta = {};
+  const openAiCsp = normalizeOpenAiWidgetCsp(meta["openai/widgetCSP"]);
+  const standardCsp = ui && isRecord(ui.csp)
+    ? ui.csp as UiResourceCsp
+    : undefined;
 
-  if (ui.csp && typeof ui.csp === "object") {
-    out.csp = ui.csp as UiResourceMeta["csp"];
+  if (openAiCsp || standardCsp) {
+    out.csp = { ...openAiCsp, ...standardCsp };
   }
-  if (ui.permissions && typeof ui.permissions === "object") {
+  if (ui && isRecord(ui.permissions)) {
     out.permissions = ui.permissions as UiResourceMeta["permissions"];
   }
-  if (typeof ui.domain === "string") {
+  if (ui && typeof ui.domain === "string") {
     out.domain = ui.domain;
   }
-  if (typeof ui.prefersBorder === "boolean") {
+  if (ui && typeof ui.prefersBorder === "boolean") {
     out.prefersBorder = ui.prefersBorder;
   }
 
   return out;
+}
+
+function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const csp: UiResourceCsp = {};
+  if (value.resource_domains !== undefined) {
+    csp.resourceDomains = value.resource_domains as string[];
+  }
+  if (value.connect_domains !== undefined) {
+    csp.connectDomains = value.connect_domains as string[];
+  }
+  if (value.frame_domains !== undefined) {
+    csp.frameDomains = value.frame_domains as string[];
+  }
+  return csp;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
