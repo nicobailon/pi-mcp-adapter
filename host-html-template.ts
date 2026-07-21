@@ -407,7 +407,10 @@ function sanitizeCspDomains(domains: unknown): string[] {
     (domain): domain is string =>
       typeof domain === "string" &&
       domain.length > 0 &&
-      !/[\x00-\x1F\x7F\p{White_Space};'"]/u.test(domain),
+      // HTTP headers must be printable ASCII; rejecting all other code points also
+      // excludes every C0/C1 control character before Node serializes the policy.
+      /^[\x21-\x7E]+$/.test(domain) &&
+      !/[;'"]/.test(domain),
   ))];
 }
 
@@ -416,18 +419,31 @@ export function applyCspMeta(html: string, cspContent: string | undefined): stri
   if (hasCspMetaTag(html)) return html;
 
   const metaTag = `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(cspContent)}">`;
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, (match) => `${match}\n${metaTag}`);
+  const headTag = findHtmlTag(html, (tag) => isHtmlTagNamed(tag, "head"));
+  if (headTag) {
+    return `${html.slice(0, headTag.end + 1)}\n${metaTag}${html.slice(headTag.end + 1)}`;
   }
   return `${metaTag}\n${html}`;
 }
 
 function hasCspMetaTag(html: string): boolean {
+  return !!findHtmlTag(
+    html,
+    (tag) =>
+      isHtmlTagNamed(tag, "meta") &&
+      getHtmlAttribute(tag, "http-equiv")?.toLowerCase() === "content-security-policy",
+  );
+}
+
+function findHtmlTag(
+  html: string,
+  predicate: (tag: string) => boolean,
+): { end: number } | undefined {
   let index = 0;
 
   while (index < html.length) {
     const tagStart = html.indexOf("<", index);
-    if (tagStart === -1) return false;
+    if (tagStart === -1) return undefined;
 
     if (html.startsWith("<!--", tagStart)) {
       const commentEnd = html.indexOf("-->", tagStart + 4);
@@ -436,9 +452,11 @@ function hasCspMetaTag(html: string): boolean {
     }
 
     const tagEnd = findHtmlTagEnd(html, tagStart);
-    if (tagEnd === -1) return false;
+    if (tagEnd === -1) return undefined;
 
     const tag = html.slice(tagStart, tagEnd + 1);
+    if (predicate(tag)) return { end: tagEnd };
+
     if (isHtmlTagNamed(tag, "script")) {
       const closingScriptTag = /<\/\s*script\s*>/gi;
       closingScriptTag.lastIndex = tagEnd + 1;
@@ -447,17 +465,10 @@ function hasCspMetaTag(html: string): boolean {
       continue;
     }
 
-    if (
-      isHtmlTagNamed(tag, "meta") &&
-      getHtmlAttribute(tag, "http-equiv")?.toLowerCase() === "content-security-policy"
-    ) {
-      return true;
-    }
-
     index = tagEnd + 1;
   }
 
-  return false;
+  return undefined;
 }
 
 function findHtmlTagEnd(html: string, tagStart: number): number {

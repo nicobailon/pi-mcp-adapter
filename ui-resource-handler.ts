@@ -128,9 +128,7 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
   const ui = isRecord(meta.ui) ? meta.ui : undefined;
   const out: UiResourceMeta = {};
   const openAiCsp = normalizeOpenAiWidgetCsp(meta["openai/widgetCSP"]);
-  const standardCsp = ui && isRecord(ui.csp)
-    ? ui.csp as UiResourceCsp
-    : undefined;
+  const standardCsp = ui ? normalizeUiResourceCsp(ui.csp) : undefined;
 
   if (openAiCsp || standardCsp) {
     out.csp = { ...openAiCsp, ...standardCsp };
@@ -148,20 +146,49 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
   return out;
 }
 
+const UI_CSP_DOMAIN_FIELDS: readonly (keyof UiResourceCsp)[] = [
+  "resourceDomains",
+  "connectDomains",
+  "frameDomains",
+  "baseUriDomains",
+  "scriptDomains",
+  "styleDomains",
+  "fontDomains",
+  "imgDomains",
+  "mediaDomains",
+  "workerDomains",
+];
+
+function normalizeUiResourceCsp(value: unknown): UiResourceCsp | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const csp: UiResourceCsp = {};
+  for (const field of UI_CSP_DOMAIN_FIELDS) {
+    const domains = copyStringArray(value[field]);
+    if (domains) csp[field] = domains;
+  }
+  return csp;
+}
+
 function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp | undefined {
   if (!isRecord(value)) return undefined;
 
   const csp: UiResourceCsp = {};
-  if (value.resource_domains !== undefined) {
-    csp.resourceDomains = value.resource_domains as string[];
-  }
-  if (value.connect_domains !== undefined) {
-    csp.connectDomains = value.connect_domains as string[];
-  }
-  if (value.frame_domains !== undefined) {
-    csp.frameDomains = value.frame_domains as string[];
+  for (const [sourceField, targetField] of [
+    ["resource_domains", "resourceDomains"],
+    ["connect_domains", "connectDomains"],
+    ["frame_domains", "frameDomains"],
+  ] as const) {
+    const domains = copyStringArray(value[sourceField]);
+    if (domains) csp[targetField] = domains;
   }
   return csp;
+}
+
+function copyStringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
+    ? [...value]
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

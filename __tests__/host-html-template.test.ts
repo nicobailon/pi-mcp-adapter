@@ -245,6 +245,27 @@ describe("buildHostHtmlTemplate", () => {
       expect(csp).not.toContain("'unsafe-eval'");
     });
 
+    it("rejects all control characters and non-ASCII CSP sources before serialization", async () => {
+      const { buildCspMetaContent } = await import("../host-html-template.ts");
+      const rejectedSources = [
+        "https://vertical-tab.example.com\vimg-src",
+        "https://unit-separator.example.com\x1Fimg-src",
+        "https://c1-low.example.com\x80img-src",
+        "https://c1-high.example.com\x9Fimg-src",
+        "https://emoji.example.com/😀",
+        "https://accent.example.com/café",
+      ];
+
+      const csp = buildCspMetaContent({
+        resourceDomains: ["https://safe.example.com", ...rejectedSources],
+      });
+
+      expect(csp?.match(/https:\/\/safe\.example\.com/g)).toHaveLength(6);
+      for (const source of rejectedSources) {
+        expect(csp).not.toContain(source);
+      }
+    });
+
     it("fails closed for malformed CSP domain containers", async () => {
       const { buildCspMetaContent } = await import("../host-html-template.ts");
 
@@ -331,6 +352,18 @@ describe("buildHostHtmlTemplate", () => {
 
       expect(applyCspMeta(resourceHtml, "default-src 'none'")).toContain(
         `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'">${inertContent}`,
+      );
+    });
+
+    it.each([
+      ["an HTML comment", "<!-- <head data-decoy> -->"],
+      ["script content", `<script>const head = "<head data-decoy>";</script>`],
+    ])("applyCspMeta inserts into the real head after a %s decoy", async (_description, inertContent) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `${inertContent}<html><head data-real="true"></head><body>Content</body></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `${inertContent}<html><head data-real="true">\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"></head><body>Content</body></html>`,
       );
     });
 

@@ -347,6 +347,87 @@ describe("UiResourceHandler", () => {
       });
     });
 
+    it("copies only string arrays from standard and OpenAI CSP metadata", async () => {
+      const standardResourceDomains = ["https://standard.example.com"];
+      const standardBaseUriDomains = ["https://base.example.com"];
+      const standardScriptDomains = ["https://scripts.example.com"];
+      const openAiConnectDomains = ["https://api.example.com"];
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{
+            uri: "ui://test/widget",
+            mimeType: "text/html",
+            text: "<h1>Content</h1>",
+            _meta: {
+              ui: {
+                csp: {
+                  resourceDomains: standardResourceDomains,
+                  connectDomains: ["https://mixed.example.com", 42],
+                  frameDomains: "https://scalar.example.com",
+                  baseUriDomains: standardBaseUriDomains,
+                  scriptDomains: standardScriptDomains,
+                  styleDomains: ["https://mixed-style.example.com", false],
+                },
+              },
+              "openai/widgetCSP": {
+                resource_domains: ["https://mixed-openai.example.com", null],
+                connect_domains: openAiConnectDomains,
+                frame_domains: null,
+              },
+            },
+          }],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({
+        resourceDomains: standardResourceDomains,
+        connectDomains: openAiConnectDomains,
+        baseUriDomains: standardBaseUriDomains,
+        scriptDomains: standardScriptDomains,
+      });
+      expect(result.meta.csp?.resourceDomains).not.toBe(standardResourceDomains);
+      expect(result.meta.csp?.connectDomains).not.toBe(openAiConnectDomains);
+    });
+
+    it("prefers conflicting content CSP over resource-list CSP", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{
+            uri: "ui://test/widget",
+            mimeType: "text/html",
+            text: "<h1>Content</h1>",
+            _meta: {
+              ui: {
+                csp: {
+                  resourceDomains: ["https://content.example.com"],
+                },
+              },
+            },
+          }],
+        }),
+        getConnection: vi.fn().mockReturnValue({
+          resources: [{
+            uri: "ui://test/widget",
+            _meta: {
+              "openai/widgetCSP": {
+                resource_domains: ["https://list.example.com"],
+              },
+            },
+          }],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({
+        resourceDomains: ["https://content.example.com"],
+      });
+    });
+
     it("extracts permissions meta", async () => {
       const manager = createMockManager({
         readResource: vi.fn().mockResolvedValue({

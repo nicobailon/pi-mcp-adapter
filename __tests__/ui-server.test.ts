@@ -282,6 +282,33 @@ describe("UiServer", () => {
       expect(res.body).toBe(appHtml);
     });
 
+    it("rejects malformed CSP metadata before writing the response header", async () => {
+      const appHtml = "<h1>Original App</h1>";
+      handle = await startUiServer(createServerOptions({
+        resource: createMockResource({
+          html: appHtml,
+          meta: {
+            permissions: [],
+            csp: {
+              resourceDomains: [
+                "https://safe.example.com",
+                "https://c1.example.com\x80img-src",
+                "https://emoji.example.com/😀",
+              ],
+            },
+          },
+        }),
+      }));
+
+      const res = await request(`http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-security-policy"]).toContain("https://safe.example.com");
+      expect(res.headers["content-security-policy"]).not.toContain("https://c1.example.com\x80img-src");
+      expect(res.headers["content-security-policy"]).not.toContain("https://emoji.example.com/😀");
+      expect(res.body).toBe(appHtml);
+    });
+
     it("omits the CSP response header when metadata is undefined", async () => {
       handle = await startUiServer(createServerOptions());
       const url = `http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`;
