@@ -411,6 +411,17 @@ function sanitizeCspDomains(domains: unknown): string[] {
   ))];
 }
 
+export function applyCspMeta(html: string, cspContent: string | undefined): string {
+  if (!cspContent) return html;
+  if (/http-equiv=["']Content-Security-Policy["']/i.test(html)) return html;
+
+  const metaTag = `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(cspContent)}">`;
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, (match) => `${match}\n${metaTag}`);
+  }
+  return `${metaTag}\n${html}`;
+}
+
 function safeInlineJSON(value: unknown): string {
   return JSON.stringify(value)
     .replace(/</g, "\\u003c")
@@ -427,4 +438,12 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }

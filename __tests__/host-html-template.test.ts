@@ -288,6 +288,37 @@ describe("buildHostHtmlTemplate", () => {
       expect(buildCspMetaContent(undefined)).toBeUndefined();
     });
 
+    it("applyCspMeta injects an escaped CSP meta tag into the HTML head", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+
+      const html = applyCspMeta(
+        "<html><head></head><body>Content</body></html>",
+        `default-src 'none'; script-src https://cdn.example.com?a=1&b=2`,
+      );
+
+      expect(html).toContain(
+        `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src https://cdn.example.com?a=1&amp;b=2">`,
+      );
+      expect(html).toContain("<body>Content</body>");
+    });
+
+    it("applyCspMeta preserves an existing app-authored CSP", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head><meta http-equiv="Content-Security-Policy" content="img-src https://images.example.com"></head></html>`;
+
+      const html = applyCspMeta(resourceHtml, "default-src 'none'");
+
+      expect(html).toBe(resourceHtml);
+      expect(html.match(/Content-Security-Policy/g)).toHaveLength(1);
+    });
+
+    it("applyCspMeta leaves HTML unchanged when metadata is absent", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = "<main>Content</main>";
+
+      expect(applyCspMeta(resourceHtml, undefined)).toBe(resourceHtml);
+    });
+
   });
 
   describe("module loading", () => {
