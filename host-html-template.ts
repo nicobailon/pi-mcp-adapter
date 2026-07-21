@@ -462,8 +462,7 @@ function findHtmlTag(
     if (tagStart === -1) return undefined;
 
     if (html.startsWith("<!--", tagStart)) {
-      const commentEnd = html.indexOf("-->", tagStart + 4);
-      index = commentEnd === -1 ? html.length : commentEnd + 3;
+      index = skipHtmlComment(html, tagStart);
       continue;
     }
 
@@ -499,8 +498,7 @@ function skipHtmlTemplateContent(html: string, index: number): number {
     if (tagStart === -1) return html.length;
 
     if (html.startsWith("<!--", tagStart)) {
-      const commentEnd = html.indexOf("-->", tagStart + 4);
-      index = commentEnd === -1 ? html.length : commentEnd + 3;
+      index = skipHtmlComment(html, tagStart);
       continue;
     }
 
@@ -529,7 +527,24 @@ function skipHtmlTemplateContent(html: string, index: number): number {
   return html.length;
 }
 
+function skipHtmlComment(html: string, index: number): number {
+  // The tokenizer abruptly closes empty comments for both <!--> and <!--->.
+  if (html[index + 4] === ">") return index + 5;
+  if (html[index + 4] === "-" && html[index + 5] === ">") return index + 6;
+
+  for (let cursor = index + 4; cursor < html.length; cursor++) {
+    if (html[cursor] !== "-" || html[cursor + 1] !== "-") continue;
+    if (html[cursor + 2] === ">") return cursor + 3;
+    // The comment-end-bang state also closes on >.
+    if (html[cursor + 2] === "!" && html[cursor + 3] === ">") return cursor + 4;
+  }
+
+  return html.length;
+}
+
 function skipHtmlTextElement(html: string, index: number, name: string): number {
+  if (name === "script") return skipHtmlScriptContent(html, index);
+
   const closingTag = new RegExp(`</${name}(?=[\\t\\n\\f\\r />])`, "gi");
   closingTag.lastIndex = index;
   const match = closingTag.exec(html);
@@ -537,6 +552,58 @@ function skipHtmlTextElement(html: string, index: number, name: string): number 
 
   const closingTagEnd = findHtmlTagEnd(html, match.index);
   return closingTagEnd === -1 ? html.length : closingTagEnd + 1;
+}
+
+function skipHtmlScriptContent(html: string, index: number): number {
+  let state: "data" | "escaped" | "double-escaped" = "data";
+
+  for (let cursor = index; cursor < html.length; cursor++) {
+    if (state === "data") {
+      if (html.startsWith("<!--", cursor)) {
+        state = "escaped";
+        cursor += 3;
+      } else if (isHtmlScriptEndTagAt(html, cursor)) {
+        const closingTagEnd = findHtmlTagEnd(html, cursor);
+        return closingTagEnd === -1 ? html.length : closingTagEnd + 1;
+      }
+      continue;
+    }
+
+    if (state === "escaped") {
+      if (isHtmlScriptEndTagAt(html, cursor)) {
+        const closingTagEnd = findHtmlTagEnd(html, cursor);
+        return closingTagEnd === -1 ? html.length : closingTagEnd + 1;
+      }
+      if (isHtmlScriptStartTagAt(html, cursor)) {
+        state = "double-escaped";
+        cursor += "<script".length - 1;
+      }
+      continue;
+    }
+
+    if (isHtmlScriptEndTagAt(html, cursor)) {
+      // In double-escaped state, </script> only returns to escaped state.
+      state = "escaped";
+      cursor += "</script".length - 1;
+    }
+  }
+
+  return html.length;
+}
+
+function isHtmlScriptStartTagAt(html: string, index: number): boolean {
+  return isHtmlTagNameAt(html, index, "<script");
+}
+
+function isHtmlScriptEndTagAt(html: string, index: number): boolean {
+  return isHtmlTagNameAt(html, index, "</script");
+}
+
+function isHtmlTagNameAt(html: string, index: number, name: string): boolean {
+  return (
+    html.slice(index, index + name.length).toLowerCase() === name &&
+    /[\t\n\f\r />]/.test(html[index + name.length] ?? "")
+  );
 }
 
 function findHtmlTextElementName(tag: string): string | undefined {

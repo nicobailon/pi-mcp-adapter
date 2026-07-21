@@ -368,6 +368,35 @@ describe("buildHostHtmlTemplate", () => {
     });
 
     it.each([
+      ["an abrupt empty comment", "<!-->"],
+      ["an abrupt empty comment after a hyphen", "<!--->"],
+      ["a comment-end-bang terminator", "<!-- --!>"],
+    ])("applyCspMeta preserves an app-authored CSP after %s", async (_description, comment) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `${comment}<html><head><meta http-equiv=Content-Security-Policy></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(resourceHtml);
+    });
+
+    it("applyCspMeta finds the actual head after an abrupt empty comment in a template", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<template><!--><head data-decoy></head></template><html><head data-real="true"></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `<template><!--><head data-decoy></head></template><html><head data-real="true">\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"></head></html>`,
+      );
+    });
+
+    it("applyCspMeta ignores a CSP meta in a double-escaped script", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head><script><!--<script></script><meta http-equiv=Content-Security-Policy></script></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `<html><head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"><script><!--<script></script><meta http-equiv=Content-Security-Policy></script></head></html>`,
+      );
+    });
+
+    it.each([
       ["style raw-text content", `<style>/* <meta http-equiv=Content-Security-Policy> */</style>`],
       ["title RCDATA content", `<title><meta http-equiv=Content-Security-Policy></title>`],
       ["textarea RCDATA content", `<textarea><meta http-equiv=Content-Security-Policy></textarea>`],
