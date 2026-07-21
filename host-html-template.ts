@@ -426,12 +426,28 @@ export function applyCspMeta(html: string, cspContent: string | undefined): stri
   return `${metaTag}\n${html}`;
 }
 
+const HTML_TEXT_ELEMENT_NAMES = [
+  // Raw-text elements.
+  "script",
+  "style",
+  "xmp",
+  "iframe",
+  "noembed",
+  "noframes",
+  // RCDATA elements.
+  "title",
+  "textarea",
+  // Browsers parse noscript as raw text when scripting is enabled.
+  "noscript",
+] as const;
+
 function hasCspMetaTag(html: string): boolean {
   return !!findHtmlTag(
     html,
     (tag) =>
       isHtmlTagNamed(tag, "meta") &&
-      getHtmlAttribute(tag, "http-equiv")?.toLowerCase() === "content-security-policy",
+      decodeCspHttpEquivCharacterReferences(getHtmlAttribute(tag, "http-equiv") ?? "").toLowerCase() ===
+        "content-security-policy",
   );
 }
 
@@ -457,11 +473,15 @@ function findHtmlTag(
     const tag = html.slice(tagStart, tagEnd + 1);
     if (predicate(tag)) return { end: tagEnd };
 
-    if (isHtmlTagNamed(tag, "script")) {
-      const closingScriptTag = /<\/\s*script\s*>/gi;
-      closingScriptTag.lastIndex = tagEnd + 1;
-      const match = closingScriptTag.exec(html);
-      index = match ? closingScriptTag.lastIndex : html.length;
+    if (isHtmlTagNamed(tag, "template")) {
+      index = skipHtmlTemplateContent(html, tagEnd + 1);
+      continue;
+    }
+    if (isHtmlTagNamed(tag, "plaintext")) return undefined;
+
+    const textElementName = findHtmlTextElementName(tag);
+    if (textElementName) {
+      index = skipHtmlTextElement(html, tagEnd + 1, textElementName);
       continue;
     }
 
@@ -469,6 +489,80 @@ function findHtmlTag(
   }
 
   return undefined;
+}
+
+function skipHtmlTemplateContent(html: string, index: number): number {
+  let templateDepth = 1;
+
+  while (index < html.length) {
+    const tagStart = html.indexOf("<", index);
+    if (tagStart === -1) return html.length;
+
+    if (html.startsWith("<!--", tagStart)) {
+      const commentEnd = html.indexOf("-->", tagStart + 4);
+      index = commentEnd === -1 ? html.length : commentEnd + 3;
+      continue;
+    }
+
+    const tagEnd = findHtmlTagEnd(html, tagStart);
+    if (tagEnd === -1) return html.length;
+
+    const tag = html.slice(tagStart, tagEnd + 1);
+    if (isHtmlTagNamed(tag, "plaintext")) return html.length;
+
+    const textElementName = findHtmlTextElementName(tag);
+    if (textElementName) {
+      index = skipHtmlTextElement(html, tagEnd + 1, textElementName);
+      continue;
+    }
+
+    if (isHtmlTagNamed(tag, "template")) {
+      templateDepth++;
+    } else if (isClosingHtmlTagNamed(tag, "template")) {
+      templateDepth--;
+      if (templateDepth === 0) return tagEnd + 1;
+    }
+
+    index = tagEnd + 1;
+  }
+
+  return html.length;
+}
+
+function skipHtmlTextElement(html: string, index: number, name: string): number {
+  const closingTag = new RegExp(`</${name}(?=[\\t\\n\\f\\r />])`, "gi");
+  closingTag.lastIndex = index;
+  const match = closingTag.exec(html);
+  if (!match) return html.length;
+
+  const closingTagEnd = findHtmlTagEnd(html, match.index);
+  return closingTagEnd === -1 ? html.length : closingTagEnd + 1;
+}
+
+function findHtmlTextElementName(tag: string): string | undefined {
+  return HTML_TEXT_ELEMENT_NAMES.find((name) => isHtmlTagNamed(tag, name));
+}
+
+function decodeCspHttpEquivCharacterReferences(value: string): string {
+  return value.replace(
+    /&#(?:(?:x|X)([0-9a-fA-F]+)|([0-9]+));?/g,
+    (reference, hexadecimal: string | undefined, decimal: string | undefined) => {
+      const source = hexadecimal ?? decimal;
+      if (!source) return reference;
+
+      const codePoint = Number.parseInt(source, hexadecimal ? 16 : 10);
+      // Only ASCII letters and hyphens can make up this comparison target, so
+      // decoding other references cannot change whether it is a CSP meta tag.
+      if (
+        (codePoint >= 0x41 && codePoint <= 0x5A) ||
+        (codePoint >= 0x61 && codePoint <= 0x7A) ||
+        codePoint === 0x2D
+      ) {
+        return String.fromCharCode(codePoint);
+      }
+      return reference;
+    },
+  );
 }
 
 function findHtmlTagEnd(html: string, tagStart: number): number {
@@ -492,6 +586,13 @@ function isHtmlTagNamed(tag: string, name: string): boolean {
   return (
     tag.slice(1, name.length + 1).toLowerCase() === name &&
     /[\s/>]/.test(tag[name.length + 1] ?? "")
+  );
+}
+
+function isClosingHtmlTagNamed(tag: string, name: string): boolean {
+  return (
+    tag.slice(2, name.length + 2).toLowerCase() === name &&
+    /[\s/>]/.test(tag[name.length + 2] ?? "")
   );
 }
 

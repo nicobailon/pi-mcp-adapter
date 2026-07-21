@@ -367,6 +367,51 @@ describe("buildHostHtmlTemplate", () => {
       );
     });
 
+    it.each([
+      ["style raw-text content", `<style>/* <meta http-equiv=Content-Security-Policy> */</style>`],
+      ["title RCDATA content", `<title><meta http-equiv=Content-Security-Policy></title>`],
+      ["textarea RCDATA content", `<textarea><meta http-equiv=Content-Security-Policy></textarea>`],
+      ["template content", `<template><meta http-equiv=Content-Security-Policy></template>`],
+      ["nested template content", `<template><template></template><meta http-equiv=Content-Security-Policy></template>`],
+      ["xmp raw-text content", `<xmp><meta http-equiv=Content-Security-Policy></xmp>`],
+      ["iframe raw-text content", `<iframe><meta http-equiv=Content-Security-Policy></iframe>`],
+      ["noembed raw-text content", `<noembed><meta http-equiv=Content-Security-Policy></noembed>`],
+      ["noframes raw-text content", `<noframes><meta http-equiv=Content-Security-Policy></noframes>`],
+      ["noscript raw-text content", `<noscript><meta http-equiv=Content-Security-Policy></noscript>`],
+      ["plaintext content", `<plaintext><meta http-equiv=Content-Security-Policy>`],
+    ])("applyCspMeta injects when a CSP-meta decoy appears only in %s", async (_description, inertContent) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head>${inertContent}</head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toContain(
+        `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'">${inertContent}`,
+      );
+    });
+
+    it.each([
+      ["style raw-text content", `<style>/* <head data-decoy> */</style>`],
+      ["title RCDATA content", `<title><head data-decoy></title>`],
+      ["textarea RCDATA content", `<textarea><head data-decoy></textarea>`],
+      ["nested template content", `<template><template></template><head data-decoy></head></template>`],
+    ])("applyCspMeta inserts into the real head after a %s", async (_description, inertContent) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `${inertContent}<html><head data-real="true"></head><body>Content</body></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `${inertContent}<html><head data-real="true">\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"></head><body>Content</body></html>`,
+      );
+    });
+
+    it.each([
+      ["decimal numeric references", `&#67;ontent&#45;Security&#45;Policy`],
+      ["hexadecimal numeric references", `&#x43;ontent&#x2d;Security&#X2D;Policy`],
+    ])("applyCspMeta preserves an existing CSP meta tag with %s in http-equiv", async (_description, httpEquiv) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head><meta http-equiv="${httpEquiv}" content="img-src https://images.example.com"></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(resourceHtml);
+    });
+
     it("applyCspMeta leaves HTML unchanged when metadata is absent", async () => {
       const { applyCspMeta } = await import("../host-html-template.ts");
       const resourceHtml = "<main>Content</main>";
