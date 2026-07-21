@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
+import { buildCspMetaContent } from "../host-html-template.ts";
 import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServerManager } from "../server-manager.ts";
 
@@ -351,7 +352,6 @@ describe("UiResourceHandler", () => {
       const standardResourceDomains = ["https://standard.example.com"];
       const standardBaseUriDomains = ["https://base.example.com"];
       const standardScriptDomains = ["https://scripts.example.com"];
-      const openAiConnectDomains = ["https://api.example.com"];
       const manager = createMockManager({
         readResource: vi.fn().mockResolvedValue({
           contents: [{
@@ -371,8 +371,8 @@ describe("UiResourceHandler", () => {
               },
               "openai/widgetCSP": {
                 resource_domains: ["https://mixed-openai.example.com", null],
-                connect_domains: openAiConnectDomains,
-                frame_domains: null,
+                connect_domains: ["https://api.example.com"],
+                frame_domains: ["https://frames.example.com"],
               },
             },
           }],
@@ -384,12 +384,10 @@ describe("UiResourceHandler", () => {
 
       expect(result.meta.csp).toEqual({
         resourceDomains: standardResourceDomains,
-        connectDomains: openAiConnectDomains,
         baseUriDomains: standardBaseUriDomains,
         scriptDomains: standardScriptDomains,
       });
       expect(result.meta.csp?.resourceDomains).not.toBe(standardResourceDomains);
-      expect(result.meta.csp?.connectDomains).not.toBe(openAiConnectDomains);
     });
 
     it.each([
@@ -415,6 +413,59 @@ describe("UiResourceHandler", () => {
       const result = await handler.readUiResource("server", "ui://test/widget");
 
       expect(result.meta.csp).toEqual({});
+    });
+
+    it("fails closed when a null standard CSP is combined with valid OpenAI widget CSP", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{
+            uri: "ui://test/widget",
+            mimeType: "text/html",
+            text: "<h1>Content</h1>",
+            _meta: {
+              ui: { csp: null },
+              "openai/widgetCSP": {
+                resource_domains: ["https://attacker.example"],
+                connect_domains: ["https://attacker.example"],
+                frame_domains: ["https://attacker.example"],
+              },
+            },
+          }],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({});
+      expect(buildCspMetaContent(result.meta.csp)).toBe(
+        "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src 'self' data:; connect-src 'self'; frame-src 'none'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'",
+      );
+    });
+
+    it("does not fall back to an OpenAI field when its standard equivalent is malformed", async () => {
+      const manager = createMockManager({
+        readResource: vi.fn().mockResolvedValue({
+          contents: [{
+            uri: "ui://test/widget",
+            mimeType: "text/html",
+            text: "<h1>Content</h1>",
+            _meta: {
+              ui: { csp: { resourceDomains: "not-an-array" } },
+              "openai/widgetCSP": {
+                resource_domains: ["https://attacker.example"],
+                connect_domains: ["https://api.example.com"],
+              },
+            },
+          }],
+        }),
+      });
+      const handler = new UiResourceHandler(manager);
+
+      const result = await handler.readUiResource("server", "ui://test/widget");
+
+      expect(result.meta.csp).toEqual({ connectDomains: ["https://api.example.com"] });
+      expect(buildCspMetaContent(result.meta.csp)).not.toContain("https://attacker.example");
     });
 
     it("prefers a declared malformed content CSP over resource-list CSP", async () => {

@@ -130,12 +130,26 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
   const openAiCsp = hasOwnProperty(meta, "openai/widgetCSP")
     ? normalizeOpenAiWidgetCsp(meta["openai/widgetCSP"])
     : undefined;
-  const standardCsp = ui && hasOwnProperty(ui, "csp")
-    ? normalizeUiResourceCsp(ui.csp)
-    : undefined;
+  const hasStandardCsp = !!ui && hasOwnProperty(ui, "csp");
+  const standardCspValue = hasStandardCsp ? ui.csp : undefined;
 
-  if (openAiCsp || standardCsp) {
-    out.csp = { ...openAiCsp, ...standardCsp };
+  if (hasStandardCsp && !isRecord(standardCspValue)) {
+    // A declared canonical container takes precedence even when malformed.
+    out.csp = {};
+  } else {
+    const standardCsp = hasStandardCsp
+      ? normalizeUiResourceCsp(standardCspValue)
+      : undefined;
+    if (openAiCsp || standardCsp) {
+      out.csp = { ...openAiCsp, ...standardCsp };
+      if (isRecord(standardCspValue)) {
+        for (const [, standardField] of OPENAI_CSP_FIELD_MAPPINGS) {
+          if (hasOwnProperty(standardCspValue, standardField) && !copyStringArray(standardCspValue[standardField])) {
+            delete out.csp[standardField];
+          }
+        }
+      }
+    }
   }
   if (ui && isRecord(ui.permissions)) {
     out.permissions = ui.permissions as UiResourceMeta["permissions"];
@@ -149,6 +163,12 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
 
   return out;
 }
+
+const OPENAI_CSP_FIELD_MAPPINGS = [
+  ["resource_domains", "resourceDomains"],
+  ["connect_domains", "connectDomains"],
+  ["frame_domains", "frameDomains"],
+] as const;
 
 const UI_CSP_DOMAIN_FIELDS: readonly (keyof UiResourceCsp)[] = [
   "resourceDomains",
@@ -178,11 +198,7 @@ function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp {
   if (!isRecord(value)) return {};
 
   const csp: UiResourceCsp = {};
-  for (const [sourceField, targetField] of [
-    ["resource_domains", "resourceDomains"],
-    ["connect_domains", "connectDomains"],
-    ["frame_domains", "frameDomains"],
-  ] as const) {
+  for (const [sourceField, targetField] of OPENAI_CSP_FIELD_MAPPINGS) {
     const domains = copyStringArray(value[sourceField]);
     if (domains) csp[targetField] = domains;
   }
