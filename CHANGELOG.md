@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Rendered standards-compliant MCP Apps that declare `resourceDomains` by mapping their metadata to the enforced script, style, image, font, media, and worker CSP directives.
+- Rendered MCP Apps from multiple providers by supporting standard `_meta.ui.csp`, OpenAI-compatible `_meta["openai/widgetCSP"]`, and granular legacy CSP domain fields without removing existing HTML metadata handling.
 
 ## [2.11.0] - 2026-07-03
 
