@@ -560,12 +560,29 @@ function skipHtmlComment(html: string, index: number): number {
 
 function skipHtmlMarkupDeclarationOrBogusComment(html: string, index: number): number {
   if (html.slice(index + 2, index + 9).toLowerCase() === "doctype") {
-    const declarationEnd = findHtmlTagEnd(html, index);
+    const declarationEnd = findHtmlDoctypeEnd(html, index);
     return declarationEnd === -1 ? html.length : declarationEnd + 1;
   }
 
   const commentEnd = html.indexOf(">", index + 2);
   return commentEnd === -1 ? html.length : commentEnd + 1;
+}
+
+function findHtmlDoctypeEnd(html: string, declarationStart: number): number {
+  let quote: string | undefined;
+
+  for (let index = declarationStart + 2; index < html.length; index++) {
+    const character = html[index];
+    if (quote) {
+      if (character === quote) quote = undefined;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      return index;
+    }
+  }
+
+  return -1;
 }
 
 function isHtmlTagOpenAt(html: string, index: number): boolean {
@@ -686,17 +703,73 @@ function decodeCspHttpEquivCharacterReferences(value: string): string {
 }
 
 function findHtmlTagEnd(html: string, tagStart: number): number {
+  let state:
+    | "tag-name"
+    | "before-attribute-name"
+    | "attribute-name"
+    | "after-attribute-name"
+    | "before-attribute-value"
+    | "unquoted-attribute-value"
+    | "quoted-attribute-value"
+    | "after-quoted-attribute-value" = "tag-name";
   let quote: string | undefined;
 
   for (let index = tagStart + 1; index < html.length; index++) {
     const character = html[index];
-    if (quote) {
-      if (character === quote) quote = undefined;
-    } else if (character === '"' || character === "'") {
-      quote = character;
-    } else if (character === ">") {
-      return index;
+
+    if (state === "quoted-attribute-value") {
+      if (character === quote) state = "after-quoted-attribute-value";
+      continue;
     }
+    if (state === "unquoted-attribute-value") {
+      if (character === ">") return index;
+      if (isHtmlAsciiWhitespace(character)) state = "before-attribute-name";
+      continue;
+    }
+    if (state === "before-attribute-value") {
+      if (isHtmlAsciiWhitespace(character)) continue;
+      if (character === ">") return index;
+      if (character === '"' || character === "'") {
+        quote = character;
+        state = "quoted-attribute-value";
+      } else {
+        state = "unquoted-attribute-value";
+      }
+      continue;
+    }
+    if (state === "after-quoted-attribute-value") {
+      if (character === ">") return index;
+      state = isHtmlAsciiWhitespace(character) ? "before-attribute-name" : "attribute-name";
+      continue;
+    }
+    if (state === "tag-name") {
+      if (character === ">") return index;
+      if (isHtmlAsciiWhitespace(character) || character === "/") {
+        state = "before-attribute-name";
+      }
+      continue;
+    }
+    if (state === "attribute-name") {
+      if (character === ">") return index;
+      if (character === "=") {
+        state = "before-attribute-value";
+      } else if (isHtmlAsciiWhitespace(character) || character === "/") {
+        state = "after-attribute-name";
+      }
+      continue;
+    }
+    if (state === "after-attribute-name") {
+      if (character === ">") return index;
+      if (character === "=") {
+        state = "before-attribute-value";
+      } else if (!isHtmlAsciiWhitespace(character)) {
+        state = "attribute-name";
+      }
+      continue;
+    }
+
+    if (character === ">") return index;
+    if (!isHtmlAsciiWhitespace(character)) state = "attribute-name";
   }
 
   return -1;
@@ -728,8 +801,12 @@ function getHtmlAttribute(tag: string, attributeName: string): string | undefine
     while (!isHtmlAttributeNameBoundary(tag[index])) index++;
     const name = tag.slice(nameStart, index);
 
+    const isMatchingAttribute = name.toLowerCase() === attributeName;
     while (isHtmlAsciiWhitespace(tag[index])) index++;
-    if (tag[index] !== "=") continue;
+    if (tag[index] !== "=") {
+      if (isMatchingAttribute) return "";
+      continue;
+    }
     index++;
 
     while (isHtmlAsciiWhitespace(tag[index])) index++;
@@ -743,7 +820,7 @@ function getHtmlAttribute(tag: string, attributeName: string): string | undefine
     const value = tag.slice(valueStart, index);
     if (quote === '"' || quote === "'") index++;
 
-    if (name.toLowerCase() === attributeName) return value;
+    if (isMatchingAttribute) return value;
   }
 
   return undefined;
