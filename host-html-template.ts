@@ -569,17 +569,90 @@ function skipHtmlMarkupDeclarationOrBogusComment(html: string, index: number): n
 }
 
 function findHtmlDoctypeEnd(html: string, declarationStart: number): number {
+  let state:
+    | "before-name"
+    | "name"
+    | "after-name"
+    | "before-public-identifier"
+    | "public-identifier"
+    | "after-public-identifier"
+    | "before-system-identifier"
+    | "system-identifier"
+    | "after-system-identifier"
+    | "bogus" = "before-name";
   let quote: string | undefined;
 
-  for (let index = declarationStart + 2; index < html.length; index++) {
+  for (let index = declarationStart + "<!DOCTYPE".length; index < html.length; index++) {
     const character = html[index];
-    if (quote) {
-      if (character === quote) quote = undefined;
-    } else if (character === '"' || character === "'") {
-      quote = character;
-    } else if (character === ">") {
-      return index;
+
+    if (state === "public-identifier" || state === "system-identifier") {
+      if (character === quote) {
+        state = state === "public-identifier"
+          ? "after-public-identifier"
+          : "after-system-identifier";
+      }
+      continue;
     }
+    if (state === "bogus") {
+      if (character === ">") return index;
+      continue;
+    }
+    if (state === "before-name") {
+      if (isHtmlAsciiWhitespace(character)) continue;
+      if (character === ">") return index;
+      state = "name";
+      continue;
+    }
+    if (state === "name") {
+      if (character === ">") return index;
+      if (isHtmlAsciiWhitespace(character)) state = "after-name";
+      continue;
+    }
+    if (state === "after-name") {
+      if (isHtmlAsciiWhitespace(character)) continue;
+      if (character === ">") return index;
+
+      const keywordStart = index;
+      while (isHtmlAsciiLetter(html[index])) index++;
+      const keyword = html.slice(keywordStart, index).toLowerCase();
+      if (keyword === "public" && isHtmlAsciiWhitespace(html[index])) {
+        state = "before-public-identifier";
+      } else if (keyword === "system" && isHtmlAsciiWhitespace(html[index])) {
+        state = "before-system-identifier";
+      } else if (html[index] === ">") {
+        return index;
+      } else {
+        state = "bogus";
+      }
+      index--;
+      continue;
+    }
+    if (state === "before-public-identifier" || state === "before-system-identifier") {
+      if (isHtmlAsciiWhitespace(character)) continue;
+      if (character === ">") return index;
+      if (character === '"' || character === "'") {
+        quote = character;
+        state = state === "before-public-identifier"
+          ? "public-identifier"
+          : "system-identifier";
+      } else {
+        state = "bogus";
+      }
+      continue;
+    }
+    if (state === "after-public-identifier") {
+      if (isHtmlAsciiWhitespace(character)) {
+        state = "before-system-identifier";
+      } else if (character === ">") {
+        return index;
+      } else {
+        state = "bogus";
+      }
+      continue;
+    }
+
+    if (character === ">") return index;
+    if (!isHtmlAsciiWhitespace(character)) state = "bogus";
   }
 
   return -1;
@@ -795,7 +868,14 @@ function getHtmlAttribute(tag: string, attributeName: string): string | undefine
 
   while (index < tag.length) {
     while (isHtmlAsciiWhitespace(tag[index])) index++;
-    if (tag[index] === ">" || tag[index] === "/" || index >= tag.length) return undefined;
+    if (tag[index] === ">" || index >= tag.length) return undefined;
+    if (tag[index] === "/") {
+      // A solidus begins self-closing syntax only when it is immediately followed
+      // by the tag end. Otherwise, HTML reconsumes after the unexpected solidus.
+      if (tag[index + 1] === ">") return undefined;
+      index++;
+      continue;
+    }
 
     const nameStart = index;
     while (!isHtmlAttributeNameBoundary(tag[index])) index++;

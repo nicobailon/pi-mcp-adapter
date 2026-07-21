@@ -369,6 +369,25 @@ describe("buildHostHtmlTemplate", () => {
     });
 
     it.each([
+      ["before whitespace", `<meta / http-equiv=Content-Security-Policy>`],
+      ["before an attribute name", `<meta/http-equiv=Content-Security-Policy>`],
+    ])("applyCspMeta preserves a CSP meta with an unexpected solidus %s", async (_description, cspMeta) => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head>${cspMeta}</head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(resourceHtml);
+    });
+
+    it("applyCspMeta treats a solidus as part of an unquoted http-equiv value", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<html><head><meta http-equiv=Content-Security-Policy/ignored></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `<html><head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"><meta http-equiv=Content-Security-Policy/ignored></head></html>`,
+      );
+    });
+
+    it.each([
       ["an HTML comment", `<!-- <meta http-equiv=Content-Security-Policy> -->`],
       ["script content", `<script>const csp = "<meta http-equiv=Content-Security-Policy>";</script>`],
     ])("applyCspMeta injects when matching text appears only in %s", async (_description, inertContent) => {
@@ -495,6 +514,22 @@ describe("buildHostHtmlTemplate", () => {
 
       expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
         `<!DOCTYPE html PUBLIC "a><head data-decoy>"><html><head data-real>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"></head></html>`,
+      );
+    });
+
+    it("applyCspMeta preserves a CSP meta after a malformed doctype quote", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<!DOCTYPE html' ><html><head><meta http-equiv=Content-Security-Policy></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(resourceHtml);
+    });
+
+    it("applyCspMeta ignores a CSP meta in valid quoted PUBLIC and SYSTEM identifiers containing >", async () => {
+      const { applyCspMeta } = await import("../host-html-template.ts");
+      const resourceHtml = `<!DOCTYPE html PUBLIC "public>identifier" "system><meta http-equiv=Content-Security-Policy>"><html><head data-real></head></html>`;
+
+      expect(applyCspMeta(resourceHtml, "default-src 'none'")).toBe(
+        `<!DOCTYPE html PUBLIC "public>identifier" "system><meta http-equiv=Content-Security-Policy>"><html><head data-real>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'"></head></html>`,
       );
     });
 
