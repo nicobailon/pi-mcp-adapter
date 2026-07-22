@@ -1,12 +1,14 @@
 import type { ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import { Type } from "typebox";
-import { showStatus, showTools, reconnectServers, authenticateServer, logoutServer, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
+import { showStatus, showTools, showPrompts, reconnectServers, authenticateServer, logoutServer, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
 import { loadMcpConfig } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.ts";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
 import { loadMetadataCache } from "./metadata-cache.ts";
 import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
+import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
+import { logger } from "./logger.ts";
 import { getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.ts";
 import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
@@ -78,6 +80,26 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
       renderResult: renderMcpToolResult,
     });
+  }
+
+  // Register slash commands for MCP prompts advertised by any configured
+  // server, driven off the persistent metadata cache so prompts stay
+  // discoverable without a live connection at startup.
+  const promptSpecs = resolveCachedPrompts(earlyConfig);
+  const registeredPromptCommands = new Set<string>();
+  for (const spec of promptSpecs) {
+    if (registeredPromptCommands.has(spec.commandName)) {
+      // Two prompts sanitized to the same slash-command name (e.g. `foo.bar`
+      // and `foo_bar` both -> `foo_bar`). Keep the first registration and
+      // record a debug line so the collision is discoverable without
+      // spamming the panel with a warning.
+      logger.debug(
+        `MCP: prompt "${spec.originalName}" on ${spec.serverName} skipped; slash command /${spec.commandName} already registered`,
+      );
+      continue;
+    }
+    registeredPromptCommands.add(spec.commandName);
+    pi.registerCommand(spec.commandName, createPromptCommand(pi, () => state, spec));
   }
 
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
@@ -185,6 +207,9 @@ export default function mcpAdapter(pi: ExtensionAPI) {
           break;
         case "tools":
           await showTools(state, ctx);
+          break;
+        case "prompts":
+          await showPrompts(state, ctx);
           break;
         case "setup": {
           const result = await openMcpSetup(state, pi, ctx, earlyConfigPath, "setup");

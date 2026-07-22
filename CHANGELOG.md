@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added MCP prompts support: prompts advertised by connected MCP servers are surfaced as pi slash commands under the `mcp__<server>__<prompt>` namespace (matching Claude Code's convention). Prompts are discovered via `prompts/list` when a server advertises the capability, cached alongside tools and resources, and registered at extension load time so they appear in the pi command palette without waiting for a live connection. Arguments accept both positional and `key=value` forms with bash-style quoting; missing required arguments produce a usage hint. `/mcp prompts` lists everything the adapter knows about.
+
 ## [2.11.0] - 2026-07-03
 
 ### Changed

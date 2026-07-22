@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import type { ToolMetadata } from "./types.ts";
+import type { PromptMetadata, ToolMetadata } from "./types.ts";
 import { existsSync } from "node:fs";
 import { loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
@@ -10,8 +10,10 @@ import {
   getMetadataCachePath,
   isServerCacheValid,
   loadMetadataCache,
+  reconstructPromptMetadata,
   reconstructToolMetadata,
   saveMetadataCache,
+  serializePrompts,
   serializeResources,
   serializeTools,
   type ServerCacheEntry,
@@ -58,6 +60,7 @@ export async function initializeMcp(
   }
   const lifecycle = new McpLifecycleManager(manager);
   const toolMetadata = new Map<string, ToolMetadata[]>();
+  const promptMetadata = new Map<string, PromptMetadata[]>();
   const failureTracker = new Map<string, number>();
   const uiResourceHandler = new UiResourceHandler(manager);
   const consentManager = new ConsentManager("once-per-server");
@@ -66,6 +69,7 @@ export async function initializeMcp(
     manager,
     lifecycle,
     toolMetadata,
+    promptMetadata,
     config,
     failureTracker,
     uiResourceHandler,
@@ -115,6 +119,10 @@ export async function initializeMcp(
     if (cache?.servers?.[name] && isServerCacheValid(cache.servers[name], definition)) {
       const metadata = reconstructToolMetadata(name, cache.servers[name], prefix, definition);
       toolMetadata.set(name, metadata);
+      const cachedPrompts = cache.servers[name].prompts;
+      if (cachedPrompts?.length) {
+        promptMetadata.set(name, reconstructPromptMetadata(name, cachedPrompts, prefix));
+      }
     }
   }
 
@@ -153,6 +161,7 @@ export async function initializeMcp(
 
     const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
     toolMetadata.set(name, metadata);
+    promptMetadata.set(name, reconstructPromptMetadata(name, connection.prompts, prefix));
     updateMetadataCache(state, name);
 
     if (failedTools.length > 0 && ctx.hasUI) {
@@ -191,6 +200,7 @@ export async function initializeMcp(
             }
             const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
             toolMetadata.set(name, metadata);
+            promptMetadata.set(name, reconstructPromptMetadata(name, connection.prompts, prefix));
             updateMetadataCache(state, name);
             return { name, ok: true };
           } catch (error) {
@@ -236,6 +246,7 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
 
   const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
   state.toolMetadata.set(serverName, metadata);
+  state.promptMetadata?.set(serverName, reconstructPromptMetadata(serverName, connection.prompts, prefix));
 }
 
 export function updateMetadataCache(state: McpExtensionState, serverName: string): void {
@@ -251,6 +262,7 @@ export function updateMetadataCache(state: McpExtensionState, serverName: string
 
   const tools = serializeTools(connection.tools);
   let resources = definition.exposeResources === false ? [] : serializeResources(connection.resources);
+  const prompts = serializePrompts(connection.prompts);
 
   if (
     definition.exposeResources !== false &&
@@ -265,6 +277,7 @@ export function updateMetadataCache(state: McpExtensionState, serverName: string
     configHash,
     tools,
     resources,
+    prompts,
     cachedAt: Date.now(),
   };
 

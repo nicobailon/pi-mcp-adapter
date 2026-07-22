@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   resolveDirectTools: vi.fn(() => []),
   showStatus: vi.fn(),
   showTools: vi.fn(),
+  showPrompts: vi.fn(),
   reconnectServers: vi.fn(),
   authenticateServer: vi.fn(),
   logoutServer: vi.fn(),
@@ -29,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   executeSearch: vi.fn(),
   executeStatus: vi.fn(),
   executeUiMessages: vi.fn(),
+  resolveCachedPrompts: vi.fn(() => []),
+  createPromptCommand: vi.fn(() => ({ handler: vi.fn(), description: "MCP: prompt" })),
   getConfigPathFromArgv: vi.fn(() => undefined),
   normalizeDirectToolInputSchema: vi.fn((schema: unknown) => schema && typeof schema === "object" && !Array.isArray(schema)
     ? Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "$schema" && key !== "additionalProperties"))
@@ -65,6 +68,7 @@ vi.mock("../direct-tools.ts", () => ({
 vi.mock("../commands.ts", () => ({
   showStatus: mocks.showStatus,
   showTools: mocks.showTools,
+  showPrompts: mocks.showPrompts,
   reconnectServers: mocks.reconnectServers,
   authenticateServer: mocks.authenticateServer,
   logoutServer: mocks.logoutServer,
@@ -83,6 +87,11 @@ vi.mock("../proxy-modes.ts", () => ({
   executeSearch: mocks.executeSearch,
   executeStatus: mocks.executeStatus,
   executeUiMessages: mocks.executeUiMessages,
+}));
+
+vi.mock("../prompts.ts", () => ({
+  createPromptCommand: mocks.createPromptCommand,
+  resolveCachedPrompts: mocks.resolveCachedPrompts,
 }));
 
 vi.mock("../utils.ts", () => ({
@@ -150,6 +159,8 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.createDirectToolExecutor.mockReturnValue(vi.fn());
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue([]);
     mocks.resolveDirectTools.mockReturnValue([]);
+    mocks.resolveCachedPrompts.mockReturnValue([]);
+    mocks.createPromptCommand.mockReturnValue({ handler: vi.fn(), description: "MCP: prompt" });
     mocks.getConfigPathFromArgv.mockReturnValue(undefined);
     mocks.normalizeDirectToolInputSchema.mockImplementation((schema: unknown) => schema && typeof schema === "object" && !Array.isArray(schema)
       ? Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "$schema" && key !== "additionalProperties"))
@@ -582,5 +593,103 @@ describe("mcpAdapter session lifecycle", () => {
     expect(toolResult?.({ details: { mode: "call", error: "call_failed", message: "boom" } })).toEqual({ isError: true });
     // a precondition code is not a tool-execution failure -> left untouched
     expect(toolResult?.({ details: { error: "auth_required", server: "demo" } })).toBeUndefined();
+  });
+
+  it("registers a slash command per cached MCP prompt", async () => {
+    mocks.resolveCachedPrompts.mockReturnValue([
+      {
+        serverName: "demo",
+        originalName: "brief",
+        commandName: "mcp__demo__brief",
+        description: "Daily brief",
+        arguments: [{ name: "topic", required: true }],
+      },
+      {
+        serverName: "demo",
+        originalName: "haiku",
+        commandName: "mcp__demo__haiku",
+        description: "Compose a haiku",
+        arguments: [],
+      },
+    ]);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    mcpAdapter(api);
+
+    const promptCommandNames = api.registerCommand.mock.calls
+      .map((call: any[]) => call[0])
+      .filter((name: string) => name.startsWith("mcp__"));
+    expect(promptCommandNames.sort()).toEqual(["mcp__demo__brief", "mcp__demo__haiku"]);
+    expect(mocks.createPromptCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the first prompt on a slash-command name collision and logs the skip", async () => {
+    // `foo.bar` and `foo_bar` sanitize to the same slash-command name; the
+    // second prompt is dropped so the first registration wins deterministically.
+    mocks.resolveCachedPrompts.mockReturnValue([
+      {
+        serverName: "demo",
+        originalName: "foo.bar",
+        commandName: "mcp__demo__foo_bar",
+        description: "first",
+        arguments: [],
+      },
+      {
+        serverName: "demo",
+        originalName: "foo_bar",
+        commandName: "mcp__demo__foo_bar",
+        description: "second",
+        arguments: [],
+      },
+    ]);
+
+    const { logger } = await import("../logger.ts");
+    const debugEntries: Array<{ level: string; message: string }> = [];
+    logger.clearHandlers();
+    logger.setLevel("debug");
+    logger.addHandler((entry) => debugEntries.push({ level: entry.level, message: entry.message }));
+
+    try {
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api } = createPi();
+      mcpAdapter(api);
+
+      const promptRegistrations = api.registerCommand.mock.calls
+        .filter((call: any[]) => call[0] === "mcp__demo__foo_bar");
+      expect(promptRegistrations).toHaveLength(1);
+      // The first spec wins; createPromptCommand receives the first spec only.
+      expect(mocks.createPromptCommand).toHaveBeenCalledTimes(1);
+      const [, , receivedSpec] = mocks.createPromptCommand.mock.calls[0];
+      expect(receivedSpec).toMatchObject({ originalName: "foo.bar", description: "first" });
+
+      const skipLog = debugEntries.find((entry) => entry.message.includes("mcp__demo__foo_bar"));
+      expect(skipLog?.level).toBe("debug");
+      expect(skipLog?.message).toContain("foo_bar");
+      expect(skipLog?.message).toContain("already registered");
+    } finally {
+      logger.clearHandlers();
+      logger.setLevel("info");
+    }
+  });
+
+  it("routes `/mcp prompts` to the prompts listing", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const ui = { notify: vi.fn() };
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, { hasUI: true, ui });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+    await commandDef.handler("prompts", { hasUI: true, ui });
+
+    expect(mocks.showPrompts).toHaveBeenCalledWith(state, expect.any(Object));
   });
 });

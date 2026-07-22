@@ -220,6 +220,25 @@ Tune the limits with the object form:
 
 Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — to disable the guard and restore raw output behavior. Saved temp files are created with mode `0600` under the system temp directory and are not cleaned up automatically; note that spilled MCP output may contain sensitive data.
 
+### MCP Prompts
+
+MCP servers can ship prompt templates alongside tools and resources. When a server advertises the `prompts` capability, the adapter registers each prompt as a native pi slash command under the `mcp__<server>__<prompt>` namespace — mirroring Claude Code's convention so cross-host muscle memory carries over. Prompts are cached alongside tools and resources, so the slash commands appear in pi's palette without waiting for a live connection.
+
+```
+/mcp__agent_board__create_plan  "harden retry policy"
+/mcp__agent_board__review_pipeline  status=paused
+```
+
+Arguments accept both positional and `key=value` forms, with bash-style quoting for values containing spaces. Required arguments declared by the prompt are validated before dispatch; missing ones produce a usage hint in the panel. The resolved `prompts/get` result is delivered to pi as a user message so the model runs against the exact content the server produced. Multi-turn prompts are flattened with `[role]` prefixes so context still survives the single-message hand-off.
+
+List everything the adapter knows about:
+
+```
+/mcp prompts
+```
+
+Servers that omit the `prompts` capability are skipped silently — no wire calls, no error noise.
+
 ### MCP Elicitation
 
 When Pi exposes dialog-capable UI, the adapter advertises form elicitation support. Forms use Pi's stock `select()` and `input()` dialogs, validate the response, and provide a review/edit step before submission. Explicit refusal maps to MCP `decline`; dismissing a dialog maps to `cancel`.
@@ -409,6 +428,7 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 | `/mcp` | Interactive panel and first-run onboarding surface |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, RepoPrompt quick-add, and config-path inspection |
 | `/mcp tools` | List all tools |
+| `/mcp prompts` | List all MCP prompts registered as slash commands |
 | `/mcp reconnect` | Reconnect all servers |
 | `/mcp reconnect <server>` | Connect or reconnect a single server |
 | `/mcp logout <server>` | Clear stored OAuth credentials for a server and disconnect it |
