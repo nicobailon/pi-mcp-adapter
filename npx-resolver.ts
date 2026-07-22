@@ -2,7 +2,7 @@
 import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
 import { join, dirname, extname, resolve, sep } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
-import { spawn, spawnSync } from "node:child_process";
+import crossSpawn from "cross-spawn";
 
 const CACHE_VERSION = 1;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -246,7 +246,7 @@ const FORCE_CACHE_TIMEOUT_MS = 30_000;
 async function forceNpxCache(packageSpec: string): Promise<void> {
   try {
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn(
+      const proc = crossSpawn(
         "npm",
         ["exec", "--yes", "--package", packageSpec, "--", "node", "-e", "1"],
         { stdio: "ignore" }
@@ -395,7 +395,7 @@ function getNpmCacheDir(): string | null {
     return npmCacheDirCached;
   }
   try {
-    const result = spawnSync("npm", ["config", "get", "cache"], { encoding: "utf-8" });
+    const result = crossSpawn.sync("npm", ["config", "get", "cache"], { encoding: "utf-8" });
     if (result.status === 0) {
       const path = String(result.stdout).trim();
       npmCacheDirCached = path || null;
