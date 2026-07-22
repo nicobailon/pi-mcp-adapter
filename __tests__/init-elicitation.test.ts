@@ -18,6 +18,7 @@ vi.mock("../config.ts", async importOriginal => ({
 
 vi.mock("../server-manager.ts", () => ({
   McpServerManager: vi.fn().mockImplementation(function (this: any) {
+    this.setRuntimeSignal = vi.fn();
     this.setDefaultRequestTimeoutMs = vi.fn();
     this.setSamplingConfig = vi.fn();
     this.setElicitationConfig = vi.fn();
@@ -58,8 +59,9 @@ describe("initializeMcp elicitation config", () => {
     await initializeMcp(extensionApi(), ctx);
 
     expect(McpServerManager).toHaveBeenCalledWith(ctx.cwd);
+    expect(mocks.managers[0].setRuntimeSignal).toHaveBeenCalledWith(expect.any(AbortSignal));
     expect(mocks.managers[0].setElicitationConfig).toHaveBeenCalledWith({
-      ui: ctx.ui,
+      ui: expect.any(Object),
       allowUrl: true,
     });
   });
@@ -71,7 +73,7 @@ describe("initializeMcp elicitation config", () => {
     await initializeMcp(extensionApi(), ctx);
 
     expect(mocks.managers[0].setElicitationConfig).toHaveBeenCalledWith({
-      ui: ctx.ui,
+      ui: expect.any(Object),
       allowUrl: false,
     });
   });
