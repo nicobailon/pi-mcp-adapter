@@ -52,6 +52,8 @@ export async function initializeMcp(
   const rawUi = hasUI ? ctx.ui : undefined;
   const ui = rawUi ? createOwnedUi(rawUi, owner) : undefined;
   const modelRegistry = ctx.modelRegistry;
+  const initialModel = ctx.model;
+  const initialSignal = ctx.signal;
   const config = loadMcpConfig(configPath, cwd);
 
   const manager = new McpServerManager(cwd);
@@ -63,10 +65,11 @@ export async function initializeMcp(
       autoApprove: samplingAutoApprove,
       ui,
       modelRegistry,
-      getCurrentModel: () => owner.isActive() ? ctx.model : undefined,
-      getSignal: () => owner.isActive()
-        ? combineAbortSignals(owner.signal, ctx.signal)
-        : owner.signal,
+      // Never retain the guarded ExtensionContext in server callbacks. Pi marks
+      // that context stale after reload, while the runtime owner remains the
+      // authoritative cancellation fence for this extension instance.
+      getCurrentModel: () => owner.isActive() ? initialModel : undefined,
+      getSignal: () => combineAbortSignals(owner.signal, initialSignal),
     });
   }
   const elicitationEnabled = config.settings?.elicitation !== false && hasUI;

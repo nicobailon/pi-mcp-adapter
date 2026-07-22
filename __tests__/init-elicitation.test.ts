@@ -88,4 +88,42 @@ describe("initializeMcp elicitation config", () => {
     await initializeMcp(extensionApi(), context());
     expect(mocks.managers[1].setElicitationConfig).not.toHaveBeenCalled();
   });
+
+  it("snapshots sampling model and signal without retaining guarded context getters", async () => {
+    const { createMcpRuntimeOwner } = await import("../runtime-owner.ts");
+    const { initializeMcp } = await import("../init.ts");
+    mocks.loadMcpConfig.mockReturnValue({
+      mcpServers: {},
+      settings: { sampling: true, samplingAutoApprove: true },
+    });
+
+    const owner = createMcpRuntimeOwner();
+    const initialModel = { provider: "test", id: "model" };
+    const initialSignal = new AbortController().signal;
+    let stale = false;
+    const accesses: string[] = [];
+    const ctx = new Proxy({
+      cwd: "/tmp/project",
+      hasUI: false,
+      mode: "print" as ExtensionMode,
+      modelRegistry: {},
+      model: initialModel,
+      signal: initialSignal,
+    }, {
+      get(target, property, receiver) {
+        accesses.push(String(property));
+        if (stale) throw new Error(`stale context access: ${String(property)}`);
+        return Reflect.get(target, property, receiver);
+      },
+    }) as unknown as ExtensionContext;
+
+    await initializeMcp(extensionApi(), ctx, owner);
+    const sampling = mocks.managers[0].setSamplingConfig.mock.calls[0][0];
+    stale = true;
+
+    expect(sampling.getCurrentModel()).toBe(initialModel);
+    expect(sampling.getSignal()).toBeInstanceOf(AbortSignal);
+    expect(accesses.filter(property => property === "model")).toHaveLength(1);
+    expect(accesses.filter(property => property === "signal")).toHaveLength(1);
+  });
 });
