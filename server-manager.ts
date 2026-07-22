@@ -12,6 +12,7 @@ import {
 import type {
   McpTool,
   McpResource,
+  McpPrompt,
   ServerDefinition,
   ServerStreamResultPatchNotification,
   Transport,
@@ -36,6 +37,7 @@ interface ServerConnection {
   definition: ServerDefinition;
   tools: McpTool[];
   resources: McpResource[];
+  prompts: McpPrompt[];
   lastUsedAt: number;
   inFlight: number;
   status: "connected" | "closed" | "needs-auth";
@@ -164,10 +166,13 @@ export class McpServerManager {
       await client.connect(transport, requestOptions);
       this.attachAdapterNotificationHandlers(name, client);
 
-      // Discover tools and resources
-      const [tools, resources] = await Promise.all([
+      // Discover tools, resources, and prompts. Prompts are only queried
+      // when the server advertises the capability; older servers that omit
+      // it get a graceful skip instead of a hard error.
+      const [tools, resources, prompts] = await Promise.all([
         this.fetchAllTools(client, requestOptions),
         this.fetchAllResources(client, requestOptions),
+        this.fetchAllPrompts(client, requestOptions),
       ]);
 
       return {
@@ -176,6 +181,7 @@ export class McpServerManager {
         definition,
         tools,
         resources,
+        prompts,
         lastUsedAt: Date.now(),
         inFlight: 0,
         status: "connected",
@@ -193,6 +199,7 @@ export class McpServerManager {
           definition,
           tools: [],
           resources: [],
+          prompts: [],
           lastUsedAt: Date.now(),
           inFlight: 0,
           status: "needs-auth",
@@ -382,6 +389,38 @@ export class McpServerManager {
     }
   }
 
+  private async fetchAllPrompts(client: Client, requestOptions?: RequestOptions): Promise<McpPrompt[]> {
+    // Only servers that advertise the `prompts` capability are queried.
+    // The MCP SDK exposes capabilities after `initialize`; if the server
+    // omits `prompts`, calling `prompts/list` would surface as a
+    // `MethodNotFound` error and pollute logs.
+    const getCaps = (client as { getServerCapabilities?: () => { prompts?: unknown } | undefined }).getServerCapabilities;
+    const caps = typeof getCaps === "function" ? getCaps.call(client) : undefined;
+    if (!caps?.prompts) return [];
+
+    try {
+      const allPrompts: McpPrompt[] = [];
+      let cursor: string | undefined;
+
+      do {
+        const result = await client.listPrompts(cursor ? { cursor } : undefined, requestOptions);
+        allPrompts.push(...((result.prompts ?? []) as McpPrompt[]));
+        cursor = result.nextCursor;
+      } while (cursor);
+
+      return allPrompts;
+    } catch (error) {
+      if (requestOptions?.signal?.aborted) {
+        throwIfAborted(requestOptions.signal);
+      }
+      // Server advertised the capability but failed to answer. Log at debug
+      // and continue: an empty prompts list should never block tool discovery.
+      const message = error instanceof Error ? error.message : String(error);
+      logger.debug(`prompts/list failed: ${message}`);
+      return [];
+    }
+  }
+
   private attachAdapterNotificationHandlers(serverName: string, client: Client): void {
     client.setNotificationHandler(serverStreamResultPatchNotificationSchema, (notification) => {
       const listener = this.uiStreamListeners.get(notification.params.streamToken);
@@ -408,6 +447,34 @@ export class McpServerManager {
       this.touch(name);
       this.incrementInFlight(name);
       return await connection.client.readResource({ uri }, this.getRequestOptions(name, signal));
+    } finally {
+      this.decrementInFlight(name);
+      this.touch(name);
+    }
+  }
+
+  /**
+   * Fetch a prompt from a connected server via `prompts/get`. Callers must
+   * ensure the server is connected first; this helper does not lazy-connect.
+   */
+  async getPrompt(
+    name: string,
+    promptName: string,
+    args: Record<string, string> | undefined,
+    signal?: AbortSignal,
+  ): Promise<import("@modelcontextprotocol/sdk/types.js").GetPromptResult> {
+    const connection = this.connections.get(name);
+    if (!connection || connection.status !== "connected") {
+      throw new Error(`Server "${name}" is not connected`);
+    }
+
+    try {
+      this.touch(name);
+      this.incrementInFlight(name);
+      return await connection.client.getPrompt(
+        { name: promptName, ...(args ? { arguments: args } : {}) },
+        this.getRequestOptions(name, signal),
+      );
     } finally {
       this.decrementInFlight(name);
       this.touch(name);

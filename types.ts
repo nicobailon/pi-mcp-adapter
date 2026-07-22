@@ -38,6 +38,22 @@ export interface McpResource {
   _meta?: Record<string, unknown>;
 }
 
+// Prompt argument declared by an MCP server (prompts/list result).
+export interface McpPromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+// Prompt definition returned by an MCP server's `prompts/list`.
+export interface McpPrompt {
+  name: string;
+  title?: string;
+  description?: string;
+  arguments?: McpPromptArgument[];
+  _meta?: Record<string, unknown>;
+}
+
 export interface UiResourceMeta {
   csp?: UiResourceCsp;
   permissions?: UiResourcePermissions;
@@ -385,6 +401,20 @@ export interface DirectToolSpec {
   uiStreamMode?: UiStreamMode;
 }
 
+/**
+ * Resolved prompt metadata for slash-command registration. `commandName`
+ * is the pi slash-command name (without the leading slash), including the
+ * `mcp__<server>__` namespace prefix.
+ */
+export interface PromptMetadata {
+  serverName: string;
+  originalName: string;
+  commandName: string;
+  title?: string;
+  description: string;
+  arguments: McpPromptArgument[];
+}
+
 export interface ServerProvenance {
   path: string;
   kind: "user" | "project" | "import";
@@ -435,6 +465,34 @@ export function formatToolName(
 ): string {
   const p = getServerPrefix(serverName, prefix);
   return p ? `${p}_${toolName}` : toolName;
+}
+
+/**
+ * Sanitize an MCP prompt name for use as a pi slash-command suffix.
+ * Non-alphanumeric characters other than `-` and `_` are replaced with `_`
+ * so servers that ship prompts with dots, slashes, or colons still register
+ * cleanly. Leading digits are prefixed with `_` for the same reason.
+ */
+export function sanitizePromptName(name: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^[_-]+|[_-]+$/g, "");
+  if (!cleaned) return "prompt";
+  return /^[0-9]/.test(cleaned) ? `_${cleaned}` : cleaned;
+}
+
+/**
+ * Format a prompt slash-command name. Mirrors Claude Code's
+ * `mcp__<server>__<prompt>` convention so users with cross-host muscle
+ * memory find prompts under the same namespace, while the server portion
+ * honours the adapter's `toolPrefix` setting for consistency with prefixed
+ * tool names.
+ */
+export function formatPromptCommandName(
+  promptName: string,
+  serverName: string,
+  prefix: "server" | "none" | "short"
+): string {
+  const serverPart = getServerPrefix(serverName, prefix) || serverName.replace(/-/g, "_") || "server";
+  return `mcp__${serverPart}__${sanitizePromptName(promptName)}`;
 }
 
 function normalizeToolName(value: string): string {

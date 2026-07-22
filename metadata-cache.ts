@@ -4,8 +4,8 @@ import { dirname } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { createHash } from "node:crypto";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { McpTool, McpResource, ServerEntry, ToolMetadata } from "./types.ts";
-import { formatToolName, isToolExcluded } from "./types.ts";
+import type { McpTool, McpResource, McpPrompt, McpPromptArgument, ServerEntry, ToolMetadata, PromptMetadata } from "./types.ts";
+import { formatPromptCommandName, formatToolName, isToolExcluded } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolUiStreamMode, interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.ts";
 
@@ -26,10 +26,28 @@ export interface CachedResource {
   description?: string;
 }
 
+export interface CachedPromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface CachedPrompt {
+  name: string;
+  title?: string;
+  description?: string;
+  arguments?: CachedPromptArgument[];
+}
+
 export interface ServerCacheEntry {
   configHash: string;
   tools: CachedTool[];
   resources: CachedResource[];
+  /**
+   * Prompts advertised by the server via `prompts/list`. Optional so caches
+   * written by earlier adapter versions remain readable.
+   */
+  prompts?: CachedPrompt[];
   cachedAt: number;
 }
 
@@ -177,6 +195,50 @@ export function serializeResources(resources: McpResource[]): CachedResource[] {
       name: r.name,
       description: r.description,
     }));
+}
+
+export function serializePrompts(prompts: McpPrompt[]): CachedPrompt[] {
+  return prompts
+    .filter(p => p?.name)
+    .map(p => ({
+      name: p.name,
+      title: p.title,
+      description: p.description,
+      arguments: Array.isArray(p.arguments)
+        ? p.arguments
+            .filter(a => a?.name)
+            .map(a => ({ name: a.name, description: a.description, required: a.required }))
+        : undefined,
+    }));
+}
+
+/**
+ * Rebuild slash-command-ready prompt metadata for a server from either a
+ * live `prompts/list` result or the persisted cache entry.
+ */
+export function reconstructPromptMetadata(
+  serverName: string,
+  prompts: ReadonlyArray<McpPrompt | CachedPrompt>,
+  prefix: "server" | "none" | "short",
+): PromptMetadata[] {
+  const metadata: PromptMetadata[] = [];
+  for (const prompt of prompts) {
+    if (!prompt?.name) continue;
+    const args: McpPromptArgument[] = Array.isArray(prompt.arguments)
+      ? prompt.arguments
+          .filter((a): a is McpPromptArgument => Boolean(a?.name))
+          .map(a => ({ name: a.name, description: a.description, required: a.required }))
+      : [];
+    metadata.push({
+      serverName,
+      originalName: prompt.name,
+      commandName: formatPromptCommandName(prompt.name, serverName, prefix),
+      title: prompt.title,
+      description: prompt.description ?? "",
+      arguments: args,
+    });
+  }
+  return metadata;
 }
 
 function stableStringify(value: unknown): string {

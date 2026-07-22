@@ -13,7 +13,7 @@ import {
   writeStarterProjectConfig,
 } from "./config.ts";
 import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.ts";
-import { loadMetadataCache } from "./metadata-cache.ts";
+import { loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth } from "./mcp-auth-flow.ts";
 import { getAuthForUrl } from "./mcp-auth.ts";
@@ -81,6 +81,44 @@ export async function showTools(state: McpExtensionState, ctx: ExtensionContext)
   ctx.ui.notify(lines.join("\n"), "info");
 }
 
+export async function showPrompts(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
+  if (!ctx.hasUI) return;
+
+  const allPrompts = [...(state.promptMetadata?.values() ?? [])].flat();
+
+  if (allPrompts.length === 0) {
+    ctx.ui.notify(
+      "No MCP prompts available. Prompts are discovered when servers with the `prompts` capability connect.",
+      "info",
+    );
+    return;
+  }
+
+  const lines = ["MCP Prompts:", ""];
+  const grouped = new Map<string, typeof allPrompts>();
+  for (const prompt of allPrompts) {
+    const list = grouped.get(prompt.serverName) ?? [];
+    list.push(prompt);
+    grouped.set(prompt.serverName, list);
+  }
+
+  for (const [serverName, prompts] of [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    lines.push(`${serverName}:`);
+    for (const prompt of prompts.sort((a, b) => a.commandName.localeCompare(b.commandName))) {
+      const argHint = prompt.arguments
+        .map(a => (a.required ? `<${a.name}>` : `[${a.name}]`))
+        .join(" ");
+      const suffix = argHint ? ` ${argHint}` : "";
+      lines.push(`  /${prompt.commandName}${suffix}`);
+      if (prompt.description) lines.push(`      ${prompt.description}`);
+    }
+    lines.push("");
+  }
+
+  lines.push(`Total: ${allPrompts.length} prompt${allPrompts.length === 1 ? "" : "s"}`);
+  ctx.ui.notify(lines.join("\n"), "info");
+}
+
 export async function reconnectServers(
   state: McpExtensionState,
   ctx: ExtensionContext,
@@ -112,6 +150,7 @@ export async function reconnectServers(
 
       const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
       state.toolMetadata.set(name, metadata);
+      state.promptMetadata?.set(name, reconstructPromptMetadata(name, connection.prompts, prefix));
       updateMetadataCache(state, name);
       state.failureTracker.delete(name);
 
