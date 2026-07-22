@@ -11,10 +11,12 @@ import { getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord }
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.ts";
 import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
 import { toolErrorOverride } from "./error-signal.ts";
+import { createMcpRuntimeOwner, type McpRuntimeOwner } from "./runtime-owner.ts";
 
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
+  let currentOwner: McpRuntimeOwner | null = null;
   let lifecycleGeneration = 0;
 
   async function shutdownState(currentState: McpExtensionState | null, reason: string): Promise<void> {
@@ -90,11 +92,17 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const generation = ++lifecycleGeneration;
     const previousState = state;
+    const previousOwner = currentOwner;
+    const owner = createMcpRuntimeOwner();
+    currentOwner = owner;
     state = null;
     initPromise = null;
 
+    // Abort first so old async work is fenced before cleanup crosses an await.
+    const stopPrevious = previousOwner?.stop("MCP extension session restarted") ?? Promise.resolve();
     try {
       await Promise.all([
+        stopPrevious,
         shutdownState(previousState, "session_restart"),
         shutdownOAuth(),
       ]);
@@ -102,19 +110,19 @@ export default function mcpAdapter(pi: ExtensionAPI) {
       console.error("MCP: failed to shut down previous session state", error);
     }
 
-    if (generation !== lifecycleGeneration) {
-      return;
-    }
+    if (generation !== lifecycleGeneration || !owner.isActive()) return;
 
     await initializeOAuth().catch(err => {
       console.error("MCP OAuth initialization failed:", err);
     });
 
-    const promise = initializeMcp(pi, ctx);
+    if (generation !== lifecycleGeneration || !owner.isActive()) return;
+
+    const promise = initializeMcp(pi, ctx, owner);
     initPromise = promise;
 
     promise.then(async (nextState) => {
-      if (generation !== lifecycleGeneration || initPromise !== promise) {
+      if (!owner.isActive() || generation !== lifecycleGeneration || initPromise !== promise) {
         try {
           await shutdownState(nextState, "stale_session_start");
         } catch (error) {
@@ -123,13 +131,12 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         return;
       }
 
+      owner.throwIfInactive();
       state = nextState;
       updateStatusBar(nextState);
       initPromise = null;
     }).catch(err => {
-      if (generation !== lifecycleGeneration) {
-        return;
-      }
+      if (!owner.isActive() || generation !== lifecycleGeneration) return;
       if (initPromise !== promise && initPromise !== null) {
         return;
       }
@@ -141,11 +148,17 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     ++lifecycleGeneration;
     const currentState = state;
+    const owner = currentOwner;
+    currentOwner = null;
     state = null;
     initPromise = null;
 
+    // Synchronously abort before any await so delayed initialization cannot
+    // resume into an invalidated ExtensionContext during core reload.
+    const stopOwner = owner?.stop("MCP extension session shutdown") ?? Promise.resolve();
     try {
       await Promise.all([
+        stopOwner,
         shutdownState(currentState, "session_shutdown"),
         shutdownOAuth(),
       ]);

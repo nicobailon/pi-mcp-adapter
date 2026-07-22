@@ -29,6 +29,7 @@ import {
 } from "./elicitation-handler.ts";
 import { interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
+import { combineAbortSignals } from "./runtime-owner.ts";
 
 interface ServerConnection {
   client: Client;
@@ -51,6 +52,7 @@ export class McpServerManager {
   private elicitationConfig: ServerElicitationConfig | undefined;
   private acceptedUrlElicitations = new Map<string, Set<string>>();
   private defaultRequestTimeoutMs: number | undefined;
+  private runtimeSignal: AbortSignal | undefined;
 
   /** Default cwd for stdio servers without an explicit config `cwd`. */
   constructor(private readonly defaultCwd?: string) {}
@@ -61,6 +63,10 @@ export class McpServerManager {
 
   setElicitationConfig(config: ServerElicitationConfig | undefined): void {
     this.elicitationConfig = config;
+  }
+
+  setRuntimeSignal(signal: AbortSignal | undefined): void {
+    this.runtimeSignal = signal;
   }
 
   setDefaultRequestTimeoutMs(timeoutMs: number | undefined): void {
@@ -84,22 +90,24 @@ export class McpServerManager {
     signal?: AbortSignal,
   ): RequestOptions | undefined {
     const timeout = this.getResolvedRequestTimeoutMs(definition);
+    const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
 
-    if (!signal && timeout === undefined) {
+    if (!ownedSignal && timeout === undefined) {
       return undefined;
     }
 
     return {
-      ...(signal ? { signal } : {}),
+      ...(ownedSignal ? { signal: ownedSignal } : {}),
       ...(timeout !== undefined ? { timeout } : {}),
     };
   }
 
   async connect(name: string, definition: ServerDefinition, signal?: AbortSignal): Promise<ServerConnection> {
-    throwIfAborted(signal);
+    const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
+    throwIfAborted(ownedSignal);
     // Dedupe concurrent connection attempts
     if (this.connectPromises.has(name)) {
-      return abortable(this.connectPromises.get(name)!, signal);
+      return abortable(this.connectPromises.get(name)!, ownedSignal);
     }
 
     // Reuse existing connection if healthy
@@ -109,11 +117,16 @@ export class McpServerManager {
       return existing;
     }
 
-    const promise = this.createConnection(name, definition, signal);
+    const promise = this.createConnection(name, definition, ownedSignal);
     this.connectPromises.set(name, promise);
 
     try {
       const connection = await promise;
+      if (ownedSignal?.aborted) {
+        await connection.client.close().catch(() => {});
+        await connection.transport.close().catch(() => {});
+        throwIfAborted(ownedSignal);
+      }
       this.connections.set(name, connection);
       return connection;
     } finally {
@@ -237,6 +250,7 @@ export class McpServerManager {
       });
       if (this.elicitationConfig.allowUrl) {
         client.setNotificationHandler(ElicitationCompleteNotificationSchema, notification => {
+          if (this.runtimeSignal?.aborted) return;
           const accepted = this.acceptedUrlElicitations.get(serverName);
           if (!accepted?.delete(notification.params.elicitationId)) return;
           this.elicitationConfig?.ui.notify(
@@ -253,7 +267,7 @@ export class McpServerManager {
     serverName: string,
     error: UrlElicitationRequiredError,
   ): Promise<"accept" | "decline" | "cancel"> {
-    if (!this.elicitationConfig?.allowUrl) return "cancel";
+    if (this.runtimeSignal?.aborted || !this.elicitationConfig?.allowUrl) return "cancel";
     for (const params of error.elicitations) {
       const result = await handleUrlElicitation({
         ...this.elicitationConfig,
@@ -266,6 +280,7 @@ export class McpServerManager {
   }
 
   private rememberUrlElicitation(serverName: string, elicitationId: string): void {
+    if (this.runtimeSignal?.aborted) return;
     let accepted = this.acceptedUrlElicitations.get(serverName);
     if (!accepted) {
       accepted = new Set();
@@ -431,6 +446,10 @@ export class McpServerManager {
   async closeAll(): Promise<void> {
     const names = [...this.connections.keys()];
     await Promise.all(names.map(name => this.close(name)));
+    this.uiStreamListeners.clear();
+    this.acceptedUrlElicitations.clear();
+    this.samplingConfig = undefined;
+    this.elicitationConfig = undefined;
   }
 
   getConnection(name: string): ServerConnection | undefined {

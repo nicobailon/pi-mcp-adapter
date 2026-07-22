@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:typecheck": "tsc --noEmit",
     "test:oauth-provider": "node --import tsx --test mcp-oauth-provider.test.ts"
   },
   "repository": {
@@ -43,6 +44,7 @@
     "state.ts",
     "utils.ts",
     "abort.ts",
+    "runtime-owner.ts",
     "tool-metadata.ts",
     "init.ts",
     "ui-session.ts",
