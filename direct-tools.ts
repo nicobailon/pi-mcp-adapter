@@ -13,7 +13,7 @@ import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } 
 import { formatToolName, isToolExcluded } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
-import { formatAuthRequiredMessage, truncateAtWord } from "./utils.ts";
+import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
@@ -49,7 +49,18 @@ async function attemptDirectAutoAuth(
   }
 
   const definition = state.config.mcpServers[serverName];
-  if (!definition || !supportsOAuth(definition) || !definition.url) {
+  if (!definition || !supportsOAuth(definition)) {
+    return { status: "skipped" };
+  }
+
+  let serverUrl: string | undefined;
+  try {
+    serverUrl = resolveServerUrl(definition);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: "failed", message: getDirectAuthFailedMessage(state, serverName, message) };
+  }
+  if (!serverUrl) {
     return { status: "skipped" };
   }
 
@@ -67,9 +78,9 @@ async function attemptDirectAutoAuth(
 
   try {
     if (state.authStorageOptions) {
-      await authenticate(serverName, definition.url, definition, { authStorageOptions: state.authStorageOptions });
+      await authenticate(serverName, serverUrl, definition, { authStorageOptions: state.authStorageOptions });
     } else {
-      await authenticate(serverName, definition.url, definition);
+      await authenticate(serverName, serverUrl, definition);
     }
     return { status: "success" };
   } catch (error) {

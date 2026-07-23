@@ -10,7 +10,7 @@ import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from ".
 import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
-import { formatAuthRequiredMessage, truncateAtWord } from "./utils.ts";
+import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 
@@ -87,7 +87,18 @@ async function attemptAutoAuth(
   }
 
   const definition = state.config.mcpServers[serverName];
-  if (!definition || !supportsOAuth(definition) || !definition.url) {
+  if (!definition || !supportsOAuth(definition)) {
+    return { status: "skipped" };
+  }
+
+  let serverUrl: string | undefined;
+  try {
+    serverUrl = resolveServerUrl(definition);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: "failed", message: getAuthFailedMessage(state, serverName, message) };
+  }
+  if (!serverUrl) {
     return { status: "skipped" };
   }
 
@@ -105,9 +116,9 @@ async function attemptAutoAuth(
 
   try {
     if (state.authStorageOptions) {
-      await authenticate(serverName, definition.url, definition, { authStorageOptions: state.authStorageOptions });
+      await authenticate(serverName, serverUrl, definition, { authStorageOptions: state.authStorageOptions });
     } else {
-      await authenticate(serverName, definition.url, definition);
+      await authenticate(serverName, serverUrl, definition);
     }
     return { status: "success" };
   } catch (error) {
@@ -262,17 +273,18 @@ export async function executeAuthStart(state: McpExtensionState, serverName: str
     };
   }
 
-  if (!definition.url || !supportsOAuth(definition)) {
-    return {
-      content: [{ type: "text" as const, text: `Server "${serverName}" is not configured for OAuth over HTTP.` }],
-      details: { mode: "auth-start", error: "oauth_not_supported", server: serverName },
-    };
-  }
-
   try {
+    const serverUrl = resolveServerUrl(definition);
+    if (!serverUrl || !supportsOAuth(definition)) {
+      return {
+        content: [{ type: "text" as const, text: `Server "${serverName}" is not configured for OAuth over HTTP.` }],
+        details: { mode: "auth-start", error: "oauth_not_supported", server: serverName },
+      };
+    }
+
     const { authorizationUrl } = state.authStorageOptions
-      ? await startAuth(serverName, definition.url, definition, { authStorageOptions: state.authStorageOptions })
-      : await startAuth(serverName, definition.url, definition);
+      ? await startAuth(serverName, serverUrl, definition, { authStorageOptions: state.authStorageOptions })
+      : await startAuth(serverName, serverUrl, definition);
     if (!authorizationUrl) {
       return {
         content: [{ type: "text" as const, text: `OAuth authentication successful for "${serverName}".` }],

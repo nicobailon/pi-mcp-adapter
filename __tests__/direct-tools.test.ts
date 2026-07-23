@@ -12,6 +12,7 @@ const originalHashEnv = {
   MCP_HASH_ENV: process.env.MCP_HASH_ENV,
   MCP_HASH_HEADER: process.env.MCP_HASH_HEADER,
   MCP_HASH_TOKEN: process.env.MCP_HASH_TOKEN,
+  MCP_HASH_URL: process.env.MCP_HASH_URL,
 };
 
 afterEach(() => {
@@ -152,6 +153,62 @@ describe("buildProxyDescription", () => {
 });
 
 describe("metadata cache hashing", () => {
+  it("hashes interpolated URLs", () => {
+    process.env.MCP_HASH_URL = "https://one.example.test/mcp";
+    const first = computeServerHash({ url: "${MCP_HASH_URL}" });
+
+    process.env.MCP_HASH_URL = "https://two.example.test/mcp";
+    const second = computeServerHash({ url: "${MCP_HASH_URL}" });
+
+    expect(first).not.toBe(second);
+    expect(computeServerHash({ url: "${MCP_HASH_URL}" })).toBe(
+      computeServerHash({ url: "https://two.example.test/mcp" }),
+    );
+  });
+
+  it("does not hash URL placeholders with missing environment variables", () => {
+    delete process.env.MCP_HASH_URL;
+
+    expect(() => computeServerHash({ url: "https://${MCP_HASH_URL}/mcp" })).toThrow(
+      "Missing environment variable in MCP server URL: MCP_HASH_URL",
+    );
+  });
+
+  it("treats cached URL placeholders with missing environment variables as cache misses", () => {
+    delete process.env.MCP_HASH_URL;
+
+    expect(isServerCacheValid({
+      configHash: "cached",
+      cachedAt: Date.now(),
+      tools: [],
+      resources: [],
+    }, { url: "https://${MCP_HASH_URL}/mcp" })).toBe(false);
+  });
+
+  it("skips cached direct tools when URL placeholders are missing", () => {
+    delete process.env.MCP_HASH_URL;
+
+    const config: McpConfig = {
+      settings: { directTools: true },
+      mcpServers: {
+        remote: { url: "https://${MCP_HASH_URL}/mcp" },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        remote: {
+          configHash: "cached",
+          cachedAt: Date.now(),
+          tools: [{ name: "search", inputSchema: { type: "object" } }],
+          resources: [],
+        },
+      },
+    };
+
+    expect(resolveDirectTools(config, cache, "server")).toEqual([]);
+  });
+
   it("hashes interpolated cwd", () => {
     process.env.MCP_HASH_CWD = "/tmp/mcp-one";
     const first = computeServerHash({ command: "node", cwd: "${MCP_HASH_CWD}/server" });

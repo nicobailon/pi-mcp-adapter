@@ -125,7 +125,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `args` | Command arguments |
 | `env` | Environment variables; supports `${VAR}` and `$env:VAR` interpolation |
 | `cwd` | Working directory; supports `${VAR}`, `$env:VAR`, and `~` expansion |
-| `url` | HTTP endpoint (StreamableHTTP with SSE fallback) |
+| `url` | HTTP endpoint (StreamableHTTP with SSE fallback); supports raw `${VAR}` and `$env:VAR` interpolation, and missing URL variables fail before any request is sent |
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |

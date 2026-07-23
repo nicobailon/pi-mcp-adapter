@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added environment-variable interpolation for HTTP MCP server URLs, with missing URL variables failing closed before requests are sent. Thanks @ozeias for PR #206.
 - Added `settings.oauthDir` to store MCP OAuth credentials in a project-specific directory, with `MCP_OAUTH_DIR` still taking precedence. Thanks @Termina1 for PR #105.
 - Added `lazy-keep-alive` lifecycle mode for MCP servers that should start on first use and then stay resident with health-check reconnects. Thanks @ricardoraposo for PR #143.
 - Added `MCP_UI_VIEWER=none` / `off` / `disabled` to suppress MCP UI browser or Glimpse windows while keeping inline tool results available. Thanks @stevekrouse for PR #172.
