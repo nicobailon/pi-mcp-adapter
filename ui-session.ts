@@ -28,6 +28,8 @@ export interface UiSessionRequest {
   onNeedsAuth?: SessionRecoveryDeps["onNeedsAuth"];
 }
 
+export type UiSessionViewer = "browser" | "glimpse" | "suppressed";
+
 export interface UiSessionRuntime {
   serverName: string;
   toolName: string;
@@ -37,11 +39,48 @@ export interface UiSessionRuntime {
   streamMode?: UiStreamMode;
   requestMeta?: Record<string, unknown>;
   url: string;
+  viewer: UiSessionViewer;
+  windowOpen: boolean;
   isActive: () => boolean;
   sendToolResult: (result: CallToolResult) => void;
   sendResultPatch: (result: CallToolResult) => void;
   sendToolCancelled: (reason: string) => void;
   close: (reason?: string) => void;
+}
+
+export interface UiSessionResultSummary {
+  message: string;
+  uiOpen: boolean;
+  uiViewer?: UiSessionViewer;
+  uiUrl?: string;
+}
+
+export function summarizeUiSessionResult(uiSession: UiSessionRuntime | null): UiSessionResultSummary {
+  if (!uiSession) {
+    return {
+      message: "Interactive UI was unavailable; returning the tool result inline.",
+      uiOpen: false,
+    };
+  }
+
+  if (!uiSession.windowOpen) {
+    const action = uiSession.reused ? "Updated the suppressed MCP UI session." : "MCP UI window was suppressed.";
+    return {
+      message: `${action} Open manually: ${uiSession.url}`,
+      uiOpen: false,
+      uiViewer: uiSession.viewer,
+      uiUrl: uiSession.url,
+    };
+  }
+
+  return {
+    message: uiSession.reused
+      ? "Updated the open UI."
+      : "Interactive UI is open. I'll respond to your prompts and intents as you interact with it.",
+    uiOpen: true,
+    uiViewer: uiSession.viewer,
+    uiUrl: uiSession.url,
+  };
 }
 
 const MAX_COMPLETED_SESSIONS = 10;
@@ -141,6 +180,8 @@ export async function maybeStartUiSession(
         streamMode,
         requestMeta: streamToken ? { [UI_STREAM_REQUEST_META_KEY]: streamToken } : undefined,
         url: existingHandle.url,
+        viewer: existingHandle.viewer ?? "browser",
+        windowOpen: existingHandle.windowOpen ?? true,
         isActive: () => active && state.uiServer === existingHandle,
         sendToolResult: (result: CallToolResult) => {
           if (!active || state.uiServer !== existingHandle) return;
@@ -328,10 +369,13 @@ export async function maybeStartUiSession(
     const viewerPref = process.env.MCP_UI_VIEWER?.toLowerCase();
     const uiSuppressed = viewerPref === "none" || viewerPref === "off" || viewerPref === "disabled";
 
+    let viewer: UiSessionViewer = "browser";
+    let windowOpen = true;
+
     if (uiSuppressed) {
-      // MCP_UI_VIEWER=none: run the tool + UI server (so streaming/results still work)
-      // but do NOT open a browser or native Glimpse window. Notify inline with the URL.
-      state.ui?.notify(`MCP UI suppressed (MCP_UI_VIEWER=${viewerPref}). Tool still ran. UI URL: ${handle.url}`, "info");
+      viewer = "suppressed";
+      windowOpen = false;
+      state.ui?.notify(`MCP UI window suppressed (MCP_UI_VIEWER=${viewerPref}). Open manually: ${handle.url}`, "info");
       log.info("Suppressing MCP UI window (MCP_UI_VIEWER=" + viewerPref + ")", { url: handle.url });
     } else {
       const glimpseDetected = isGlimpseAvailable();
@@ -349,16 +393,21 @@ export async function maybeStartUiSession(
               if (active) handle.close("glimpse-closed");
             },
           });
+          viewer = "glimpse";
         } catch (error) {
           log.debug("Glimpse unavailable, using browser", {
             error: error instanceof Error ? error.message : String(error),
           });
           await openInBrowser(state, handle.url);
+          viewer = "browser";
         }
       } else {
         await openInBrowser(state, handle.url);
       }
     }
+
+    handle.viewer = viewer;
+    handle.windowOpen = windowOpen;
 
     return {
       serverName: request.serverName,
@@ -369,6 +418,8 @@ export async function maybeStartUiSession(
       streamMode,
       requestMeta: streamToken ? { [UI_STREAM_REQUEST_META_KEY]: streamToken } : undefined,
       url: handle.url,
+      viewer,
+      windowOpen,
       isActive: () => active && state.uiServer === handle,
       sendToolResult: (result: CallToolResult) => {
         if (!active || state.uiServer !== handle) return;

@@ -9,7 +9,7 @@ import { abortable, throwIfAborted } from "./abort.ts";
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
-import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
+import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
@@ -970,13 +970,19 @@ export async function executeCall(
 
       const content = resolveMcpResultContent(result as Record<string, unknown>);
       const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-      const uiMessage = uiSession?.reused
-        ? "Updated the open UI."
-        : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiMessage}`, rawMcpResult: result });
+      const uiSummary = summarizeUiSessionResult(uiSession);
+      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiSummary.message}`, rawMcpResult: result });
       return {
         content: guarded.content,
-        details: { mode: "call", ...guardedMcpDetails(guarded), server: serverName, tool: toolMeta.originalName, uiOpen: true },
+        details: {
+          mode: "call",
+          ...guardedMcpDetails(guarded),
+          server: serverName,
+          tool: toolMeta.originalName,
+          uiOpen: uiSummary.uiOpen,
+          uiViewer: uiSummary.uiViewer,
+          uiUrl: uiSummary.uiUrl,
+        },
       };
     }
 

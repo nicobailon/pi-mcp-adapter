@@ -9,7 +9,7 @@ import { isServerCacheValid } from "./metadata-cache.ts";
 import { formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
-import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.ts";
+import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { formatToolName, isToolExcluded } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
@@ -446,13 +446,18 @@ export function createDirectToolExecutor(
       const content = resolveMcpResultContent(result as Record<string, unknown>);
       const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
       if (hasUi) {
-        const uiMessage = uiSession?.reused
-          ? "Updated the open UI."
-          : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
-        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiMessage}` });
+        const uiSummary = summarizeUiSessionResult(uiSession);
+        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiSummary.message}` });
         return {
           content: guarded.content,
-          details: { server: spec.serverName, tool: spec.originalName, uiOpen: true, ...guardedMcpDetails(guarded) },
+          details: {
+            server: spec.serverName,
+            tool: spec.originalName,
+            uiOpen: uiSummary.uiOpen,
+            uiViewer: uiSummary.uiViewer,
+            uiUrl: uiSummary.uiUrl,
+            ...guardedMcpDetails(guarded),
+          },
         };
       }
 
