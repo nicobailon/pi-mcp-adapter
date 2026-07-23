@@ -7,7 +7,13 @@ import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge"
 import type { McpTool, McpResource, ServerEntry, ToolMetadata } from "./types.ts";
 import { formatToolName, isToolExcluded } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
-import { extractToolUiStreamMode, interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.ts";
+import {
+  extractToolUiStreamMode,
+  interpolateEnvRecord,
+  resolveBearerToken,
+  resolveConfigPath,
+  resolveServerUrl,
+} from "./utils.ts";
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -91,7 +97,7 @@ export function computeServerHash(definition: ServerEntry): string {
     args: definition.args,
     env: interpolateEnvRecord(definition.env),
     cwd: resolveConfigPath(definition.cwd),
-    url: definition.url,
+    url: resolveServerUrl(definition),
     headers: interpolateEnvRecord(definition.headers),
     auth: definition.auth,
     bearerToken: resolveBearerToken(definition),

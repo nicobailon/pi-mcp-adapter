@@ -18,7 +18,7 @@ import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth } from "./mcp-auth-flow.ts";
 import { getAuthForUrl, getAuthStorageOptions } from "./mcp-auth.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
-import { openPath } from "./utils.ts";
+import { openPath, resolveServerUrl } from "./utils.ts";
 
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return;
@@ -166,7 +166,8 @@ export async function authenticateServer(
     return { ok: false, message };
   }
 
-  if (!definition.url) {
+  const serverUrl = resolveServerUrl(definition);
+  if (!serverUrl) {
     const message = `Server "${serverName}" has no URL configured (OAuth requires HTTP transport)`;
     ctx.ui.notify(message, "error");
     return { ok: false, message };
@@ -175,7 +176,7 @@ export async function authenticateServer(
   try {
     ctx.ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
     const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, ctx.cwd);
-    const status = await authenticate(serverName, definition.url, definition, {
+    const status = await authenticate(serverName, serverUrl, definition, {
       ...(authStorageOptions.baseDir ? { authStorageOptions } : {}),
       onAuthorizationUrl: (authorizationUrl) => {
         ctx.ui.notify(
@@ -331,12 +332,13 @@ function buildMcpPanelCallbacks(
       if (connection?.status === "needs-auth") {
         return "needs-auth";
       }
+      const serverUrl = definition ? resolveServerUrl(definition) : undefined;
       if (
         definition?.auth === "oauth"
-        && definition.url
+        && serverUrl
         && definition.oauth !== false
         && definition.oauth?.grantType !== "client_credentials"
-        && !getAuthForUrl(serverName, definition.url, state.authStorageOptions)?.tokens
+        && !getAuthForUrl(serverName, serverUrl, state.authStorageOptions)?.tokens
       ) {
         return "needs-auth";
       }

@@ -152,6 +152,19 @@ describe("buildProxyDescription", () => {
 });
 
 describe("metadata cache hashing", () => {
+  it("hashes interpolated URLs", () => {
+    process.env.MCP_HASH_URL = "https://one.example.test/mcp";
+    const first = computeServerHash({ url: "${MCP_HASH_URL}" });
+
+    process.env.MCP_HASH_URL = "https://two.example.test/mcp";
+    const second = computeServerHash({ url: "${MCP_HASH_URL}" });
+
+    expect(first).not.toBe(second);
+    expect(computeServerHash({ url: "${MCP_HASH_URL}" })).toBe(
+      computeServerHash({ url: "https://two.example.test/mcp" }),
+    );
+  });
+
   it("hashes interpolated cwd", () => {
     process.env.MCP_HASH_CWD = "/tmp/mcp-one";
     const first = computeServerHash({ command: "node", cwd: "${MCP_HASH_CWD}/server" });

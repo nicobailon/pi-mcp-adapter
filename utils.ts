@@ -75,6 +75,10 @@ export function interpolateEnvRecord(values: Record<string, string> | undefined)
   return resolved;
 }
 
+export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string | undefined {
+  return definition.url === undefined ? undefined : interpolateEnvVars(definition.url);
+}
+
 export function resolveConfigPath(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
 

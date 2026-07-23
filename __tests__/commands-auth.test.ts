@@ -20,6 +20,32 @@ vi.mock("../init.ts", () => ({
 }));
 
 describe("authenticateServer", () => {
+  it("interpolates the server URL before OAuth authentication", async () => {
+    const originalUrl = process.env.MCP_AUTH_URL;
+    process.env.MCP_AUTH_URL = "https://mcp.sentry.dev/mcp";
+    mocks.authenticate.mockResolvedValueOnce("authenticated");
+    const ui = { notify: vi.fn(), setStatus: vi.fn() };
+    const { authenticateServer } = await import("../commands.ts");
+
+    try {
+      const definition = { url: "${MCP_AUTH_URL}", auth: "oauth" as const };
+      const result = await authenticateServer("sentry", {
+        mcpServers: { sentry: definition },
+      }, { hasUI: true, ui } as any);
+
+      expect(result.ok).toBe(true);
+      expect(mocks.authenticate).toHaveBeenCalledWith(
+        "sentry",
+        "https://mcp.sentry.dev/mcp",
+        definition,
+        { onAuthorizationUrl: expect.any(Function) },
+      );
+    } finally {
+      if (originalUrl === undefined) delete process.env.MCP_AUTH_URL;
+      else process.env.MCP_AUTH_URL = originalUrl;
+    }
+  });
+
   it("surfaces the exact OAuth URL through UI notification", async () => {
     const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
     mocks.authenticate.mockImplementationOnce(async (_name, _url, _definition, options) => {

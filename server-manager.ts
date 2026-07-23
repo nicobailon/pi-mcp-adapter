@@ -28,7 +28,7 @@ import {
   registerElicitationHandler,
   type ServerElicitationConfig,
 } from "./elicitation-handler.ts";
-import { interpolateEnvRecord, resolveBearerToken, resolveConfigPath } from "./utils.ts";
+import { interpolateEnvRecord, resolveBearerToken, resolveConfigPath, resolveServerUrl } from "./utils.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 
 export interface ServerConnection {
@@ -360,7 +360,8 @@ export class McpServerManager {
     signal?: AbortSignal,
   ): Promise<Transport> {
     throwIfAborted(signal);
-    const url = new URL(definition.url!);
+    const serverUrl = resolveServerUrl(definition)!;
+    const url = new URL(serverUrl);
 
     // Build headers first (including any bearer token)
     const headers = resolveHeaders(definition.headers) ?? {};
@@ -382,7 +383,7 @@ export class McpServerManager {
       const oauthConfig = extractOAuthConfig(definition);
       authProvider = new McpOAuthProvider(
         serverName,
-        definition.url!,
+        serverUrl,
         oauthConfig,
         {
           onRedirect: async (_authUrl) => {
