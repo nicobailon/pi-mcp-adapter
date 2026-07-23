@@ -60,6 +60,7 @@ export async function initializeMcp(
   const toolMetadata = new Map<string, ToolMetadata[]>();
   const serverInstructions = new Map<string, string>();
   const failureTracker = new Map<string, number>();
+  const failureMessages = new Map<string, string>();
   const uiResourceHandler = new UiResourceHandler(manager);
   const consentManager = new ConsentManager("once-per-server");
   const ui = ctx.hasUI ? ctx.ui : undefined;
@@ -70,6 +71,7 @@ export async function initializeMcp(
     serverInstructions,
     config,
     failureTracker,
+    failureMessages,
     uiResourceHandler,
     consentManager,
     uiServer: null,
@@ -221,6 +223,7 @@ export async function initializeMcp(
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
     state.failureTracker.delete(serverName);
+    state.failureMessages.delete(serverName);
     updateStatusBar(state);
   });
 
@@ -315,6 +318,11 @@ export function getFailureAgeSeconds(state: McpExtensionState, serverName: strin
   return Math.round(ageMs / 1000);
 }
 
+export function getFailureMessage(state: McpExtensionState, serverName: string): string | null {
+  if (getFailureAgeSeconds(state, serverName) === null) return null;
+  return state.failureMessages.get(serverName) ?? null;
+}
+
 export async function lazyConnect(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<boolean> {
   const connection = state.manager.getConnection(serverName);
   if (connection?.status === "needs-auth") {
@@ -340,6 +348,7 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
       return false;
     }
     state.failureTracker.delete(serverName);
+    state.failureMessages.delete(serverName);
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
     updateStatusBar(state);
@@ -350,6 +359,7 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
     }
     state.failureTracker.set(serverName, Date.now());
     const message = error instanceof Error ? error.message : String(error);
+    state.failureMessages.set(serverName, message);
     logger.debug(`MCP: lazy connect failed for ${serverName}: ${message}`);
     updateStatusBar(state);
     return false;

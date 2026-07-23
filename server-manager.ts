@@ -131,6 +131,8 @@ export class McpServerManager {
     const client = this.createClient(name);
 
     let transport: Transport;
+    let stderrChunks: string[] = [];
+    let stderrLen = 0;
 
     if (definition.command) {
       let command = definition.command;
@@ -145,13 +147,25 @@ export class McpServerManager {
         }
       }
 
-      transport = new StdioClientTransport({
+      const stdioTransport = new StdioClientTransport({
         command,
         args,
         env: resolveEnv(definition.env),
         cwd: resolveConfigPath(definition.cwd) ?? this.defaultCwd,
-        stderr: definition.debug ? "inherit" : "ignore",
+        stderr: definition.debug ? "inherit" : "pipe",
       });
+      // Capture child stderr so connection failures can surface the real reason
+      // (e.g. "Cannot connect to the Docker daemon") instead of "Connection closed".
+      const stderrStream = stdioTransport.stderr;
+      if (stderrStream) {
+        stderrStream.on("data", (chunk: Buffer) => {
+          if (stderrLen > 8192) return;
+          const text = chunk.toString("utf8");
+          stderrChunks.push(text);
+          stderrLen += text.length;
+        });
+      }
+      transport = stdioTransport;
     } else if (definition.url) {
       // HTTP transport with fallback
       transport = await this.createHttpTransport(definition, name, signal);
@@ -204,6 +218,16 @@ export class McpServerManager {
       // Clean up both client and transport on any error
       await client.close().catch(() => {});
       await transport.close().catch(() => {});
+
+      // Augment the error with captured stderr, if any, so the panel/status
+      // shows the real failure cause instead of a bare "Connection closed".
+      const stderrText = stderrChunks.join("").trim();
+      if (stderrText) {
+        const baseMsg = error instanceof Error ? error.message : String(error);
+        const lines = stderrText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        const detail = lines.slice(-3).join(" — ");
+        throw new Error(`${baseMsg} (${detail})`);
+      }
       throw error;
     }
   }

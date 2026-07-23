@@ -32,6 +32,7 @@ export interface McpExtensionState {
   serverInstructions: Map<string, string>;
   config: McpConfig;
   failureTracker: Map<string, number>;
+  failureMessages: Map<string, string>;
   uiResourceHandler: UiResourceHandler;
   consentManager: ConsentManager;
   uiServer: UiServerHandle | null;
