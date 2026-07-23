@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { type Component, Text } from "@earendil-works/pi-tui";
 
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -31,6 +31,29 @@ export interface McpToolResultDisplay {
 }
 
 const DEFAULT_MAX_CALL_INPUT_CHARS = 1500;
+const DEFAULT_MAX_COLLAPSED_LINES = 3;
+
+class CollapsibleText implements Component {
+  constructor(
+    private readonly text: string,
+    private readonly expanded: boolean,
+    private readonly maxCollapsedLines: number,
+    private readonly ellipsis: string,
+    private readonly expandHint: string,
+  ) {}
+
+  render(width: number): string[] {
+    const lines = new Text(this.text, 0, 0).render(width);
+    if (this.expanded || lines.length <= this.maxCollapsedLines) return lines;
+
+    return [
+      ...lines.slice(0, this.maxCollapsedLines),
+      ...new Text(`${this.ellipsis}\n${this.expandHint}`, 0, 0).render(width),
+    ];
+  }
+
+  invalidate(): void {}
+}
 
 function truncateText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
@@ -149,13 +172,15 @@ export function renderMcpToolResult(
   }
 
   const hasErrorDetails = Boolean(result.details.error);
-  const display = formatMcpToolResultLines(result, options.expanded || context?.isError === true || hasErrorDetails);
-  const output = display.lines
-    .map((line) => line === "…" ? theme.fg("muted", line) : theme.fg("toolOutput", line))
-    .join("\n");
-  const hint = display.truncated && !options.expanded
-    ? `\n${theme.fg("muted", "(Ctrl+O to expand)")}`
-    : "";
+  const expanded = options.expanded || context?.isError === true || hasErrorDetails;
+  const display = formatMcpToolResultLines(result, true);
+  const output = display.lines.map((line) => theme.fg("toolOutput", line)).join("\n");
 
-  return new Text(`${output}${hint}`, 0, 0);
+  return new CollapsibleText(
+    output,
+    expanded,
+    DEFAULT_MAX_COLLAPSED_LINES,
+    theme.fg("muted", "…"),
+    theme.fg("muted", "(Ctrl+O to expand)"),
+  );
 }

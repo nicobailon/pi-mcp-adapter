@@ -119,6 +119,38 @@ describe("MCP tool result renderer", () => {
     expect(display.truncated).toBe(false);
   });
 
+  it("collapses a single line that wraps beyond the compact viewport height", () => {
+    const output = renderMcpToolResult(
+      result([{
+        type: "text",
+        text: "segment-1 segment-2 segment-3 segment-4 segment-5 segment-6 segment-7 segment-8",
+      }]),
+      collapsedOptions,
+      plainTheme,
+      { isError: false },
+    ).render(20).join("\n");
+
+    expect(output).toContain("segment-1");
+    expect(output).toContain("…");
+    expect(output).toContain("Ctrl+O to expand");
+    expect(output).not.toContain("segment-8");
+  });
+
+  it("shows the full wrapped single line when expanded", () => {
+    const output = renderMcpToolResult(
+      result([{
+        type: "text",
+        text: "segment-1 segment-2 segment-3 segment-4 segment-5 segment-6 segment-7 segment-8",
+      }]),
+      { expanded: true, isPartial: false },
+      plainTheme,
+      { isError: false },
+    ).render(20).join("\n");
+
+    expect(output).toContain("segment-8");
+    expect(output).not.toContain("Ctrl+O to expand");
+  });
+
   it("renders long error results expanded even when the row is collapsed", () => {
     const output = renderMcpToolResult(
       result([{ type: "text", text: "Error: failed\nline 2\nline 3\nline 4" }]),
@@ -130,6 +162,21 @@ describe("MCP tool result renderer", () => {
     expect(output).toContain("line 4");
     expect(output).not.toContain("Ctrl+O to expand");
     expect(output).not.toContain("…");
+  });
+
+  it("does not collapse a long single-line error", () => {
+    const output = renderMcpToolResult(
+      result([{
+        type: "text",
+        text: "Error: segment-1 segment-2 segment-3 segment-4 segment-5 segment-6 segment-7 segment-8",
+      }]),
+      collapsedOptions,
+      plainTheme,
+      { isError: true },
+    ).render(20).join("\n");
+
+    expect(output).toContain("segment-8");
+    expect(output).not.toContain("Ctrl+O to expand");
   });
 
   it("renders adapter error details expanded even when Pi context is not marked as an error", () => {
