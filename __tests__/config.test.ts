@@ -154,6 +154,191 @@ describe("config discovery", () => {
     });
   });
 
+  // SECURITY: credential/url binding in mergeServerMaps. A lower-precedence
+  // source (~/.config/mcp/mcp.json) defines an HTTP server with an
+  // Authorization header; a higher-precedence source (~/.pi/agent/mcp.json)
+  // overrides it. Auth material bound to the original url must not follow the
+  // server to a different url. See config.ts mergeServerMaps.
+  const URL_A = "https://litellm.internal/mcp/";
+  const URL_B = "https://attacker.example/mcp/";
+
+  function writeBakedAndOverride(
+    home: string,
+    project: string,
+    baked: Record<string, unknown>,
+    override: Record<string, unknown>,
+  ): void {
+    process.env.HOME = home;
+    process.chdir(project);
+    // Lowest precedence — the baked, credential-bearing definition.
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      mcpServers: { litellm: baked },
+    });
+    // Higher precedence — the (potentially untrusted) override.
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      mcpServers: { litellm: override },
+    });
+  }
+
+  it("preserves inherited auth when a higher-precedence override keeps the same url", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-a-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-a-project-"));
+    writeBakedAndOverride(
+      home,
+      project,
+      { url: URL_A, headers: { Authorization: "Bearer secret-vk" } },
+      { url: URL_A, directTools: true },
+    );
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    expect(config.mcpServers.litellm).toEqual({
+      url: URL_A,
+      headers: { Authorization: "Bearer secret-vk" },
+      directTools: true,
+    });
+  });
+
+  it("drops inherited auth when a higher-precedence override changes the url without supplying new auth", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-b-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-b-project-"));
+    writeBakedAndOverride(
+      home,
+      project,
+      { url: URL_A, headers: { Authorization: "Bearer secret-vk" } },
+      { url: URL_B },
+    );
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    expect(config.mcpServers.litellm).toEqual({ url: URL_B });
+    expect(config.mcpServers.litellm.headers).toBeUndefined();
+  });
+
+  it("keeps only the new auth when a higher-precedence override changes both url and headers", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-c-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-c-project-"));
+    writeBakedAndOverride(
+      home,
+      project,
+      { url: URL_A, headers: { Authorization: "Bearer secret-vk" } },
+      { url: URL_B, headers: { Authorization: "Bearer override-token" } },
+    );
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    expect(config.mcpServers.litellm).toEqual({
+      url: URL_B,
+      headers: { Authorization: "Bearer override-token" },
+    });
+  });
+
+  it("does not exfiltrate the baked VK when a url-only override repoints the server", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-d-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-d-project-"));
+    // The baked config carries the real VK as an unexpanded interpolation
+    // template; expansion happens at egress. If the header survives a url-only
+    // override, the interpolated VK is shipped to the attacker url.
+    writeBakedAndOverride(
+      home,
+      project,
+      {
+        url: URL_A,
+        headers: { Authorization: "Bearer ${LITELLM_API_KEY}" },
+        bearerTokenEnv: "LITELLM_API_KEY",
+      },
+      { url: URL_B },
+    );
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    const entry = config.mcpServers.litellm;
+    expect(entry.url).toBe(URL_B);
+    expect(entry.headers).toBeUndefined();
+    expect(entry.bearerTokenEnv).toBeUndefined();
+    // No auth-bearing material of any kind may reference the VK.
+    expect(JSON.stringify(entry)).not.toContain("LITELLM_API_KEY");
+  });
+
+  // Per-field coverage for every member of URL_BOUND_AUTH_FIELDS beyond
+  // headers/bearerTokenEnv — guards against a regression that silently drops a
+  // field from the strip set while the other tests stay green.
+  it("drops an inherited bearerToken when a url-only override repoints the server", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-bt-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-bt-project-"));
+    writeBakedAndOverride(
+      home,
+      project,
+      { url: URL_A, bearerToken: "secret-bearer-token" },
+      { url: URL_B },
+    );
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    const entry = config.mcpServers.litellm;
+    expect(entry).toEqual({ url: URL_B });
+    expect(entry.bearerToken).toBeUndefined();
+    expect(JSON.stringify(entry)).not.toContain("secret-bearer-token");
+  });
+
+  it("drops inherited oauth config when a url-only override repoints the server", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-oauth-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-oauth-project-"));
+    writeBakedAndOverride(
+      home,
+      project,
+      { url: URL_A, oauth: { clientId: "client", clientSecret: "oauth-client-secret" } },
+      { url: URL_B },
+    );
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    const entry = config.mcpServers.litellm;
+    expect(entry).toEqual({ url: URL_B });
+    expect(entry.oauth).toBeUndefined();
+    expect(JSON.stringify(entry)).not.toContain("oauth-client-secret");
+  });
+
+  // Three-source laundering: the accumulated (folded) entry's url — not just a
+  // pairwise base — must drive the strip decision. A middle source re-supplies
+  // the auth WITHOUT a url (so it is inherited against the still-url-A entry),
+  // then the top source repoints the url; the top override must still strip the
+  // accumulated auth.
+  it("does not launder auth across three sources when the top source changes the url", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-3src-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-3src-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    // Lowest precedence (shared-global): baked url + VK header.
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      mcpServers: { litellm: { url: URL_A, headers: { Authorization: "Bearer secret-vk" } } },
+    });
+    // Middle precedence (pi-global): re-supplies auth but NO url — inherited
+    // against the still-url-A accumulated entry.
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      mcpServers: { litellm: { headers: { Authorization: "Bearer secret-vk" } } },
+    });
+    // Highest precedence (shared-project): repoints the url, supplies no auth.
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: { litellm: { url: URL_B } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    const entry = config.mcpServers.litellm;
+    expect(entry).toEqual({ url: URL_B });
+    expect(entry.headers).toBeUndefined();
+    expect(JSON.stringify(entry)).not.toContain("secret-vk");
+  });
+
   it("tracks provenance so project servers write locally and shared/imported servers write to Pi config", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-provenance-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-provenance-project-"));
