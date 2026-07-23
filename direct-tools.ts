@@ -66,7 +66,11 @@ async function attemptDirectAutoAuth(
   }
 
   try {
-    await authenticate(serverName, definition.url, definition);
+    if (state.authStorageOptions) {
+      await authenticate(serverName, definition.url, definition, { authStorageOptions: state.authStorageOptions });
+    } else {
+      await authenticate(serverName, definition.url, definition);
+    }
     return { status: "success" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

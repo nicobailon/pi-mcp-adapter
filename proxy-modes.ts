@@ -103,7 +103,11 @@ async function attemptAutoAuth(
   }
 
   try {
-    await authenticate(serverName, definition.url, definition);
+    if (state.authStorageOptions) {
+      await authenticate(serverName, definition.url, definition, { authStorageOptions: state.authStorageOptions });
+    } else {
+      await authenticate(serverName, definition.url, definition);
+    }
     return { status: "success" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -265,7 +269,9 @@ export async function executeAuthStart(state: McpExtensionState, serverName: str
   }
 
   try {
-    const { authorizationUrl } = await startAuth(serverName, definition.url, definition);
+    const { authorizationUrl } = state.authStorageOptions
+      ? await startAuth(serverName, definition.url, definition, { authStorageOptions: state.authStorageOptions })
+      : await startAuth(serverName, definition.url, definition);
     if (!authorizationUrl) {
       return {
         content: [{ type: "text" as const, text: `OAuth authentication successful for "${serverName}".` }],
@@ -295,7 +301,9 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
   }
 
   try {
-    const status = await completeAuthFromInput(serverName, input);
+    const status = state.authStorageOptions
+      ? await completeAuthFromInput(serverName, input, { authStorageOptions: state.authStorageOptions })
+      : await completeAuthFromInput(serverName, input);
     if (status !== "authenticated") {
       return {
         content: [{ type: "text" as const, text: `OAuth authentication did not complete for "${serverName}".` }],

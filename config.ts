@@ -703,3 +703,14 @@ export function writeDirectToolsConfig(
     writeRawConfigObject(filePath, raw);
   }
 }
+
+export function resolveConfiguredOAuthDir(raw: unknown, cwd = process.cwd()): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string") {
+    throw new Error("settings.oauthDir must be a string");
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return resolve(cwd, trimmed);
+}

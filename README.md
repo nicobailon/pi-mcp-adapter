@@ -180,7 +180,8 @@ You can also pass only the `code` query parameter with `args: '{"code":"..."}'`.
   "settings": {
     "toolPrefix": "server",
     "idleTimeout": 10,
-    "requestTimeoutMs": 30000
+    "requestTimeoutMs": 30000,
+    "oauthDir": ".pi/mcp-oauth"
   },
   "mcpServers": { }
 }
@@ -191,6 +192,7 @@ You can also pass only the `code` query parameter with `args: '{"code":"..."}'`.
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), or `"none"` |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
+| `oauthDir` | OAuth credential directory for this MCP config. Relative paths resolve from the active project cwd. `MCP_OAUTH_DIR` still wins when set. |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |

@@ -19,6 +19,7 @@ vi.mock("../config.ts", async importOriginal => ({
 vi.mock("../server-manager.ts", () => ({
   McpServerManager: vi.fn().mockImplementation(function (this: any) {
     this.setDefaultRequestTimeoutMs = vi.fn();
+    this.setAuthStorageOptions = vi.fn();
     this.setSamplingConfig = vi.fn();
     this.setElicitationConfig = vi.fn();
     this.getConnection = vi.fn();
@@ -61,6 +62,18 @@ describe("initializeMcp elicitation config", () => {
     expect(mocks.managers[0].setElicitationConfig).toHaveBeenCalledWith({
       ui: ctx.ui,
       allowUrl: true,
+    });
+  });
+
+  it("binds oauthDir storage to the active context cwd", async () => {
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: { oauthDir: ".pi/oauth" } });
+    const { initializeMcp } = await import("../init.ts");
+    const ctx = context();
+
+    await initializeMcp(extensionApi(), ctx);
+
+    expect(mocks.managers[0].setAuthStorageOptions).toHaveBeenCalledWith({
+      baseDir: "/tmp/project/.pi/oauth",
     });
   });
 

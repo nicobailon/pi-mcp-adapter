@@ -16,7 +16,7 @@ import { lazyConnect, markKeepAliveAfterConnect, updateMetadataCache, updateStat
 import { loadMetadataCache } from "./metadata-cache.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth } from "./mcp-auth-flow.ts";
-import { getAuthForUrl } from "./mcp-auth.ts";
+import { getAuthForUrl, getAuthStorageOptions } from "./mcp-auth.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
 import { openPath } from "./utils.ts";
 
@@ -174,7 +174,9 @@ export async function authenticateServer(
 
   try {
     ctx.ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
+    const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, ctx.cwd);
     const status = await authenticate(serverName, definition.url, definition, {
+      ...(authStorageOptions.baseDir ? { authStorageOptions } : {}),
       onAuthorizationUrl: (authorizationUrl) => {
         ctx.ui.notify(
           `Open this URL to authenticate ${serverName}:\n\n${authorizationUrl}\n\n` +
@@ -218,7 +220,7 @@ export async function logoutServer(
     return { ok: false, message };
   }
 
-  await removeAuth(serverName);
+  await removeAuth(serverName, { authStorageOptions: state.authStorageOptions });
   await state.manager.close(serverName);
   updateStatusBar(state);
 
@@ -334,7 +336,7 @@ function buildMcpPanelCallbacks(
         && definition.url
         && definition.oauth !== false
         && definition.oauth?.grantType !== "client_credentials"
-        && !getAuthForUrl(serverName, definition.url)?.tokens
+        && !getAuthForUrl(serverName, definition.url, state.authStorageOptions)?.tokens
       ) {
         return "needs-auth";
       }

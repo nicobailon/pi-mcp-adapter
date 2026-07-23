@@ -21,6 +21,7 @@ import { resolveNpxBinary } from "./npx-resolver.ts";
 import { logger } from "./logger.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { extractOAuthConfig, supportsOAuth } from "./mcp-auth-flow.ts";
+import type { AuthStorageOptions } from "./mcp-auth.ts";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
 import {
   handleUrlElicitation,
@@ -51,6 +52,7 @@ export class McpServerManager {
   private uiStreamListeners = new Map<string, UiStreamListener>();
   private samplingConfig: ServerSamplingConfig | undefined;
   private elicitationConfig: ServerElicitationConfig | undefined;
+  private authStorageOptions: AuthStorageOptions = {};
   private acceptedUrlElicitations = new Map<string, Set<string>>();
   private defaultRequestTimeoutMs: number | undefined;
 
@@ -67,6 +69,10 @@ export class McpServerManager {
 
   setDefaultRequestTimeoutMs(timeoutMs: number | undefined): void {
     this.defaultRequestTimeoutMs = normalizeRequestTimeoutMs(timeoutMs);
+  }
+
+  setAuthStorageOptions(options: AuthStorageOptions): void {
+    this.authStorageOptions = options;
   }
 
   getRequestOptions(name: string, signal?: AbortSignal): RequestOptions | undefined {
@@ -382,7 +388,8 @@ export class McpServerManager {
           onRedirect: async (_authUrl) => {
             // URL is captured by startAuth, no need to log
           },
-        }
+        },
+        this.authStorageOptions
       );
     }
 

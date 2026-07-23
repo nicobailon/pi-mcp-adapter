@@ -45,7 +45,7 @@ describe("config discovery", () => {
     });
 
     writeJson(join(project, ".mcp.json"), {
-      settings: { toolPrefix: "none" },
+      settings: { toolPrefix: "none", oauthDir: "shared-oauth" },
       mcpServers: {
         shared: { command: "project" },
         projectOnly: { command: "project-only" },
@@ -53,7 +53,7 @@ describe("config discovery", () => {
     });
 
     writeJson(join(project, ".pi", "mcp.json"), {
-      settings: { autoAuth: true },
+      settings: { autoAuth: true, oauthDir: ".pi/oauth" },
       mcpServers: {
         shared: { command: "project-pi" },
         projectPiOnly: { command: "project-pi-only" },
@@ -74,7 +74,20 @@ describe("config discovery", () => {
       toolPrefix: "none",
       directTools: true,
       autoAuth: true,
+      oauthDir: ".pi/oauth",
     });
+  });
+
+  it("resolves configured oauthDir against the active project cwd", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-oauthdir-project-"));
+    const absolute = mkdtempSync(join(tmpdir(), "pi-mcp-oauthdir-absolute-"));
+
+    const { resolveConfiguredOAuthDir } = await import("../config.ts");
+
+    expect(resolveConfiguredOAuthDir(".pi/oauth", project)).toBe(resolve(project, ".pi/oauth"));
+    expect(resolveConfiguredOAuthDir(absolute, project)).toBe(resolve(absolute));
+    expect(resolveConfiguredOAuthDir("  ", project)).toBeUndefined();
+    expect(() => resolveConfiguredOAuthDir(123, project)).toThrow(/settings\.oauthDir must be a string/);
   });
 
   it("prefers modern Claude Code config detection over legacy paths", async () => {

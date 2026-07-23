@@ -23,6 +23,7 @@ import { openUrl, parallelLimit } from "./utils.ts";
 import { logger } from "./logger.ts";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
 import { throwIfAborted } from "./abort.ts";
+import { getAuthStorageOptions } from "./mcp-auth.ts";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 
@@ -36,9 +37,11 @@ export async function initializeMcp(
 ): Promise<McpExtensionState> {
   const configPath = pi.getFlag("mcp-config") as string | undefined;
   const config = loadMcpConfig(configPath, ctx.cwd);
+  const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, ctx.cwd);
 
   const manager = new McpServerManager(ctx.cwd);
   manager.setDefaultRequestTimeoutMs(config.settings?.requestTimeoutMs);
+  manager.setAuthStorageOptions(authStorageOptions);
   const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
   if (config.settings?.sampling !== false && (ctx.hasUI || samplingAutoApprove)) {
     manager.setSamplingConfig({
@@ -69,6 +72,7 @@ export async function initializeMcp(
     toolMetadata,
     serverInstructions,
     config,
+    authStorageOptions,
     failureTracker,
     uiResourceHandler,
     consentManager,

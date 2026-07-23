@@ -14,6 +14,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../config.ts", () => ({
   loadMcpConfig: vi.fn(() => mocks.config),
+  resolveConfiguredOAuthDir: vi.fn((raw, cwd = process.cwd()) => {
+    if (raw === undefined || raw === null) return undefined;
+    if (typeof raw !== "string") throw new Error("settings.oauthDir must be a string");
+    const trimmed = raw.trim();
+    return trimmed ? join(cwd, trimmed) : undefined;
+  }),
 }));
 
 vi.mock("../metadata-cache.ts", () => ({
@@ -51,6 +57,7 @@ function createManager() {
   let current: typeof connection | undefined;
   const manager = {
     setDefaultRequestTimeoutMs: vi.fn(),
+    setAuthStorageOptions: vi.fn(),
     setSamplingConfig: vi.fn(),
     setElicitationConfig: vi.fn(),
     getConnection: vi.fn(() => current),

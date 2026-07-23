@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { getAuthEntry, getAuthEntryFilePath, saveAuthEntry } from "../mcp-auth.ts";
+import { getAuthEntry, getAuthEntryFilePath, getAuthStorageOptions, saveAuthEntry } from "../mcp-auth.ts";
 
 describe("mcp-auth storage paths", () => {
   const originalOAuthDir = process.env.MCP_OAUTH_DIR;
@@ -43,5 +43,46 @@ describe("mcp-auth storage paths", () => {
 
   it("rejects non-string names at the storage boundary", () => {
     expect(() => getAuthEntryFilePath(undefined as unknown as string)).toThrow(/Invalid MCP server name/);
+  });
+
+  it("uses configured oauthDir relative to the active cwd", () => {
+    delete process.env.MCP_OAUTH_DIR;
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
+    const options = getAuthStorageOptions(".pi/oauth", project);
+
+    saveAuthEntry("configured", { tokens: { accessToken: "token" } }, "https://example.com/mcp", options);
+
+    const filePath = getAuthEntryFilePath("configured", options);
+    expect(filePath.startsWith(join(project, ".pi", "oauth"))).toBe(true);
+    expect(existsSync(filePath)).toBe(true);
+    rmSync(project, { recursive: true, force: true });
+  });
+
+  it("keeps separate configured oauthDir values isolated in one process", () => {
+    delete process.env.MCP_OAUTH_DIR;
+    const projectA = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-a-"));
+    const projectB = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-b-"));
+    const optionsA = getAuthStorageOptions(".pi/oauth", projectA);
+    const optionsB = getAuthStorageOptions(".pi/oauth", projectB);
+
+    saveAuthEntry("same-server", { tokens: { accessToken: "token-a" } }, "https://example.com/mcp", optionsA);
+    saveAuthEntry("same-server", { tokens: { accessToken: "token-b" } }, "https://example.com/mcp", optionsB);
+
+    expect(getAuthEntry("same-server", optionsA)?.tokens?.accessToken).toBe("token-a");
+    expect(getAuthEntry("same-server", optionsB)?.tokens?.accessToken).toBe("token-b");
+    rmSync(projectA, { recursive: true, force: true });
+    rmSync(projectB, { recursive: true, force: true });
+  });
+
+  it("keeps MCP_OAUTH_DIR as the explicit override over settings.oauthDir", () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
+    const options = getAuthStorageOptions(".pi/oauth", project);
+
+    saveAuthEntry("env-override", { tokens: { accessToken: "token" } }, "https://example.com/mcp", options);
+
+    const filePath = getAuthEntryFilePath("env-override", options);
+    expect(filePath.startsWith(authDir)).toBe(true);
+    expect(filePath.startsWith(join(project, ".pi", "oauth"))).toBe(false);
+    rmSync(project, { recursive: true, force: true });
   });
 });

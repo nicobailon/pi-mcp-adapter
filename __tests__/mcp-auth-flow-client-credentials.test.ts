@@ -281,6 +281,47 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(getOAuthState("stale")).not.toBe("old-state");
   });
 
+  it("keeps same-name pending OAuth flows isolated by auth storage", async () => {
+    delete process.env.MCP_OAUTH_DIR;
+    const projectA = mkdtempSync(join(tmpdir(), "pi-mcp-auth-flow-a-"));
+    const projectB = mkdtempSync(join(tmpdir(), "pi-mcp-auth-flow-b-"));
+    const authStorageOptionsA = { baseDir: join(projectA, ".pi", "oauth") };
+    const authStorageOptionsB = { baseDir: join(projectB, ".pi", "oauth") };
+    let call = 0;
+    mocks.sdkAuth.mockImplementation(async (provider) => {
+      call++;
+      if (call <= 2) {
+        await provider.saveClientInformation({ client_id: `client-${call}` });
+        await provider.redirectToAuthorization(new URL(`https://auth.example.com/authorize-${call}`));
+        return "REDIRECT";
+      }
+      await provider.saveTokens({ access_token: "token-b", token_type: "Bearer" });
+      return "AUTHORIZED";
+    });
+    const { startAuth, completeAuthFromInput, shutdownOAuth } = await import("../mcp-auth-flow.ts");
+    const { getAuthForUrl, getOAuthState } = await import("../mcp-auth.ts");
+
+    await startAuth("shared", "https://api.example.com/mcp", {
+      url: "https://api.example.com/mcp",
+      auth: "oauth",
+    }, { authStorageOptions: authStorageOptionsA });
+    await startAuth("shared", "https://api.example.com/mcp", {
+      url: "https://api.example.com/mcp",
+      auth: "oauth",
+    }, { authStorageOptions: authStorageOptionsB });
+
+    expect(getOAuthState("shared", authStorageOptionsA)).toBeDefined();
+    expect(getOAuthState("shared", authStorageOptionsB)).toBeDefined();
+
+    await completeAuthFromInput("shared", "code-b", { authStorageOptions: authStorageOptionsB });
+
+    expect(getAuthForUrl("shared", "https://api.example.com/mcp", authStorageOptionsA)?.tokens).toBeUndefined();
+    expect(getAuthForUrl("shared", "https://api.example.com/mcp", authStorageOptionsB)?.tokens?.accessToken).toBe("token-b");
+    await shutdownOAuth();
+    rmSync(projectA, { recursive: true, force: true });
+    rmSync(projectB, { recursive: true, force: true });
+  });
+
   it("preserves stored dynamic client info when tokens exist", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       expect(await provider.clientInformation()).toEqual({ client_id: "stored-client", client_secret: "stored-secret" });
