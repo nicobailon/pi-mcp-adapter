@@ -1,7 +1,7 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import { isToolExcluded } from "./types.ts";
-import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance } from "./types.ts";
+import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance, ToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import type { MetadataCache, ServerCacheEntry, CachedTool } from "./metadata-cache.ts";
 
@@ -152,7 +152,7 @@ interface VisibleItem {
 
 class McpPanel {
   private noticeLines: string[];
-  private prefix: "server" | "none" | "short";
+  private prefix: ToolPrefix;
   private servers: ServerState[] = [];
   private cursorIndex = 0;
   private nameQuery = "";

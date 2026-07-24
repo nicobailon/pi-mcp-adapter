@@ -329,8 +329,10 @@ export interface McpOutputGuardSettings {
 }
 
 // Settings
+export type ToolPrefix = "server" | "none" | "short" | "mcp";
+
 export interface McpSettings {
-  toolPrefix?: "server" | "none" | "short";
+  toolPrefix?: ToolPrefix;
   idleTimeout?: number; // minutes, default 10, 0 to disable
   requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
   directTools?: boolean;
@@ -423,7 +425,7 @@ export interface McpPanelResult {
  */
 export function getServerPrefix(
   serverName: string,
-  mode: "server" | "none" | "short"
+  mode: ToolPrefix
 ): string {
   if (mode === "none") return "";
   if (mode === "short") {
@@ -431,6 +433,7 @@ export function getServerPrefix(
     if (!short) short = "mcp";
     return short;
   }
+  if (mode === "mcp") return `mcp__${serverName.replace(/-/g, "_")}`;
   return serverName.replace(/-/g, "_");
 }
 
@@ -440,7 +443,7 @@ export function getServerPrefix(
 export function formatToolName(
   toolName: string,
   serverName: string,
-  prefix: "server" | "none" | "short"
+  prefix: ToolPrefix
 ): string {
   const p = getServerPrefix(serverName, prefix);
   const sanitized = toolName.replace(/\./g, "_");
@@ -454,7 +457,7 @@ function normalizeToolName(value: string): string {
 export function isToolExcluded(
   toolName: string,
   serverName: string,
-  prefix: "server" | "none" | "short",
+  prefix: ToolPrefix,
   excludeTools?: unknown
 ): boolean {
   if (!Array.isArray(excludeTools) || excludeTools.length === 0) return false;
@@ -464,6 +467,7 @@ export function isToolExcluded(
     normalizeToolName(formatToolName(toolName, serverName, prefix)),
     normalizeToolName(formatToolName(toolName, serverName, "server")),
     normalizeToolName(formatToolName(toolName, serverName, "short")),
+    normalizeToolName(formatToolName(toolName, serverName, "mcp")),
   ]);
 
   for (const excluded of excludeTools) {

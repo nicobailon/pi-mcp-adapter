@@ -548,6 +548,21 @@ describe("config discovery", () => {
     expect(sharedPreview.diffText).toContain('+     "repoprompt": {');
   });
 
+  it("preserves the mcp toolPrefix setting from config files", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-prefix-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-prefix-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      settings: { toolPrefix: "mcp" },
+      mcpServers: { demo: { command: "demo" } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().settings?.toolPrefix).toBe("mcp");
+  });
+
   it("writes selected compatibility imports and a starter project config", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-setup-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-setup-project-"));

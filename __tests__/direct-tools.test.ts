@@ -31,6 +31,7 @@ describe("formatToolName", () => {
     expect(formatToolName("namespace.tool", "demo", "server")).toBe("demo_namespace_tool");
     expect(formatToolName("namespace.tool", "demo-mcp", "short")).toBe("demo_namespace_tool");
     expect(formatToolName("namespace.tool", "demo", "none")).toBe("namespace_tool");
+    expect(formatToolName("namespace.tool", "demo-mcp", "mcp")).toBe("mcp__demo_mcp_namespace_tool");
   });
 });
 
@@ -440,6 +441,39 @@ describe("excludeTools filtering", () => {
     const specs = resolveDirectTools(config, cache, "server");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes"]);
+  });
+
+  it("matches mcp-prefixed exclusions when toolPrefix is mcp", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "mcp" },
+      mcpServers: {
+        "my-server": {
+          command: "npx",
+          args: ["-y", "my-server"],
+          directTools: true,
+          excludeTools: ["mcp__my_server_do_thing"],
+        },
+      },
+    };
+
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        "my-server": {
+          configHash: computeServerHash(config.mcpServers["my-server"]),
+          cachedAt: Date.now(),
+          tools: [
+            { name: "do_thing", description: "Does a thing" },
+            { name: "other_tool", description: "Another tool" },
+          ],
+          resources: [],
+        },
+      },
+    };
+
+    const specs = resolveDirectTools(config, cache, "mcp");
+
+    expect(specs.map((spec) => spec.prefixedName)).toEqual(["mcp__my_server_other_tool"]);
   });
 
   it("matches prefixed exclusions even when toolPrefix is none", () => {

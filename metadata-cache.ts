@@ -5,7 +5,7 @@ import { getAgentPath } from "./agent-dir.ts";
 import { createHash } from "node:crypto";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpTool, McpResource, ServerEntry, ToolMetadata } from "./types.ts";
-import { formatToolName, isToolExcluded } from "./types.ts";
+import { formatToolName, isToolExcluded, type ToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
   extractToolUiStreamMode,
@@ -129,7 +129,7 @@ export function isServerCacheValid(
 export function reconstructToolMetadata(
   serverName: string,
   entry: ServerCacheEntry,
-  prefix: "server" | "none" | "short",
+  prefix: ToolPrefix,
   definition: Pick<ServerEntry, "exposeResources" | "excludeTools">
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];

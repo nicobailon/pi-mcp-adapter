@@ -132,7 +132,7 @@ describe("proxy auto auth", () => {
 
     const state = {
       config: {
-        settings: { autoAuth: true, toolPrefix: "server" },
+        settings: { autoAuth: true, toolPrefix: "mcp" },
         mcpServers: {
           demo: { url: "https://api.example.com/mcp", auth: "oauth" },
         },
@@ -153,6 +153,10 @@ describe("proxy auto auth", () => {
     );
     expect(manager.close).toHaveBeenCalledWith("demo");
     expect(manager.connect).toHaveBeenCalledTimes(2);
+    expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({
+      name: "mcp__demo_search",
+      originalName: "search",
+    });
     expect(result.content[0].text).toContain("demo (1 tools)");
   });
 
@@ -407,7 +411,7 @@ describe("proxy auto auth", () => {
         return false;
       }
       state.toolMetadata.set(serverName, [{
-        name: "demo_search",
+        name: "mcp__demo_search",
         originalName: "search",
         description: "Search",
         inputSchema: { type: "object", properties: {} },
@@ -419,7 +423,7 @@ describe("proxy auto auth", () => {
     manager.setDefaultRequestTimeoutMs(2500);
     const state = {
       config: {
-        settings: { toolPrefix: "server" },
+        settings: { toolPrefix: "mcp" },
         mcpServers: {
           demo: { command: "node", args: ["server.js"], requestTimeoutMs: 5000 },
         },
@@ -431,8 +435,8 @@ describe("proxy auto auth", () => {
     } as any;
 
     const [first, second] = await Promise.all([
-      executeCall(state, "demo_search", { q: "one" }),
-      executeCall(state, "demo_search", { q: "two" }),
+      executeCall(state, "mcp__demo_search", { q: "one" }),
+      executeCall(state, "mcp__demo_search", { q: "two" }),
     ]);
 
     expect(mocks.clients).toHaveLength(1);
