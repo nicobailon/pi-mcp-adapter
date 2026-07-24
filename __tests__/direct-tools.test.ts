@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { buildProxyDescription, resolveDirectTools } from "../direct-tools.ts";
 import { computeServerHash, isServerCacheValid, type MetadataCache } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
+import { formatToolName } from "../types.ts";
 import type { McpConfig } from "../types.ts";
 import { reconstructToolMetadata } from "../metadata-cache.ts";
 
@@ -23,6 +24,14 @@ afterEach(() => {
       process.env[key] = value;
     }
   }
+});
+
+describe("formatToolName", () => {
+  it("sanitizes dotted MCP tool names for every prefix mode", () => {
+    expect(formatToolName("namespace.tool", "demo", "server")).toBe("demo_namespace_tool");
+    expect(formatToolName("namespace.tool", "demo-mcp", "short")).toBe("demo_namespace_tool");
+    expect(formatToolName("namespace.tool", "demo", "none")).toBe("namespace_tool");
+  });
 });
 
 describe("buildProxyDescription", () => {
@@ -337,6 +346,23 @@ describe("excludeTools filtering", () => {
     );
 
     expect(reconstructed.map((tool) => tool.name)).toEqual(["figma_get_nodes"]);
+  });
+
+  it("sanitizes registered names while preserving raw MCP names", () => {
+    const { metadata } = buildToolMetadata(
+      [{ name: "namespace.tool", description: "Namespaced tool" }] as any,
+      [],
+      { command: "npx", args: ["-y", "demo"] },
+      "demo",
+      "server",
+    );
+
+    expect(metadata).toEqual([
+      expect.objectContaining({
+        name: "demo_namespace_tool",
+        originalName: "namespace.tool",
+      }),
+    ]);
   });
 
   it("filters excluded tools during direct tool registration from cache", () => {
