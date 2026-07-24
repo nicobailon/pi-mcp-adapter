@@ -29,7 +29,10 @@ const IMPORT_PATHS = {
     path.join(HOME, ".claude", "claude_desktop_config.json"),
   ],
   "claude-desktop": [path.join(HOME, "Library", "Application Support", "Claude", "claude_desktop_config.json")],
-  codex: [path.join(HOME, ".codex", "config.json")],
+  codex: [
+    path.join(HOME, ".codex", "config.toml"),
+    path.join(HOME, ".codex", "config.json"),
+  ],
   windsurf: [path.join(HOME, ".windsurf", "mcp.json")],
   vscode: [path.resolve(process.cwd(), ".vscode", "mcp.json")],
 };

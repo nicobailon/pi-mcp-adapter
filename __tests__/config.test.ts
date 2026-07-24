@@ -112,6 +112,145 @@ describe("config discovery", () => {
     );
   });
 
+  it("imports Codex MCP servers from config.toml", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-codex-toml-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-codex-toml-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      imports: ["codex"],
+      mcpServers: {},
+    });
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(
+      join(home, ".codex", "config.toml"),
+      [
+        "[mcp_servers.context7]",
+        'url = "https://mcp.context7.com/mcp"',
+        "",
+        "[mcp_servers.serena]",
+        'command = "uvx"',
+        'args = ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"]',
+      ].join("\n"),
+    );
+
+    const { loadMcpConfig, getMcpDiscoverySummary, getServerProvenance } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    expect(config.mcpServers).toEqual({
+      context7: { url: "https://mcp.context7.com/mcp" },
+      serena: {
+        command: "uvx",
+        args: ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"],
+      },
+    });
+    expect(getMcpDiscoverySummary().imports).toEqual([
+      expect.objectContaining({ kind: "codex", path: join(home, ".codex", "config.toml"), serverCount: 2 }),
+    ]);
+    expect(getServerProvenance().get("context7")).toEqual({
+      path: join(home, ".pi", "agent", "mcp.json"),
+      kind: "import",
+      importKind: "codex",
+    });
+  });
+
+  it("maps Codex HTTP authentication fields to adapter fields", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-codex-http-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-codex-http-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["codex"], mcpServers: {} });
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(
+      join(home, ".codex", "config.toml"),
+      [
+        "[mcp_servers.remote]",
+        'url = "https://mcp.example.com/mcp"',
+        'bearer_token_env_var = "CODEX_TOKEN"',
+        'http_headers = { "X-API-Key" = "literal-key" }',
+        'env_http_headers = { "X-Trace-ID" = "CODEX_TRACE_ID" }',
+      ].join("\n"),
+    );
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers.remote).toEqual({
+      url: "https://mcp.example.com/mcp",
+      auth: "bearer",
+      bearerTokenEnv: "CODEX_TOKEN",
+      headers: {
+        "X-API-Key": "literal-key",
+        "X-Trace-ID": "$env:CODEX_TRACE_ID",
+      },
+    });
+  });
+
+  it("preserves invalid TOML warnings and JSON fallback in provenance", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-codex-fallback-provenance-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-codex-fallback-provenance-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["codex"], mcpServers: {} });
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "config.toml"), "[mcp_servers.exa\\nurl = \\\"broken\\\"\\n");
+    writeJson(join(home, ".codex", "config.json"), {
+      mcpServers: { exa: { url: "https://mcp.exa.ai/mcp" } },
+    });
+
+    const { getServerProvenance } = await import("../config.ts");
+    expect(getServerProvenance().get("exa")).toEqual({
+      path: join(home, ".pi", "agent", "mcp.json"),
+      kind: "import",
+      importKind: "codex",
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to inspect imported MCP config from codex:"),
+      expect.anything(),
+    );
+  });
+
+  it("reports invalid TOML warnings while discovering the JSON fallback", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-codex-fallback-discovery-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-codex-fallback-discovery-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "config.toml"), "[mcp_servers.exa\\nurl = \\\"broken\\\"\\n");
+    writeJson(join(home, ".codex", "config.json"), {
+      mcpServers: { exa: { url: "https://mcp.exa.ai/mcp" } },
+    });
+
+    const { findAvailableImportConfigs, getMcpDiscoverySummary } = await import("../config.ts");
+    expect(findAvailableImportConfigs()).toContainEqual({ kind: "codex", path: join(home, ".codex", "config.json") });
+    expect(getMcpDiscoverySummary().imports).toEqual([
+      expect.objectContaining({ kind: "codex", path: join(home, ".codex", "config.json"), serverCount: 1 }),
+    ]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to discover imported MCP config from codex:"),
+      expect.anything(),
+    );
+  });
+
+  it("keeps Codex JSON imports working when config.toml is absent", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-codex-json-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-codex-json-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["codex"], mcpServers: {} });
+    writeJson(join(home, ".codex", "config.json"), {
+      mcpServers: { exa: { url: "https://mcp.exa.ai/mcp" } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers).toEqual({ exa: { url: "https://mcp.exa.ai/mcp" } });
+  });
+
   it("merges partial Pi overrides into shared and imported server definitions", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-merge-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-merge-project-"));

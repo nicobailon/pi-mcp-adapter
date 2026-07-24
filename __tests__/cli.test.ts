@@ -55,6 +55,28 @@ describe("cli init helper", () => {
     expect(logs.join("\n")).toContain("Updated");
   });
 
+  it("detects TOML-only Codex config during dry-run", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-codex-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-codex-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    const codexConfigPath = join(home, ".codex", "config.toml");
+    mkdirSync(dirname(codexConfigPath), { recursive: true });
+    writeFileSync(codexConfigPath, '[mcp_servers.context7]\nurl = "https://mcp.context7.com/mcp"\n', "utf-8");
+
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const { main } = await import("../cli.js");
+    const exitCode = await main(["init", "--dry-run"], (line) => logs.push(line), (line) => errors.push(line));
+
+    expect(exitCode).toBe(0);
+    expect(errors).toEqual([]);
+    expect(logs.join("\n")).toContain(`codex: ${codexConfigPath}`);
+    expect(logs.join("\n")).toContain("Detected host configs to import into Pi: codex");
+    expect(existsSync(join(home, ".pi", "agent", "mcp.json"))).toBe(false);
+  });
+
   it("writes detected host imports to PI_CODING_AGENT_DIR when set", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-cli-agent-"));

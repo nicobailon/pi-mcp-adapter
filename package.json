@@ -91,6 +91,7 @@
     "cross-spawn": "^7.0.6",
     "open": "^10.2.0",
     "recheck": "^4.5.0",
+    "smol-toml": "^1.6.1",
     "zod": "^3.25.0 || ^4.0.0"
   },
   "peerDependencies": {
