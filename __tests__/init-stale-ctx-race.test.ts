@@ -14,6 +14,7 @@ vi.mock("../config.ts", async (importOriginal) => ({
 vi.mock("../server-manager.ts", () => ({
   McpServerManager: vi.fn().mockImplementation(function (this: any) {
     this.setDefaultRequestTimeoutMs = vi.fn();
+    this.setAuthStorageOptions = vi.fn();
     this.setSamplingConfig = vi.fn();
     this.setElicitationConfig = vi.fn();
     this.getConnection = vi.fn();
@@ -81,10 +82,8 @@ describe("initializeMcp vs. a ctx invalidated mid-connect", () => {
     armed.value = true;
     resolveConnect({ status: "connected", tools: [], resources: [] });
 
-    // Desired/fixed behavior: a session torn down mid-connect is an ordinary,
-    // expected race — initializeMcp should abandon quietly, not reject. On
-    // today's code this promise rejects with the "extension ctx is stale" error
-    // instead, so this assertion currently fails.
+    // A session torn down mid-connect is an ordinary, expected race:
+    // initializeMcp should abandon quietly instead of rejecting.
     await pending;
   });
 });

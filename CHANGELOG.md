@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Avoided MCP renderer crashes without a TUI theme and preserved status-bar updates with plain fallback text. Thanks @fankangsong for PR #183.
+- Abandoned MCP initialization quietly when a session is disposed during eager or keep-alive connection setup. Thanks @luisfontes for PR #192.
 - Sanitized dotted MCP tool names before registering them with Pi. Thanks @benjaminrickels for PR #190.
 - Reconnected OAuth MCP servers automatically after successful panel or `/mcp-auth` authorization, and made panel reconnect force a fresh connection like `/mcp reconnect`. Thanks @mightymatth for issue #171.
 - Recovered stale Streamable HTTP MCP sessions that report `-32000 Server not initialized` after a server restart. Thanks @vicary for issue #184.
