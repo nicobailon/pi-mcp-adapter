@@ -1,7 +1,7 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import type { McpExtensionState } from "./state.ts";
-import type { DirectToolSpec, McpConfig, McpContent } from "./types.ts";
+import type { DirectToolSpec, McpConfig, McpContent, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
@@ -95,7 +95,7 @@ async function attemptDirectAutoAuth(
 export function resolveDirectTools(
   config: McpConfig,
   cache: MetadataCache | null,
-  prefix: "server" | "none" | "short",
+  prefix: ToolPrefix,
   envOverride?: string[],
 ): DirectToolSpec[] {
   const specs: DirectToolSpec[] = [];
