@@ -133,6 +133,7 @@ export function reconstructToolMetadata(
   definition: Pick<ServerEntry, "exposeResources" | "excludeTools">
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
+  const seenNames = new Set<string>();
 
   for (const tool of entry.tools ?? []) {
     if (!tool?.name) continue;
@@ -140,8 +141,14 @@ export function reconstructToolMetadata(
       continue;
     }
 
+    const name = formatToolName(tool.name, serverName, prefix);
+    if (seenNames.has(name)) {
+      continue;
+    }
+    seenNames.add(name);
+
     metadata.push({
-      name: formatToolName(tool.name, serverName, prefix),
+      name,
       originalName: tool.name,
       description: tool.description ?? "",
       inputSchema: tool.inputSchema,
@@ -158,8 +165,14 @@ export function reconstructToolMetadata(
         continue;
       }
 
+      const name = formatToolName(baseName, serverName, prefix);
+      if (seenNames.has(name)) {
+        continue;
+      }
+      seenNames.add(name);
+
       metadata.push({
-        name: formatToolName(baseName, serverName, prefix),
+        name,
         originalName: baseName,
         description: resource.description ?? `Read resource: ${resource.uri}`,
         resourceUri: resource.uri,

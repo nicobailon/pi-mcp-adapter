@@ -14,6 +14,7 @@ export function buildToolMetadata(
 ): { metadata: ToolMetadata[]; failedTools: string[] } {
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
+  const seenNames = new Set<string>();
 
   for (const tool of tools) {
     if (!tool?.name) {
@@ -24,6 +25,12 @@ export function buildToolMetadata(
       continue;
     }
 
+    const name = formatToolName(tool.name, serverName, prefix);
+    if (seenNames.has(name)) {
+      continue;
+    }
+    seenNames.add(name);
+
     let uiResourceUri: string | undefined;
     try {
       uiResourceUri = getToolUiResourceUri({ _meta: tool._meta });
@@ -31,7 +38,7 @@ export function buildToolMetadata(
       failedTools.push(tool.name);
     }
     metadata.push({
-      name: formatToolName(tool.name, serverName, prefix),
+      name,
       originalName: tool.name,
       description: tool.description ?? "",
       inputSchema: tool.inputSchema,
@@ -47,8 +54,14 @@ export function buildToolMetadata(
         continue;
       }
 
+      const name = formatToolName(baseName, serverName, prefix);
+      if (seenNames.has(name)) {
+        continue;
+      }
+      seenNames.add(name);
+
       metadata.push({
-        name: formatToolName(baseName, serverName, prefix),
+        name,
         originalName: baseName,
         description: resource.description ?? `Read resource: ${resource.uri}`,
         resourceUri: resource.uri,
