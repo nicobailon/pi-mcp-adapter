@@ -6,6 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 
 const CACHE_VERSION = 1;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const EXACT_PACKAGE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
 interface NpxCacheEntry {
   resolvedBin: string;
@@ -31,6 +32,11 @@ interface ParsedInvocation {
   extraArgs: string[];
 }
 
+interface ParsedPackageSpec {
+  packageName: string;
+  exactVersion?: string;
+}
+
 export async function resolveNpxBinary(
   command: string,
   args: string[]
@@ -43,11 +49,17 @@ export async function resolveNpxBinary(
 
   if (!parsed) return null;
 
+  const packageSpec = parsePackageSpec(parsed.packageSpec);
   const cacheKey = JSON.stringify([command, ...args]);
   const cache = loadCache();
   const cached = cache?.entries?.[cacheKey];
 
-  if (cached && Date.now() - cached.resolvedAt < CACHE_TTL_MS && existsSync(cached.resolvedBin)) {
+  if (
+    cached
+    && Date.now() - cached.resolvedAt < CACHE_TTL_MS
+    && existsSync(cached.resolvedBin)
+    && (!packageSpec?.exactVersion || cached.packageVersion === packageSpec.exactVersion)
+  ) {
     return { binPath: cached.resolvedBin, extraArgs: parsed.extraArgs, isJs: cached.isJs };
   }
 
@@ -163,10 +175,11 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
   const cacheDir = getNpmCacheDir();
   if (!cacheDir) return null;
 
-  const packageName = extractPackageName(packageSpec);
-  if (!packageName) return null;
+  const parsedSpec = parsePackageSpec(packageSpec);
+  if (!parsedSpec) return null;
 
-  const packageDir = findCachedPackageDir(cacheDir, packageName);
+  const { packageName, exactVersion } = parsedSpec;
+  const packageDir = findCachedPackageDir(cacheDir, packageName, exactVersion);
   if (!packageDir) return null;
 
   const packageJsonPath = join(packageDir, "package.json");
@@ -267,20 +280,40 @@ function buildBinCandidates(packageName: string, explicitBin?: string): string[]
   return [...new Set(candidates.filter(Boolean))];
 }
 
-function extractPackageName(spec: string): string | null {
+function parsePackageSpec(spec: string): ParsedPackageSpec | null {
   const trimmed = spec.trim();
   if (!trimmed) return null;
+
+  let packageName: string;
+  let requestedVersion: string | undefined;
   if (trimmed.startsWith("@")) {
     const slashIndex = trimmed.indexOf("/");
     if (slashIndex < 0) return null;
     const atIndex = trimmed.lastIndexOf("@");
     if (atIndex > slashIndex) {
-      return trimmed.slice(0, atIndex);
+      packageName = trimmed.slice(0, atIndex);
+      requestedVersion = trimmed.slice(atIndex + 1);
+    } else {
+      packageName = trimmed;
     }
-    return trimmed;
+  } else {
+    const atIndex = trimmed.indexOf("@");
+    if (atIndex >= 0) {
+      packageName = trimmed.slice(0, atIndex);
+      requestedVersion = trimmed.slice(atIndex + 1);
+    } else {
+      packageName = trimmed;
+    }
   }
-  const atIndex = trimmed.indexOf("@");
-  return atIndex >= 0 ? trimmed.slice(0, atIndex) : trimmed;
+
+  if (!packageName) return null;
+  const normalizedVersion = requestedVersion?.replace(/^=/, "").replace(/^v/i, "");
+  return {
+    packageName,
+    exactVersion: normalizedVersion && EXACT_PACKAGE_VERSION_RE.test(normalizedVersion)
+      ? normalizedVersion
+      : undefined,
+  };
 }
 
 function defaultBinName(packageName: string): string {
@@ -291,7 +324,7 @@ function defaultBinName(packageName: string): string {
   return packageName;
 }
 
-function findCachedPackageDir(cacheDir: string, packageName: string): string | null {
+function findCachedPackageDir(cacheDir: string, packageName: string, exactVersion?: string): string | null {
   const npxDir = join(cacheDir, "_npx");
   if (!existsSync(npxDir)) return null;
 
@@ -310,9 +343,17 @@ function findCachedPackageDir(cacheDir: string, packageName: string): string | n
 
   for (const entry of candidates) {
     const pkgDir = join(npxDir, entry.name, "node_modules", ...packagePathParts);
-    if (existsSync(join(pkgDir, "package.json"))) {
-      return pkgDir;
+    const packageJsonPath = join(pkgDir, "package.json");
+    if (!existsSync(packageJsonPath)) continue;
+    if (exactVersion) {
+      try {
+        const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version?: unknown };
+        if (pkg.version !== exactVersion) continue;
+      } catch {
+        continue;
+      }
     }
+    return pkgDir;
   }
 
   return null;
