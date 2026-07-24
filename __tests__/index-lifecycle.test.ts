@@ -136,6 +136,7 @@ describe("mcpAdapter session lifecycle", () => {
   beforeEach(() => {
     delete process.env.MCP_DIRECT_TOOLS;
     vi.resetModules();
+    vi.doUnmock("typebox");
     for (const value of Object.values(mocks)) {
       if (typeof value === "function" && "mockReset" in value) {
         value.mockReset();
@@ -194,6 +195,34 @@ describe("mcpAdapter session lifecycle", () => {
       name: "mcp",
       renderResult: expect.any(Function),
     }));
+  });
+
+  it("registers direct MCP tools when the host TypeBox shim omits Unsafe", async () => {
+    vi.doMock("typebox", () => ({
+      Type: {
+        Object: (properties: Record<string, unknown>, options?: Record<string, unknown>) => ({ type: "object", properties, ...options }),
+        String: (options?: Record<string, unknown>) => ({ type: "string", ...options }),
+        Boolean: (options?: Record<string, unknown>) => ({ type: "boolean", ...options }),
+        Optional: (schema: Record<string, unknown>) => ({ ...schema, optional: true }),
+        Union: (schemas: unknown[], options?: Record<string, unknown>) => ({ anyOf: schemas, ...options }),
+      },
+    }));
+    mocks.resolveDirectTools.mockReturnValue([
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search demo",
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      },
+    ]);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    mcpAdapter(api);
+
+    const directTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "demo_search")?.[0];
+    expect(directTool.parameters).toEqual({ type: "object", properties: { query: { type: "string" } } });
   });
 
   it("normalizes direct MCP tool schemas before registration", async () => {
