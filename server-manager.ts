@@ -734,16 +734,24 @@ export class McpServerManager {
   }
 
   private async fetchAllTools(client: Client, requestOptions?: RequestOptions): Promise<McpTool[]> {
-    const allTools: McpTool[] = [];
-    let cursor: string | undefined;
+    try {
+      const allTools: McpTool[] = [];
+      let cursor: string | undefined;
 
-    do {
-      const result = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
-      allTools.push(...(result.tools ?? []));
-      cursor = result.nextCursor;
-    } while (cursor);
+      do {
+        const result = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
+        allTools.push(...(result.tools ?? []));
+        cursor = result.nextCursor;
+      } while (cursor);
 
-    return allTools;
+      return allTools;
+    } catch {
+      if (requestOptions?.signal?.aborted) {
+        throwIfAborted(requestOptions.signal);
+      }
+      // Server may not support tools
+      return [];
+    }
   }
 
   private async fetchAllPrompts(
