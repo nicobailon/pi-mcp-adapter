@@ -84,6 +84,44 @@ describe("authenticateServer", () => {
     }
   });
 
+  it("reports credential removal failures without escaping the logout command boundary", async () => {
+    mocks.removeAuth.mockRejectedValueOnce(new Error("simulated secure credential store unavailable"));
+    const ui = { notify: vi.fn() };
+    const { logoutServer } = await import("../commands.ts");
+
+    const close = vi.fn();
+    const result = await logoutServer("sentry", {
+      config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
+      authStorageOptions: {},
+      manager: { close },
+    } as any, { hasUI: true, ui } as any);
+
+    expect(result).toEqual({ ok: false, message: "simulated secure credential store unavailable" });
+    expect(close).not.toHaveBeenCalled();
+    expect(ui.notify).toHaveBeenCalledWith(
+      'Failed to clear OAuth credentials for "sentry": simulated secure credential store unavailable',
+      "error",
+    );
+  });
+
+  it("reports a close failure accurately after credentials were removed", async () => {
+    mocks.removeAuth.mockResolvedValueOnce(undefined);
+    const ui = { notify: vi.fn() };
+    const { logoutServer } = await import("../commands.ts");
+
+    const result = await logoutServer("sentry", {
+      config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
+      authStorageOptions: {},
+      manager: { close: vi.fn(async () => { throw new Error("close failed"); }) },
+    } as any, { hasUI: true, ui } as any);
+
+    expect(result).toEqual({ ok: false, message: "close failed" });
+    expect(ui.notify).toHaveBeenCalledWith(
+      'OAuth credentials were cleared for "sentry", but its connection could not be closed: close failed',
+      "error",
+    );
+  });
+
   it("surfaces the exact OAuth URL through UI notification", async () => {
     const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
     mocks.authenticate.mockImplementationOnce(async (_name, _url, _definition, options) => {

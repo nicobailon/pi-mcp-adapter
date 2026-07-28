@@ -2,7 +2,32 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { getAuthEntry, getAuthEntryFilePath, getAuthStorageOptions, saveAuthEntry } from "../mcp-auth.ts";
+import {
+  formatOAuthCredentialStoreUnavailable,
+  getAuthEntry,
+  getAuthEntryFilePath,
+  getAuthStorageOptions,
+  inspectAuthForUrl,
+  OAuthCredentialStoreError,
+  saveAuthEntry,
+} from "../mcp-auth.ts";
+
+describe("OAuth credential-store diagnostics", () => {
+  it("recognizes a revoked Linux keyring through the error cause chain", () => {
+    const nativeError = new Error("Couldn't access platform storage: KeyRevoked", {
+      cause: new Error("KeyRevoked"),
+    });
+    const error = new OAuthCredentialStoreError("read failed", "read", nativeError);
+
+    const message = formatOAuthCredentialStoreUnavailable(error);
+    if (process.platform === "linux") {
+      expect(message).toContain("Linux session keyring may be revoked");
+      expect(message).toContain("fresh login/keyring session");
+    } else {
+      expect(message).toContain("OAuth credential store unavailable");
+    }
+  });
+});
 
 describe("mcp-auth storage paths", () => {
   const originalOAuthDir = process.env.MCP_OAUTH_DIR;
@@ -58,6 +83,21 @@ describe("mcp-auth storage paths", () => {
     expect(existsSync(filePath)).toBe(false);
     expect(getAuthEntry("configured", options)?.tokens?.accessToken).toBe("legacy-token");
     rmSync(project, { recursive: true, force: true });
+  });
+
+  it("does not migrate legacy credentials during status-only inspection", () => {
+    const filePath = getAuthEntryFilePath("status-only");
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, JSON.stringify({
+      tokens: { accessToken: "legacy-token" },
+      serverUrl: "https://example.com/mcp",
+    }), "utf-8");
+
+    expect(inspectAuthForUrl("status-only", "https://example.com/mcp").status).toBe("present");
+    expect(existsSync(filePath)).toBe(true);
+
+    expect(getAuthEntry("status-only")?.tokens?.accessToken).toBe("legacy-token");
+    expect(existsSync(filePath)).toBe(false);
   });
 
   it("does not use configured oauthDir values as secure-store namespaces", () => {

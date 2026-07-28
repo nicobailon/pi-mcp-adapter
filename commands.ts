@@ -17,7 +17,7 @@ import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCac
 import { loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
-import { getAuthForUrl, getAuthStorageOptions } from "./mcp-auth.ts";
+import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
 import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
@@ -312,9 +312,33 @@ export async function logoutServer(
     return { ok: false, message };
   }
 
-  await removeAuth(serverName, { authStorageOptions: state.authStorageOptions, signal: state.owner?.signal, runtime: state.oauthRuntime });
+  const signal = state.owner?.signal;
+  try {
+    await removeAuth(serverName, { authStorageOptions: state.authStorageOptions, signal, runtime: state.oauthRuntime });
+  } catch (error) {
+    if (isAbortError(error, signal)) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    if (ui) {
+      ui.notify(`Failed to clear OAuth credentials for "${serverName}": ${sanitizeTerminalText(message)}`, "error");
+    }
+    return { ok: false, message };
+  }
+
   state.owner?.throwIfInactive();
-  await state.manager.close(serverName);
+  try {
+    await state.manager.close(serverName);
+  } catch (error) {
+    if (isAbortError(error, signal)) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    if (ui) {
+      ui.notify(
+        `OAuth credentials were cleared for "${serverName}", but its connection could not be closed: ${sanitizeTerminalText(message)}`,
+        "error",
+      );
+    }
+    return { ok: false, message };
+  }
+
   state.owner?.throwIfInactive();
   updateStatusBar(state);
 
@@ -416,6 +440,11 @@ function buildMcpPanelCallbacks(
   config: McpConfig,
   ctx: ExtensionContext,
 ): McpPanelCallbacks {
+  // Panel-only diagnostics keep status inspection from mutating connection
+  // failure state while allowing the existing panel failure UI to show why the
+  // credential store could not be inspected.
+  const authStatusFailures = new Map<string, string>();
+
   return {
     reconnect: (serverName: string) => reconnectServer(state, ctx, serverName),
     canAuthenticate: (serverName: string) => {
@@ -424,12 +453,10 @@ function buildMcpPanelCallbacks(
     },
     authenticate: (serverName: string) => authenticateServer(serverName, config, ctx, state.owner?.signal, state.oauthRuntime),
     getConnectionStatus: (serverName: string) => {
+      authStatusFailures.delete(serverName);
       const definition = config.mcpServers[serverName];
       if (isServerDisabled(definition)) return "disabled";
       const connection = state.manager.getConnection(serverName);
-      if (connection?.status === "needs-auth") {
-        return "needs-auth";
-      }
       let serverUrl: string | undefined;
       try {
         serverUrl = definition ? resolveServerUrl(definition) : undefined;
@@ -441,15 +468,22 @@ function buildMcpPanelCallbacks(
         && serverUrl
         && definition.oauth !== false
         && definition.oauth?.grantType !== "client_credentials"
-        && !getAuthForUrl(serverName, serverUrl, state.authStorageOptions)?.tokens
       ) {
-        return "needs-auth";
+        const authStatus = inspectAuthForUrl(serverName, serverUrl, state.authStorageOptions);
+        if (authStatus.status === "unavailable") {
+          authStatusFailures.set(serverName, authStatus.message);
+          return "failed";
+        }
+        if (authStatus.status === "absent" || !authStatus.entry.tokens) {
+          return "needs-auth";
+        }
       }
+      if (connection?.status === "needs-auth") return "needs-auth";
       if (connection?.status === "connected") return "connected";
       if (getFailureAgeSeconds(state, serverName) !== null) return "failed";
       return "idle";
     },
-    getFailureMessage: (serverName: string) => getFailureMessage(state, serverName),
+    getFailureMessage: (serverName: string) => authStatusFailures.get(serverName) ?? getFailureMessage(state, serverName),
     refreshCacheAfterReconnect: (serverName: string) => {
       const freshCache = loadMetadataCache();
       return freshCache?.servers?.[serverName] ?? null;

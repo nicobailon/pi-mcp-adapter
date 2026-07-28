@@ -64,6 +64,46 @@ export interface AuthStorageOptions {
   baseDir?: string;
 }
 
+export class OAuthCredentialStoreError extends Error {
+  readonly code = 'OAUTH_CREDENTIAL_STORE_UNAVAILABLE';
+
+  constructor(
+    message: string,
+    readonly operation: 'read' | 'write' | 'remove',
+    cause: unknown,
+  ) {
+    super(message, { cause });
+    this.name = 'OAuthCredentialStoreError';
+  }
+}
+
+export type OAuthCredentialStatus =
+  | { status: 'present'; entry: AuthEntry }
+  | { status: 'absent' }
+  | { status: 'unavailable'; message: string };
+
+function causeChainContains(error: unknown, pattern: RegExp): boolean {
+  const seen = new Set<unknown>();
+  let current = error;
+  while ((typeof current === 'object' && current !== null) || typeof current === 'function') {
+    if (seen.has(current)) break;
+    seen.add(current);
+    const candidate = current as { name?: unknown; message?: unknown; code?: unknown; cause?: unknown };
+    if ([candidate.name, candidate.message, candidate.code].some(value => typeof value === 'string' && pattern.test(value))) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
+}
+
+export function formatOAuthCredentialStoreUnavailable(error: OAuthCredentialStoreError): string {
+  if (process.platform === 'linux' && causeChainContains(error, /key\s*(?:has been\s*)?revoked|keyrevoked/i)) {
+    return 'OAuth credential store unavailable: the Linux session keyring may be revoked. Start Pi from a fresh login/keyring session and retry.';
+  }
+  return 'OAuth credential store unavailable. Configure or unlock the OS credential store and retry.';
+}
+
 interface KeyringEntry {
   getPassword(): string | null;
   setPassword(password: string): void;
@@ -209,7 +249,11 @@ function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
   try {
     getAuthSecretStore().write(account, JSON.stringify(entry, null, 2));
   } catch (error) {
-    throw new Error(`Failed to write OAuth credentials for ${serverName} to the OS secure credential store`, { cause: error });
+    throw new OAuthCredentialStoreError(
+      `Failed to write OAuth credentials for ${serverName} to the OS secure credential store`,
+      'write',
+      error,
+    );
   }
 }
 
@@ -217,13 +261,21 @@ function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
  * Read the auth entry for a server from the OS secure store, importing and
  * deleting a legacy plaintext entry when present.
  */
-function readAuthEntry(serverName: string, options?: AuthStorageOptions): AuthEntry | undefined {
+function readAuthEntry(
+  serverName: string,
+  options?: AuthStorageOptions,
+  behavior: { migrateLegacy?: boolean } = {},
+): AuthEntry | undefined {
   const account = getAuthEntryAccount(serverName);
   let payload: string | undefined;
   try {
     payload = getAuthSecretStore().read(account);
   } catch (error) {
-    throw new Error(`Failed to read OAuth credentials for ${serverName} from the OS secure credential store`, { cause: error });
+    throw new OAuthCredentialStoreError(
+      `Failed to read OAuth credentials for ${serverName} from the OS secure credential store`,
+      'read',
+      error,
+    );
   }
 
   if (payload !== undefined) {
@@ -234,6 +286,7 @@ function readAuthEntry(serverName: string, options?: AuthStorageOptions): AuthEn
 
   const legacyEntry = readLegacyAuthEntry(serverName, options);
   if (!legacyEntry) return undefined;
+  if (behavior.migrateLegacy === false) return legacyEntry;
   writeSecureAuthEntry(serverName, legacyEntry);
   removeLegacyAuthEntry(serverName, options);
   return legacyEntry;
@@ -264,6 +317,26 @@ export function getAuthForUrl(serverName: string, serverUrl: string, options?: A
 }
 
 /**
+ * Inspect credentials for status-only UI paths without treating an unavailable
+ * secure store as missing credentials. Authentication operations continue to
+ * use getAuthForUrl() directly and therefore remain fail-closed.
+ */
+export function inspectAuthForUrl(
+  serverName: string,
+  serverUrl: string,
+  options?: AuthStorageOptions,
+): OAuthCredentialStatus {
+  try {
+    const entry = readAuthEntry(serverName, options, { migrateLegacy: false });
+    if (!entry?.serverUrl || entry.serverUrl !== serverUrl) return { status: 'absent' };
+    return { status: 'present', entry };
+  } catch (error) {
+    if (!(error instanceof OAuthCredentialStoreError)) throw error;
+    return { status: 'unavailable', message: formatOAuthCredentialStoreUnavailable(error) };
+  }
+}
+
+/**
  * Save auth entry for a server.
  */
 export function saveAuthEntry(serverName: string, entry: AuthEntry, serverUrl?: string, options?: AuthStorageOptions): void {
@@ -283,7 +356,11 @@ export function removeAuthEntry(serverName: string, options?: AuthStorageOptions
   try {
     getAuthSecretStore().remove(account);
   } catch (error) {
-    throw new Error(`Failed to remove OAuth credentials for ${serverName} from the OS secure credential store`, { cause: error });
+    throw new OAuthCredentialStoreError(
+      `Failed to remove OAuth credentials for ${serverName} from the OS secure credential store`,
+      'remove',
+      error,
+    );
   }
   removeLegacyAuthEntry(serverName, options);
 }
