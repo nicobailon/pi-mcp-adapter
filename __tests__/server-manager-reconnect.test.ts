@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   httpTransports: [] as HttpTransportMock[],
 }));
 
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation((info: unknown, options: unknown) => {
     const client: any = {
@@ -32,15 +32,20 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     mocks.clients.push(client);
     return client;
   }),
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   StreamableHTTPClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => {
     const transport = { url, options, close: vi.fn(async () => undefined) };
     mocks.httpTransports.push(transport);
     return transport;
   }),
-  SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/client/stdio", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({ SSEClientTransport: vi.fn() }));
+
+vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn(),
 }));
 

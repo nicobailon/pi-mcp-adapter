@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   instructions: undefined as string | undefined,
 }));
 
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any, info: unknown, options: unknown) {
     this.info = info;
@@ -23,7 +23,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/client/stdio", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
     this.close = vi.fn(async () => undefined);
@@ -59,14 +59,5 @@ describe("McpServerManager instructions", () => {
     expect(connection.instructions).toBeUndefined();
   });
 
-  it("enables automatic v2 protocol negotiation for stdio clients", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
 
-    await manager.connect("demo", { command: "node", args: ["server.js"] });
-
-    expect(mocks.clients[0]?.options).toMatchObject({
-      versionNegotiation: { mode: "auto" },
-    });
-  });
 });

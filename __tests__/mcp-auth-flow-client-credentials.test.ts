@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
 
 class MockUnauthorizedError extends Error {}
 
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/sdk/client/auth.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   auth: mocks.sdkAuth,
   extractWWWAuthenticateParams: (response: Response) => {
@@ -105,6 +105,95 @@ describe("mcp-auth-flow explicit auth", () => {
       "http://localhost:19876/callback?code=abc123&state=wrong",
       "state123",
     )).toThrow("state mismatch");
+  });
+
+  it("keeps a pending flow when an advertised RFC 9207 issuer is missing", async () => {
+    let oauthState = "";
+    mocks.sdkAuth.mockImplementation(async (provider, options) => {
+      if (options.authorizationCode) return "AUTHORIZED";
+      oauthState = await provider.state();
+      await provider.saveDiscoveryState({
+        authorizationServerUrl: "https://auth.example.com",
+        authorizationServerMetadata: {
+          issuer: "https://auth.example.com",
+          authorization_endpoint: "https://auth.example.com/authorize",
+          token_endpoint: "https://auth.example.com/token",
+          response_types_supported: ["code"],
+          authorization_response_iss_parameter_supported: true,
+        },
+      });
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+      return "REDIRECT";
+    });
+    const { completeAuthFromInput, hasPendingAuth, startAuth } = await import("../mcp-auth-flow.ts");
+
+    await startAuth("rfc9207-missing", "https://api.example.com/mcp", { auth: "oauth" });
+    await expect(completeAuthFromInput(
+      "rfc9207-missing",
+      `code=auth-code&state=${oauthState}`,
+    )).rejects.toThrow('requires the RFC 9207 "iss" parameter');
+
+    expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
+    expect(hasPendingAuth("rfc9207-missing")).toBe(true);
+
+    await expect(completeAuthFromInput(
+      "rfc9207-missing",
+      `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://auth.example.com")}`,
+    )).resolves.toBe("authenticated");
+    expect(mocks.sdkAuth).toHaveBeenCalledTimes(2);
+    expect(hasPendingAuth("rfc9207-missing")).toBe(false);
+  });
+
+  it("rejects a mismatched RFC 9207 issuer before token exchange", async () => {
+    let oauthState = "";
+    mocks.sdkAuth.mockImplementation(async (provider, options) => {
+      if (options.authorizationCode) return "AUTHORIZED";
+      oauthState = await provider.state();
+      await provider.saveDiscoveryState({
+        authorizationServerUrl: "https://auth.example.com",
+        authorizationServerMetadata: {
+          issuer: "https://auth.example.com",
+          authorization_endpoint: "https://auth.example.com/authorize",
+          token_endpoint: "https://auth.example.com/token",
+          response_types_supported: ["code"],
+          authorization_response_iss_parameter_supported: true,
+        },
+      });
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+      return "REDIRECT";
+    });
+    const { completeAuthFromInput, hasPendingAuth, startAuth } = await import("../mcp-auth-flow.ts");
+
+    await startAuth("rfc9207-mismatch", "https://api.example.com/mcp", { auth: "oauth" });
+    await expect(completeAuthFromInput(
+      "rfc9207-mismatch",
+      `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://attacker.example.com")}`,
+    )).rejects.toThrow("does not match the discovered issuer");
+
+    expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
+    expect(hasPendingAuth("rfc9207-mismatch")).toBe(false);
+  });
+
+  it("rejects a callback issuer mismatch when metadata is unavailable", async () => {
+    let oauthState = "";
+    mocks.sdkAuth.mockImplementation(async (provider, options) => {
+      if (options.authorizationCode) return "AUTHORIZED";
+      oauthState = await provider.state();
+      await provider.saveDiscoveryState({
+        authorizationServerUrl: "https://auth.example.com",
+      });
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+      return "REDIRECT";
+    });
+    const { completeAuthFromInput, startAuth } = await import("../mcp-auth-flow.ts");
+
+    await startAuth("issuer-without-metadata", "https://api.example.com/mcp", { auth: "oauth" });
+    await expect(completeAuthFromInput(
+      "issuer-without-metadata",
+      `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://attacker.example.com")}`,
+    )).rejects.toThrow("does not match the discovered issuer");
+
+    expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
   });
 
   it("does not start the callback server during OAuth initialization", async () => {

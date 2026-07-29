@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { JsonSchemaType } from "@modelcontextprotocol/client";
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation/types.js";
 import { createJsonSchemaValidator } from "../json-schema-validator.ts";
 
 const draft07 = "http://json-schema.org/draft-07/schema#";
@@ -64,16 +64,32 @@ describe("createJsonSchemaValidator", () => {
       required: ["values"],
     };
 
-    expect(validate(schema, { values: ["ok", 1] }).valid).toBe(true);
-    expect(validate(schema, { values: ["ok", 1, true] }).valid).toBe(false);
-    expect(validate({ $schema: "https://json-schema.org/draft/2020-12/schema", ...schema }, { values: ["ok", 1] }).valid).toBe(true);
+    for (const candidate of [schema, { $schema: "https://json-schema.org/draft/2020-12/schema", ...schema }]) {
+      expect(validate(candidate, { values: ["ok", 1] }).valid).toBe(true);
+      expect(validate(candidate, { values: ["ok", 1, true] }).valid).toBe(false);
+    }
+  });
+
+  it("accepts unstamped schemas that use draft-07-compatible keywords", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        name: { type: "string", minLength: 1 },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    };
+
+    expect(validate(schema, { name: "ok" }).valid).toBe(true);
+    expect(validate(schema, { name: "" }).valid).toBe(false);
+    expect(validate(schema, { name: "ok", extra: true }).valid).toBe(false);
   });
 
   it("does not downgrade an unsupported explicit dialect", () => {
     expect(() => validate({
       $schema: "https://example.com/custom-schema",
       type: "object",
-    }, {})).toThrow(/unsupported dialect|2020-12/i);
+    }, {})).toThrow(/unsupported.*dialect|2020-12/i);
   });
 
   it("creates isolated validator providers", () => {

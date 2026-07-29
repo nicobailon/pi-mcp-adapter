@@ -37,7 +37,7 @@ vi.mock("../init.ts", () => ({
   recordFailure: mocks.recordFailure,
 }));
 
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any, info: unknown, options: unknown) {
     this.info = info;
@@ -64,7 +64,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/client/stdio", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
     this.close = vi.fn(async () => undefined);
@@ -260,7 +260,7 @@ describe("proxy auto auth", () => {
   });
 
   it("runs URL elicitations returned by proxy tool calls", async () => {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
+    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/sdk/types.js");
     const { executeCall } = await import("../proxy-modes.ts");
     const error = new UrlElicitationRequiredError([{
       mode: "url",
@@ -374,6 +374,7 @@ describe("proxy auto auth", () => {
         arguments: { q: "hello" },
         _meta: undefined,
       },
+      undefined,
       { timeout: 1234 },
     );
     expect(result.content[0].text).toContain("ok");
@@ -451,6 +452,7 @@ describe("proxy auto auth", () => {
     expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
     expect(connection.client.callTool).toHaveBeenCalledWith(
       { name: "search", arguments: {}, _meta: undefined },
+      undefined,
       requestOptions,
     );
     expect(result.details).toMatchObject({ error: "aborted", message: "request aborted" });
@@ -554,11 +556,13 @@ describe("proxy auto auth", () => {
     expect(client.callTool).toHaveBeenNthCalledWith(
       1,
       { name: "search", arguments: { q: "one" }, _meta: undefined },
+      undefined,
       { timeout: 5000 },
     );
     expect(client.callTool).toHaveBeenNthCalledWith(
       2,
       { name: "search", arguments: { q: "two" }, _meta: undefined },
+      undefined,
       { timeout: 5000 },
     );
     expect(first.content[0].text).toContain("ok");

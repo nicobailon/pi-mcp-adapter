@@ -27,7 +27,7 @@ export interface StoredTokens {
   refreshToken?: string;
   expiresAt?: number; // Unix timestamp in seconds
   scope?: string;
-  /** SEP-2352 authorization-server issuer stamp from the SDK */
+  /** SEP-2352 authorization-server issuer binding */
   issuer?: string;
 }
 
@@ -38,7 +38,7 @@ export interface StoredClientInfo {
   clientIdIssuedAt?: number;
   clientSecretExpiresAt?: number;
   redirectUris?: string[];
-  /** SEP-2352 authorization-server issuer stamp from the SDK */
+  /** SEP-2352 authorization-server issuer binding */
   issuer?: string;
   /**
    * True when this entry is a secretless SEP-2352 issuer stub persisted for a

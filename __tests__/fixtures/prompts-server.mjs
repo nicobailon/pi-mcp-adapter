@@ -1,5 +1,12 @@
-import { Server } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 // A minimal MCP server that advertises the `prompts` capability and returns
 // deterministic content, used by prompts-sdk-integration.test.ts to exercise
@@ -9,17 +16,17 @@ const server = new Server(
   { capabilities: { tools: {}, resources: {}, prompts: { listChanged: false } } },
 );
 
-server.setRequestHandler("tools/list", async () => ({
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [{ name: "noop", inputSchema: { type: "object", properties: {} } }],
 }));
 
-server.setRequestHandler("resources/list", async () => ({ resources: [] }));
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
 
-server.setRequestHandler("tools/call", async () => ({
+server.setRequestHandler(CallToolRequestSchema, async () => ({
   content: [{ type: "text", text: "ok" }],
 }));
 
-server.setRequestHandler("prompts/list", async () => ({
+server.setRequestHandler(ListPromptsRequestSchema, async () => ({
   prompts: [
     {
       name: "brief",
@@ -37,7 +44,7 @@ server.setRequestHandler("prompts/list", async () => ({
   ],
 }));
 
-server.setRequestHandler("prompts/get", async (request) => {
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
   if (name === "brief") {
     const topic = typeof args.topic === "string" ? args.topic : "(missing)";

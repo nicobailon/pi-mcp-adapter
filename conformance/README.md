@@ -44,7 +44,6 @@ Current gaps:
 | --- | --- |
 | `auth/basic-cimd` | The adapter uses dynamic client registration rather than an HTTPS Client ID Metadata Document. |
 | `auth/scope-step-up` | Pi's user-gated OAuth flow cannot yet resume the SDK's in-call 403 scope challenge with the widened scope. |
-| `auth/2025-03-26-oauth-metadata-backcompat` | SDK beta.5 rejects the referee's legacy metadata issuer mismatch under RFC 8414 validation. |
 | `auth/client-credentials-jwt` | Private-key JWT client authentication is not configured by the adapter. |
 | `auth/cross-app-access-complete-flow` | The adapter does not implement SEP-990 token exchange and JWT bearer grants. |
 

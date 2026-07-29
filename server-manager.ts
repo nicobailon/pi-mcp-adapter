@@ -1,14 +1,18 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import {
-  Client,
-  SSEClientTransport,
   StreamableHTTPClientTransport,
-  SdkHttpError,
-  UnauthorizedError,
-  type RequestOptions,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import {
+  ElicitationCompleteNotificationSchema,
+  type GetPromptResult,
   type ReadResourceResult,
   type UrlElicitationRequiredError,
-} from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+} from "@modelcontextprotocol/sdk/types.js";
 import { UnixSocketClientTransport } from "./unix-socket-transport.ts";
 import {
   isServerDisabled,
@@ -19,8 +23,8 @@ import {
   type ServerStreamResultPatchNotification,
   type Transport,
   type McpTraceSettings,
+  serverStreamResultPatchNotificationSchema,
 } from "./types.ts";
-import { SERVER_STREAM_RESULT_PATCH_METHOD, serverStreamResultPatchNotificationSchema } from "./types.ts";
 import { resolveNpxBinary } from "./npx-resolver.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { logger } from "./logger.ts";
@@ -53,10 +57,6 @@ import {
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
-const MCP_CLIENT_OPTIONS = {
-  versionNegotiation: { mode: "auto" as const },
-  inputRequired: { autoFulfill: true },
-};
 const abortCleanupPromises = new WeakMap<object, Promise<void>>();
 
 type HttpAuthProviderState =
@@ -66,7 +66,7 @@ type HttpAuthProviderState =
   | { status: "implicit-challenged"; provider: McpOAuthProvider };
 
 function isUnauthorizedHttpError(error: unknown): boolean {
-  return error instanceof UnauthorizedError || (error instanceof SdkHttpError && error.status === 401);
+  return error instanceof UnauthorizedError || (error instanceof StreamableHTTPError && error.code === 401);
 }
 
 function boundedStderrChunk(chunk: Buffer | string): Buffer {
@@ -507,7 +507,6 @@ export class McpServerManager {
     client = new Client(
       { name: `pi-mcp-${serverName}`, version: "1.0.0" },
       {
-        ...MCP_CLIENT_OPTIONS,
         jsonSchemaValidator: createJsonSchemaValidator(),
         ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
         listChanged: {
@@ -539,7 +538,7 @@ export class McpServerManager {
         onUrlAccepted: elicitationId => this.rememberUrlElicitation(serverName, elicitationId),
       });
       if (this.elicitationConfig.allowUrl) {
-        client.setNotificationHandler("notifications/elicitation/complete", notification => {
+        client.setNotificationHandler(ElicitationCompleteNotificationSchema, notification => {
           if (this.runtimeSignal?.aborted) return;
           const accepted = this.acceptedUrlElicitations.get(serverName);
           if (!accepted?.delete(notification.params.elicitationId)) return;
@@ -702,10 +701,7 @@ export class McpServerManager {
       const probeTransport = traceObserver
         ? wrapTransportWithMcpTrace(streamableTransport, serverName, "streamable-http", traceObserver)
         : streamableTransport;
-      const testClient = new Client(
-        { name: "pi-mcp-probe", version: "2.1.2" },
-        MCP_CLIENT_OPTIONS,
-      );
+      const testClient = new Client({ name: "pi-mcp-probe", version: "2.1.2" });
       let probeCleanupAttempted = false;
       try {
         await this.connectClientWithAbort(
@@ -829,15 +825,11 @@ export class McpServerManager {
   }
 
   private attachAdapterNotificationHandlers(serverName: string, client: Client): void {
-    client.setNotificationHandler(
-      SERVER_STREAM_RESULT_PATCH_METHOD,
-      { params: serverStreamResultPatchNotificationSchema.shape.params },
-      (params) => {
-        const listener = this.uiStreamListeners.get(params.streamToken);
-        if (!listener) return;
-        listener(serverName, params);
-      },
-    );
+    client.setNotificationHandler(serverStreamResultPatchNotificationSchema, notification => {
+      const listener = this.uiStreamListeners.get(notification.params.streamToken);
+      if (!listener) return;
+      listener(serverName, notification.params);
+    });
   }
 
   registerUiStreamListener(streamToken: string, listener: UiStreamListener): void {
@@ -853,7 +845,7 @@ export class McpServerManager {
     promptName: string,
     args?: Record<string, string>,
     signal?: AbortSignal,
-  ): Promise<import("@modelcontextprotocol/client").GetPromptResult> {
+  ): Promise<GetPromptResult> {
     const connection = this.connections.get(name);
     if (!connection || connection.status !== "connected") {
       throw new Error(`Server "${name}" is not connected`);

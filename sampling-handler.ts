@@ -2,14 +2,15 @@ import { complete, type Api, type AssistantMessage, type Message, type Model, ty
 import { truncateAtWord } from "./utils.ts";
 import { throwIfAborted } from "./abort.ts";
 import type { ExtensionUIContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type {
-  Client,
-  CreateMessageRequest,
-  CreateMessageResult,
-  ModelPreferences,
-  SamplingMessage,
-  SamplingMessageContentBlock,
-} from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import {
+  CreateMessageRequestSchema,
+  type CreateMessageRequest,
+  type CreateMessageResult,
+  type ModelPreferences,
+  type SamplingMessage,
+  type SamplingMessageContentBlock,
+} from "@modelcontextprotocol/sdk/types.js";
 
 export interface SamplingHandlerOptions {
   serverName: string;
@@ -23,8 +24,8 @@ export interface SamplingHandlerOptions {
 export type ServerSamplingConfig = Omit<SamplingHandlerOptions, "serverName">;
 
 export function registerSamplingHandler(client: Client, options: SamplingHandlerOptions): void {
-  client.setRequestHandler("sampling/createMessage", (request) => {
-    return handleSamplingRequest(options, request as CreateMessageRequest);
+  client.setRequestHandler(CreateMessageRequestSchema, request => {
+    return handleSamplingRequest(options, request);
   });
 }
 

@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { UnauthorizedError } from "@modelcontextprotocol/client";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
-import { saveAuthEntry } from "../mcp-auth.ts";
+import { getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
 
 describe("McpOAuthProvider clientMetadata scope", () => {
   it("includes configured scope in authorization_code client metadata", () => {
@@ -195,6 +195,200 @@ describe("McpOAuthProvider discovery state", () => {
     } else {
       process.env.MCP_OAUTH_DIR = originalOAuthDir;
     }
+  });
+
+  it("back-stamps legacy client information and tokens with the discovered issuer", async () => {
+    saveAuthEntry("legacy-binding", {
+      clientInfo: {
+        clientId: "legacy-client",
+        clientSecret: "legacy-secret",
+        redirectUris: ["http://localhost:19876/callback"],
+      },
+      tokens: {
+        accessToken: "legacy-access",
+        refreshToken: "legacy-refresh",
+      },
+      serverUrl,
+    }, serverUrl);
+    const provider = new McpOAuthProvider(
+      "legacy-binding",
+      serverUrl,
+      {},
+      { onRedirect: async () => {} },
+    );
+
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: "https://auth.example.com",
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+      },
+    });
+
+    expect(await provider.clientInformation()).toMatchObject({
+      client_id: "legacy-client",
+      issuer: "https://auth.example.com",
+    });
+    expect(await provider.tokens()).toMatchObject({
+      access_token: "legacy-access",
+      issuer: "https://auth.example.com",
+    });
+    expect(getAuthForUrl("legacy-binding", serverUrl)).toMatchObject({
+      clientInfo: { issuer: "https://auth.example.com" },
+      tokens: { issuer: "https://auth.example.com" },
+    });
+  });
+
+  it("rejects stored credentials when the issuer changes before refresh", async () => {
+    saveAuthEntry("changed-issuer", {
+      clientInfo: {
+        clientId: "bound-client",
+        clientSecret: "bound-secret",
+        redirectUris: ["http://localhost:19876/callback"],
+        issuer: "https://old-auth.example.com",
+      },
+      tokens: {
+        accessToken: "bound-access",
+        refreshToken: "bound-refresh",
+        issuer: "https://old-auth.example.com",
+      },
+      serverUrl,
+    }, serverUrl);
+    const provider = new McpOAuthProvider(
+      "changed-issuer",
+      serverUrl,
+      {},
+      { onRedirect: async () => {} },
+    );
+
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: "https://new-auth.example.com",
+      authorizationServerMetadata: {
+        issuer: "https://new-auth.example.com",
+        authorization_endpoint: "https://new-auth.example.com/authorize",
+        token_endpoint: "https://new-auth.example.com/token",
+        response_types_supported: ["code"],
+      },
+    });
+
+    await expect(provider.clientInformation()).rejects.toThrow(
+      "clear credentials before authenticating again",
+    );
+    await expect(provider.tokens()).rejects.toThrow(
+      "clear credentials before authenticating again",
+    );
+  });
+
+  it("does not stamp unbound tokens when client information has a different issuer", async () => {
+    saveAuthEntry("partial-client-binding", {
+      clientInfo: {
+        clientId: "bound-client",
+        clientSecret: "bound-secret",
+        redirectUris: ["http://localhost:19876/callback"],
+        issuer: "https://old-auth.example.com",
+      },
+      tokens: { accessToken: "legacy-access", refreshToken: "legacy-refresh" },
+      serverUrl,
+    }, serverUrl);
+    const provider = new McpOAuthProvider(
+      "partial-client-binding",
+      serverUrl,
+      {},
+      { onRedirect: async () => {} },
+    );
+    await provider.saveDiscoveryState({ authorizationServerUrl: "https://new-auth.example.com" });
+
+    await expect(provider.tokens()).rejects.toThrow("clear credentials before authenticating again");
+    expect(getAuthForUrl("partial-client-binding", serverUrl)?.tokens?.issuer).toBeUndefined();
+  });
+
+  it("does not stamp unbound client information when tokens have a different issuer", async () => {
+    saveAuthEntry("partial-token-binding", {
+      clientInfo: {
+        clientId: "legacy-client",
+        clientSecret: "legacy-secret",
+        redirectUris: ["http://localhost:19876/callback"],
+      },
+      tokens: {
+        accessToken: "bound-access",
+        refreshToken: "bound-refresh",
+        issuer: "https://old-auth.example.com",
+      },
+      serverUrl,
+    }, serverUrl);
+    const provider = new McpOAuthProvider(
+      "partial-token-binding",
+      serverUrl,
+      {},
+      { onRedirect: async () => {} },
+    );
+    await provider.saveDiscoveryState({ authorizationServerUrl: "https://new-auth.example.com" });
+
+    await expect(provider.clientInformation()).rejects.toThrow("clear credentials before authenticating again");
+    expect(getAuthForUrl("partial-token-binding", serverUrl)?.clientInfo?.issuer).toBeUndefined();
+  });
+
+  it("persists a pre-registered issuer binding without the config secret", async () => {
+    const provider = new McpOAuthProvider(
+      "pre-registered-binding",
+      serverUrl,
+      { clientId: "config-client", clientSecret: "config-secret" },
+      { onRedirect: async () => {} },
+    );
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: "https://auth.example.com",
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+      },
+    });
+
+    expect(await provider.clientInformation()).toMatchObject({
+      client_id: "config-client",
+      client_secret: "config-secret",
+      issuer: "https://auth.example.com",
+    });
+    expect(getAuthForUrl("pre-registered-binding", serverUrl)?.clientInfo).toEqual({
+      clientId: "config-client",
+      issuer: "https://auth.example.com",
+      configPreRegistered: true,
+    });
+  });
+
+  it("fails closed when a pre-registered client issuer changes", async () => {
+    saveAuthEntry("pre-registered-issuer-change", {
+      clientInfo: {
+        clientId: "config-client",
+        issuer: "https://old-auth.example.com",
+        configPreRegistered: true,
+      },
+      serverUrl,
+    }, serverUrl);
+    const provider = new McpOAuthProvider(
+      "pre-registered-issuer-change",
+      serverUrl,
+      { clientId: "config-client", clientSecret: "config-secret" },
+      { onRedirect: async () => {} },
+    );
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: "https://new-auth.example.com",
+      authorizationServerMetadata: {
+        issuer: "https://new-auth.example.com",
+        authorization_endpoint: "https://new-auth.example.com/authorize",
+        token_endpoint: "https://new-auth.example.com/token",
+        response_types_supported: ["code"],
+      },
+    });
+
+    await expect(provider.clientInformation()).rejects.toThrow(
+      "clear credentials before authenticating again",
+    );
+    expect(getAuthForUrl("pre-registered-issuer-change", serverUrl)?.clientInfo?.issuer)
+      .toBe("https://old-auth.example.com");
   });
 
   it("round-trips callback-leg discovery state and invalidates it independently", async () => {

@@ -1,15 +1,16 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
-  ProtocolError,
-  ProtocolErrorCode,
-  type Client,
+  ElicitRequestSchema,
+  ErrorCode,
+  McpError,
   type ElicitRequest,
   type ElicitRequestFormParams,
   type ElicitRequestURLParams,
   type ElicitResult,
-  type JsonSchemaType,
-} from "@modelcontextprotocol/client";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
+} from "@modelcontextprotocol/sdk/types.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation/types.js";
 import open from "open";
 
 export type ElicitationValue = string | number | boolean | string[] | undefined;
@@ -27,7 +28,7 @@ export interface ElicitationHandlerOptions {
 export type ServerElicitationConfig = Omit<ElicitationHandlerOptions, "serverName" | "onUrlAccepted">;
 
 export function registerElicitationHandler(client: Client, options: ElicitationHandlerOptions): void {
-  client.setRequestHandler("elicitation/create", (request) =>
+  client.setRequestHandler(ElicitRequestSchema, request =>
     handleElicitationRequest(options, request));
 }
 
@@ -304,16 +305,16 @@ export async function handleUrlElicitation(
   options: ElicitationHandlerOptions,
   params: ElicitRequestURLParams,
 ): Promise<ElicitResult> {
-  if (!options.allowUrl) throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation is not supported");
+  if (!options.allowUrl) throw new McpError(ErrorCode.InvalidParams, "URL elicitation is not supported");
 
   let parsed: URL;
   try {
     parsed = new URL(params.url);
   } catch {
-    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation supplied an invalid URL");
+    throw new McpError(ErrorCode.InvalidParams, "URL elicitation supplied an invalid URL");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation only supports HTTP and HTTPS URLs");
+    throw new McpError(ErrorCode.InvalidParams, "URL elicitation only supports HTTP and HTTPS URLs");
   }
 
   const decision = await options.ui.select([

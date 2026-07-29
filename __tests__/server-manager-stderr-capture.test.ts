@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   connectImpl: null as null | ((transport: any) => Promise<void>),
 }));
 
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any) {
     this.setRequestHandler = vi.fn();
@@ -28,7 +28,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   }),
 }));
 
-vi.mock("@modelcontextprotocol/client/stdio", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: any) {
     this.options = options;
     this.stderr = options?.stderr === "pipe" ? new PassThrough() : null;

@@ -5,15 +5,17 @@
  * Handles OAuth client registration, token storage, and authorization redirection.
  */
 
-import { UnauthorizedError } from "@modelcontextprotocol/client"
+import {
+  UnauthorizedError,
+  type AddClientAuthentication,
+  type OAuthClientProvider,
+  type OAuthDiscoveryState,
+} from "@modelcontextprotocol/sdk/client/auth.js"
 import type {
-  AddClientAuthentication,
-  OAuthClientProvider,
+  OAuthClientInformationMixed,
   OAuthClientMetadata,
-  OAuthDiscoveryState,
-  StoredOAuthClientInformation,
-  StoredOAuthTokens,
-} from "@modelcontextprotocol/client"
+  OAuthTokens,
+} from "@modelcontextprotocol/sdk/shared/auth.js"
 import {
   getAuthForUrl,
   updateTokens,
@@ -22,11 +24,21 @@ import {
   clearClientInfo,
   clearCodeVerifier,
   clearTokens,
+  type AuthEntry,
   type AuthStorageOptions,
   type StoredTokens,
   type StoredClientInfo,
 } from "./mcp-auth.ts"
 import { resolveCommandSecret } from "./utils.ts"
+
+type IssuerBoundClientInformation = OAuthClientInformationMixed & { issuer?: string }
+type IssuerBoundTokens = OAuthTokens & { issuer?: string }
+
+function issuersMatch(first: string, second: string): boolean {
+  return first === second
+    || (first.endsWith("/") && first.slice(0, -1) === second)
+    || (second.endsWith("/") && second.slice(0, -1) === first)
+}
 
 // Callback server configuration
 const DEFAULT_OAUTH_CALLBACK_PORT = 19876
@@ -90,6 +102,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private flowClientInfo: StoredClientInfo | undefined
   private flowCodeVerifier: string | undefined
   private flowDiscoveryState: OAuthDiscoveryState | undefined
+  private flowIssuerMismatch = false
   private flowState: string | undefined
 
   constructor(
@@ -111,8 +124,31 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return this.config.grantType === "client_credentials"
   }
 
+  private get discoveredIssuer(): string | undefined {
+    return this.flowDiscoveryState?.authorizationServerMetadata?.issuer
+      ?? this.flowDiscoveryState?.authorizationServerUrl
+  }
+
   deactivate(): void {
     this.active = false
+  }
+
+  private assertStoredIssuerBindings(entry: AuthEntry | undefined, issuer: string | undefined): void {
+    if (this.flowIssuerMismatch) {
+      throw new Error(
+        `OAuth authorization server issuer changed for ${this.serverName}; clear credentials before authenticating again`,
+      )
+    }
+    if (!entry || !issuer) return
+
+    const storedIssuers = [entry.clientInfo?.issuer, entry.tokens?.issuer]
+      .filter((storedIssuer): storedIssuer is string => storedIssuer !== undefined)
+    if (storedIssuers.some(storedIssuer => !issuersMatch(storedIssuer, issuer))) {
+      this.flowIssuerMismatch = true
+      throw new Error(
+        `OAuth authorization server issuer changed for ${this.serverName}; clear credentials before authenticating again`,
+      )
+    }
   }
 
   private throwIfInactive(): void {
@@ -163,13 +199,25 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Get client information (for pre-registered or dynamically registered clients).
    * Returns undefined if no client info exists or if the server URL has changed.
    */
-  async clientInformation(): Promise<StoredOAuthClientInformation | undefined> {
-    // Check config first (pre-registered client)
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    const issuer = this.discoveredIssuer
+    const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
+    this.assertStoredIssuerBindings(stored, issuer)
+
+    // Check config first (pre-registered client). Store only its issuer binding.
+    // The configured secret stays in config and never enters the credential store.
     if (this.config.clientId) {
-      // Reuse a previously stamped issuer (SEP-2352) if the SDK re-saved
-      // this pre-registered client with one.
-      const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
-      const issuer = stored?.clientInfo?.clientId === this.config.clientId ? stored.clientInfo.issuer : undefined
+      const storedClient = stored?.clientInfo?.clientId === this.config.clientId
+        ? stored.clientInfo
+        : undefined
+      if (issuer && (storedClient?.issuer !== issuer || storedClient.configPreRegistered !== true)) {
+        updateClientInfo(
+          this.serverName,
+          { clientId: this.config.clientId, issuer, configPreRegistered: true },
+          this.serverUrl,
+          this.storageOptions,
+        )
+      }
       const clientSecret = this.config.clientSecret?.startsWith("!")
         ? resolveCommandSecret(
           this.config.clientSecret,
@@ -180,12 +228,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
         client_id: this.config.clientId,
         client_secret: clientSecret,
         ...(issuer !== undefined ? { issuer } : {}),
-      }
+      } as IssuerBoundClientInformation
     }
 
     // Keep client registration associated with this in-flight flow even if
     // another runtime writes the shared persistent entry for the same name.
-    const clientInfo = this.flowClientInfo ?? (await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions))?.clientInfo
+    const clientInfo = this.flowClientInfo ?? stored?.clientInfo
     if (clientInfo) {
       // A stored SEP-2352 issuer stub for a config-pre-registered client
       // (identified by the explicit marker, or by the legacy stub shape of
@@ -207,10 +255,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
       if (clientInfo.clientSecretExpiresAt && clientInfo.clientSecretExpiresAt < Date.now() / 1000) {
         return undefined
       }
-      // Return all stored registration metadata so the SDK's SEP-2352 issuer
-      // stamp-and-resave (which round-trips clientInformation() back through
-      // saveClientInformation()) does not drop client_id_issued_at,
-      // client_secret_expires_at, or the registered redirect_uris.
+      if (issuer && clientInfo.issuer && !issuersMatch(clientInfo.issuer, issuer)) {
+        return undefined
+      }
+      if (issuer && clientInfo.issuer === undefined) {
+        clientInfo.issuer = issuer
+        this.flowClientInfo = clientInfo
+        updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
+      }
+      // Return all registration metadata and the local issuer extension.
+      // This keeps the SDK v1 view and the stored issuer binding consistent.
       return {
         client_id: clientInfo.clientId,
         client_secret: clientInfo.clientSecret,
@@ -224,7 +278,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
           ? { redirect_uris: clientInfo.redirectUris }
           : {}),
         ...(clientInfo.issuer !== undefined ? { issuer: clientInfo.issuer } : {}),
-      }
+      } as IssuerBoundClientInformation
     }
 
     // No client info or URL changed - will trigger dynamic registration
@@ -234,16 +288,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
   /**
    * Save client information from dynamic registration.
    */
-  async saveClientInformation(info: StoredOAuthClientInformation): Promise<void> {
+  async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
     this.throwIfInactive()
-    // Pre-registered client from config: the SDK's SEP-2352 issuer stamp
-    // re-saves whatever clientInformation() returned. Persist only the
-    // issuer binding - never copy the config-supplied client secret into
-    // the on-disk auth store.
+    const issuer = this.discoveredIssuer ?? (info as IssuerBoundClientInformation).issuer
     if (this.config.clientId && info.client_id === this.config.clientId) {
       updateClientInfo(
         this.serverName,
-        { clientId: info.client_id, issuer: info.issuer, configPreRegistered: true },
+        { clientId: info.client_id, issuer, configPreRegistered: true },
         this.serverUrl,
         this.storageOptions,
       )
@@ -258,7 +309,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       clientIdIssuedAt: info.client_id_issued_at,
       clientSecretExpiresAt: info.client_secret_expires_at,
       redirectUris,
-      issuer: info.issuer,
+      issuer,
     }
     this.flowClientInfo = clientInfo
     updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
@@ -268,10 +319,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Get stored OAuth tokens.
    * Returns undefined if no tokens exist or if the server URL has changed.
    */
-  async tokens(): Promise<StoredOAuthTokens | undefined> {
-    // Use getAuthForUrl to validate tokens are for the current server URL
+  async tokens(): Promise<OAuthTokens | undefined> {
+    // Use getAuthForUrl to validate tokens are for the current server URL.
     const entry = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
     if (!entry?.tokens) return undefined
+    const issuer = this.discoveredIssuer
+    this.assertStoredIssuerBindings(entry, issuer)
+    if (issuer && entry.tokens.issuer === undefined) {
+      entry.tokens.issuer = issuer
+      updateTokens(this.serverName, entry.tokens, this.serverUrl, this.storageOptions)
+    }
 
     return {
       access_token: entry.tokens.accessToken,
@@ -282,13 +339,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
         : undefined,
       scope: entry.tokens.scope,
       ...(entry.tokens.issuer !== undefined ? { issuer: entry.tokens.issuer } : {}),
-    }
+    } as IssuerBoundTokens
   }
 
   /**
    * Save OAuth tokens.
    */
-  async saveTokens(tokens: StoredOAuthTokens): Promise<void> {
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
     const storedTokens: StoredTokens = {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
@@ -297,7 +354,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       // being persisted as never-expiring.
       expiresAt: tokens.expires_in !== undefined ? Date.now() / 1000 + tokens.expires_in : undefined,
       scope: tokens.scope,
-      issuer: tokens.issuer,
+      issuer: this.discoveredIssuer ?? (tokens as IssuerBoundTokens).issuer,
     }
     this.throwIfInactive()
     updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
@@ -356,8 +413,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Persist discovery with the same durability as the PKCE verifier. SDK v2
-   * reads this on the callback leg to prevent authorization-code mix-up.
+   * Keep discovery with the in-flight PKCE verifier. The callback leg uses it
+   * to validate the authorization response issuer before token exchange.
    */
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     this.throwIfInactive()
@@ -405,6 +462,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.flowClientInfo = undefined
         this.flowCodeVerifier = undefined
         this.flowDiscoveryState = undefined
+        this.flowIssuerMismatch = false
         this.flowState = undefined
         clearAllCredentials(this.serverName, this.storageOptions)
         break

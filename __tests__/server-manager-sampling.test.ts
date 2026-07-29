@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("open", () => ({ default: mocks.open }));
 
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any, info: unknown, options: unknown) {
     this.info = info;
@@ -28,7 +28,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/client/stdio", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
     this.close = vi.fn(async () => undefined);
@@ -72,8 +72,6 @@ describe("McpServerManager sampling", () => {
     const client = mocks.clients[0];
     expect(client.options).toMatchObject({
       capabilities: { sampling: {} },
-      versionNegotiation: { mode: "auto" },
-      inputRequired: { autoFulfill: true },
     });
     expect(client.setRequestHandler).toHaveBeenCalledTimes(1);
     expect(client.setRequestHandler.mock.invocationCallOrder[0]).toBeLessThan(
@@ -99,8 +97,6 @@ describe("McpServerManager sampling", () => {
           url: {},
         },
       },
-      versionNegotiation: { mode: "auto" },
-      inputRequired: { autoFulfill: true },
     });
     expect(client.setRequestHandler).toHaveBeenCalledTimes(1);
     expect(client.setRequestHandler.mock.invocationCallOrder[0]).toBeLessThan(
@@ -117,8 +113,6 @@ describe("McpServerManager sampling", () => {
 
     expect(mocks.clients[0].options).toMatchObject({
       capabilities: { elicitation: { form: {} } },
-      versionNegotiation: { mode: "auto" },
-      inputRequired: { autoFulfill: true },
     });
   });
 
@@ -158,7 +152,7 @@ describe("McpServerManager sampling", () => {
   });
 
   it("handles every URL in a URL-required error", async () => {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
+    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/sdk/types.js");
     const { McpServerManager } = await import("../server-manager.ts");
     const ui = {
       select: vi.fn().mockResolvedValue("Open"),
@@ -201,8 +195,6 @@ describe("McpServerManager sampling", () => {
           url: {},
         },
       },
-      versionNegotiation: { mode: "auto" },
-      inputRequired: { autoFulfill: true },
     });
     expect(mocks.clients[0].setRequestHandler).toHaveBeenCalledTimes(2);
   });
@@ -214,10 +206,7 @@ describe("McpServerManager sampling", () => {
     await manager.connect("demo", { command: "node", args: ["server.js"] });
 
     const client = mocks.clients[0];
-    expect(client.options).toMatchObject({
-      versionNegotiation: { mode: "auto" },
-      inputRequired: { autoFulfill: true },
-    });
+    expect(client.options).not.toHaveProperty("capabilities");
     expect(client.options.listChanged.tools.onChanged).toBeTypeOf("function");
     expect(client.options.listChanged.resources.onChanged).toBeTypeOf("function");
     expect(client.setRequestHandler).not.toHaveBeenCalled();
