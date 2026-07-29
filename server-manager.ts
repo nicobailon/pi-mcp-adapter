@@ -925,9 +925,14 @@ export class McpServerManager {
   }
 
   private async disposeConnection(connection: ServerConnection): Promise<void> {
+    // The SDK client owns the transport after client.connect(transport). Calling
+    // both client.close() and transport.close() races two shutdown paths against
+    // the same underlying handles; some transports tolerate that, but others can
+    // leave one close awaiting state already consumed by the other. Close through
+    // the client only, and keep direct transport.close() for pre-connect abort
+    // cleanup where the client has not taken ownership yet.
     const results = await Promise.allSettled([
       Promise.resolve().then(() => connection.client.close()),
-      Promise.resolve().then(() => connection.transport.close()),
       this.traceWriter?.flush() ?? Promise.resolve(),
     ]);
     const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);

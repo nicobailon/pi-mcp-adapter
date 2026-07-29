@@ -87,6 +87,18 @@ describe("MCP manager owner races", () => {
     expect(manager.getConnection("demo")).toBeUndefined();
   });
 
+  it("closes established connections through the owning client only", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager("/tmp/session");
+    await manager.connect("demo", { command: "node", args: ["server.js"] });
+    mocks.transports[0].close = vi.fn(() => new Promise<void>(() => {}));
+
+    await expect(manager.close("demo")).resolves.toBeUndefined();
+
+    expect(mocks.clients[0].close).toHaveBeenCalledTimes(1);
+    expect(mocks.transports[0].close).not.toHaveBeenCalled();
+  });
+
   it("closeAll aborts pending connects and settles without late insertion", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const connectGate = gate();
