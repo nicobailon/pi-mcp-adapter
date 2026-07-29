@@ -34,6 +34,12 @@ export interface McpToolResultDisplay {
 
 const DEFAULT_MAX_CALL_INPUT_CHARS = 1500;
 const DEFAULT_MAX_COLLAPSED_LINES = 3;
+/**
+ * Collapsed TUI rows only need enough source text to fill a few visual lines.
+ * Capping here keeps ICU/grapheme wrapping off multi-10KB MCP dumps on every
+ * keystroke invalidate (Pi rebuilds tool rows on each composer render).
+ */
+const COLLAPSED_RENDER_CHAR_SLACK = 8;
 
 class CollapsibleText implements Component {
   constructor(
@@ -45,8 +51,22 @@ class CollapsibleText implements Component {
   ) {}
 
   render(width: number): string[] {
-    const lines = new Text(this.text, 0, 0).render(width);
-    if (this.expanded || lines.length <= this.maxCollapsedLines) return lines;
+    if (this.expanded) {
+      return new Text(this.text, 0, 0).render(width);
+    }
+
+    // Only wrap a prefix large enough to fill the collapsed viewport. Full-text
+    // wrap of large MCP results dominates the main-thread sample (Intl.Segmenter).
+    // Multi-line dumps are already truncated by formatMcpToolResultLines.
+    const safeWidth = Math.max(1, Math.floor(width));
+    const charBudget = safeWidth * (this.maxCollapsedLines + 1) * COLLAPSED_RENDER_CHAR_SLACK;
+    const prefix = this.text.length > charBudget
+      ? this.text.slice(0, charBudget)
+      : this.text;
+    const fullyIncluded = prefix === this.text;
+
+    const lines = new Text(prefix, 0, 0).render(width);
+    if (fullyIncluded && lines.length <= this.maxCollapsedLines) return lines;
 
     return [
       ...lines.slice(0, this.maxCollapsedLines),
@@ -191,7 +211,9 @@ export function renderMcpToolResult(
 
   const hasErrorDetails = Boolean(result.details.error);
   const expanded = options.expanded || context?.isError === true || hasErrorDetails;
-  const display = formatMcpToolResultLines(result, true);
+  // Keep logical collapse for multi-line dumps; CollapsibleText still handles
+  // single-line visual wrap without scanning the full body when collapsed.
+  const display = formatMcpToolResultLines(result, expanded);
   const identity = formatMcpToolResultIdentity(result.details);
   const output = [
     ...(identity ? [activeTheme.fg("muted", identity)] : []),

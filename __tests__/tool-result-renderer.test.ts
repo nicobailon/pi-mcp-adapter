@@ -159,6 +159,27 @@ describe("MCP tool result renderer", () => {
     expect(output).not.toContain("segment-8");
   });
 
+  it("keeps collapsed rendering cheap for multi-10KB MCP dumps", () => {
+    const huge = `${"word ".repeat(20_000)}\n${"line\n".repeat(2_000)}tail-marker`;
+    const toolResult = result([{ type: "text", text: huge }]);
+
+    // Match the product path: each TUI invalidate rebuilds via renderResult().
+    const started = performance.now();
+    let component = renderMcpToolResult(toolResult, collapsedOptions, plainTheme, { isError: false });
+    for (let i = 0; i < 50; i++) {
+      component = renderMcpToolResult(toolResult, collapsedOptions, plainTheme, { isError: false });
+      component.render(80);
+    }
+    const elapsedMs = performance.now() - started;
+
+    const output = component.render(80).join("\n");
+    expect(output).toContain("word");
+    expect(output).toContain("Ctrl+O to expand");
+    expect(output).not.toContain("tail-marker");
+    // Full-text ICU wrap of this payload is hundreds of ms; prefix wrap stays small.
+    expect(elapsedMs).toBeLessThan(100);
+  });
+
   it("shows proxy call result identity without hiding the third content line", () => {
     const output = renderMcpToolResult(
       result([{ type: "text", text: "one\ntwo\nthree\nfour" }], { mode: "call", server: "figma", tool: "get_nodes" }),

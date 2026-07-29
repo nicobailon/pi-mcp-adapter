@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Collapsed MCP tool results no longer ICU-wrap the full payload on every TUI invalidate. Collapsed rows wrap only a small prefix, which stops composer keystroke lag after large MCP dumps.
+
 ## [2.15.0] - 2026-07-25
 
 ### Added
