@@ -925,7 +925,6 @@ export class McpServerManager {
   }
 
   private async disposeConnection(connection: ServerConnection): Promise<void> {
-    
     const results = await Promise.allSettled([
       // Only client.close() is needed; the client owns the transport and will close it internally.
       Promise.resolve().then(() => connection.client.close()),
