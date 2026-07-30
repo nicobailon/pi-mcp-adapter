@@ -247,7 +247,8 @@ function removeLegacyAuthEntry(serverName: string, options?: AuthStorageOptions)
 function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
   const account = getAuthEntryAccount(serverName);
   try {
-    getAuthSecretStore().write(account, JSON.stringify(entry, null, 2));
+    // Compact: multiline secrets corrupt gnome-keyring plaintext (GKeyFile) collections.
+    getAuthSecretStore().write(account, JSON.stringify(entry));
   } catch (error) {
     throw new OAuthCredentialStoreError(
       `Failed to write OAuth credentials for ${serverName} to the OS secure credential store`,
