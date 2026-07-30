@@ -3,12 +3,16 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  clearAllCredentials,
   formatOAuthCredentialStoreUnavailable,
   getAuthEntry,
   getAuthEntryFilePath,
   getAuthStorageOptions,
+  getTestAuthSecretStoreEntries,
   inspectAuthForUrl,
   OAuthCredentialStoreError,
+  removeTestAuthSecretStoreEntry,
+  resetTestAuthSecretStore,
   saveAuthEntry,
 } from "../mcp-auth.ts";
 
@@ -36,6 +40,7 @@ describe("mcp-auth storage paths", () => {
   beforeEach(() => {
     authDir = mkdtempSync(join(tmpdir(), "pi-mcp-auth-storage-"));
     process.env.MCP_OAUTH_DIR = authDir;
+    resetTestAuthSecretStore();
   });
 
   afterEach(() => {
@@ -126,5 +131,53 @@ describe("mcp-auth storage paths", () => {
     expect(filePath.startsWith(authDir)).toBe(true);
     expect(filePath.startsWith(join(project, ".pi", "oauth"))).toBe(false);
     rmSync(project, { recursive: true, force: true });
+  });
+
+  it("chunks large secure-store entries and reads them back", () => {
+    const accessToken = "x".repeat(5000);
+    saveAuthEntry("large-entry", { tokens: { accessToken } }, "https://example.com/mcp");
+
+    expect(getAuthEntry("large-entry")?.tokens?.accessToken).toBe(accessToken);
+    const entries = getTestAuthSecretStoreEntries();
+    const manifestEntry = entries.find(([account]) => !account.includes(".chunk."));
+    const chunkEntries = entries.filter(([account]) => account.includes(".chunk."));
+
+    expect(manifestEntry).toBeDefined();
+    const manifest = JSON.parse(manifestEntry![1]) as { __piMcpAdapterOAuthChunked?: number; chunkCount?: number };
+    expect(manifest.__piMcpAdapterOAuthChunked).toBe(1);
+    expect(chunkEntries).toHaveLength(manifest.chunkCount);
+    expect(chunkEntries.every(([, payload]) => payload.length <= 1800)).toBe(true);
+  });
+
+  it("returns unavailable status when a stored chunk cannot be read", () => {
+    saveAuthEntry("large-status", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
+    const chunkAccount = getTestAuthSecretStoreEntries().find(([account]) => account.includes(".chunk."))?.[0];
+    expect(chunkAccount).toBeDefined();
+    removeTestAuthSecretStoreEntry(chunkAccount!);
+
+    expect(inspectAuthForUrl("large-status", "https://example.com/mcp").status).toBe("unavailable");
+  });
+
+  it("removes chunk payloads when credentials are cleared", () => {
+    saveAuthEntry("large-remove", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
+    const storedAccounts = getTestAuthSecretStoreEntries().map(([account]) => account);
+    expect(storedAccounts.some(account => account.includes(".chunk."))).toBe(true);
+
+    clearAllCredentials("large-remove");
+
+    const remainingAccounts = new Set(getTestAuthSecretStoreEntries().map(([account]) => account));
+    expect(storedAccounts.every(account => !remainingAccounts.has(account))).toBe(true);
+  });
+
+  it("cleans stale chunks when a large entry is replaced by a small one", () => {
+    saveAuthEntry("large-to-small", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
+    expect(getTestAuthSecretStoreEntries().some(([account]) => account.includes(".chunk."))).toBe(true);
+
+    saveAuthEntry("large-to-small", { tokens: { accessToken: "small" } }, "https://example.com/mcp");
+
+    expect(getAuthEntry("large-to-small")?.tokens?.accessToken).toBe("small");
+    const entries = getTestAuthSecretStoreEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0][0]).not.toContain(".chunk.");
   });
 });
