@@ -245,7 +245,7 @@ export async function initializeMcp(
         resourceCounts.set(name, cachedEntry.resources.length);
       }
       if (cachedEntry.prompts?.length) {
-        promptMetadata.set(name, reconstructPromptMetadata(name, cachedEntry.prompts ?? [], prefix));
+        promptMetadata.set(name, reconstructPromptMetadata(name, cachedEntry.prompts ?? [], prefix, definition));
       }
       if (cachedEntry.instructions) {
         serverInstructions.set(name, cachedEntry.instructions);
@@ -301,7 +301,7 @@ export async function initializeMcp(
     toolMetadata.set(name, metadata);
     resourceCounts.set(name, connection.resources.length);
     if (!connection.promptDiscoveryFailed) {
-      promptMetadata.set(name, reconstructPromptMetadata(name, connection.prompts ?? [], prefix));
+      promptMetadata.set(name, reconstructPromptMetadata(name, connection.prompts ?? [], prefix, definition));
       promptMetadataLive.add(name);
     }
     if (connection.instructions) {
@@ -433,7 +433,7 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
   state.toolMetadata.set(serverName, metadata);
   state.resourceCounts?.set(serverName, connection.resources.length);
   if (!connection.promptDiscoveryFailed) {
-    state.promptMetadata?.set(serverName, reconstructPromptMetadata(serverName, connection.prompts ?? [], prefix));
+    state.promptMetadata?.set(serverName, reconstructPromptMetadata(serverName, connection.prompts ?? [], prefix, definition));
     state.promptMetadataLive?.add(serverName);
   }
   if (connection.instructions) {

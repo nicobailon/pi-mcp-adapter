@@ -27,7 +27,7 @@ export function resolveCachedPrompts(config: McpConfig): PromptMetadata[] {
     const definition = config.mcpServers[serverName];
     if (!definition || isServerDisabled(definition)) continue;
     if (!entry?.prompts?.length || !isServerCacheValid(entry, definition)) continue;
-    specs.push(...reconstructPromptMetadata(serverName, entry.prompts, prefix));
+    specs.push(...reconstructPromptMetadata(serverName, entry.prompts, prefix, definition));
   }
 
   return specs;

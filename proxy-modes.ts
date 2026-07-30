@@ -696,7 +696,7 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
     const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
     state.toolMetadata.set(serverName, metadata);
     if (!connection.promptDiscoveryFailed) {
-      state.promptMetadata?.set(serverName, reconstructPromptMetadata(serverName, connection.prompts ?? [], prefix));
+      state.promptMetadata?.set(serverName, reconstructPromptMetadata(serverName, connection.prompts ?? [], prefix, definition));
       state.promptMetadataLive?.add(serverName);
     }
     if (connection.instructions) {

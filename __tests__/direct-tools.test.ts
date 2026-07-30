@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { buildProxyDescription, resolveDirectTools } from "../direct-tools.ts";
+import { DIRECT_TOOLS_ADVISORY_THRESHOLD, buildProxyDescription, resolveDirectTools } from "../direct-tools.ts";
 import {
   computeServerHash,
   getMissingConfiguredDirectToolServers,
@@ -22,6 +22,7 @@ const originalHashEnv = {
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const [key, value] of Object.entries(originalHashEnv)) {
     if (value === undefined) {
       delete process.env[key];
@@ -418,6 +419,18 @@ describe("excludeTools filtering", () => {
     expect(reconstructed.map((tool) => tool.name)).toEqual(["figma_get_nodes", "figma_read_figjam"]);
   });
 
+  it("honors per-server toolPrefix while building live metadata", () => {
+    const { metadata } = buildToolMetadata(
+      [{ name: "search", description: "Search" }] as any,
+      [],
+      { command: "npx", args: ["-y", "github"], toolPrefix: "none" },
+      "github",
+      "server",
+    );
+
+    expect(metadata.map((tool) => tool.name)).toEqual(["search"]);
+  });
+
   it("sanitizes registered names while preserving raw MCP names", () => {
     const { metadata } = buildToolMetadata(
       [{ name: "namespace.tool", description: "Namespaced tool" }] as any,
@@ -510,6 +523,69 @@ describe("excludeTools filtering", () => {
     const specs = resolveDirectTools(config, cache, "server");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes"]);
+  });
+
+  it("honors per-server toolPrefix during direct tool registration from cache", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "none" },
+      mcpServers: {
+        github: {
+          command: "npx",
+          args: ["-y", "github"],
+          directTools: true,
+          toolPrefix: "server",
+        },
+      },
+    };
+
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        github: {
+          configHash: computeServerHash(config.mcpServers.github),
+          cachedAt: Date.now(),
+          tools: [{ name: "search", description: "Search" }],
+          resources: [],
+        },
+      },
+    };
+
+    const specs = resolveDirectTools(config, cache, "none");
+
+    expect(specs.map((spec) => spec.prefixedName)).toEqual(["github_search"]);
+  });
+
+  it("warns without capping when resolved direct tools exceed the README threshold", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const tools = Array.from({ length: DIRECT_TOOLS_ADVISORY_THRESHOLD }, (_, index) => ({
+      name: `tool_${index}`,
+      description: `Tool ${index}`,
+    }));
+    const config: McpConfig = {
+      mcpServers: {
+        huge: {
+          command: "npx",
+          args: ["-y", "huge"],
+          directTools: true,
+        },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        huge: {
+          configHash: computeServerHash(config.mcpServers.huge),
+          cachedAt: Date.now(),
+          tools,
+          resources: [],
+        },
+      },
+    };
+
+    const specs = resolveDirectTools(config, cache, "server");
+
+    expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("75+ direct tools"));
   });
 
   it("filters included tools during direct tool registration from cache", () => {

@@ -1,7 +1,7 @@
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
-import { formatToolName, isToolAllowed } from "./types.ts";
+import { formatToolName, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
 
@@ -15,17 +15,18 @@ export function buildToolMetadata(
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
   const seenNames = new Set<string>();
+  const effectivePrefix = resolveToolPrefix(definition, prefix);
 
   for (const tool of tools) {
     if (!tool?.name) {
       failedTools.push("(unnamed)");
       continue;
     }
-    if (!isToolAllowed(tool.name, serverName, prefix, definition.includeTools, definition.excludeTools)) {
+    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) {
       continue;
     }
 
-    const name = formatToolName(tool.name, serverName, prefix);
+    const name = formatToolName(tool.name, serverName, effectivePrefix);
     if (seenNames.has(name)) {
       continue;
     }
@@ -50,11 +51,11 @@ export function buildToolMetadata(
   if (definition.exposeResources !== false) {
     for (const resource of resources) {
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
-      if (!isToolAllowed(baseName, serverName, prefix, definition.includeTools, definition.excludeTools)) {
+      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) {
         continue;
       }
 
-      const name = formatToolName(baseName, serverName, prefix);
+      const name = formatToolName(baseName, serverName, effectivePrefix);
       if (seenNames.has(name)) {
         continue;
       }

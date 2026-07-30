@@ -349,6 +349,8 @@ export interface ServerEntry {
   exposeResources?: boolean;
   // Direct tool registration
   directTools?: boolean | string[];
+  // Override settings.toolPrefix for this server.
+  toolPrefix?: ToolPrefix;
   // Include/exclude specific MCP tools/resources by original or prefixed name
   includeTools?: string[];
   excludeTools?: string[];
@@ -568,6 +570,13 @@ export function formatToolName(
   const p = getServerPrefix(serverName, prefix);
   const sanitized = toolName.replace(/\./g, "_");
   return p ? `${p}_${sanitized}` : sanitized;
+}
+
+export function resolveToolPrefix(
+  definition?: Pick<ServerEntry, "toolPrefix">,
+  globalPrefix?: ToolPrefix,
+): ToolPrefix {
+  return definition?.toolPrefix ?? globalPrefix ?? "server";
 }
 
 export function sanitizePromptName(name: string): string {

@@ -19,7 +19,7 @@ import type {
   ToolMetadata,
   PromptMetadata,
 } from "./types.ts";
-import { formatPromptCommandName, formatToolName, isServerDisabled, isToolAllowed, type ToolPrefix } from "./types.ts";
+import { formatPromptCommandName, formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix, type ToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
   extractToolUiStreamMode,
@@ -175,18 +175,19 @@ export function reconstructToolMetadata(
   serverName: string,
   entry: ServerCacheEntry,
   prefix: ToolPrefix,
-  definition: Pick<ServerEntry, "exposeResources" | "includeTools" | "excludeTools">
+  definition: Pick<ServerEntry, "exposeResources" | "includeTools" | "excludeTools" | "toolPrefix">
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
   const seenNames = new Set<string>();
+  const effectivePrefix = resolveToolPrefix(definition, prefix);
 
   for (const tool of entry.tools ?? []) {
     if (!tool?.name) continue;
-    if (!isToolAllowed(tool.name, serverName, prefix, definition.includeTools, definition.excludeTools)) {
+    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) {
       continue;
     }
 
-    const name = formatToolName(tool.name, serverName, prefix);
+    const name = formatToolName(tool.name, serverName, effectivePrefix);
     if (seenNames.has(name)) {
       continue;
     }
@@ -206,11 +207,11 @@ export function reconstructToolMetadata(
     for (const resource of entry.resources ?? []) {
       if (!resource?.name || !resource?.uri) continue;
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
-      if (!isToolAllowed(baseName, serverName, prefix, definition.includeTools, definition.excludeTools)) {
+      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) {
         continue;
       }
 
-      const name = formatToolName(baseName, serverName, prefix);
+      const name = formatToolName(baseName, serverName, effectivePrefix);
       if (seenNames.has(name)) {
         continue;
       }
@@ -271,7 +272,9 @@ export function reconstructPromptMetadata(
   serverName: string,
   prompts: ReadonlyArray<McpPrompt | CachedPrompt>,
   prefix: ToolPrefix,
+  definition?: Pick<ServerEntry, "toolPrefix">,
 ): PromptMetadata[] {
+  const effectivePrefix = resolveToolPrefix(definition, prefix);
   return (prompts ?? []).filter(prompt => prompt?.name).map(prompt => {
     const args: McpPromptArgument[] = Array.isArray(prompt.arguments)
       ? prompt.arguments.filter(argument => argument?.name).map(argument => ({
@@ -283,7 +286,7 @@ export function reconstructPromptMetadata(
     return {
       serverName,
       originalName: prompt.name,
-      commandName: formatPromptCommandName(prompt.name, serverName, prefix),
+      commandName: formatPromptCommandName(prompt.name, serverName, effectivePrefix),
       title: prompt.title,
       description: prompt.description ?? "",
       arguments: args,

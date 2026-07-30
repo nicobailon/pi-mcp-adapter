@@ -166,7 +166,7 @@ export async function reconnectServer(
     const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
     state.toolMetadata.set(name, metadata);
     if (!connection.promptDiscoveryFailed) {
-      state.promptMetadata?.set(name, reconstructPromptMetadata(name, connection.prompts ?? [], prefix));
+      state.promptMetadata?.set(name, reconstructPromptMetadata(name, connection.prompts ?? [], prefix, definition));
       state.promptMetadataLive?.add(name);
     }
     if (connection.instructions) {
