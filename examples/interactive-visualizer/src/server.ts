@@ -1,5 +1,5 @@
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,7 +59,7 @@ server.registerTool(
     }),
     _meta: { ui: { resourceUri: "ui://interactive-visualizer/app.html" } },
   },
-  async (args, ctx) => {
+  async (args, extra) => {
     const spec = {
       type: args.type || "bar",
       title: args.title || "Chart",
@@ -67,10 +67,10 @@ server.registerTool(
       datasets: JSON.parse(args.datasets || "[]"),
     };
 
-    const streamToken = ctx.mcpReq._meta?.["pi-mcp-adapter/stream-token"] as string | undefined;
+    const streamToken = extra._meta?.["pi-mcp-adapter/stream-token"] as string | undefined;
     if (streamToken) {
       const sendAdapterNotification = (notification: StreamNotification) =>
-        ctx.mcpReq.notify(notification as never);
+        extra.sendNotification(notification as never);
       for (let i = 0; i < spec.datasets.length; i++) {
         const partial = { ...spec, datasets: spec.datasets.slice(0, i + 1) };
         const isLast = i === spec.datasets.length - 1;
@@ -185,12 +185,12 @@ server.registerTool(
     inputSchema: z.object({}),
     _meta: { ui: { resourceUri: "ui://interactive-visualizer/app.html" } },
   },
-  async (_args, ctx) => {
-    const streamToken = ctx.mcpReq._meta?.["pi-mcp-adapter/stream-token"] as string | undefined;
+  async (_args, extra) => {
+    const streamToken = extra._meta?.["pi-mcp-adapter/stream-token"] as string | undefined;
 
     if (streamToken) {
       const sendAdapterNotification = (notification: StreamNotification) =>
-        ctx.mcpReq.notify(notification as never);
+        extra.sendNotification(notification as never);
       for (let t = 1; t <= STORY.length; t++) {
         const isLast = t === STORY.length;
         await sendStreamFrame(streamToken, sendAdapterNotification, {

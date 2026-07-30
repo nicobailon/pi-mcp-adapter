@@ -20,7 +20,8 @@
 //     many things other than "your session is gone"
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
-import { ProtocolError, SdkHttpError } from "@modelcontextprotocol/client";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { isServerDisabled, type McpConfig } from "./types.ts";
@@ -33,32 +34,25 @@ import type { McpServerManager, ServerConnection } from "./server-manager.ts";
  * gate response some servers emit before dispatching to a handler.
  *
  * `hadSessionId` must reflect the transport's session id from *before* the
- * call that produced `err` was made. The installed SDK (2.0.0-beta.5) only
- * clears `transport.sessionId` on an explicit `terminateSession()`, so
- * checking it at catch time currently agrees with checking it up front — but
- * callers should capture it before the call rather than rely on that
- * incidental behavior.
+ * call that produced `err` was made. The installed SDK (1.30.0) does not
+ * clear `transport.sessionId` on a 404 response, so callers must capture it
+ * before the call rather than rely on catch-time transport state.
  */
-// JSON-RPC "connection closed" code emitted by servers as -32000 (the SDK v1
-// `ErrorCode.ConnectionClosed`; v2's `ProtocolErrorCode` no longer names it,
-// but peers still send it on the wire).
-const CONNECTION_CLOSED_CODE = -32000;
-
 const SERVER_NOT_INITIALIZED_MCP_MESSAGES = new Set([
-  "Server not initialized",
-  "Bad Request: Server not initialized",
+  `MCP error ${ErrorCode.ConnectionClosed}: Server not initialized`,
+  `MCP error ${ErrorCode.ConnectionClosed}: Bad Request: Server not initialized`,
 ]);
 
 export function isTerminatedSession(err: unknown, hadSessionId: boolean): boolean {
   if (!hadSessionId) return false;
-  if (err instanceof SdkHttpError) {
-    return err.status === 404
-      || (err.status === 400
+  if (err instanceof StreamableHTTPError) {
+    return err.code === 404
+      || (err.code === 400
         && /"code"\s*:\s*-32000/.test(err.message)
         && /"message"\s*:\s*"Bad Request: Server not initialized"/.test(err.message));
   }
-  return err instanceof ProtocolError
-    && err.code === CONNECTION_CLOSED_CODE
+  return err instanceof McpError
+    && err.code === ErrorCode.ConnectionClosed
     && SERVER_NOT_INITIALIZED_MCP_MESSAGES.has(err.message);
 }
 

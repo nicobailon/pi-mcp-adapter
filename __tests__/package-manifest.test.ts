@@ -61,8 +61,10 @@ describe("package.json dependency policy", () => {
     }
   });
 
-  it("declares the SDK v1 peer needed by ext-apps under Pi managed installs", () => {
+  it("uses the SDK v1 dependency without the SDK v2 beta packages", () => {
     expect(packageJson.dependencies?.["@modelcontextprotocol/ext-apps"]).toBeDefined();
-    expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBe("^1.29.0");
+    expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBe("^1.30.0");
+    expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBeUndefined();
+    expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
   });
 });

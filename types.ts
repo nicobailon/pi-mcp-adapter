@@ -1,5 +1,5 @@
 // types.ts - Core type definitions
-import type { Transport as McpTransport } from "@modelcontextprotocol/client";
+import type { Transport as McpTransport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import type { UiStreamMode } from "./ui-stream-types.ts";
 

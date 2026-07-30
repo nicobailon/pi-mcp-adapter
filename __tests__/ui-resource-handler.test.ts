@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 import { buildCspMetaContent } from "../host-html-template.ts";
-import { UrlElicitationRequiredError } from "@modelcontextprotocol/client";
+import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServerManager } from "../server-manager.ts";
 
 // Mock the manager
@@ -38,12 +38,12 @@ describe("UiResourceHandler", () => {
     });
 
     it("recovers a terminated HTTP session while loading a UI resource", async () => {
-      const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
+      const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
       const stale = {
         status: "connected" as const,
         transport: { sessionId: "session-1" },
         client: {
-          readResource: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })),
+          readResource: vi.fn().mockRejectedValueOnce(new StreamableHTTPError(404, "Session not found")),
         },
         resources: [],
       };

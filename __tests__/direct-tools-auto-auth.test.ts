@@ -110,6 +110,7 @@ describe("direct tools auto auth", () => {
         arguments: { q: "hello" },
         _meta: undefined,
       },
+      undefined,
       { timeout: 4321 },
     );
     expect(result.content[0].text).toContain("ok");
@@ -156,6 +157,7 @@ describe("direct tools auto auth", () => {
     expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
     expect(connection.client.callTool).toHaveBeenCalledWith(
       { name: "search", arguments: {}, _meta: undefined },
+      undefined,
       requestOptions,
     );
     expect(result.details).toMatchObject({ error: "aborted", server: "demo" });
@@ -244,7 +246,7 @@ describe("direct tools auto auth", () => {
   });
 
   it("runs URL elicitations returned by a URL-required tool error", async () => {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
+    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/sdk/types.js");
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
     const error = new UrlElicitationRequiredError([{
       mode: "url",

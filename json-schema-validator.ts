@@ -1,13 +1,12 @@
-import {
-  Ajv,
-  AjvJsonSchemaValidator,
-  addFormats,
-} from "@modelcontextprotocol/client/validators/ajv";
+import { Ajv } from "ajv";
+import Ajv2020Import from "ajv/dist/2020.js";
+import addFormatsImport from "ajv-formats";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import type {
   JsonSchemaType,
   JsonSchemaValidator,
   jsonSchemaValidator as JsonSchemaValidatorProvider,
-} from "@modelcontextprotocol/client";
+} from "@modelcontextprotocol/sdk/validation/types.js";
 
 type SchemaDialect =
   | { status: "unstamped" }
@@ -16,6 +15,9 @@ type SchemaDialect =
 const DRAFT_07_SCHEMA_URIS: ReadonlySet<string> = new Set([
   "http://json-schema.org/draft-07/schema",
   "https://json-schema.org/draft-07/schema",
+]);
+const DRAFT_2020_12_SCHEMA_URIS: ReadonlySet<string> = new Set([
+  "https://json-schema.org/draft/2020-12/schema",
 ]);
 
 function schemaDialect(schema: JsonSchemaType): SchemaDialect {
@@ -29,14 +31,24 @@ function schemaDialect(schema: JsonSchemaType): SchemaDialect {
 }
 
 export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
-  const defaultValidator = new AjvJsonSchemaValidator();
   let draft07Validator: AjvJsonSchemaValidator | undefined;
+  let draft2020Validator: AjvJsonSchemaValidator | undefined;
 
   return {
     getValidator<T>(schema: JsonSchemaType): JsonSchemaValidator<T> {
       const dialect = schemaDialect(schema);
-      if (dialect.status !== "stamped" || !DRAFT_07_SCHEMA_URIS.has(dialect.uri)) {
-        return defaultValidator.getValidator<T>(schema);
+      if (dialect.status === "unstamped" || DRAFT_2020_12_SCHEMA_URIS.has(dialect.uri)) {
+        draft2020Validator ??= (() => {
+          const Ajv2020 = Ajv2020Import as unknown as typeof Ajv;
+          const ajv = new Ajv2020({ strict: false, allErrors: true });
+          const addFormats = addFormatsImport as unknown as (instance: Ajv) => void;
+          addFormats(ajv);
+          return new AjvJsonSchemaValidator(ajv);
+        })();
+        return draft2020Validator.getValidator<T>(schema);
+      }
+      if (!DRAFT_07_SCHEMA_URIS.has(dialect.uri)) {
+        throw new Error(`Unsupported JSON Schema dialect: ${dialect.uri}`);
       }
 
       draft07Validator ??= (() => {
@@ -46,6 +58,7 @@ export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
           validateSchema: false,
           allErrors: true,
         });
+        const addFormats = addFormatsImport as unknown as (instance: Ajv) => void;
         addFormats(ajv);
         return new AjvJsonSchemaValidator(ajv);
       })();

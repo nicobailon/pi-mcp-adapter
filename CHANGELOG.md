@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Restored the MCP SDK v1 client for compatibility with deployed MCP servers and OAuth providers. This rollback temporarily removes SDK v2-only protocol negotiation while retaining OAuth issuer binding and callback issuer validation. Thanks @hyknerf for PR #237 and issue #236, @leonfox28 for issue #227, and @JorelLatraille for issue #241.
+
 ### Fixed
 - Prevented `/mcp` and `/mcp-auth` from crashing when the OS OAuth credential store is unavailable.
 

@@ -9,9 +9,7 @@ type OAuthProviderLike = {
   };
 };
 
-type ClientOptions = {
-  versionNegotiation?: { mode?: string };
-};
+type ClientOptions = Record<string, unknown>;
 
 type TransportOptions = {
   requestInit?: {
@@ -31,7 +29,7 @@ const mocks = vi.hoisted(() => ({
   httpTransports: [] as HttpTransportMock[],
 }));
 
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation((info: unknown, options: ClientOptions) => {
     const client = {
@@ -47,15 +45,20 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     mocks.clients.push(client);
     return client;
   }),
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   StreamableHTTPClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => {
     const transport = { url, options, close: vi.fn(async () => undefined) };
     mocks.httpTransports.push(transport);
     return transport;
   }),
-  SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/client/stdio", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({ SSEClientTransport: vi.fn() }));
+
+vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn(),
 }));
 
@@ -85,18 +88,7 @@ describe("McpServerManager HTTP bearer auth", () => {
     }
   });
 
-  it("enables automatic v2 protocol negotiation for both HTTP probe and live clients", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
 
-    await manager.connect("remote", { url: "https://example.test/mcp" });
-
-    expect(mocks.clients).toHaveLength(2);
-    expect(mocks.clients.map(client => client.options)).toEqual([
-      expect.objectContaining({ versionNegotiation: { mode: "auto" } }),
-      expect.objectContaining({ versionNegotiation: { mode: "auto" } }),
-    ]);
-  });
 
   it("interpolates ${VAR} URL placeholders", async () => {
     const { McpServerManager } = await import("../server-manager.ts");

@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import type {
   GetPromptResult,
   PromptMessage,
-} from "@modelcontextprotocol/client";
+} from "@modelcontextprotocol/sdk/types.js";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type McpConfig, type PromptMetadata } from "./types.ts";
 import { formatPromptCommandName } from "./types.ts";

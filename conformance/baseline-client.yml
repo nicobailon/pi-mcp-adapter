@@ -11,11 +11,6 @@ client:
   # challenge scope and requests only the original PRM scope.
   - auth/scope-step-up
 
-  # beta.5 applies RFC 8414 issuer-echo validation to the 2025-03-26 fallback.
-  # The referee serves metadata at the MCP origin while advertising an /oauth
-  # issuer, so the secure default rejects it before registration.
-  - auth/2025-03-26-oauth-metadata-backcompat
-
   # The adapter supports client_secret_basic client credentials, but its config
   # has no private-key JWT credentials or assertion signing hook.
   - auth/client-credentials-jwt

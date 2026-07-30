@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-import type { GetPromptResult } from "@modelcontextprotocol/client";
+import type { GetPromptResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   createPromptCommand,
   formatPromptResult,

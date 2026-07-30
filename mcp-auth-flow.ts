@@ -7,10 +7,9 @@
 import {
   auth as runSdkAuth,
   extractWWWAuthenticateParams,
-  IssuerMismatchError,
   UnauthorizedError,
-  LATEST_PROTOCOL_VERSION,
-} from "@modelcontextprotocol/client"
+} from "@modelcontextprotocol/sdk/client/auth.js"
+import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js"
 import open from "open"
 import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {
@@ -572,10 +571,25 @@ export async function completeAuth(
   let keepPendingForRetry = false
   let caughtError: unknown
   try {
+    const discoveryState = await pendingAuth.authProvider.discoveryState()
+    const metadata = discoveryState?.authorizationServerMetadata
+    const expectedIssuer = metadata?.issuer ?? discoveryState?.authorizationServerUrl
+    const requiresIssuer = (metadata as { authorization_response_iss_parameter_supported?: unknown } | undefined)
+      ?.authorization_response_iss_parameter_supported === true
+    if (expectedIssuer !== undefined && iss === undefined && requiresIssuer) {
+      keepPendingForRetry = true
+      throw new Error(
+        `The authorization server for ${serverName} requires the RFC 9207 "iss" parameter. ` +
+        "Paste the full redirect URL from the browser address bar (not just the authorization code).",
+      )
+    }
+    if (expectedIssuer !== undefined && iss !== undefined && iss !== expectedIssuer) {
+      throw new Error(`The OAuth authorization response issuer does not match the discovered issuer for ${serverName}.`)
+    }
+
     const result = await abortable(runSdkAuth(pendingAuth.authProvider, {
       serverUrl: pendingAuth.serverUrl,
       authorizationCode: code,
-      ...(iss !== undefined ? { iss } : {}),
       ...pendingAuth.discovery,
     }), signal)
     throwIfAborted(signal)
@@ -585,17 +599,6 @@ export async function completeAuth(
     return "authenticated"
   } catch (error) {
     caughtError = error
-    // RFC 9207: the AS advertises authorization_response_iss_parameter_supported
-    // but no `iss` accompanied the pasted code (e.g. the user pasted only the
-    // raw code). Keep the pending flow alive so the user can re-paste the full
-    // redirect URL instead of restarting authentication from scratch.
-    if (iss === undefined && error instanceof IssuerMismatchError && error.kind === "authorization_response") {
-      keepPendingForRetry = true
-      throw new Error(
-        `The authorization server for ${serverName} requires the RFC 9207 "iss" parameter. ` +
-        "Paste the full redirect URL from the browser address bar (not just the authorization code).",
-      )
-    }
     throw error
   } finally {
     if (!keepPendingForRetry) {

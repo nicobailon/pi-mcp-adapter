@@ -6,7 +6,7 @@ import { buildAllowAttribute } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
   CallToolRequest,
   CallToolResult,
-} from "@modelcontextprotocol/client";
+} from "@modelcontextprotocol/sdk/types.js";
 import type { ConsentManager } from "./consent-manager.ts";
 import { ServerError, wrapError } from "./errors.ts";
 import { formatAuthRequiredMessage } from "./utils.ts";
@@ -369,9 +369,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
             ? await withSessionRecovery(
                 { manager: options.manager, config: options.config, onNeedsAuth: options.onNeedsAuth },
                 options.serverName,
-                (conn) => conn.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName)),
+                (conn) => conn.client.callTool(callArgs, undefined, options.manager.getRequestOptions?.(options.serverName)),
               )
-            : await connection.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName));
+            : await connection.client.callTool(callArgs, undefined, options.manager.getRequestOptions?.(options.serverName));
           sendJson(res, 200, { ok: true, result });
         } finally {
           options.manager.decrementInFlight(options.serverName);

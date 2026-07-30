@@ -14,7 +14,7 @@ function gate() {
   return { promise, resolve };
 }
 
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any) {
     this.setRequestHandler = vi.fn();
@@ -31,7 +31,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   StreamableHTTPClientTransport: vi.fn(),
   SSEClientTransport: vi.fn(),
 }));
-vi.mock("@modelcontextprotocol/client/stdio", () => ({
+vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any) {
     this.close = vi.fn(async () => undefined);
     mocks.transports.push(this);

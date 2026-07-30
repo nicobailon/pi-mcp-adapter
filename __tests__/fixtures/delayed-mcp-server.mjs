@@ -1,7 +1,8 @@
 import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Server } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { ListResourcesRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const pidPath = process.env.MCP_RELOAD_PID_DIR ? join(process.env.MCP_RELOAD_PID_DIR, `${process.pid}.json`) : undefined;
 const identity = { pid: process.pid, toolName: "reload_identity" };
@@ -18,11 +19,11 @@ const server = new Server(
   { name: "delayed-reload-fixture", version: "1.0.0" },
   { capabilities: { tools: {}, resources: {} } },
 );
-server.setRequestHandler("tools/list", async () => {
+server.setRequestHandler(ListToolsRequestSchema, async () => {
   await new Promise(resolve => setTimeout(resolve, 100));
   return {
     tools: [{ name: identity.toolName, description: "reload identity", inputSchema: { type: "object", properties: {} } }],
   };
 });
-server.setRequestHandler("resources/list", async () => ({ resources: [] }));
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
 await server.connect(new StdioServerTransport());
