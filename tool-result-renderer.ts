@@ -34,23 +34,48 @@ export interface McpToolResultDisplay {
 
 const DEFAULT_MAX_CALL_INPUT_CHARS = 1500;
 const DEFAULT_MAX_COLLAPSED_LINES = 3;
+const COLLAPSED_RENDER_CHAR_SLACK = 8;
 
 class CollapsibleText implements Component {
+  private readonly fullText: Text;
+  private readonly footerText: Text;
+  private collapsedText: { charBudget: number; fullyIncluded: boolean; text: Text } | null = null;
+
   constructor(
     private readonly text: string,
     private readonly expanded: boolean,
     private readonly maxCollapsedLines: number,
     private readonly ellipsis: string,
     private readonly expandHint: string,
-  ) {}
+  ) {
+    this.fullText = new Text(text, 0, 0);
+    this.footerText = new Text(`${ellipsis}\n${expandHint}`, 0, 0);
+  }
 
   render(width: number): string[] {
-    const lines = new Text(this.text, 0, 0).render(width);
-    if (this.expanded || lines.length <= this.maxCollapsedLines) return lines;
+    if (this.expanded) {
+      return this.fullText.render(width);
+    }
+
+    const safeWidth = Math.max(1, Math.floor(width));
+    const charBudget = safeWidth * (this.maxCollapsedLines + 1) * COLLAPSED_RENDER_CHAR_SLACK;
+    if (!this.collapsedText || this.collapsedText.charBudget !== charBudget) {
+      const prefix = this.text.length > charBudget
+        ? this.text.slice(0, charBudget)
+        : this.text;
+      this.collapsedText = {
+        charBudget,
+        fullyIncluded: prefix === this.text,
+        text: new Text(prefix, 0, 0),
+      };
+    }
+
+    const lines = this.collapsedText.text.render(width);
+    if (this.collapsedText.fullyIncluded && lines.length <= this.maxCollapsedLines) return lines;
 
     return [
       ...lines.slice(0, this.maxCollapsedLines),
-      ...new Text(`${this.ellipsis}\n${this.expandHint}`, 0, 0).render(width),
+      ...this.footerText.render(width),
     ];
   }
 
@@ -191,7 +216,7 @@ export function renderMcpToolResult(
 
   const hasErrorDetails = Boolean(result.details.error);
   const expanded = options.expanded || context?.isError === true || hasErrorDetails;
-  const display = formatMcpToolResultLines(result, true);
+  const display = formatMcpToolResultLines(result, expanded);
   const identity = formatMcpToolResultIdentity(result.details);
   const output = [
     ...(identity ? [activeTheme.fg("muted", identity)] : []),
