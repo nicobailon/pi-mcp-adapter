@@ -8,6 +8,9 @@ import type {
   jsonSchemaValidator as JsonSchemaValidatorProvider,
 } from "@modelcontextprotocol/sdk/validation/types.js";
 
+// ajv-formats types target its bundled ajv; the runtime accepts both instances.
+const addFormats = addFormatsImport as unknown as (instance: Ajv) => void;
+
 type SchemaDialect =
   | { status: "unstamped" }
   | { status: "stamped"; uri: string };
@@ -41,7 +44,6 @@ export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
         draft2020Validator ??= (() => {
           const Ajv2020 = Ajv2020Import as unknown as typeof Ajv;
           const ajv = new Ajv2020({ strict: false, allErrors: true });
-          const addFormats = addFormatsImport as unknown as (instance: Ajv) => void;
           addFormats(ajv);
           return new AjvJsonSchemaValidator(ajv);
         })();
@@ -58,7 +60,6 @@ export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
           validateSchema: false,
           allErrors: true,
         });
-        const addFormats = addFormatsImport as unknown as (instance: Ajv) => void;
         addFormats(ajv);
         return new AjvJsonSchemaValidator(ajv);
       })();

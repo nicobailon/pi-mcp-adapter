@@ -244,8 +244,8 @@ function isAuthEntryChunkManifest(value: unknown): value is AuthEntryChunkManife
   if (typeof value !== 'object' || value === null) return false;
   const manifest = value as Partial<AuthEntryChunkManifest>;
   return manifest[AUTH_CHUNK_MANIFEST_KEY] === 1
+    && typeof manifest.chunkCount === 'number'
     && Number.isInteger(manifest.chunkCount)
-    && manifest.chunkCount !== undefined
     && manifest.chunkCount > 0
     && typeof manifest.chunkDigest === 'string'
     && /^[a-f0-9]{16}$/.test(manifest.chunkDigest);
@@ -349,7 +349,8 @@ function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
 
   try {
     if (manifest) {
-      for (const [index, chunk] of payload.match(new RegExp(`.{1,${AUTH_SECRET_CHUNK_SIZE}}`, 'gs'))?.entries() ?? []) {
+      for (let index = 0; index < manifest.chunkCount; index++) {
+        const chunk = payload.slice(index * AUTH_SECRET_CHUNK_SIZE, (index + 1) * AUTH_SECRET_CHUNK_SIZE);
         store.write(getAuthEntryChunkAccount(account, manifest, index), chunk);
       }
       store.write(account, JSON.stringify(manifest));
