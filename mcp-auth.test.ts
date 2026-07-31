@@ -32,6 +32,7 @@ import {
   clearClientInfo,
   clearTokens,
   resetTestAuthSecretStore,
+  loadTestKeyringEntryClass,
   type AuthEntry,
 } from "./mcp-auth.ts"
 
@@ -57,6 +58,85 @@ describe("mcp-auth", () => {
     } catch {
       // Ignore cleanup errors
     }
+  })
+
+
+  describe("keyring native binding fallback", () => {
+    class FakeEntry {
+      constructor(readonly service: string, readonly account: string) {}
+      getPassword(): string | null { return null }
+      setPassword(): void {}
+      deleteCredential(): boolean { return true }
+    }
+
+    it("loads the native binding by absolute path when the package loader fails", () => {
+      const loaderError = new Error("package loader failed")
+      const nativePath = "/tmp/keyring-darwin-arm64/keyring.darwin-arm64.node"
+      const required: string[] = []
+      const requireStub = Object.assign((id: string) => {
+        required.push(id)
+        if (id === "@napi-rs/keyring") throw loaderError
+        if (id === nativePath) return { Entry: FakeEntry }
+        throw new Error(`unexpected require: ${id}`)
+      }, {
+        resolve(id: string) {
+          assert.strictEqual(id, "@napi-rs/keyring-darwin-arm64/package.json")
+          return "/tmp/keyring-darwin-arm64/package.json"
+        },
+      })
+
+      const Entry = loadTestKeyringEntryClass(requireStub, "darwin", "arm64")
+
+      assert.strictEqual(Entry, FakeEntry)
+      assert.deepStrictEqual(required, ["@napi-rs/keyring", nativePath])
+    })
+
+    it("tries the Linux musl package when the gnu package is unavailable", () => {
+      const loaderError = new Error("package loader failed")
+      const nativePath = "/tmp/keyring-linux-x64-musl/keyring.linux-x64-musl.node"
+      const resolved: string[] = []
+      const requireStub = Object.assign((id: string) => {
+        if (id === "@napi-rs/keyring") throw loaderError
+        if (id === nativePath) return { Entry: FakeEntry }
+        throw new Error(`unexpected require: ${id}`)
+      }, {
+        resolve(id: string) {
+          resolved.push(id)
+          if (id === "@napi-rs/keyring-linux-x64-musl/package.json") return "/tmp/keyring-linux-x64-musl/package.json"
+          throw new Error(`missing package: ${id}`)
+        },
+      })
+
+      const Entry = loadTestKeyringEntryClass(requireStub, "linux", "x64")
+
+      assert.strictEqual(Entry, FakeEntry)
+      assert.deepStrictEqual(resolved, [
+        "@napi-rs/keyring-linux-x64-gnu/package.json",
+        "@napi-rs/keyring-linux-x64-musl/package.json",
+      ])
+    })
+
+    it("keeps the original loader error in the cause chain when fallback fails", () => {
+      const loaderError = new Error("package loader failed")
+      const fallbackError = new Error("native binding failed")
+      const requireStub = Object.assign((id: string) => {
+        if (id === "@napi-rs/keyring") throw loaderError
+        throw fallbackError
+      }, {
+        resolve() { return "/tmp/keyring-darwin-arm64/package.json" },
+      })
+
+      assert.throws(() => loadTestKeyringEntryClass(requireStub, "darwin", "arm64"), (error) => {
+        assert(error instanceof Error)
+        assert.match(error.message, /absolute-path native binding fallback also failed: native binding failed/)
+        let current: unknown = error
+        while (current && typeof current === "object") {
+          if (current === loaderError) return true
+          current = (current as { cause?: unknown }).cause
+        }
+        assert.fail("original loader error was not preserved in the cause chain")
+      })
+    })
   })
 
   describe("getAuthEntry", () => {

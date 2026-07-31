@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added per-server OAuth `authorizationParams` for provider-specific authorization URL parameters such as Google's `access_type=offline`, while rejecting OAuth flow-owned parameter overrides. Thanks @hank-warren for issue #238.
 
 ### Fixed
+- Added a best-effort absolute-path fallback for loading the `@napi-rs/keyring` native binding when compiled Pi/Bun cannot resolve the package loader. Thanks @sgiath for issue #230.
 - Bound collapsed MCP tool result rendering by character count as well as line count, preventing huge single-line results from slowing long TUI sessions. Thanks @Whisperfall for issue #249.
 - Let configured `oauth.scope` override OAuth discovery scopes during authorization flows. Thanks @viggy28 for issue #225 and @adity982 for PR #226.
 

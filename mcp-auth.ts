@@ -13,7 +13,7 @@
 import { createHash } from 'crypto';
 import { createRequire } from 'module';
 import { readFileSync, existsSync, rmSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { getAgentPath } from './agent-dir.ts';
 import { resolveConfiguredOAuthDir } from './config.ts';
 
@@ -113,6 +113,8 @@ interface KeyringEntry {
 }
 
 type KeyringEntryConstructor = new (service: string, account: string) => KeyringEntry;
+type KeyringModule = { Entry: KeyringEntryConstructor };
+type KeyringRequire = ((id: string) => unknown) & { resolve(id: string): string };
 
 interface AuthSecretStore {
   read(account: string): string | undefined;
@@ -185,11 +187,79 @@ function getAuthSecretStore(): AuthSecretStore {
 
 function getKeyringEntry(account: string): KeyringEntry {
   try {
-    KeyringEntryClass ??= (require('@napi-rs/keyring') as { Entry: KeyringEntryConstructor }).Entry;
+    KeyringEntryClass ??= loadKeyringEntryClass();
     return new KeyringEntryClass(AUTH_SECRET_SERVICE, account);
   } catch (error) {
     throw new Error('OAuth secure credential storage is unavailable. Configure the OS credential store and retry authentication.', { cause: error });
   }
+}
+
+function loadKeyringEntryClass(keyringRequire: KeyringRequire = require, platform: NodeJS.Platform = process.platform, arch: NodeJS.Architecture = process.arch): KeyringEntryConstructor {
+  try {
+    return (keyringRequire('@napi-rs/keyring') as KeyringModule).Entry;
+  } catch (loaderError) {
+    try {
+      return loadKeyringNativeBindingFallback(keyringRequire, platform, arch).Entry;
+    } catch (fallbackError) {
+      throw new Error(`Failed to load @napi-rs/keyring; absolute-path native binding fallback also failed: ${formatErrorMessage(fallbackError)}`, {
+        cause: loaderError,
+      });
+    }
+  }
+}
+
+function loadKeyringNativeBindingFallback(keyringRequire: KeyringRequire, platform: NodeJS.Platform, arch: NodeJS.Architecture): KeyringModule {
+  const targets = getKeyringNativeBindingTargets(platform, arch);
+  if (targets.length === 0) {
+    throw new Error(`Unsupported @napi-rs/keyring native binding target: ${platform}-${arch}`);
+  }
+
+  let lastError: unknown;
+  for (const target of targets) {
+    try {
+      const packageJsonPath = keyringRequire.resolve(`${target.packageName}/package.json`);
+      return keyringRequire(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function getKeyringNativeBindingTargets(platform: NodeJS.Platform, arch: NodeJS.Architecture): { packageName: string; bindingFile: string }[] {
+  return getKeyringNativeBindingSuffixes(platform, arch).map(suffix => ({
+    packageName: `@napi-rs/keyring-${suffix}`,
+    bindingFile: `keyring.${suffix}.node`,
+  }));
+}
+
+function getKeyringNativeBindingSuffixes(platform: NodeJS.Platform, arch: NodeJS.Architecture): string[] {
+  if (platform === 'darwin') {
+    if (arch === 'arm64') return ['darwin-arm64'];
+    if (arch === 'x64') return ['darwin-x64'];
+  }
+  if (platform === 'win32') {
+    if (arch === 'arm64') return ['win32-arm64-msvc'];
+    if (arch === 'x64') return ['win32-x64-msvc'];
+    if (arch === 'ia32') return ['win32-ia32-msvc'];
+  }
+  if (platform === 'linux') {
+    if (arch === 'arm64') return ['linux-arm64-gnu', 'linux-arm64-musl'];
+    if (arch === 'arm') return ['linux-arm-gnueabihf'];
+    if (arch === 'riscv64') return ['linux-riscv64-gnu'];
+    if (arch === 'x64') return ['linux-x64-gnu', 'linux-x64-musl'];
+  }
+  if (platform === 'freebsd' && arch === 'x64') return ['freebsd-x64'];
+  return [];
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function loadTestKeyringEntryClass(keyringRequire: KeyringRequire, platform: NodeJS.Platform, arch: NodeJS.Architecture): KeyringEntryConstructor {
+  return loadKeyringEntryClass(keyringRequire, platform, arch);
 }
 
 export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): AuthStorageOptions {
