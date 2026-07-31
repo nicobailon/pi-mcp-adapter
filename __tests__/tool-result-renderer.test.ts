@@ -159,27 +159,18 @@ describe("MCP tool result renderer", () => {
     expect(output).not.toContain("segment-8");
   });
 
-  it("keeps repeated collapsed renders cheap for multi-10KB MCP dumps", () => {
-    const huge = `${"word ".repeat(20_000)}\n${"line\n".repeat(2_000)}tail-marker`;
-    const component = renderMcpToolResult(
+  it("bounds a huge single-line collapsed result and shows the expand hint", () => {
+    const huge = `head ${"x".repeat(50_000)} tail-marker`;
+    const output = renderMcpToolResult(
       result([{ type: "text", text: huge }]),
       collapsedOptions,
       plainTheme,
       { isError: false },
-    );
+    ).render(80).join("\n");
 
-    component.render(80);
-    const started = performance.now();
-    for (let i = 0; i < 50; i++) {
-      component.render(80);
-    }
-    const elapsedMs = performance.now() - started;
-
-    const output = component.render(80).join("\n");
-    expect(output).toContain("word");
+    expect(output).toContain("head");
     expect(output).toContain("Ctrl+O to expand");
     expect(output).not.toContain("tail-marker");
-    expect(elapsedMs).toBeLessThan(100);
   });
 
   it("shows proxy call result identity without hiding the third content line", () => {

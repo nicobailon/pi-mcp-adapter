@@ -34,6 +34,7 @@ export interface McpToolResultDisplay {
 
 const DEFAULT_MAX_CALL_INPUT_CHARS = 1500;
 const DEFAULT_MAX_COLLAPSED_LINES = 3;
+const DEFAULT_MAX_COLLAPSED_CHARS = 8000;
 const COLLAPSED_RENDER_CHAR_SLACK = 8;
 
 class CollapsibleText implements Component {
@@ -47,6 +48,7 @@ class CollapsibleText implements Component {
     private readonly maxCollapsedLines: number,
     private readonly ellipsis: string,
     private readonly expandHint: string,
+    private readonly preTruncated = false,
   ) {
     this.fullText = new Text(text, 0, 0);
     this.footerText = new Text(`${ellipsis}\n${expandHint}`, 0, 0);
@@ -71,7 +73,7 @@ class CollapsibleText implements Component {
     }
 
     const lines = this.collapsedText.text.render(width);
-    if (this.collapsedText.fullyIncluded && lines.length <= this.maxCollapsedLines) return lines;
+    if (!this.preTruncated && this.collapsedText.fullyIncluded && lines.length <= this.maxCollapsedLines) return lines;
 
     return [
       ...lines.slice(0, this.maxCollapsedLines),
@@ -171,6 +173,58 @@ function blockToLines(block: McpToolContentBlock): string[] {
   return [`[image: ${block.mimeType}]`];
 }
 
+function collectCollapsedResultLines(
+  content: AgentToolResult<McpToolResultDetails>["content"],
+  maxLines: number,
+  maxChars: number,
+): McpToolResultDisplay {
+  if (content.length === 0) return { lines: ["(empty result)"], truncated: false };
+
+  const lines: string[] = [];
+  let remainingChars = maxChars;
+  let truncated = false;
+
+  const appendLine = (line: string) => {
+    if (lines.length >= maxLines || remainingChars <= 0) {
+      truncated = true;
+      return false;
+    }
+
+    if (line.length > remainingChars) {
+      lines.push(line.slice(0, remainingChars));
+      truncated = true;
+      remainingChars = 0;
+      return false;
+    }
+
+    lines.push(line);
+    remainingChars -= line.length + 1;
+    return true;
+  };
+
+  for (const block of content) {
+    if (block.type !== "text") {
+      if (!appendLine(`[image: ${block.mimeType}]`)) break;
+      continue;
+    }
+
+    let start = 0;
+    while (start <= block.text.length) {
+      const newline = block.text.indexOf("\n", start);
+      const line = newline === -1 ? block.text.slice(start) : block.text.slice(start, newline);
+      if (!appendLine(line)) break;
+      if (newline === -1) break;
+      start = newline + 1;
+    }
+
+    if (truncated) break;
+  }
+
+  if (lines.length === 0) lines.push("");
+  if (truncated && lines.length >= maxLines) lines.push("…");
+  return { lines, truncated };
+}
+
 export function formatMcpToolResultIdentity(details: McpToolResultDetails | undefined): string | null {
   if (details?.mode !== "call") return null;
   const server = typeof details.server === "string"
@@ -189,18 +243,15 @@ export function formatMcpToolResultLines(
   result: Pick<AgentToolResult<McpToolResultDetails>, "content">,
   expanded: boolean,
   maxCollapsedLines = 3,
+  maxCollapsedChars = DEFAULT_MAX_COLLAPSED_CHARS,
 ): McpToolResultDisplay {
-  const allLines = result.content.flatMap(blockToLines);
-  const lines = allLines.length > 0 ? allLines : ["(empty result)"];
-
-  if (expanded || lines.length <= maxCollapsedLines) {
-    return { lines, truncated: false };
+  if (!expanded) {
+    return collectCollapsedResultLines(result.content, maxCollapsedLines, maxCollapsedChars);
   }
 
-  return {
-    lines: [...lines.slice(0, maxCollapsedLines), "…"],
-    truncated: true,
-  };
+  const allLines = result.content.flatMap(blockToLines);
+  const lines = allLines.length > 0 ? allLines : ["(empty result)"];
+  return { lines, truncated: false };
 }
 
 export function renderMcpToolResult(
@@ -229,5 +280,6 @@ export function renderMcpToolResult(
     DEFAULT_MAX_COLLAPSED_LINES + (identity ? 1 : 0),
     activeTheme.fg("muted", "…"),
     activeTheme.fg("muted", "(Ctrl+O to expand)"),
+    display.truncated,
   );
 }
