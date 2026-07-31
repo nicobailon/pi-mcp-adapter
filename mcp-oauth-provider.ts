@@ -82,9 +82,33 @@ export interface McpOAuthConfig {
   clientId?: string
   clientSecret?: string
   scope?: string
+  authorizationParams?: Record<string, string>
   redirectUri?: string
   clientName?: string
   clientUri?: string
+}
+
+const reservedAuthorizationParams = new Set([
+  "client_id",
+  "code_challenge",
+  "code_challenge_method",
+  "redirect_uri",
+  "resource",
+  "response_type",
+  "scope",
+  "state",
+])
+
+function addAuthorizationParams(authorizationUrl: URL, params: Record<string, string> | undefined): URL {
+  if (!params) return authorizationUrl
+  const nextUrl = new URL(authorizationUrl.toString())
+  for (const [key, value] of Object.entries(params)) {
+    if (reservedAuthorizationParams.has(key) || nextUrl.searchParams.has(key)) {
+      throw new Error(`OAuth authorizationParams.${key} cannot override an authorization flow parameter`)
+    }
+    nextUrl.searchParams.set(key, value)
+  }
+  return nextUrl
 }
 
 /** Callbacks for OAuth flow interactions */
@@ -386,7 +410,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       )
     }
     // URL is passed to callback, not logged (may contain sensitive params)
-    await this.callbacks.onRedirect(authorizationUrl)
+    await this.callbacks.onRedirect(addAuthorizationParams(authorizationUrl, this.config.authorizationParams))
   }
 
   /**

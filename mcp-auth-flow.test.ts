@@ -297,6 +297,25 @@ describe("mcp-auth-flow", () => {
       )
     })
 
+    it("should reject malformed OAuth authorizationParams", () => {
+      assert.throws(
+        () => extractOAuthConfig({
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { authorizationParams: [] as unknown as Record<string, string> },
+        }),
+        /authorizationParams must be an object/
+      )
+      assert.throws(
+        () => extractOAuthConfig({
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { authorizationParams: { prompt: 123 as unknown as string } },
+        }),
+        /authorizationParams\.prompt must be a string/
+      )
+    })
+
     it("should trim OAuth redirectUri and client metadata values", () => {
       const config = extractOAuthConfig({
         url: "https://api.example.com/mcp",

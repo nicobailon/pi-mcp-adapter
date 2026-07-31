@@ -707,6 +707,41 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(getAuthForUrl("cancel-token", "https://api.example.com/mcp")?.tokens).toBeUndefined();
   });
 
+  it("adds configured authorization URL parameters", async () => {
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize?client_id=abc"));
+      return "REDIRECT";
+    });
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    const result = await startAuth("google", "https://gmailmcp.googleapis.com/mcp/v1", {
+      url: "https://gmailmcp.googleapis.com/mcp/v1",
+      auth: "oauth",
+      oauth: {
+        authorizationParams: { access_type: "offline", prompt: "consent" },
+      },
+    });
+
+    const url = new URL(result.authorizationUrl);
+    expect(url.searchParams.get("client_id")).toBe("abc");
+    expect(url.searchParams.get("access_type")).toBe("offline");
+    expect(url.searchParams.get("prompt")).toBe("consent");
+  });
+
+  it("rejects authorization URL parameters that override the OAuth flow", async () => {
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize?state=flow-state"));
+      return "REDIRECT";
+    });
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    await expect(startAuth("bad-param", "https://api.example.com/mcp", {
+      url: "https://api.example.com/mcp",
+      auth: "oauth",
+      oauth: { authorizationParams: { state: "config-state" } },
+    })).rejects.toThrow("OAuth authorizationParams.state cannot override an authorization flow parameter");
+  });
+
   it("uses a custom authorization URL handler instead of raw console output", async () => {
     const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {

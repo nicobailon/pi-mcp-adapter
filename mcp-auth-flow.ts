@@ -166,6 +166,18 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     if (typeof definition.oauth.scope !== "string") throw new Error("OAuth scope must be a string")
     config.scope = interpolateEnvVars(definition.oauth.scope)
   }
+  if (definition.oauth?.authorizationParams !== undefined) {
+    const params = definition.oauth.authorizationParams
+    if (!params || typeof params !== "object" || Array.isArray(params)) {
+      throw new Error("OAuth authorizationParams must be an object")
+    }
+    config.authorizationParams = {}
+    for (const [key, value] of Object.entries(params)) {
+      if (!key) throw new Error("OAuth authorizationParams keys must not be empty")
+      if (typeof value !== "string") throw new Error(`OAuth authorizationParams.${key} must be a string`)
+      config.authorizationParams[key] = interpolateEnvVars(value)
+    }
+  }
   if (definition.oauth?.redirectUri !== undefined) {
     if (typeof definition.oauth.redirectUri !== "string") {
       throw new Error("OAuth redirectUri must be a string")

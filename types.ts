@@ -307,6 +307,8 @@ export interface OAuthConfig {
   clientSecret?: string;
   /** Requested OAuth scopes */
   scope?: string;
+  /** Extra authorization URL parameters for provider-specific extensions. Flow-owned parameters cannot be overridden. */
+  authorizationParams?: Record<string, string>;
   /** Exact authorization-code redirect URI for pre-registered clients */
   redirectUri?: string;
   /** Client display name for dynamic registration */
