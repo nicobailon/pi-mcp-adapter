@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added `settings.mcpFooterStatus` to compact or hide the persistent MCP footer status. Thanks @jwintz for issue #5.
 - Added per-server OAuth `authorizationParams` for provider-specific authorization URL parameters such as Google's `access_type=offline`, while rejecting OAuth flow-owned parameter overrides. Thanks @hank-warren for issue #238.
 
 ### Fixed

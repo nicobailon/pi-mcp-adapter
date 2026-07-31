@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { updateStatusBar } from "../init.ts";
+import { formatMcpStatus } from "../utils.ts";
 import type { McpSettings } from "../types.ts";
 
 function createState(ui: unknown, settings: Partial<McpSettings> = {}) {
@@ -9,6 +10,12 @@ function createState(ui: unknown, settings: Partial<McpSettings> = {}) {
     manager: { getAllConnections: vi.fn(() => new Map()) },
   } as any;
 }
+
+describe("formatMcpStatus", () => {
+  it("returns undefined when the MCP footer is off", () => {
+    expect(formatMcpStatus({ settings: { mcpFooterStatus: "off" } }, "connecting...")).toBeUndefined();
+  });
+});
 
 describe("updateStatusBar", () => {
   it("shows enabled servers instead of active connections as the primary count", () => {
@@ -73,5 +80,22 @@ describe("updateStatusBar", () => {
     updateStatusBar(state);
 
     expect(setStatus).toHaveBeenCalledWith("mcp", "styled:MCP: 1 server enabled (1 connected) (1 disabled)");
+  });
+
+  it("can show a compact connected/enabled footer", () => {
+    const setStatus = vi.fn();
+    const state = createState({ setStatus }, { mcpFooterStatus: "compact" });
+    state.manager.getAllConnections.mockReturnValue(new Map([["demo", { status: "connected" }]]));
+
+    updateStatusBar(state);
+
+    expect(setStatus).toHaveBeenCalledWith("mcp", "MCP 1/1");
+  });
+
+  it("can clear the MCP footer status", () => {
+    const setStatus = vi.fn();
+    updateStatusBar(createState({ setStatus }, { mcpFooterStatus: "off" }));
+
+    expect(setStatus).toHaveBeenCalledWith("mcp", undefined);
   });
 });

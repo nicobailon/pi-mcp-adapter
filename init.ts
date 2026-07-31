@@ -261,7 +261,8 @@ export async function initializeMcp(
       });
 
   if (ui && startupServers.length > 0) {
-    ui.setStatus("mcp", formatMcpStatus(state.config, `connecting to ${startupServers.length} servers...`));
+    const status = formatMcpStatus(state.config, `connecting to ${startupServers.length} servers...`);
+    ui.setStatus("mcp", status);
   }
 
   const results = await parallelLimit(startupServers, 10, async ([name, definition]) => {
@@ -399,6 +400,9 @@ export async function initializeMcp(
 
   owner.throwIfInactive();
   lifecycle.startHealthChecks(runtimeSignal);
+  if (config.settings?.mcpFooterStatus === "off") {
+    ui?.setStatus("mcp", undefined);
+  }
   publishMcpStatusSnapshot(state);
 
   return state;
@@ -524,10 +528,24 @@ export function updateStatusBar(state: McpExtensionState): void {
     const definition = state.config.mcpServers[name];
     return connection.status === "connected" && definition !== undefined && !isServerDisabled(definition);
   }).length;
-  let status = `${enabledCount} ${enabledCount === 1 ? "server" : "servers"} enabled`;
-  if (connectedCount > 0) status += ` (${connectedCount} connected)`;
-  if (disabledCount > 0) status += ` (${disabledCount} disabled)`;
-  const formattedStatus = formatMcpStatus(state.config, status);
+  const footerStatus = state.config.settings?.mcpFooterStatus ?? "full";
+  if (footerStatus === "off") {
+    ui.setStatus("mcp", undefined);
+    return;
+  }
+
+  let status = footerStatus === "compact"
+    ? `MCP ${connectedCount}/${enabledCount}`
+    : `${enabledCount} ${enabledCount === 1 ? "server" : "servers"} enabled`;
+  if (footerStatus === "full") {
+    if (connectedCount > 0) status += ` (${connectedCount} connected)`;
+    if (disabledCount > 0) status += ` (${disabledCount} disabled)`;
+  }
+  const formattedStatus = footerStatus === "compact" ? status : formatMcpStatus(state.config, status);
+  if (formattedStatus === undefined) {
+    ui.setStatus("mcp", undefined);
+    return;
+  }
   ui.setStatus("mcp", ui.theme ? ui.theme.fg("accent", formattedStatus) : formattedStatus);
 }
 
@@ -565,7 +583,8 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
 
   try {
     if (state.ui) {
-      state.ui.setStatus("mcp", formatMcpStatus(state.config, `connecting to ${serverName}...`));
+      const status = formatMcpStatus(state.config, `connecting to ${serverName}...`);
+      state.ui.setStatus("mcp", status);
     }
     const newConnection = await state.manager.connect(serverName, definition, ownedSignal);
     if (newConnection.status === "needs-auth") {
