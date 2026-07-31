@@ -57,6 +57,10 @@ type AuthDiscovery = {
   scope?: string
 }
 
+function applyConfiguredScope(discovery: AuthDiscovery, config: McpOAuthConfig): AuthDiscovery {
+  return config.scope !== undefined ? { ...discovery, scope: config.scope } : discovery
+}
+
 type PendingAuth = {
   serverName: string
   authProvider: McpOAuthProvider
@@ -304,7 +308,7 @@ export async function startAuth(
       },
     }, authStorageOptions, runtime.signal)
     try {
-      const discovery = await probeAuthDiscovery(serverUrl, definition, signal)
+      const discovery = applyConfiguredScope(await probeAuthDiscovery(serverUrl, definition, signal), config)
       throwIfAborted(signal)
       const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery }), signal)
       throwIfAborted(signal)
@@ -370,7 +374,7 @@ export async function startAuth(
 
     throwIfAborted(signal)
 
-    const discovery = await probeAuthDiscovery(serverUrl, definition, signal)
+    const discovery = applyConfiguredScope(await probeAuthDiscovery(serverUrl, definition, signal), config)
     throwIfAborted(signal)
     const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery }), signal)
     throwIfAborted(signal)

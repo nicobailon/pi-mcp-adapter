@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Let configured `oauth.scope` override OAuth discovery scopes during authorization flows. Thanks @viggy28 for issue #225 and @adity982 for PR #226.
+
 ## [2.16.0] - 2026-07-30
 
 ### Added

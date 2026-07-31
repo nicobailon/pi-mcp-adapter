@@ -874,6 +874,34 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(getOAuthState("direct-complete")).toBeUndefined();
   });
 
+  it("prefers a configured scope over discovery for start and completion", async () => {
+    mocks.fetch.mockResolvedValueOnce(new Response(null, {
+      headers: { "www-authenticate": 'Bearer scope="session:role:all"' },
+    }));
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+      return "REDIRECT";
+    });
+    const { completeAuth, startAuth } = await import("../mcp-auth-flow.ts");
+
+    await startAuth("configured-scope", "https://api.example.com/mcp", {
+      url: "https://api.example.com/mcp",
+      auth: "oauth",
+      oauth: { scope: "session:role:MCP_ROLE" },
+    });
+    await expect(completeAuth("configured-scope", "auth-code")).resolves.toBe("authenticated");
+
+    expect(mocks.sdkAuth).toHaveBeenNthCalledWith(1, expect.anything(), {
+      serverUrl: "https://api.example.com/mcp",
+      scope: "session:role:MCP_ROLE",
+    });
+    expect(mocks.sdkAuth).toHaveBeenNthCalledWith(2, expect.anything(), {
+      serverUrl: "https://api.example.com/mcp",
+      authorizationCode: "auth-code",
+      scope: "session:role:MCP_ROLE",
+    });
+  });
+
   it("uses an explicit OAuth redirect URI for callback binding and metadata", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       expect(provider.redirectUrl).toBe("http://127.0.0.1:3118/callback");
