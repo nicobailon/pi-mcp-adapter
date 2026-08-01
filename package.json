@@ -95,6 +95,7 @@
     "npx-resolver.ts",
     "oauth-handler.ts",
     "mcp-auth.ts",
+    "mcp-keyring-helper.cjs",
     "mcp-oauth-provider.ts",
     "mcp-callback-server.ts",
     "mcp-auth-flow.ts",

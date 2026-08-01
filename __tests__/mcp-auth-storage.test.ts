@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -34,7 +34,15 @@ describe("OAuth credential-store diagnostics", () => {
 });
 
 describe("mcp-auth storage paths", () => {
-  const originalOAuthDir = process.env.MCP_OAUTH_DIR;
+  const originalEnv = {
+    MCP_OAUTH_DIR: process.env.MCP_OAUTH_DIR,
+    PI_MCP_ADAPTER_TEST_AUTH_STORE: process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE,
+    PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY: process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY,
+    PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL: process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL,
+    PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE: process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE,
+    PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER: process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER,
+    PI_MCP_ADAPTER_FAKE_KEYRING_STORE: process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE,
+  };
   let authDir: string;
 
   beforeEach(() => {
@@ -44,10 +52,12 @@ describe("mcp-auth storage paths", () => {
   });
 
   afterEach(() => {
-    if (originalOAuthDir === undefined) {
-      delete process.env.MCP_OAUTH_DIR;
-    } else {
-      process.env.MCP_OAUTH_DIR = originalOAuthDir;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
     rmSync(authDir, { recursive: true, force: true });
   });
@@ -179,5 +189,73 @@ describe("mcp-auth storage paths", () => {
     const entries = getTestAuthSecretStoreEntries();
     expect(entries).toHaveLength(1);
     expect(entries[0][0]).not.toContain(".chunk.");
+  });
+
+  it("routes revoked Linux keyring operations through the recovery helper", () => {
+    const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-keyring-recovery-"));
+    const keyctlPath = join(harnessDir, "keyctl");
+    const helperPath = join(harnessDir, "helper.cjs");
+    const storePath = join(harnessDir, "store.json");
+
+    writeFileSync(keyctlPath, `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" != "session" ] || [ "$2" != "-" ]; then exit 64; fi
+shift 2
+exec "$@"
+`, { mode: 0o755 });
+    writeFileSync(helperPath, `const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const path = process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE;
+const store = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+if (input.operation === 'read') {
+  const value = store[input.account];
+  process.stdout.write(JSON.stringify(value === undefined ? { ok: true, found: false } : { ok: true, found: true, value }) + '\\n');
+} else if (input.operation === 'write') {
+  store[input.account] = input.payload;
+  writeFileSync(path, JSON.stringify(store));
+  process.stdout.write(JSON.stringify({ ok: true }) + '\\n');
+} else if (input.operation === 'remove') {
+  delete store[input.account];
+  writeFileSync(path, JSON.stringify(store));
+  process.stdout.write(JSON.stringify({ ok: true }) + '\\n');
+} else {
+  process.stdout.write(JSON.stringify({ ok: false, error: 'bad op' }) + '\\n');
+  process.exitCode = 1;
+}
+`);
+
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "keyrevoked";
+    process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY = "1";
+    process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL = keyctlPath;
+    process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE = process.execPath;
+    process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER = helperPath;
+    process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE = storePath;
+
+    const accessToken = "x".repeat(5000);
+    saveAuthEntry("recovered", { tokens: { accessToken } }, "https://example.com/mcp");
+
+    expect(getAuthEntry("recovered")?.tokens?.accessToken).toBe(accessToken);
+
+    clearAllCredentials("recovered");
+
+    expect(getAuthEntry("recovered")).toBeUndefined();
+    expect(JSON.parse(readFileSync(storePath, "utf8"))).toEqual({});
+    rmSync(harnessDir, { recursive: true, force: true });
+  });
+
+  it("does not use the recovery helper for generic secure-store failures", () => {
+    const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-keyring-no-recovery-"));
+    const keyctlPath = join(harnessDir, "keyctl");
+    const storePath = join(harnessDir, "store.json");
+    writeFileSync(keyctlPath, "#!/usr/bin/env bash\nexit 99\n", { mode: 0o755 });
+
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+    process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY = "1";
+    process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL = keyctlPath;
+    process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE = storePath;
+
+    expect(() => getAuthEntry("generic-unavailable")).toThrow(/OS secure credential store/);
+    expect(existsSync(storePath)).toBe(false);
+    rmSync(harnessDir, { recursive: true, force: true });
   });
 });
