@@ -471,6 +471,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         case "reconnect":
           commandOwner?.throwIfInactive();
           await reconnectServers(state, commandCtx, targetServer);
+          if (directToolsFrozen) syncToolSurface(commandCtx);
           break;
         case "tools":
           await showTools(state, commandCtx);
