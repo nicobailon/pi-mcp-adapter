@@ -106,6 +106,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const fallbackDeactivatedTools = new Set<string>();
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
+  let directToolsFrozen = false;
 
   // OMP remaps `typebox` to a host shim that historically lacked Type.Unsafe.
   // Prefer Unsafe when present (real TypeBox / fixed OMP shim); otherwise pass
@@ -278,12 +279,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       nextState.onToolMetadataUpdated = (_serverName, _reason) => {
         if (state !== nextState || !owner.isActive()) return;
         syncPromptCommands();
+        if (directToolsFrozen) {
+          logger.debug(`MCP: metadata update for ${_serverName} (${_reason}) skipped — directTools frozen`);
+          return;
+        }
         syncToolSurface(ctx);
       };
       syncPromptCommands();
       syncToolSurface(ctx);
       updateStatusBar(nextState);
       initPromise = null;
+      if (earlyConfig.settings?.freezeDirectTools === true) {
+        directToolsFrozen = true;
+        logger.info("MCP: direct tools frozen after initial sync — reconnects won't rebuild the system prompt; use mcp({ connect: \"server\" }) to rediscover");
+      }
     }).catch(async err => {
       if (!owner.isActive() || generation !== lifecycleGeneration) {
         return;

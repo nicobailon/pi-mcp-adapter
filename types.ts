@@ -407,6 +407,11 @@ export interface McpSettings {
   requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
   directTools?: boolean;
   disableProxyTool?: boolean;
+  /** Freeze direct-tool registration after the initial sync. Automatic metadata updates
+   * (reconnects, lazy-connect, tool-list-changed) won't rebuild the system prompt,
+   * preserving the prompt-cache prefix. The agent rediscovers explicitly via
+   * mcp({ connect: "server" }). Default: false. */
+  freezeDirectTools?: boolean;
   autoAuth?: boolean;
   sampling?: boolean;
   samplingAutoApprove?: boolean;
