@@ -11,7 +11,11 @@ describe("resources capability negotiation", () => {
 
   it("skips resources/list for servers that omit the capability", async () => {
     const listResources = vi.fn(async () => ({ resources: [{ name: "unreachable", uri: "test://unreachable" }] }));
-    const client = { getServerCapabilities: () => ({ tools: {} }), listResources };
+    const client = {
+      getServerCapabilities: () => ({ tools: {} }),
+      getProtocolEra: () => "legacy",
+      listResources,
+    };
     const manager = new McpServerManager({} as any);
 
     await expect((manager as any).fetchAllResources(client)).resolves.toEqual([]);
@@ -21,7 +25,11 @@ describe("resources capability negotiation", () => {
   it("lists resources for servers that advertise the capability", async () => {
     const resource = { name: "readme", uri: "test://readme" };
     const listResources = vi.fn(async () => ({ resources: [resource] }));
-    const client = { getServerCapabilities: () => ({ tools: {}, resources: {} }), listResources };
+    const client = {
+      getServerCapabilities: () => ({ tools: {}, resources: {} }),
+      getProtocolEra: () => "legacy",
+      listResources,
+    };
     const manager = new McpServerManager({} as any);
 
     await expect((manager as any).fetchAllResources(client)).resolves.toEqual([resource]);

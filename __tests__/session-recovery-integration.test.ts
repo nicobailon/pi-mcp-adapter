@@ -1,4 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ProtocolError as McpError,
+  SdkErrorCode,
+  SdkHttpError,
+} from "@modelcontextprotocol/client";
+
+class StreamableHTTPError extends SdkHttpError {
+  constructor(status: number, message: string) {
+    super(SdkErrorCode.ClientHttpUnexpectedContent, message, { status });
+  }
+}
 
 // direct-tools.ts calls lazyConnect() before touching the connection; mock
 // it the same way __tests__/direct-tools-auto-auth.test.ts does so we can
@@ -38,6 +49,15 @@ describe("session recovery — Streamable HTTP wire path", () => {
       let body = "";
       for await (const chunk of req) body += chunk;
       const message = JSON.parse(body) as { id?: string | number; method?: string };
+
+      if (message.method === "server/discover") {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32601, message: "Method not found" },
+        }));
+        return;
+      }
 
       if (message.method === "initialize") {
         res.writeHead(200, {
@@ -129,7 +149,6 @@ describe("session recovery — Streamable HTTP wire path", () => {
 describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
   it("recovers a terminated Streamable HTTP session transparently mid tool-call", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 
     const stale = {
       status: "connected" as const,
@@ -176,7 +195,6 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
 
   it("recovers a server-not-initialized MCP error transparently mid tool-call", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
-    const { McpError } = await import("@modelcontextprotocol/sdk/types.js");
 
     const stale = {
       status: "connected" as const,
@@ -223,7 +241,6 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
 
   it("gives up after one reconnect attempt: a second server-not-initialized MCP error propagates as call_failed", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
-    const { McpError } = await import("@modelcontextprotocol/sdk/types.js");
 
     const stale = {
       status: "connected" as const,
@@ -265,7 +282,6 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
 
   it("gives up after one reconnect attempt: a second terminated session propagates as call_failed", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 
     const stale = {
       status: "connected" as const,
@@ -314,7 +330,6 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
 
   it("recovers a terminated Streamable HTTP session transparently for a direct tool call", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 
     const stale = {
       status: "connected" as const,
@@ -365,7 +380,6 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
 
   it("recovers a server-not-initialized MCP error transparently for a direct tool call", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const { McpError } = await import("@modelcontextprotocol/sdk/types.js");
 
     const stale = {
       status: "connected" as const,
@@ -416,7 +430,6 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
 
   it("gives up after one reconnect attempt: a second terminated session propagates as call_failed", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 
     const stale = {
       status: "connected" as const,

@@ -4,6 +4,13 @@ import { startUiServer, type UiServerHandle, type UiServerOptions } from "../ui-
 import type { McpServerManager, ServerConnection } from "../server-manager.ts";
 import type { ConsentManager } from "../consent-manager.ts";
 import type { UiResourceContent, McpConfig } from "../types.ts";
+import { SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
+
+class StreamableHTTPError extends SdkHttpError {
+  constructor(status: number, message: string) {
+    super(SdkErrorCode.ClientHttpUnexpectedContent, message, { status });
+  }
+}
 
 // Same HTTP helper as __tests__/ui-server.test.ts.
 async function request(
@@ -70,7 +77,6 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("recovers a terminated Streamable HTTP session transparently, when config is supplied", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 
     const stale = {
       status: "connected",
@@ -121,7 +127,6 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("returns auth guidance when recovery reconnect needs auth and no callback can refresh it", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 
     const stale = {
       status: "connected",
@@ -168,7 +173,6 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("uses the supplied auth callback when recovery reconnect returns needs-auth", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 
     const stale = {
       status: "connected",
@@ -222,7 +226,6 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("runs without recovery (unchanged pre-existing behavior) when config is not supplied", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 
     const stale = {
       status: "connected",

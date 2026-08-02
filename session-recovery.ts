@@ -20,8 +20,8 @@
 //     many things other than "your session is gone"
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
-import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+const SERVER_NOT_INITIALIZED_ERROR_CODE = -32000;
+import { ProtocolError, SdkHttpError } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { isServerDisabled, type McpConfig } from "./types.ts";
@@ -39,20 +39,22 @@ import type { McpServerManager, ServerConnection } from "./server-manager.ts";
  * before the call rather than rely on catch-time transport state.
  */
 const SERVER_NOT_INITIALIZED_MCP_MESSAGES = new Set([
-  `MCP error ${ErrorCode.ConnectionClosed}: Server not initialized`,
-  `MCP error ${ErrorCode.ConnectionClosed}: Bad Request: Server not initialized`,
+  "Server not initialized",
+  "Bad Request: Server not initialized",
+  `MCP error ${SERVER_NOT_INITIALIZED_ERROR_CODE}: Server not initialized`,
+  `MCP error ${SERVER_NOT_INITIALIZED_ERROR_CODE}: Bad Request: Server not initialized`,
 ]);
 
 export function isTerminatedSession(err: unknown, hadSessionId: boolean): boolean {
   if (!hadSessionId) return false;
-  if (err instanceof StreamableHTTPError) {
-    return err.code === 404
-      || (err.code === 400
+  if (err instanceof SdkHttpError) {
+    return err.status === 404
+      || (err.status === 400
         && /"code"\s*:\s*-32000/.test(err.message)
         && /"message"\s*:\s*"Bad Request: Server not initialized"/.test(err.message));
   }
-  return err instanceof McpError
-    && err.code === ErrorCode.ConnectionClosed
+  return err instanceof ProtocolError
+    && err.code === SERVER_NOT_INITIALIZED_ERROR_CODE
     && SERVER_NOT_INITIALIZED_MCP_MESSAGES.has(err.message);
 }
 
@@ -100,6 +102,10 @@ export async function withSessionRecovery<T>(
   const connection = deps.manager.getConnection(serverName);
   if (!connection) {
     throw new Error(`Server "${serverName}" is not connected`);
+  }
+
+  if (connection.protocolEra === "modern") {
+    return fn(connection);
   }
 
   const hadSessionId = hasSessionId(connection);

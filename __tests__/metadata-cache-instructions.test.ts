@@ -38,6 +38,29 @@ describe("metadata cache instructions", () => {
     );
   });
 
+  it("removes persisted metadata when a modern result is private", () => {
+    const legacyEntry: ServerCacheEntry = {
+      configHash: "hash",
+      tools: [],
+      resources: [],
+      cachedAt: Date.now(),
+    };
+    saveMetadataCache({ version: 1, servers: { demo: legacyEntry } });
+
+    saveMetadataCache({
+      version: 1,
+      servers: {
+        demo: {
+          ...legacyEntry,
+          protocolEra: "modern",
+          cacheScope: "private",
+        },
+      },
+    });
+
+    expect(loadMetadataCache()?.servers.demo).toBeUndefined();
+  });
+
   it("omits instructions from the cache file when a server provides none", () => {
     const entry: ServerCacheEntry = {
       configHash: "hash",

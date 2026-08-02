@@ -22,7 +22,7 @@
  */
 
 import { rmSync } from "node:fs"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
+import { UnauthorizedError } from "@modelcontextprotocol/client"
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent"
 import { McpServerManager } from "../server-manager.ts"
 import {
@@ -117,7 +117,9 @@ const debugLog = (message: string): void => {
   if (process.env.CONFORMANCE_DRIVER_DEBUG) console.error(`[driver] ${message}`)
 }
 
-const definition: ServerEntry = { url: serverUrl }
+// Published conformance 0.1.x profiles the legacy protocol family. Keep this
+// regression driver pinned so legacy OAuth compatibility is explicit.
+const definition: ServerEntry = { url: serverUrl, protocolMode: "legacy" }
 if (context.client_id) {
   definition.oauth = {
     clientId: context.client_id,

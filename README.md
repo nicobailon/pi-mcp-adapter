@@ -14,7 +14,9 @@ Mario wrote about [why you might not need MCP](https://mariozechner.at/posts/202
 
 His take: skip MCP entirely, write simple CLI tools instead.
 
-But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter gives you access without the bloat. One proxy tool (~200 tokens) instead of hundreds. The agent discovers what it needs on-demand. Servers only start when you actually use them.
+MCP servers provide database, browser, and API integrations. This adapter exposes them through one proxy tool (~200 tokens) instead of adding every server tool to the prompt. The agent discovers tools on demand, and lazy servers start on first use.
+
+The default `protocolMode`, `auto`, requests MCP `2026-07-28`. A response with definitive legacy evidence selects the 2025 protocol family. Set `protocolMode` per server to force legacy behavior or require the modern revision.
 
 ## Install
 
@@ -22,7 +24,7 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 pi install npm:pi-mcp-adapter
 ```
 
-Restart Pi after installation.
+Restart Pi after installation. This release requires Node.js 22.19 or newer, matching the current Pi host runtime.
 
 ## What happens on first run
 
@@ -69,9 +71,9 @@ Precedence is:
 5. `.mcp.json`
 6. `.pi/mcp.json`
 
-`/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
+`/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tools are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
 
-Servers are **lazy by default** — they won't connect until you actually call one of their tools. The adapter caches tool metadata so search and describe work without live connections.
+Servers are **lazy by default** — they won't connect until you actually call one of their tools. The adapter caches tool metadata so search and describe work without live connections. A modern server must mark metadata `public` and provide a positive TTL before the adapter writes it to disk. Private modern metadata remains in memory.
 
 ```
 mcp({ search: "screenshot" })
@@ -174,10 +176,11 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 |-------|-------------|
 | `command` | Executable for stdio transport; mutually exclusive with `url` and `socket` |
 | `args` | Command arguments |
-| `socket` | Explicit `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url` |
+| `socket` | Explicit legacy-only `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url` |
 | `env` | Environment variables; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the stdio server connects; use `!!` for a literal leading `!`. |
 | `cwd` | Working directory; supports `${VAR}`, `$env:VAR`, and `~` expansion |
-| `url` | HTTP endpoint (StreamableHTTP with SSE fallback); supports raw `${VAR}` and `$env:VAR` interpolation, and missing URL variables fail before any request is sent |
+| `url` | HTTP endpoint (Streamable HTTP, with deprecated SSE fallback only when the HTTP response identifies an unsupported transport); supports raw `${VAR}` and `$env:VAR` interpolation, and missing URL variables fail before any request is sent |
+| `protocolMode` | `"auto"` (default), `"legacy"`, or `"2026-07-28"`; `auto` negotiates modern first and conservatively falls back, while Unix sockets require `legacy` |
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the HTTP server connects or OAuth authenticates; use `!!` for a literal leading `!`. |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
@@ -200,7 +203,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `trace` | Enable metadata-only JSONL protocol tracing for this server; payloads, prompts, tool arguments/results, authorization data, and URLs are never persisted |
 | `disabled` | Keep the server visible in config and status, but prevent connections, authentication, tools, and resource calls (only literal `true` disables it) |
 
-For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
+For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port. An MCP `2025-03-26` server that omits protected-resource metadata and publishes path-based issuer metadata must use `protocolMode: "legacy"`; automatic and modern modes retain strict issuer validation.
 
 Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, and stdio `env` may use a leading `!command` to obtain their value at connection or authentication time. The command runs with stdin and stderr suppressed, stdout is limited to 1 MiB and trimmed, and it must finish within 10 seconds with non-empty output; failures stop the connection or authentication flow. Commands are not run during OAuth discovery or while reading, merging, previewing, hashing, or rendering configuration. Use `!!` to escape a literal leading `!`; ordinary and escaped values retain environment interpolation.
 
@@ -456,7 +459,7 @@ Each direct tool costs ~150-300 tokens in the system prompt (name + description 
 
 Direct tools register from the metadata cache in the Pi agent dir (`~/.pi/agent/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only while the cache populates, then the extension hot-loads the refreshed direct tools into the current session. Servers that advertise MCP list-change notifications refresh the current session when their tool or resource list changes. On Pi versions that expose `pi.unregisterTool()`, stale direct tools are removed from the registry during refresh; older Pi versions still deactivate them from the active tool set. To force a refresh: `/mcp reconnect <server>`.
 
-If prompt-cache stability matters more than automatic direct-tool hot-loading, set `settings.freezeDirectTools` to `true`. The initial direct-tool sync still runs, but later automatic reconnects, lazy-connects, and list-change notifications keep the registered tool surface unchanged. Deliberate refreshes through `mcp({ connect: "server" })` or `/mcp reconnect <server>` still update direct tools.
+If prompt-cache stability matters more than automatic direct-tool hot-loading, set `settings.freezeDirectTools` to `true`. The initial direct-tool sync still runs, but later automatic reconnects, lazy-connects, and list-change notifications keep the registered tool set unchanged. Deliberate refreshes through `mcp({ connect: "server" })` or `/mcp reconnect <server>` still update direct tools.
 
 When you change direct-tool toggles in `/mcp`, the extension updates direct tool registration in the current session. Broader setup writes from `/mcp setup` still use Pi's normal reload flow because they can add or restructure MCP config files.
 
@@ -568,17 +571,17 @@ Search includes both MCP tools and Pi tools (from extensions). Pi tools appear f
 
 Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_library_id` finds `context7_resolve-library-id`. When `describe` or `tool` cannot resolve a name, the result includes top suggestions so the agent can correct a typo or missing prefix in the same turn.
 
-When `includeSchemas` is enabled, search and describe render common JSON Schema parameters as compact TypeScript shapes like `{ query: string; limit?: number; }`, with the older schema formatter retained as a fallback for unsupported schemas.
+When `includeSchemas` is enabled, search and describe render common JSON Schema parameters as compact TypeScript signatures like `{ query: string; limit?: number; }`, with the older schema formatter retained as a fallback for unsupported schemas.
 
-For HTTP servers, failed connects run a one-request shape probe that can turn opaque transport errors into setup hints such as `endpoint returned HTML (200) — this URL does not appear to speak MCP`. Healthy connections are not probed.
+For HTTP servers, failed connects run a one-request response probe that can turn opaque transport errors into setup hints such as `endpoint returned HTML (200) — this URL does not appear to speak MCP`. Healthy connections are not probed.
 
-Servers that provide usage guidance via the MCP `instructions` field surface it at three levels: a truncated head in the `mcp` proxy tool description itself (so the model sees it without any call), a longer preview at the end of `mcp({ server: "name" })` listings, and the full text via `mcp({ instructions: "name" })`. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection.
+Servers that provide usage guidance via the MCP `instructions` field present it in three locations: a truncated head in the `mcp` proxy tool description itself (so the model sees it without any call), a longer preview at the end of `mcp({ server: "name" })` listings, and the full text via `mcp({ instructions: "name" })`. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection.
 
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
-| `/mcp` | Interactive panel and first-run onboarding surface |
+| `/mcp` | Interactive panel and first-run onboarding interface |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
 | `/mcp tools` | List all tools |
 | `/mcp prompts` | List all MCP prompts registered as slash commands |

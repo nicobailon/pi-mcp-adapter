@@ -1,18 +1,18 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import {
+  Client,
+  MAX_CACHE_TTL_MS,
+  SdkHttpError,
+  SSEClientTransport,
   StreamableHTTPClientTransport,
-  StreamableHTTPError,
-} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import {
-  ElicitationCompleteNotificationSchema,
+  UnauthorizedError,
   type GetPromptResult,
+  type ProtocolEra,
   type ReadResourceResult,
+  type RequestOptions,
   type UrlElicitationRequiredError,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
+import { ElicitationCompleteNotificationSchema } from "@modelcontextprotocol/core";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { UnixSocketClientTransport } from "./unix-socket-transport.ts";
 import { probeMcpEndpoint } from "./mcp-probe.ts";
 import {
@@ -24,10 +24,12 @@ import {
   type ServerStreamResultPatchNotification,
   type Transport,
   type McpTraceSettings,
+  SERVER_STREAM_RESULT_PATCH_METHOD,
   serverStreamResultPatchNotificationSchema,
 } from "./types.ts";
 import { resolveNpxBinary } from "./npx-resolver.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
+import { buildManagedClientOptions } from "./mcp-client.ts";
 import { logger } from "./logger.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
@@ -67,7 +69,14 @@ type HttpAuthProviderState =
   | { status: "implicit-challenged"; provider: McpOAuthProvider };
 
 function isUnauthorizedHttpError(error: unknown): boolean {
-  return error instanceof UnauthorizedError || (error instanceof StreamableHTTPError && error.code === 401);
+  return error instanceof UnauthorizedError || (error instanceof SdkHttpError && error.status === 401);
+}
+
+const DEPRECATED_SSE_HTTP_STATUSES = new Set([404, 405, 406, 415]);
+
+function shouldFallbackToSse(error: unknown, definition: ServerDefinition): boolean {
+  if (definition.protocolMode === "2026-07-28") return false;
+  return error instanceof SdkHttpError && DEPRECATED_SSE_HTTP_STATUSES.has(error.status);
 }
 
 function boundedStderrChunk(chunk: Buffer | string): Buffer {
@@ -97,6 +106,11 @@ function appendStderrTail(tail: Buffer, chunk: Buffer | string): Buffer {
     : combined;
 }
 
+interface MetadataCachePolicy {
+  cacheScope: "public" | "private";
+  expiresAt?: number;
+}
+
 export interface ServerConnection {
   client: Client;
   transport: Transport;
@@ -106,6 +120,9 @@ export interface ServerConnection {
   prompts: McpPrompt[];
   /** True when prompts were advertised but prompts/list failed. */
   promptDiscoveryFailed?: boolean;
+  protocolEra?: ProtocolEra;
+  protocolVersion?: string;
+  metadataCachePolicy?: MetadataCachePolicy;
   instructions?: string;
   lastUsedAt: number;
   inFlight: number;
@@ -126,6 +143,7 @@ export class McpServerManager {
   private authStorageOptions: AuthStorageOptions = {};
   private oauthRuntime: McpOAuthRuntime | undefined;
   private acceptedUrlElicitations = new Map<string, Set<string>>();
+  private metadataCachePolicies = new WeakMap<Client, MetadataCachePolicy>();
   private defaultRequestTimeoutMs: number | undefined;
   private runtimeSignal: AbortSignal | undefined;
   private closePromises = new Map<string, Promise<void>>();
@@ -307,7 +325,7 @@ export class McpServerManager {
     requestSignal?: AbortSignal,
   ): Promise<ServerConnection> {
     throwIfAborted(signal);
-    const client = this.createClient(name);
+    let client: Client;
 
     const tracingEnabled = isMcpTraceEnabled(definition, this.traceSettings);
     const traceWriter = tracingEnabled
@@ -318,6 +336,7 @@ export class McpServerManager {
       : undefined;
 
     let transport: Transport;
+    let isClientConnected = false;
     let stderrTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     const configuredTransports = [definition.command, definition.url, definition.socket]
       .filter(value => typeof value === "string" && value.length > 0);
@@ -326,6 +345,7 @@ export class McpServerManager {
     }
 
     if (definition.command) {
+      client = this.createClient(name, definition);
       let command = definition.command;
       let args = definition.args ?? [];
 
@@ -355,13 +375,16 @@ export class McpServerManager {
       }
       transport = stdioTransport;
     } else if (definition.url) {
-      // HTTP transport with fallback
-      transport = await this.createHttpTransport(definition, name, signal, requestSignal, traceObserver);
+      const connected = await this.createHttpTransport(definition, name, signal, requestSignal, traceObserver);
+      client = connected.client;
+      transport = connected.transport;
+      isClientConnected = true;
     } else {
+      client = this.createClient(name, definition);
       transport = new UnixSocketClientTransport(resolveConfigPath(definition.socket!)!);
     }
 
-    if (traceObserver) {
+    if (traceObserver && !isClientConnected) {
       const traceTransportKindValue = traceTransportKind(definition, transport);
       transport = wrapTransportWithMcpTrace(transport, name, traceTransportKindValue, traceObserver);
     }
@@ -370,7 +393,9 @@ export class McpServerManager {
     const requestOptions = this.buildRequestOptions(definition, requestSignal);
 
     try {
-      await this.connectClientWithAbort(client, transport, requestOptions, signal);
+      if (!isClientConnected) {
+        await this.connectClientWithAbort(client, transport, requestOptions, signal);
+      }
       this.attachAdapterNotificationHandlers(name, client);
 
       const connection: ServerConnection = {
@@ -380,11 +405,17 @@ export class McpServerManager {
         tools: [],
         resources: [],
         prompts: [],
+        protocolEra: client.getProtocolEra(),
+        protocolVersion: client.getNegotiatedProtocolVersion(),
         instructions: client.getInstructions?.(),
         lastUsedAt: Date.now(),
         inFlight: 0,
         status: "connected",
       };
+      if (connection.protocolEra === "modern") {
+        const discovery = client.getDiscoverResult();
+        if (discovery) this.captureMetadataCachePolicy(client, discovery);
+      }
 
       // Reflect the SDK's own close signal in connection status, guarded by
       // identity so a stale connection's late close (e.g. the old
@@ -411,6 +442,11 @@ export class McpServerManager {
       ]);
       connection.tools = tools;
       connection.resources = resources;
+      if (connection.protocolEra === "modern") {
+        connection.metadataCachePolicy = this.metadataCachePolicies.get(client)
+          ?? { cacheScope: "private" };
+        this.metadataCachePolicies.delete(client);
+      }
       connection.prompts = promptResult.prompts;
       connection.promptDiscoveryFailed = promptResult.failed;
 
@@ -515,12 +551,12 @@ export class McpServerManager {
     };
   }
 
-  private createClient(serverName: string): Client {
+  private createClient(serverName: string, definition: ServerDefinition): Client {
     const capabilities = this.buildClientCapabilities();
     let client: Client;
     client = new Client(
       { name: `pi-mcp-${serverName}`, version: "1.0.0" },
-      {
+      buildManagedClientOptions(definition, this.getResolvedRequestTimeoutMs(definition), {
         jsonSchemaValidator: createJsonSchemaValidator(),
         ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
         listChanged: {
@@ -540,7 +576,7 @@ export class McpServerManager {
             },
           },
         },
-      },
+      }),
     );
     if (this.samplingConfig) {
       registerSamplingHandler(client, { ...this.samplingConfig, serverName });
@@ -552,15 +588,19 @@ export class McpServerManager {
         onUrlAccepted: elicitationId => this.rememberUrlElicitation(serverName, elicitationId),
       });
       if (this.elicitationConfig.allowUrl) {
-        client.setNotificationHandler(ElicitationCompleteNotificationSchema, notification => {
-          if (this.runtimeSignal?.aborted) return;
+        client.setNotificationHandler(
+          "notifications/elicitation/complete",
+          { params: ElicitationCompleteNotificationSchema.shape.params },
+          params => {
+          if (client.getProtocolEra() !== "legacy" || this.runtimeSignal?.aborted) return;
           const accepted = this.acceptedUrlElicitations.get(serverName);
-          if (!accepted?.delete(notification.params.elicitationId)) return;
+          if (!accepted?.delete(params.elicitationId)) return;
           this.elicitationConfig?.ui.notify(
             `MCP browser interaction for ${serverName} completed. You can retry the tool now.`,
             "info",
           );
-        });
+          },
+        );
       }
     }
     return client;
@@ -580,6 +620,7 @@ export class McpServerManager {
     const connection = this.connections.get(serverName);
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.tools = tools;
+    this.invalidateModernMetadataCachePolicy(connection);
     this.metadataListChangedListener?.(serverName, "tools-list-changed");
   }
 
@@ -598,6 +639,7 @@ export class McpServerManager {
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.prompts = prompts;
     connection.promptDiscoveryFailed = false;
+    this.invalidateModernMetadataCachePolicy(connection);
     this.metadataListChangedListener?.(serverName, "prompts-list-changed");
   }
 
@@ -615,7 +657,14 @@ export class McpServerManager {
     const connection = this.connections.get(serverName);
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.resources = resources;
+    this.invalidateModernMetadataCachePolicy(connection);
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
+  }
+
+  private invalidateModernMetadataCachePolicy(connection: ServerConnection): void {
+    if (connection.protocolEra === "modern") {
+      connection.metadataCachePolicy = { cacheScope: "private" };
+    }
   }
 
   async handleUrlElicitationRequired(
@@ -650,7 +699,7 @@ export class McpServerManager {
     signal?: AbortSignal,
     requestSignal?: AbortSignal,
     traceObserver?: McpTraceObserver,
-  ): Promise<Transport> {
+  ): Promise<{ client: Client; transport: Transport }> {
     throwIfAborted(signal);
     const serverUrl = resolveServerUrl(definition)!;
     const url = new URL(serverUrl);
@@ -715,7 +764,7 @@ export class McpServerManager {
       const probeTransport = traceObserver
         ? wrapTransportWithMcpTrace(streamableTransport, serverName, "streamable-http", traceObserver)
         : streamableTransport;
-      const testClient = new Client({ name: "pi-mcp-probe", version: "2.1.2" });
+      const testClient = this.createClient(serverName, definition);
       let probeCleanupAttempted = false;
       try {
         await this.connectClientWithAbort(
@@ -724,15 +773,7 @@ export class McpServerManager {
           this.buildRequestOptions(definition, requestSignal),
           signal,
         );
-        probeCleanupAttempted = true;
-        try {
-          await testClient.close();
-        } catch (cleanupError) {
-          throw new AggregateError([cleanupError], "MCP HTTP probe cleanup failed");
-        }
-
-        // StreamableHTTP works - create fresh transport for actual use
-        return new StreamableHTTPClientTransport(url, { requestInit, authProvider });
+        return { client: testClient, transport: probeTransport };
       } catch (error) {
         if (error instanceof AggregateError && (
           error.message === "MCP connection abort cleanup failed" ||
@@ -766,13 +807,25 @@ export class McpServerManager {
           continue;
         }
 
-        // If this was an UnauthorizedError, don't try SSE - the server needs auth
-        if (isUnauthorizedHttpError(error)) {
+        // Authorization, server, rate-limit, timeout, and network failures are
+        // not evidence that the endpoint uses the deprecated SSE transport.
+        if (isUnauthorizedHttpError(error) || !shouldFallbackToSse(error, definition)) {
           throw error;
         }
 
-        // SSE is the legacy transport
-        return new SSEClientTransport(url, { requestInit, authProvider });
+        // A failed client cannot be reused for the deprecated SSE fallback.
+        const fallbackClient = this.createClient(serverName, definition);
+        const sseTransport = new SSEClientTransport(url, { requestInit, authProvider });
+        const fallbackTransport = traceObserver
+          ? wrapTransportWithMcpTrace(sseTransport, serverName, "sse", traceObserver)
+          : sseTransport;
+        await this.connectClientWithAbort(
+          fallbackClient,
+          fallbackTransport,
+          this.buildRequestOptions(definition, requestSignal),
+          signal,
+        );
+        return { client: fallbackClient, transport: fallbackTransport };
       }
     }
   }
@@ -783,11 +836,34 @@ export class McpServerManager {
 
     do {
       const result = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
+      this.captureMetadataCachePolicy(client, result);
       allTools.push(...(result.tools ?? []));
       cursor = result.nextCursor;
     } while (cursor);
 
     return allTools;
+  }
+
+  private captureMetadataCachePolicy(client: Client, result: object): void {
+    if (client.getProtocolEra() !== "modern") return;
+    const current = this.metadataCachePolicies.get(client);
+    if (current?.cacheScope === "private") return;
+    const cacheHint = result as { cacheScope?: unknown; ttlMs?: unknown };
+    if (
+      cacheHint.cacheScope !== "public"
+      || typeof cacheHint.ttlMs !== "number"
+      || !Number.isFinite(cacheHint.ttlMs)
+      || cacheHint.ttlMs <= 0
+    ) {
+      this.metadataCachePolicies.set(client, { cacheScope: "private" });
+      return;
+    }
+
+    const expiresAt = Date.now() + Math.min(cacheHint.ttlMs, MAX_CACHE_TTL_MS);
+    this.metadataCachePolicies.set(client, {
+      cacheScope: "public",
+      expiresAt: current?.expiresAt === undefined ? expiresAt : Math.min(current.expiresAt, expiresAt),
+    });
   }
 
   private async fetchAllPrompts(
@@ -802,6 +878,7 @@ export class McpServerManager {
       let cursor: string | undefined;
       do {
         const result = await client.listPrompts(cursor ? { cursor } : undefined, requestOptions);
+        this.captureMetadataCachePolicy(client, result);
         prompts.push(...(result.prompts ?? []));
         cursor = result.nextCursor;
       } while (cursor);
@@ -824,6 +901,7 @@ export class McpServerManager {
 
       do {
         const result = await client.listResources(cursor ? { cursor } : undefined, requestOptions);
+        this.captureMetadataCachePolicy(client, result);
         allResources.push(...(result.resources ?? []));
         cursor = result.nextCursor;
       } while (cursor);
@@ -839,11 +917,15 @@ export class McpServerManager {
   }
 
   private attachAdapterNotificationHandlers(serverName: string, client: Client): void {
-    client.setNotificationHandler(serverStreamResultPatchNotificationSchema, notification => {
-      const listener = this.uiStreamListeners.get(notification.params.streamToken);
-      if (!listener) return;
-      listener(serverName, notification.params);
-    });
+    client.setNotificationHandler(
+      SERVER_STREAM_RESULT_PATCH_METHOD,
+      { params: serverStreamResultPatchNotificationSchema.shape.params },
+      params => {
+        const listener = this.uiStreamListeners.get(params.streamToken);
+        if (!listener) return;
+        listener(serverName, params);
+      },
+    );
   }
 
   registerUiStreamListener(streamToken: string, listener: UiStreamListener): void {

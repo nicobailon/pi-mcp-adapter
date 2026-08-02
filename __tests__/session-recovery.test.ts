@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import {
+  ProtocolError as McpError,
+  SdkErrorCode,
+  SdkHttpError,
+} from "@modelcontextprotocol/client";
+
+class StreamableHTTPError extends SdkHttpError {
+  constructor(status: number, message: string) {
+    super(SdkErrorCode.ClientHttpUnexpectedContent, message, { status });
+  }
+}
 import { SessionRecoveryAuthRequiredError, isTerminatedSession, withSessionRecovery } from "../session-recovery.ts";
 import type { ServerConnection } from "../server-manager.ts";
 import type { McpConfig } from "../types.ts";
@@ -19,6 +28,15 @@ function makeConnection(sessionId: string | undefined): ServerConnection {
 }
 
 describe("isTerminatedSession", () => {
+  it("is true for a v2 HTTP 404 carrying a session id", () => {
+    const err = new SdkHttpError(
+      SdkErrorCode.ClientHttpUnexpectedContent,
+      "Session not found",
+      { status: 404 },
+    );
+    expect(isTerminatedSession(err, true)).toBe(true);
+  });
+
   it("is true for a 404 StreamableHTTPError carrying a session id", () => {
     const err = new StreamableHTTPError(404, "Session not found");
     expect(isTerminatedSession(err, true)).toBe(true);
@@ -295,6 +313,17 @@ describe("withSessionRecovery", () => {
     const connection = makeConnection(undefined);
     const manager = makeManager({ getConnection: () => connection, reconnect: async () => connection });
     const err = new StreamableHTTPError(404, "Not found");
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(err);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(manager.reconnect).not.toHaveBeenCalled();
+  });
+
+  it("does not run legacy session recovery for modern connections", async () => {
+    const connection = { ...makeConnection("unexpected-session"), protocolEra: "modern" as const };
+    const manager = makeManager({ getConnection: () => connection, reconnect: async () => connection });
+    const err = new StreamableHTTPError(404, "Session not found");
     const fn = vi.fn().mockRejectedValue(err);
 
     await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(err);

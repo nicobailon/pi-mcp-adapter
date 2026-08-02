@@ -23,6 +23,14 @@ afterEach(async () => {
 });
 
 describe("McpServerManager Unix socket transport", () => {
+  it("rejects modern negotiation because Unix sockets are legacy-only", async () => {
+    const manager = new McpServerManager();
+    await expect(manager.connect("modern-socket", {
+      socket: "/tmp/pi-mcp-modern.sock",
+      protocolMode: "auto",
+    })).rejects.toThrow(/legacy-only/);
+  });
+
   it("connects to an rmcp-mux-compatible socket and discovers tools", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-mcp-socket-"));
     temporaryDirectories.push(directory);

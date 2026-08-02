@@ -8,18 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added the stable MCP SDK v2 client. It negotiates MCP `2026-07-28` with modern servers and retains the 2025 handshake for legacy servers. Per-server `protocolMode` can select `legacy` or require `2026-07-28`.
+- Added modern multi-round input handling with a five-round limit. SDK-managed `subscriptions/listen` calls track tool, prompt, and resource list changes.
+- Added protocol-aware metadata caching. Disk persistence requires an explicit public scope and a positive TTL from every relevant modern response. Private entries remain in memory.
 - Added `settings.freezeDirectTools` to keep direct MCP tool registration stable after initial sync while preserving explicit reconnect refreshes. Thanks @ddfourtwo for PR #254.
 - Added best-effort Linux OAuth credential recovery when Pi inherits a revoked session keyring, allowing explicit re-authentication through a fresh `keyctl` session helper. Thanks @anthod0 for issue #248 and the validation prototype.
 - Ranked, paginated MCP tool search: best matches come first in a short page of 12 instead of an unranked dump of every match with full schemas, so the model stops guessing and each search costs a fraction of the tokens. Misses on describe/call now return top-5 "Did you mean" suggestions, letting the model self-correct a typo or missing prefix in the same turn instead of burning a round trip.
 - Optional `approveTools` patterns (global and per-server) add the missing middle tier between "tool runs instantly" and "tool hidden entirely": flag risky tools and Pi asks before running them — Allow once / Allow for session / Deny — across proxy, direct, resource, and iframe-originated calls. Safe tools keep full speed; a deny is a normal result the model adapts to, not a crash.
-- Opt-in `mcp_script` trusted JavaScript MCP scripting turns N-step jobs into one call: loop, filter, and chain tools for tool-restricted subagents where every round trip costs child context. Scripts discover tools with `await tools.search({ query })`, inspect exact shapes with `await tools.describe({ path })`, and call them with `tools.call(path, args)` — no more guessing names from outside the script. A runaway script can never freeze Pi itself: scripts run isolated from the main process and are force-stopped at their time limit, even if stuck in an infinite loop. Result details include a `calls` trace of every invoked path and outcome, and a bundled `mcp-scripting` skill teaches the full workflow on demand. Every scripted call still goes through auth, output guarding, and the approval gate.
+- Opt-in `mcp_script` trusted JavaScript MCP scripting turns N-step jobs into one call: loop, filter, and chain tools for tool-restricted subagents where every round trip costs child context. Scripts discover tools with `await tools.search({ query })`, inspect exact parameter contracts with `await tools.describe({ path })`, and call them with `tools.call(path, args)` — no more guessing names from outside the script. A runaway script can never freeze Pi itself: scripts run isolated from the main process and are force-stopped at their time limit, even if stuck in an infinite loop. Result details include a `calls` trace of every invoked path and outcome, and a bundled `mcp-scripting` skill teaches the full workflow on demand. Every scripted call still goes through auth, output guarding, and the approval gate.
 - HTTP connection failures are now probe-classified into a plain-language diagnosis (for example "endpoint returned HTML (200) — this URL does not appear to speak MCP") instead of an opaque "fetch failed", so setup mistakes are fixed in seconds. Healthy connections are never probed.
-- Tool parameters render as compact TypeScript shapes (`{ query: string; limit?: number }`) in describe and search, replacing multi-line schema dumps — the model reads less and acts sooner, with the previous formatting kept as a fallback for exotic schemas.
+- Tool parameters render as compact TypeScript signatures (`{ query: string; limit?: number }`) in describe and search, replacing multi-line schema dumps — the model reads less and acts sooner, with the previous formatting kept as a fallback for exotic schemas.
 - `/mcp setup` gained curated one-click presets (DeepWiki, Context7, Notion, GitHub, Chrome DevTools): pick, preview the exact config write, confirm — new servers in under a minute with no hand-typed setup.
 
-The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint shape probe, TypeScript-shaped schemas, and codemode design in this release are adapted from [Executor](https://github.com/UsefulSoftwareCo/executor) by Rhys Sullivan (@RhysSullivan). Thanks Rhys.
+The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint response probe, compact TypeScript schemas, and codemode design in this release are adapted from [Executor](https://github.com/UsefulSoftwareCo/executor) by Rhys Sullivan (@RhysSullivan). Thanks Rhys.
+
+### Changed
+- Raised the minimum Node.js version to 22.19 to match the current Pi host runtime.
 
 ### Fixed
+- Limited deprecated SSE fallback to HTTP responses that identify an unsupported transport. Authentication failures, rate limits, server errors, timeouts, and network failures now propagate without a downgrade.
+- Kept the concrete stdio transport instance when protocol tracing is enabled. Automatic negotiation can restart legacy servers that exit on `server/discover`.
+- Kept OAuth issuer binding and RFC 9207 callback validation. Native loopback dynamic client registration remains supported. Legacy MCP `2025-03-26` issuer-metadata fallback now requires `protocolMode: "legacy"`.
 - Brought MCP Apps UI hosting in line with the current spec: provider HTML now runs in a real sandbox, gets a restrictive default CSP even when the resource omits one, and `_meta.ui.visibility` is honored so app-only tools stay out of the model tool list while model-only tools cannot be called from the UI.
 - MCP Apps UI sessions are now easier to open from Moshi and remote terminals: the local UI server uses Moshi-discoverable low ports, answers preview discovery probes, serves a loopback-only landing shell, prints Moshi/SSH access hints for remote sessions, and fits the host shell better in narrow in-app browsers. UI-submitted model context is now captured as a bounded handoff, wakes the agent like prompts and intents, and remains available through `mcp({ action: "ui-messages" })` after the UI closes.
 
@@ -75,7 +84,7 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - Added a versioned, sanitized MCP runtime status snapshot on Pi's shared event bus for extensions, without connecting lazy servers or exposing SDK internals. Thanks Ludev (@ludevdot) for issue #110.
 - Added opt-in host-specific MCP config discovery with source/provenance and conflict reporting. Standard shared and Pi-owned config precedence remains unchanged, and external host files are never written or silently executed. Thanks @lsmir2 for issue #169.
 - Added opt-in metadata-only JSONL MCP protocol tracing with bounded per-session files and redaction. Thanks @66-firebat for issue #45.
-- Added per-server `includeTools` allowlists with exact-name and glob matching for proxy, direct-tool, and `/mcp` panel surfaces. Thanks Finn (@finnvyrn) for issue #136.
+- Added per-server `includeTools` allowlists with exact-name and glob matching for proxy tools, direct tools, and the `/mcp` panel. Thanks Finn (@finnvyrn) for issue #136.
 - Made `mcp({ connect: "server" })` refresh an already connected server instead of reusing stale tool metadata. Thanks Sebastiano Poggi (@rock3r) for issue #28 and @theflysurfer for the refresh analysis.
 - Added a plug icon prefix to MCP footer status text. Thanks Felipe Cadal (@cadal-cw) for issue #145.
 - Discovered user-global MCP configs from `~/.agents/mcp.json` and `~/.agents/mcp/mcp.json`. Thanks David Jadczyk (@davidjadczyk) for issue #117.
@@ -107,14 +116,14 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - Migrated the MCP client and interactive visualizer to the exact-pinned MCP SDK v2 beta.5 packages, with automatic protocol negotiation and client conformance coverage. Thanks Matt Carey (@mattzcarey) for PR #210.
 - Added disabled MCP server definitions plus `/mcp disable` and `/mcp enable` project-local overrides that preserve visibility while preventing execution. Thanks Ömer Ulusoy (@ulusoyomer) for PR #61.
 - Added argument completions for `/mcp` subcommands and reconnect/logout server names. Thanks @sting8k for PR #8.
-- Surfaced MCP connection failure reasons from bounded stdio diagnostics in status output and the `/mcp` panel, with a shortcut to copy the selected failure. Thanks @parkuman for PR #197.
+- Reported MCP connection failure reasons from bounded stdio diagnostics in status output and the `/mcp` panel, with a shortcut to copy the selected failure. Thanks @parkuman for PR #197.
 - Added Codex MCP imports from `.codex/config.toml`, with fallback to the existing JSON config. Thanks @npo-mmenke for PR #31.
 - Added explicit OpenCode V1 MCP imports from global and project `opencode.json` files, including nested config merging and environment interpolation. Thanks @NicoAvanzDev for PR #25.
 - Added environment-variable interpolation for HTTP MCP server URLs, with missing URL variables failing closed before requests are sent. Thanks @ozeias for PR #206.
 - Added `settings.oauthDir` to store MCP OAuth credentials in a project-specific directory, with `MCP_OAUTH_DIR` still taking precedence. Thanks @Termina1 for PR #105.
 - Added `lazy-keep-alive` lifecycle mode for MCP servers that should start on first use and then stay resident with health-check reconnects. Thanks @ricardoraposo for PR #143.
 - Added `MCP_UI_VIEWER=none` / `off` / `disabled` to suppress MCP UI browser or Glimpse windows while keeping inline tool results available. Thanks @stevekrouse for PR #172.
-- Surfaced MCP server `instructions` from the initialize handshake: captured at connect time, cached alongside tool metadata, shown as a truncated head in the `mcp` proxy tool description, previewed in `mcp({ server: "name" })` listings, and available in full via the new `mcp({ instructions: "name" })` mode. Thanks @JeongJuhyeon for issue #188 and PR #189.
+- Presented MCP server `instructions` from the initialize handshake: captured at connect time, cached alongside tool metadata, shown as a truncated head in the `mcp` proxy tool description, previewed in `mcp({ server: "name" })` listings, and available in full via the new `mcp({ instructions: "name" })` mode. Thanks @JeongJuhyeon for issue #188 and PR #189.
 - Added `createMcpAdapter({ config, configPath })` for isolated SDK configuration and file-path overrides. Thanks @Cansiny0320 for PR #86.
 
 ### Changed
@@ -303,7 +312,7 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - OAuth callback server now calls `unref()` after successful bind so it no longer keeps sub-agent processes alive by itself.
 - Strict OAuth port mode now rebinds to the configured callback port when safe, while refusing to switch ports when authorizations are still pending.
 - Added focused lifecycle/callback-server regression coverage for teardown, `unref()`, strict rebinding, and pending-auth guardrails.
-- Thanks @blai for the investigation and PR #43 that surfaced the sub-agent hang/root lifecycle issues.
+- Thanks @blai for the investigation and PR #43 that revealed the sub-agent hang/root lifecycle issues.
 
 ## [2.3.4] - 2026-04-12
 
@@ -348,7 +357,7 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ### Fixed
 - Session lifecycle teardown now handles repeated `session_start` transitions safely and prevents stale async init results from replacing newer state.
 - Shutdown now still runs `gracefulShutdown()` even if metadata cache flushing throws, avoiding leaked MCP processes.
-- Proxy/direct tool init error paths now preserve and surface underlying error messages instead of returning generic failures.
+- Proxy/direct tool init error paths now preserve and return underlying error messages instead of returning generic failures.
 - Invalid `mcp` tool `args` now fail by throwing with parse/type context instead of returning non-failing tool payloads.
 - Added focused lifecycle regressions tests for stale init cleanup and init-error visibility.
 

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
 import { getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
 

@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
-import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
+import { UrlElicitationRequiredError } from "@modelcontextprotocol/client";
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
@@ -1120,11 +1120,11 @@ export async function executeCall(
         name: toolMeta.originalName,
         arguments: args ?? {},
         _meta: uiSession?.requestMeta,
-      }, undefined, requestOptions), ownedSignal),
+      }, requestOptions), ownedSignal),
     );
 
     if (toolMeta.uiResourceUri) {
-      uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
+      uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
 
       if (result.isError) {
         const mcpContent = (result.content ?? []) as McpContent[];

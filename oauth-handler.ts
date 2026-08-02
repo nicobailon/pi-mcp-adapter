@@ -1,5 +1,5 @@
 // oauth-handler.ts - OAuth token compatibility helpers for MCP servers
-import type { OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type { StoredOAuthTokens } from "@modelcontextprotocol/client";
 import { getAuthEntry } from "./mcp-auth.ts";
 
 /**
@@ -9,7 +9,7 @@ import { getAuthEntry } from "./mcp-auth.ts";
  * Persistent credentials are read from the OS secure credential store. Legacy
  * plaintext entries are imported through mcp-auth.ts before this returns.
  */
-export function getStoredTokens(serverName: string): OAuthTokens | undefined {
+export function getStoredTokens(serverName: string): StoredOAuthTokens | undefined {
   const tokens = getAuthEntry(serverName)?.tokens;
   if (!tokens) return undefined;
 

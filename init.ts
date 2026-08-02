@@ -482,6 +482,15 @@ export function updateMetadataCache(
 
   const entry: ServerCacheEntry = {
     configHash,
+    ...(connection.protocolEra !== undefined ? { protocolEra: connection.protocolEra } : {}),
+    ...(connection.protocolEra === "modern"
+      ? {
+          cacheScope: connection.metadataCachePolicy?.cacheScope ?? "private",
+          ...(connection.metadataCachePolicy?.expiresAt !== undefined
+            ? { expiresAt: connection.metadataCachePolicy.expiresAt }
+            : {}),
+        }
+      : {}),
     tools,
     resources,
     ...(prompts !== undefined ? { prompts } : {}),

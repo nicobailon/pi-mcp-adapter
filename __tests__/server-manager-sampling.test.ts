@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("open", () => ({ default: mocks.open }));
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any, info: unknown, options: unknown) {
     this.info = info;
@@ -19,6 +19,8 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
     this.setNotificationHandler = vi.fn();
     this.connect = vi.fn(async () => undefined);
     this.getServerCapabilities = vi.fn(() => ({ tools: {}, resources: {} }));
+    this.getProtocolEra = vi.fn(() => "legacy");
+    this.getNegotiatedProtocolVersion = vi.fn(() => "2025-11-25");
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
     this.close = vi.fn(async () => undefined);
@@ -28,7 +30,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
   SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
     this.close = vi.fn(async () => undefined);
@@ -138,10 +140,10 @@ describe("McpServerManager sampling", () => {
         url: "https://example.com/connect",
       },
     });
-    const completionHandler = client.setNotificationHandler.mock.calls[0][1];
-    completionHandler({ params: { elicitationId: "unknown-id" } });
-    completionHandler({ params: { elicitationId: "known-id" } });
-    completionHandler({ params: { elicitationId: "known-id" } });
+    const completionHandler = client.setNotificationHandler.mock.calls[0][2];
+    completionHandler({ elicitationId: "unknown-id" });
+    completionHandler({ elicitationId: "known-id" });
+    completionHandler({ elicitationId: "known-id" });
 
     expect(ui.notify).toHaveBeenCalledWith("Opened browser for MCP elicitation.", "info");
     expect(ui.notify).toHaveBeenCalledWith(
@@ -152,7 +154,7 @@ describe("McpServerManager sampling", () => {
   });
 
   it("handles every URL in a URL-required error", async () => {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/sdk/types.js");
+    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
     const { McpServerManager } = await import("../server-manager.ts");
     const ui = {
       select: vi.fn().mockResolvedValue("Open"),
@@ -223,6 +225,12 @@ describe("McpServerManager sampling", () => {
     await manager.close("demo");
     await manager.connect("demo", { command: "node", args: ["server.js"] });
     const freshClient = mocks.clients[1];
+    const freshConnection = manager.getConnection("demo")!;
+    freshConnection.protocolEra = "modern";
+    freshConnection.metadataCachePolicy = {
+      cacheScope: "public",
+      expiresAt: Date.now() + 60_000,
+    };
     const freshTools = [{ name: "fresh_tool", description: "Fresh tool" }];
     const freshResources = [{ uri: "file://fresh", name: "Fresh resource" }];
 
@@ -236,6 +244,7 @@ describe("McpServerManager sampling", () => {
     freshClient.options.listChanged.resources.onChanged(null, freshResources);
     expect(manager.getConnection("demo")?.tools).toEqual(freshTools);
     expect(manager.getConnection("demo")?.resources).toEqual(freshResources);
+    expect(manager.getConnection("demo")?.metadataCachePolicy).toEqual({ cacheScope: "private" });
     expect(metadataChanged).toHaveBeenCalledWith("demo", "tools-list-changed");
     expect(metadataChanged).toHaveBeenCalledWith("demo", "resources-list-changed");
   });
@@ -307,6 +316,9 @@ describe("McpServerManager sampling", () => {
 
     const client = mocks.clients[0];
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 2500 });
+    expect(client.options).toMatchObject({
+      versionNegotiation: { probe: { timeoutMs: 2500, maxRetries: 0 } },
+    });
     expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 2500 });
     expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 2500 });
   });
@@ -320,6 +332,9 @@ describe("McpServerManager sampling", () => {
 
     const client = mocks.clients[0];
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 5000 });
+    expect(client.options).toMatchObject({
+      versionNegotiation: { probe: { timeoutMs: 5000, maxRetries: 0 } },
+    });
     expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000 });
     expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000 });
   });

@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   instructions: undefined as string | undefined,
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any, info: unknown, options: unknown) {
     this.info = info;
@@ -13,6 +13,9 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
     this.setRequestHandler = vi.fn();
     this.setNotificationHandler = vi.fn();
     this.connect = vi.fn(async () => undefined);
+    this.getProtocolEra = vi.fn(() => "legacy");
+    this.getNegotiatedProtocolVersion = vi.fn(() => "2025-11-25");
+    this.getServerCapabilities = vi.fn(() => ({ tools: {}, resources: {} }));
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
     this.getInstructions = vi.fn(() => mocks.instructions);
@@ -23,7 +26,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
   SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
     this.close = vi.fn(async () => undefined);

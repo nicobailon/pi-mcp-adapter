@@ -596,7 +596,6 @@ describe("UiServer", () => {
           name: "some_tool",
           arguments: { arg1: "value1" },
         },
-        undefined,
         requestOptions,
       );
     });

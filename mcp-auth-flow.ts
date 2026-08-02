@@ -5,11 +5,14 @@
  */
 
 import {
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
+  PROTOCOL_VERSION_META_KEY,
+  UnauthorizedError,
   auth as runSdkAuth,
   extractWWWAuthenticateParams,
-  UnauthorizedError,
-} from "@modelcontextprotocol/sdk/client/auth.js"
-import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js"
+} from "@modelcontextprotocol/client"
+import { MCP_2026_PROTOCOL_VERSION } from "./mcp-client.ts"
 import open from "open"
 import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {
@@ -55,6 +58,7 @@ export interface AuthenticateOptions {
 type AuthDiscovery = {
   resourceMetadataUrl?: URL
   scope?: string
+  skipIssuerMetadataValidation?: boolean
 }
 
 function applyConfiguredScope(discovery: AuthDiscovery, config: McpOAuthConfig): AuthDiscovery {
@@ -225,25 +229,40 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
 
   try {
     headers.set("accept", "application/json, text/event-stream")
+    headers.set("mcp-method", "server/discover")
+    headers.set("mcp-protocol-version", MCP_2026_PROTOCOL_VERSION)
 
     const response = await fetch(new URL(serverUrl), {
       method: "POST",
       headers,
       body: JSON.stringify({
         jsonrpc: "2.0",
-        id: 0,
-        method: "initialize",
+        id: "oauth-server-discover",
+        method: "server/discover",
         params: {
-          protocolVersion: LATEST_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: "pi-mcp-adapter", version: "2.11.0" },
+          _meta: {
+            [PROTOCOL_VERSION_META_KEY]: MCP_2026_PROTOCOL_VERSION,
+            [CLIENT_INFO_META_KEY]: { name: "pi-mcp-adapter", version: "2.17.0" },
+            [CLIENT_CAPABILITIES_META_KEY]: {},
+          },
         },
       }),
       signal: discoverySignal,
     })
     const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response)
     await response.body?.cancel().catch(() => {})
-    return { ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}), ...(scope ? { scope } : {}) }
+    return {
+      ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
+      ...(scope ? { scope } : {}),
+      // MCP 2025-03-26 servers can omit protected-resource metadata and
+      // publish authorization metadata at the resource origin even when its
+      // issuer has a path. Keep this opt-out confined to that legacy fallback.
+      ...(response.status === 401
+        && !resourceMetadataUrl
+        && definition?.protocolMode === "legacy"
+        ? { skipIssuerMetadataValidation: true }
+        : {}),
+    }
   } catch (error) {
     if (signal?.aborted) throwIfAborted(signal)
     return {}
@@ -606,6 +625,7 @@ export async function completeAuth(
     const result = await abortable(runSdkAuth(pendingAuth.authProvider, {
       serverUrl: pendingAuth.serverUrl,
       authorizationCode: code,
+      ...(iss !== undefined ? { iss } : {}),
       ...pendingAuth.discovery,
     }), signal)
     throwIfAborted(signal)

@@ -8,14 +8,13 @@
 import {
   UnauthorizedError,
   type AddClientAuthentication,
+  type OAuthClientInformationContext,
+  type OAuthClientInformationMixed,
+  type OAuthClientMetadata,
   type OAuthClientProvider,
   type OAuthDiscoveryState,
-} from "@modelcontextprotocol/sdk/client/auth.js"
-import type {
-  OAuthClientInformationMixed,
-  OAuthClientMetadata,
-  OAuthTokens,
-} from "@modelcontextprotocol/sdk/shared/auth.js"
+  type OAuthTokens,
+} from "@modelcontextprotocol/client"
 import {
   getAuthForUrl,
   updateTokens,
@@ -214,6 +213,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
+      application_type: oauthApplicationType(redirectUrl),
       token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
       ...(this.config.scope !== undefined ? { scope: this.config.scope } : {}),
     }
@@ -223,8 +223,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Get client information (for pre-registered or dynamically registered clients).
    * Returns undefined if no client info exists or if the server URL has changed.
    */
-  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    const issuer = this.discoveredIssuer
+  async clientInformation(
+    context?: OAuthClientInformationContext,
+  ): Promise<OAuthClientInformationMixed | undefined> {
+    const issuer = context?.issuer ?? this.discoveredIssuer
     const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
     this.assertStoredIssuerBindings(stored, issuer)
 
@@ -312,9 +314,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
   /**
    * Save client information from dynamic registration.
    */
-  async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
+  async saveClientInformation(
+    info: OAuthClientInformationMixed,
+    context?: OAuthClientInformationContext,
+  ): Promise<void> {
     this.throwIfInactive()
-    const issuer = this.discoveredIssuer ?? (info as IssuerBoundClientInformation).issuer
+    const issuer = context?.issuer
+      ?? this.discoveredIssuer
+      ?? (info as IssuerBoundClientInformation).issuer
     if (this.config.clientId && info.client_id === this.config.clientId) {
       updateClientInfo(
         this.serverName,
@@ -343,11 +350,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Get stored OAuth tokens.
    * Returns undefined if no tokens exist or if the server URL has changed.
    */
-  async tokens(): Promise<OAuthTokens | undefined> {
+  async tokens(context?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
     // Use getAuthForUrl to validate tokens are for the current server URL.
     const entry = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
     if (!entry?.tokens) return undefined
-    const issuer = this.discoveredIssuer
+    const issuer = context?.issuer ?? this.discoveredIssuer
     this.assertStoredIssuerBindings(entry, issuer)
     if (issuer && entry.tokens.issuer === undefined) {
       entry.tokens.issuer = issuer
@@ -369,7 +376,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
   /**
    * Save OAuth tokens.
    */
-  async saveTokens(tokens: OAuthTokens): Promise<void> {
+  async saveTokens(
+    tokens: OAuthTokens,
+    context?: OAuthClientInformationContext,
+  ): Promise<void> {
     const storedTokens: StoredTokens = {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
@@ -378,7 +388,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       // being persisted as never-expiring.
       expiresAt: tokens.expires_in !== undefined ? Date.now() / 1000 + tokens.expires_in : undefined,
       scope: tokens.scope,
-      issuer: this.discoveredIssuer ?? (tokens as IssuerBoundTokens).issuer,
+      issuer: context?.issuer ?? this.discoveredIssuer ?? (tokens as IssuerBoundTokens).issuer,
     }
     this.throwIfInactive()
     updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
@@ -565,6 +575,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
       params.set("scope", requestedScope)
     }
     return params
+  }
+}
+
+function oauthApplicationType(redirectUrl: string): "native" | "web" {
+  try {
+    return new URL(redirectUrl).protocol === "https:" ? "web" : "native"
+  } catch {
+    throw new Error(`Invalid OAuth redirect URI: ${redirectUrl}`)
   }
 }
 

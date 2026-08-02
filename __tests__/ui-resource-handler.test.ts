@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 import { buildCspMetaContent } from "../host-html-template.ts";
-import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
+import {
+  SdkErrorCode,
+  SdkHttpError,
+  UrlElicitationRequiredError,
+} from "@modelcontextprotocol/client";
 import type { McpServerManager } from "../server-manager.ts";
 
 // Mock the manager
@@ -38,7 +42,11 @@ describe("UiResourceHandler", () => {
     });
 
     it("recovers a terminated HTTP session while loading a UI resource", async () => {
-      const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+      const StreamableHTTPError = class extends SdkHttpError {
+        constructor(status: number, message: string) {
+          super(SdkErrorCode.ClientHttpUnexpectedContent, message, { status });
+        }
+      };
       const stale = {
         status: "connected" as const,
         transport: { sessionId: "session-1" },

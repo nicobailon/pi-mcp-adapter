@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
 
 class MockUnauthorizedError extends Error {}
 
-vi.mock("@modelcontextprotocol/sdk/client/auth.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   auth: mocks.sdkAuth,
   extractWWWAuthenticateParams: (response: Response) => {
@@ -141,6 +141,10 @@ describe("mcp-auth-flow explicit auth", () => {
       `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://auth.example.com")}`,
     )).resolves.toBe("authenticated");
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(2);
+    expect(mocks.sdkAuth.mock.calls[1]?.[1]).toMatchObject({
+      authorizationCode: "auth-code",
+      iss: "https://auth.example.com",
+    });
     expect(hasPendingAuth("rfc9207-missing")).toBe(false);
   });
 
@@ -867,6 +871,26 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.stopCallbackServer).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps issuer metadata validation for a modern-pinned server", async () => {
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    await startAuth("modern-auth", "https://api.example.com/mcp", {
+      url: "https://api.example.com/mcp",
+      auth: "oauth",
+      protocolMode: "2026-07-28",
+      oauth: {
+        grantType: "client_credentials",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+      },
+    });
+
+    expect(mocks.sdkAuth).toHaveBeenCalledWith(expect.anything(), {
+      serverUrl: "https://api.example.com/mcp",
+    });
+  });
+
   it("releases reserved callback state after direct completeAuth", async () => {
     const resourceMetadataUrl = "https://api.example.com/.well-known/oauth-protected-resource";
     mocks.fetch.mockResolvedValueOnce(new Response(null, {
@@ -893,7 +917,10 @@ describe("mcp-auth-flow explicit auth", () => {
 
     const probeInit = mocks.fetch.mock.calls[0]?.[1] as RequestInit;
     expect(new Headers(probeInit.headers).get("x-tenant")).toBe("tenant-a");
-    expect(JSON.parse(String(probeInit.body)).params.clientInfo.name).toBe("pi-mcp-adapter");
+    const probeRequest = JSON.parse(String(probeInit.body));
+    expect(probeRequest.method).toBe("server/discover");
+    expect(probeRequest.params._meta["io.modelcontextprotocol/protocolVersion"]).toBe("2026-07-28");
+    expect(probeRequest.params._meta["io.modelcontextprotocol/clientInfo"].name).toBe("pi-mcp-adapter");
     expect(mocks.sdkAuth).toHaveBeenNthCalledWith(1, expect.anything(), {
       serverUrl: "https://api.example.com/mcp",
       resourceMetadataUrl: new URL(resourceMetadataUrl),

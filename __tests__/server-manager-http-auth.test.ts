@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
   httpTransports: [] as HttpTransportMock[],
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation((info: unknown, options: ClientOptions) => {
     const client = {
@@ -38,6 +38,9 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
       setRequestHandler: vi.fn(),
       setNotificationHandler: vi.fn(),
       connect: vi.fn(async () => undefined),
+      getProtocolEra: vi.fn(() => "legacy"),
+      getNegotiatedProtocolVersion: vi.fn(() => "2025-11-25"),
+      getServerCapabilities: vi.fn(() => ({ tools: {}, resources: {} })),
       listTools: vi.fn(async () => ({ tools: [] })),
       listResources: vi.fn(async () => ({ resources: [] })),
       close: vi.fn(async () => undefined),
@@ -45,6 +48,12 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
     mocks.clients.push(client);
     return client;
   }),
+  StreamableHTTPClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => {
+    const transport = { url, options, close: vi.fn(async () => undefined) };
+    mocks.httpTransports.push(transport);
+    return transport;
+  }),
+  SSEClientTransport: vi.fn(),
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", async (importOriginal) => ({
@@ -58,7 +67,7 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", async (importOrigi
 
 vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({ SSEClientTransport: vi.fn() }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn(),
 }));
 
@@ -220,7 +229,7 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(authProvider?.clientMetadata?.client_uri).toBe("https://example.com/custom-mcp");
   });
 
-  it("applies the configured timeout to the HTTP probe connect", async () => {
+  it("applies the configured timeout to v2 discovery without a probe client", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
 
     const manager = new McpServerManager();
@@ -230,7 +239,11 @@ describe("McpServerManager HTTP bearer auth", () => {
       requestTimeoutMs: 5000,
     });
 
-    expect(mocks.clients[1].connect).toHaveBeenCalledWith(mocks.httpTransports[0], { timeout: 5000 });
-    expect(mocks.clients[0].connect).toHaveBeenCalledWith(mocks.httpTransports[1], { timeout: 5000 });
+    expect(mocks.clients).toHaveLength(1);
+    expect(mocks.clients[0].options).toMatchObject({
+      versionNegotiation: { probe: { timeoutMs: 5000, maxRetries: 0 } },
+    });
+    // SDK v2 applies the same timeout to connect through ConnectOptions.
+    expect(mocks.clients[0].connect).toHaveBeenCalledWith(mocks.httpTransports[0], { timeout: 5000 });
   });
 });

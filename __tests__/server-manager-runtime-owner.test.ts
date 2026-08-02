@@ -14,7 +14,7 @@ function gate() {
   return { promise, resolve };
 }
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any) {
     this.setRequestHandler = vi.fn();
@@ -23,6 +23,9 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
       if (mocks.connectError) throw mocks.connectError;
       await mocks.connectGate?.promise;
     });
+    this.getProtocolEra = vi.fn(() => "legacy");
+    this.getNegotiatedProtocolVersion = vi.fn(() => "2025-11-25");
+    this.getServerCapabilities = vi.fn(() => ({ tools: {}, resources: {} }));
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
     this.close = vi.fn(async () => undefined);
@@ -31,7 +34,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
   StreamableHTTPClientTransport: vi.fn(),
   SSEClientTransport: vi.fn(),
 }));
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any) {
     this.close = vi.fn(async () => undefined);
     mocks.transports.push(this);

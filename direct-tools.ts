@@ -1,5 +1,5 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
+import { UrlElicitationRequiredError } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpConfig, McpContent, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
@@ -466,9 +466,9 @@ export function createDirectToolExecutor(
           name: spec.originalName,
           arguments: params ?? {},
           _meta: uiSession?.requestMeta,
-        }, undefined, requestOptions), ownedSignal),
+        }, requestOptions), ownedSignal),
       );
-      uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
+      uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
 
       if (result.isError) {
         const mcpContent = (result.content ?? []) as McpContent[];

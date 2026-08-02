@@ -47,6 +47,14 @@ describe("McpServerManager StreamableHTTP transport", () => {
         let body = "";
         for await (const chunk of req) body += chunk;
         const message = JSON.parse(body) as { id?: string | number; method?: string };
+        if (message.method === "server/discover") {
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32601, message: "Method not found" },
+          }));
+          return;
+        }
         const result = message.method === "initialize"
           ? {
               protocolVersion: "2025-06-18",
@@ -110,6 +118,26 @@ describe("McpServerManager StreamableHTTP transport", () => {
     });
   });
 
+  it("does not downgrade to SSE after a Streamable HTTP server failure", async () => {
+    const requests: string[] = [];
+    const server = http.createServer((req, res) => {
+      requests.push(`${req.method} ${req.url}`);
+      res.writeHead(503, { "content-type": "text/plain" }).end("Unavailable");
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+
+    const manager = new McpServerManager();
+    await expect(manager.connect("unavailable", {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+      auth: false,
+    })).rejects.toThrow(/503|Unavailable/);
+
+    expect(requests.some(request => request.startsWith("GET "))).toBe(false);
+  });
+
   it("resolves command-backed HTTP secrets without falling back to SSE on GET 405", async () => {
     const requests: string[] = [];
     const server = http.createServer(async (req, res) => {
@@ -133,6 +161,15 @@ describe("McpServerManager StreamableHTTP transport", () => {
       let body = "";
       for await (const chunk of req) body += chunk;
       const message = JSON.parse(body) as { id?: string | number; method?: string };
+
+      if (message.method === "server/discover") {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32601, message: "Method not found" },
+        }));
+        return;
+      }
 
       if (message.method === "initialize") {
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
@@ -200,8 +237,8 @@ describe("McpServerManager StreamableHTTP transport", () => {
       expect(connection.tools).toEqual([]);
       expect(connection.resources).toEqual([]);
       expect(requests).toContain("GET /mcp");
-      // The SDK probes the optional GET stream once, then keeps the successful
-      // POST-based session without an SSE fallback or retry storm.
+      // One SDK client owns negotiation and the optional GET stream, without
+      // a probe connection or an SSE retry.
       expect(requests.filter(request => request === "GET /mcp")).toHaveLength(1);
 
       await manager.close("post-only");
@@ -209,7 +246,7 @@ describe("McpServerManager StreamableHTTP transport", () => {
         .trim()
         .split("\n")
         .map(line => JSON.parse(line) as { direction: string; method?: string });
-      expect(traceLines.filter(event => event.direction === "outbound" && event.method === "initialize")).toHaveLength(2);
+      expect(traceLines.filter(event => event.direction === "outbound" && event.method === "initialize")).toHaveLength(1);
     } finally {
       await manager.close("post-only").catch(() => {});
     }

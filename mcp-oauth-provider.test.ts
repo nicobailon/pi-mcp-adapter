@@ -22,8 +22,11 @@ import {
   type McpOAuthConfig,
 } from "./mcp-oauth-provider.ts"
 import { getAuthForUrl, saveAuthEntry } from "./mcp-auth.ts"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
-import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
+import {
+  UnauthorizedError,
+  type OAuthClientInformationFull,
+  type OAuthTokens,
+} from "@modelcontextprotocol/client"
 
 describe("McpOAuthProvider", () => {
   const serverName = "test-server"
@@ -107,6 +110,7 @@ describe("McpOAuthProvider", () => {
       assert.deepStrictEqual(metadata.grant_types, ["authorization_code", "refresh_token"])
       assert.deepStrictEqual(metadata.response_types, ["code"])
       assert.strictEqual(metadata.token_endpoint_auth_method, "none")
+      assert.strictEqual(metadata.application_type, "native")
     })
 
     it("should return correct metadata for confidential client", () => {
@@ -143,12 +147,13 @@ describe("McpOAuthProvider", () => {
   })
 
   describe("clientInformation", () => {
-    it("should return config clientId when provided", async () => {
+    it("should bind configured client information to the v2 issuer context", async () => {
       const provider = createProvider({ clientId: "config-client", clientSecret: "config-secret" })
-      const info = await provider.clientInformation()
+      const info = await provider.clientInformation({ issuer: "https://auth.example.com" })
 
       assert.strictEqual(info?.client_id, "config-client")
       assert.strictEqual(info?.client_secret, "config-secret")
+      assert.strictEqual((info as { issuer?: string } | undefined)?.issuer, "https://auth.example.com")
     })
 
     it("should return stored client info when no config", async () => {
@@ -277,9 +282,10 @@ describe("McpOAuthProvider", () => {
         client_secret_expires_at: futureTime,
       }
 
-      await provider.saveClientInformation(info)
+      await provider.saveClientInformation(info, { issuer: "https://auth.example.com" })
+      assert.strictEqual(getAuthForUrl(serverName, serverUrl)?.clientInfo?.issuer, "https://auth.example.com")
 
-      const storedInfo = await provider.clientInformation()
+      const storedInfo = await provider.clientInformation({ issuer: "https://auth.example.com" })
       assert.strictEqual(storedInfo?.client_id, "new-client")
       assert.strictEqual(storedInfo?.client_secret, "new-secret")
       assert.deepStrictEqual(getAuthForUrl(serverName, serverUrl)?.clientInfo?.redirectUris, ["http://localhost:3118/callback"])
@@ -328,8 +334,9 @@ describe("McpOAuthProvider", () => {
         scope: "read write",
       }
 
-      await provider.saveTokens(tokens)
-      const stored = await provider.tokens()
+      await provider.saveTokens(tokens, { issuer: "https://auth.example.com" })
+      assert.strictEqual(getAuthForUrl(serverName, serverUrl)?.tokens?.issuer, "https://auth.example.com")
+      const stored = await provider.tokens({ issuer: "https://auth.example.com" })
 
       assert.strictEqual(stored?.access_token, "access-123")
       assert.strictEqual(stored?.refresh_token, "refresh-456")

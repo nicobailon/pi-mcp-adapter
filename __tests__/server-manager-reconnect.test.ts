@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   httpTransports: [] as HttpTransportMock[],
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation((info: unknown, options: unknown) => {
     const client: any = {
@@ -25,6 +25,9 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
       setRequestHandler: vi.fn(),
       setNotificationHandler: vi.fn(),
       connect: vi.fn(async () => undefined),
+      getProtocolEra: vi.fn(() => "legacy"),
+      getNegotiatedProtocolVersion: vi.fn(() => "2025-11-25"),
+      getServerCapabilities: vi.fn(() => ({ tools: {}, resources: {} })),
       listTools: vi.fn(async () => ({ tools: [] })),
       listResources: vi.fn(async () => ({ resources: [] })),
       close: vi.fn(async () => undefined),
@@ -32,6 +35,12 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
     mocks.clients.push(client);
     return client;
   }),
+  StreamableHTTPClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => {
+    const transport = { url, options, close: vi.fn(async () => undefined) };
+    mocks.httpTransports.push(transport);
+    return transport;
+  }),
+  SSEClientTransport: vi.fn(),
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", async (importOriginal) => ({
@@ -45,7 +54,7 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", async (importOrigi
 
 vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({ SSEClientTransport: vi.fn() }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn(),
 }));
 
@@ -59,10 +68,6 @@ describe("McpServerManager.reconnect", () => {
     mocks.httpTransports.length = 0;
   });
 
-  // For an HTTP server, connect() creates a probe client+transport and then
-  // a real one; the real client (used as connection.client) is always
-  // mocks.clients[0] for a given connect() call because createClient() runs
-  // before the probe is created inside createHttpTransport().
   const def = { url: "https://example.test/mcp" };
 
   it("is single-flight: concurrent reconnects for the same server share one underlying reconnect", async () => {
@@ -79,9 +84,8 @@ describe("McpServerManager.reconnect", () => {
     ]);
 
     expect(c1).toBe(c2);
-    // Exactly one new connection was established (probe client + real
-    // client == 2), not two (which would be 4).
-    expect(mocks.clients.length).toBe(2);
+    // Automatic negotiation and the live connection share one client.
+    expect(mocks.clients.length).toBe(1);
     expect(manager.getConnection("remote")).toBe(c1);
   });
 

@@ -71,11 +71,24 @@ export function saveMetadataCache(cache: MetadataCache): void {
   }
 
   merged.version = CACHE_VERSION;
-  merged.servers = { ...merged.servers, ...cache.servers };
+  for (const [serverName, entry] of Object.entries(cache.servers)) {
+    if (shouldPersistServerEntry(entry)) {
+      merged.servers[serverName] = entry;
+    } else {
+      delete merged.servers[serverName];
+    }
+  }
 
   const tmpPath = `${cachePath}.${process.pid}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
   renameSync(tmpPath, cachePath);
+}
+
+function shouldPersistServerEntry(entry: ServerCacheEntry): boolean {
+  if (entry.protocolEra !== "modern") return true;
+  return entry.cacheScope === "public"
+    && Number.isFinite(entry.expiresAt)
+    && entry.expiresAt! > Date.now();
 }
 
 export function computeServerHash(definition: ServerEntry): string {
@@ -86,6 +99,7 @@ export function computeServerHash(definition: ServerEntry): string {
     command: definition.command,
     args: definition.args,
     socket: resolveConfigPath(definition.socket),
+    protocolMode: definition.protocolMode,
     env: interpolateEnvRecord(definition.env),
     cwd: resolveConfigPath(definition.cwd),
     url: resolveServerUrl(definition),
@@ -113,6 +127,10 @@ export function isServerCacheValid(
     return false;
   }
   if (!entry || entry.configHash !== configHash) return false;
+  if (entry.protocolEra === "modern") {
+    if (entry.cacheScope !== "public") return false;
+    if (!Number.isFinite(entry.expiresAt) || entry.expiresAt! <= Date.now()) return false;
+  }
   if (!entry.cachedAt || typeof entry.cachedAt !== "number") return false;
   if (maxAgeMs > 0 && Date.now() - entry.cachedAt > maxAgeMs) return false;
   return true;

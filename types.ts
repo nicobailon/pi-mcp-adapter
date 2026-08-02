@@ -1,6 +1,5 @@
 // types.ts - Core type definitions
-import type { Transport as McpTransport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { ContentBlock as McpContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { ContentBlock as McpContentBlock, Transport as McpTransport } from "@modelcontextprotocol/client";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import type { UiStreamMode } from "./ui-stream-types.ts";
 import type { UiToolVisibility } from "./ui-tool-visibility.ts";
@@ -343,6 +342,8 @@ export interface OAuthConfig {
 }
 
 // Server configuration
+export type ProtocolMode = "auto" | "legacy" | "2026-07-28";
+
 export interface ServerEntry {
   command?: string;
   args?: string[];
@@ -372,6 +373,8 @@ export interface ServerEntry {
   lifecycle?: "keep-alive" | "lazy" | "lazy-keep-alive" | "eager";
   idleTimeout?: number; // minutes, overrides global setting
   requestTimeoutMs?: number; // milliseconds, overrides global request timeout when > 0
+  /** Protocol negotiation policy. Defaults to auto except for Unix sockets. */
+  protocolMode?: ProtocolMode;
   // Resource handling
   exposeResources?: boolean;
   // Direct tool registration
@@ -559,6 +562,9 @@ export interface CachedPrompt {
 
 export interface ServerCacheEntry {
   configHash: string;
+  protocolEra?: "legacy" | "modern";
+  cacheScope?: "public" | "private";
+  expiresAt?: number;
   tools: CachedTool[];
   resources: CachedResource[];
   prompts?: CachedPrompt[];

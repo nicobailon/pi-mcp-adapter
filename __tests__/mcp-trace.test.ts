@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Transport } from "@modelcontextprotocol/client";
 import {
   createMcpTraceEvent,
   isMcpTraceEnabled,
@@ -127,9 +127,10 @@ describe("MCP protocol tracing", () => {
   });
 
   it("does not let a throwing observer break transport callbacks", async () => {
-    const underlying = fakeTransport();
+    const underlying = fakeTransport({ hasPerRequestStream: true });
     const observer = { record: () => { throw new Error("trace failure"); } };
     const wrapped = wrapTransportWithMcpTrace(underlying, "demo", "stdio", observer);
+    expect(wrapped.hasPerRequestStream).toBe(true);
     const incoming = vi.fn();
     wrapped.onmessage = incoming;
     underlying.onmessage?.({ jsonrpc: "2.0", method: "notifications/ping", params: {} });

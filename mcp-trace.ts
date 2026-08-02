@@ -1,8 +1,7 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/sdk/types.js";
+import type { JSONRPCMessage, MessageExtraInfo, Transport } from "@modelcontextprotocol/client";
 
 export const MCP_TRACE_SCHEMA_VERSION = 1;
 export const DEFAULT_MCP_TRACE_MAX_BYTES = 256 * 1024;
@@ -237,7 +236,8 @@ export function wrapTransportWithMcpTrace<T extends Transport>(
   transportKind: McpTraceTransport,
   observer: McpTraceObserver,
 ): T {
-  let messageHandler: Transport["onmessage"];
+  let messageHandler = transport.onmessage;
+  const originalSend = transport.send.bind(transport);
   const record = (event: McpTraceEvent): void => {
     try {
       observer.record(event);
@@ -245,60 +245,43 @@ export function wrapTransportWithMcpTrace<T extends Transport>(
       // An observer failure must never alter SDK transport behavior.
     }
   };
-  const traced: Transport = {
-    start: () => transport.start(),
-    send: async (message, options) => {
-      const started = performance.now();
-      const messages = Array.isArray(message) ? message : [message];
-      try {
-        await transport.send(message, options);
-        for (const item of messages) {
-          record(createMcpTraceEvent("outbound", server, transportKind, item, "sent", {
-            durationMs: performance.now() - started,
-          }));
-        }
-      } catch (error) {
-        for (const item of messages) {
-          record(createMcpTraceEvent("outbound", server, transportKind, item, "error", {
-            durationMs: performance.now() - started,
-          }));
-        }
-        throw error;
+
+  transport.send = async (message, options) => {
+    const started = performance.now();
+    const messages = Array.isArray(message) ? message : [message];
+    try {
+      await originalSend(message, options);
+      for (const item of messages) {
+        record(createMcpTraceEvent("outbound", server, transportKind, item, "sent", {
+          durationMs: performance.now() - started,
+        }));
       }
-    },
-    close: () => transport.close(),
-    get onclose() {
-      return transport.onclose;
-    },
-    set onclose(handler) {
-      transport.onclose = handler;
-    },
-    get onerror() {
-      return transport.onerror;
-    },
-    set onerror(handler) {
-      transport.onerror = handler;
-    },
-    get onmessage() {
-      return messageHandler;
-    },
-    set onmessage(handler) {
-      messageHandler = handler;
-      transport.onmessage = handler
-        ? ((message: JSONRPCMessage, extra?: MessageExtraInfo) => {
-            record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
-            handler(message, extra);
-          }) as Transport["onmessage"]
-        : undefined;
-    },
-    get sessionId() {
-      return transport.sessionId;
-    },
-    setProtocolVersion: transport.setProtocolVersion
-      ? version => transport.setProtocolVersion!(version)
-      : undefined,
+    } catch (error) {
+      for (const item of messages) {
+        record(createMcpTraceEvent("outbound", server, transportKind, item, "error", {
+          durationMs: performance.now() - started,
+        }));
+      }
+      throw error;
+    }
   };
-  return traced as T;
+
+  const tracedMessageHandler = ((message: JSONRPCMessage, extra?: MessageExtraInfo) => {
+    record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
+    messageHandler?.(message, extra);
+  }) as Transport["onmessage"];
+  Object.defineProperty(transport, "onmessage", {
+    configurable: true,
+    enumerable: true,
+    get: () => messageHandler ? tracedMessageHandler : undefined,
+    set: (handler: Transport["onmessage"]) => {
+      if (handler !== tracedMessageHandler) messageHandler = handler;
+    },
+  });
+
+  // Preserve the concrete transport instance. SDK v2 uses stdio transport
+  // identity to probe legacy servers in a disposable sibling process.
+  return transport;
 }
 
 export function traceTransportKind(definition: { command?: string; url?: string; socket?: string }, transport: Transport): McpTraceTransport {

@@ -7,12 +7,21 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")) as {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  engines?: Record<string, string>;
   files?: string[];
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   exports?: Record<string, unknown>;
   types?: string;
 };
+
+const visualizerPackageJson = JSON.parse(
+  readFileSync(join(repoRoot, "examples/interactive-visualizer/package.json"), "utf-8"),
+) as { dependencies?: Record<string, string> };
+const visualizerServerSource = readFileSync(
+  join(repoRoot, "examples/interactive-visualizer/src/server.ts"),
+  "utf-8",
+);
 
 const hostPeerPackages = {
   "@earendil-works/pi-ai": "0.74.2",
@@ -50,6 +59,10 @@ describe("package.json files", () => {
 });
 
 describe("package.json dependency policy", () => {
+  it("requires the Node runtime supported by the Pi host", () => {
+    expect(packageJson.engines?.node).toBe(">=22.19.0");
+  });
+
   it("treats Pi host packages as optional wildcard peers with exact dev pins", () => {
     const entries = Object.entries(hostPeerPackages);
 
@@ -61,10 +74,25 @@ describe("package.json dependency policy", () => {
     }
   });
 
-  it("uses the SDK v1 dependency without the SDK v2 beta packages", () => {
+  it("builds the interactive visualizer server with stable SDK v2", () => {
+    expect(visualizerPackageJson.dependencies?.["@modelcontextprotocol/server"]).toBe("2.0.0");
+    expect(visualizerPackageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBeUndefined();
+    expect(visualizerServerSource).toContain("@modelcontextprotocol/server");
+    expect(visualizerServerSource).not.toContain("@modelcontextprotocol/sdk");
+  });
+
+  it("uses stable SDK v2 while retaining v1 only for ext-apps compatibility", () => {
+    expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBe("2.0.0");
+    expect(packageJson.dependencies?.["@modelcontextprotocol/core"]).toBe("2.0.0");
+    expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBe("2.0.0");
     expect(packageJson.dependencies?.["@modelcontextprotocol/ext-apps"]).toBeDefined();
     expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBe("^1.30.0");
-    expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBeUndefined();
-    expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
+  });
+
+  const runtimeModules = readdirSync(repoRoot)
+    .filter(entry => entry.endsWith(".ts") && !entry.endsWith(".test.ts"));
+
+  it.each(runtimeModules)("keeps v1 SDK imports out of runtime module %s", entry => {
+    expect(readFileSync(join(repoRoot, entry), "utf8")).not.toContain("@modelcontextprotocol/sdk");
   });
 });
