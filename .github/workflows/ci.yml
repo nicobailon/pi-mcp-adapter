@@ -25,7 +25,8 @@ jobs:
         run: |
           npm install --prefix examples/interactive-visualizer --no-package-lock --no-audit --no-fund
           npm run --prefix examples/interactive-visualizer build
-      - run: npx tsc --noEmit
+      - name: Typecheck
+        run: npm run typecheck
       - run: npm test
       - run: npm run test:oauth
       - run: npm run test:conformance

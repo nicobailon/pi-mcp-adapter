@@ -69,7 +69,7 @@ class Logger {
       level,
       message,
       context: { ...this.defaultContext, ...context },
-      error,
+      ...(error !== undefined ? { error } : {}),
       timestamp: new Date(),
     };
 

@@ -5,7 +5,7 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 
 /** MCP JSONL transport for an explicitly configured Unix-domain socket. */
 export class UnixSocketClientTransport implements Transport {
-  private socket?: Socket;
+  private socket: Socket | undefined;
   private readonly readBuffer = new ReadBuffer();
 
   onclose?: () => void;

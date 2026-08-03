@@ -124,7 +124,7 @@ export async function initializeMcp(
   if (config.settings?.sampling !== false && (hasUI || samplingAutoApprove)) {
     manager.setSamplingConfig({
       autoApprove: samplingAutoApprove,
-      ui,
+      ...(ui !== undefined ? { ui } : {}),
       modelRegistry,
       getCurrentModel: () => owner.isActive() ? ctx.model : undefined,
       getSignal: () => owner.isActive()
@@ -175,12 +175,12 @@ export async function initializeMcp(
       await openUrl(pi, url, process.env.BROWSER, owner.signal);
       owner.throwIfInactive();
     },
-    ui,
+    ...(ui !== undefined ? { ui } : {}),
     sendMessage: (message, options) => {
       if (!owner.isActive()) return;
       pi.sendMessage(message as unknown as Parameters<typeof pi.sendMessage>[0], options);
     },
-    statusEvents: options.statusEvents,
+    ...(options.statusEvents !== undefined ? { statusEvents: options.statusEvents } : {}),
   };
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
   manager.setMetadataListChangedListener?.((serverName, reason) => {
@@ -345,8 +345,9 @@ export async function initializeMcp(
         missingCacheServers.filter(name => !results.some(r => r.name === name && r.connection)),
         10,
         async (name) => {
-          const definition = config.mcpServers[name];
           try {
+            const definition = config.mcpServers[name];
+            if (!definition) throw new Error(`MCP server "${name}" is not configured`);
             const connection = await manager.connect(name, definition, runtimeSignal);
             if (connection.status === "needs-auth") {
               return { name, ok: false };
@@ -412,8 +413,8 @@ export async function initializeMcp(
 
 export function markKeepAliveAfterConnect(state: McpExtensionState, serverName: string): void {
   const definition = state.config.mcpServers[serverName];
-  if (isServerDisabled(definition)) return;
-  if ((definition?.lifecycle ?? "lazy") === "lazy-keep-alive") {
+  if (!definition || isServerDisabled(definition)) return;
+  if ((definition.lifecycle ?? "lazy") === "lazy-keep-alive") {
     state.lifecycle.markKeepAlive(serverName, definition);
   }
 }
@@ -485,7 +486,7 @@ export function updateMetadataCache(
     tools,
     resources,
     ...(prompts !== undefined ? { prompts } : {}),
-    instructions: connection.instructions,
+    ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
     cachedAt: Date.now(),
   };
 

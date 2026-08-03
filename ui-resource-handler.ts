@@ -4,7 +4,7 @@ import { ResourceFetchError, ResourceParseError } from "./errors.ts";
 import { logger } from "./logger.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import type { McpServerManager } from "./server-manager.ts";
-import { isServerDisabled, type McpConfig, type UiResourceContent, type UiResourceCsp, type UiResourceMeta } from "./types.ts";
+import { isServerDisabled, type McpConfig, type UiResourceContent, type UiResourceCsp, type UiResourceMeta, type UiResourcePermissions } from "./types.ts";
 
 interface ResourceContentRecord {
   uri?: string;
@@ -23,7 +23,7 @@ interface ReadUiResourceOptions {
 export class UiResourceHandler {
   private log = logger.child({ component: "UiResourceHandler" });
 
-  constructor(private manager: McpServerManager, private config?: McpConfig) {}
+  constructor(private manager: McpServerManager, private config: McpConfig | undefined = undefined) {}
 
   async readUiResource(serverName: string, uri: string, options: ReadUiResourceOptions = {}): Promise<UiResourceContent> {
     const log = this.log.child({ server: serverName, uri });
@@ -45,7 +45,12 @@ export class UiResourceHandler {
         this.manager.incrementInFlight(serverName);
         try {
           result = await withSessionRecovery(
-            { manager: this.manager, config, signal: options.signal, onNeedsAuth: options.onNeedsAuth },
+            {
+              manager: this.manager,
+              config,
+              ...(options.signal ? { signal: options.signal } : {}),
+              ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
+            },
             serverName,
             (connection) => connection.client.readResource({ uri }, this.manager.getRequestOptions(serverName, options.signal)),
           );
@@ -62,7 +67,7 @@ export class UiResourceHandler {
       log.error("Failed to read resource", error instanceof Error ? error : undefined);
       throw new ResourceFetchError(uri, message, {
         server: serverName,
-        cause: error instanceof Error ? error : undefined,
+        ...(error instanceof Error ? { cause: error } : {}),
       });
     }
 
@@ -97,10 +102,14 @@ export class UiResourceHandler {
       html,
       mimeType: mimeType ?? RESOURCE_MIME_TYPE,
       meta: {
-        csp: contentMeta.csp ?? listMeta.csp,
-        permissions: contentMeta.permissions ?? listMeta.permissions,
-        domain: contentMeta.domain ?? listMeta.domain,
-        prefersBorder: contentMeta.prefersBorder ?? listMeta.prefersBorder,
+        ...((contentMeta.csp ?? listMeta.csp) !== undefined ? { csp: contentMeta.csp ?? listMeta.csp } : {}),
+        ...((contentMeta.permissions ?? listMeta.permissions) !== undefined
+          ? { permissions: contentMeta.permissions ?? listMeta.permissions }
+          : {}),
+        ...((contentMeta.domain ?? listMeta.domain) !== undefined ? { domain: contentMeta.domain ?? listMeta.domain } : {}),
+        ...((contentMeta.prefersBorder ?? listMeta.prefersBorder) !== undefined
+          ? { prefersBorder: contentMeta.prefersBorder ?? listMeta.prefersBorder }
+          : {}),
       },
     };
   }
@@ -128,7 +137,11 @@ function selectContent(result: ReadResourceResult, preferredUri: string): Resour
   );
   if (byHtmlMime) return byHtmlMime;
 
-  return contents[0];
+  const firstContent = contents[0];
+  if (!firstContent) {
+    throw new Error(`No contents returned for UI resource: ${preferredUri}`);
+  }
+  return firstContent;
 }
 
 function isHtmlMimeType(mimeType: string): boolean {
@@ -192,7 +205,7 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
   }
 
   if (ui && isRecord(ui.permissions)) {
-    out.permissions = ui.permissions as UiResourceMeta["permissions"];
+    out.permissions = ui.permissions as UiResourcePermissions;
   }
   if (ui && typeof ui.domain === "string") {
     out.domain = ui.domain;

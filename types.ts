@@ -1,6 +1,11 @@
 // types.ts - Core type definitions
 import type { Transport as McpTransport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { ContentBlock as McpContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  ContentBlock as McpContentBlock,
+  ListPromptsResult,
+  ListResourcesResult,
+  ListToolsResult,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import type { UiStreamMode } from "./ui-stream-types.ts";
 import type { UiToolVisibility } from "./ui-tool-visibility.ts";
@@ -48,36 +53,41 @@ export type ImportKind =
   | "windsurf" 
   | "vscode";
 
-// Tool definition from MCP server
+type SdkTool = ListToolsResult["tools"][number];
+type SdkResource = ListResourcesResult["resources"][number];
+type SdkPrompt = ListPromptsResult["prompts"][number];
+type SdkPromptArgument = NonNullable<SdkPrompt["arguments"]>[number];
+
+// MCP wire definitions derive their field types from the installed SDK while
+// retaining the adapter's deliberately smaller public surface.
 export interface McpTool {
-  name: string;
-  title?: string;
-  description?: string;
-  inputSchema?: unknown; // JSON Schema
-  _meta?: Record<string, unknown>;
+  name: SdkTool["name"];
+  title?: SdkTool["title"];
+  description?: SdkTool["description"];
+  inputSchema?: SdkTool["inputSchema"]; // JSON Schema
+  _meta?: SdkTool["_meta"];
 }
 
-// Resource definition from MCP server
 export interface McpResource {
-  uri: string;
-  name: string;
-  description?: string;
-  mimeType?: string;
-  _meta?: Record<string, unknown>;
+  uri: SdkResource["uri"];
+  name: SdkResource["name"];
+  description?: SdkResource["description"];
+  mimeType?: SdkResource["mimeType"];
+  _meta?: SdkResource["_meta"];
 }
 
 export interface McpPromptArgument {
-  name: string;
-  description?: string;
-  required?: boolean;
+  name: SdkPromptArgument["name"];
+  description?: SdkPromptArgument["description"];
+  required?: SdkPromptArgument["required"];
 }
 
 export interface McpPrompt {
-  name: string;
-  title?: string;
-  description?: string;
-  arguments?: McpPromptArgument[];
-  _meta?: Record<string, unknown>;
+  name: SdkPrompt["name"];
+  title?: SdkPrompt["title"];
+  description?: SdkPrompt["description"];
+  arguments?: SdkPrompt["arguments"];
+  _meta?: SdkPrompt["_meta"];
 }
 
 export interface UiResourceMeta {

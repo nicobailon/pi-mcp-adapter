@@ -107,7 +107,7 @@ export async function guardMcpOutput(
   if (options.enabled === false) {
     return {
       content: addAffixes(normalizedContent, prefix, suffix),
-      mcpResult: options.rawMcpResult,
+      ...(options.rawMcpResult !== undefined ? { mcpResult: options.rawMcpResult } : {}),
     };
   }
 
@@ -138,8 +138,8 @@ export async function guardMcpOutput(
       originalLines: stats.lines,
       returnedLines: finalStats.lines,
       ...(imageBlocks.length > 0 ? { imageBlocksPassedThrough: imageBlocks.length } : {}),
-      fullOutputPath,
-      writeError,
+      ...(fullOutputPath !== undefined ? { fullOutputPath } : {}),
+      ...(writeError !== undefined ? { writeError } : {}),
     };
   }
 
@@ -147,7 +147,11 @@ export async function guardMcpOutput(
     ? undefined
     : await boundMcpResult(options.rawMcpResult, detailsMaxBytes);
 
-  return { content: guardedContent, outputGuard, mcpResult };
+  return {
+    content: guardedContent,
+    ...(outputGuard ? { outputGuard } : {}),
+    ...(mcpResult !== undefined ? { mcpResult } : {}),
+  };
 }
 
 function sanitizeContent(content: ContentBlock[]): ContentBlock[] {
@@ -177,7 +181,7 @@ function addAffixes(content: ContentBlock[], prefix: string, suffix: string): Co
   if (prefix) {
     const index = next.findIndex((block) => block.type === "text");
     const block = next[index];
-    if (index >= 0 && block.type === "text") {
+    if (block?.type === "text") {
       next[index] = { ...block, text: `${prefix}${block.text}` };
     } else {
       next.unshift({ type: "text", text: prefix });
@@ -187,13 +191,13 @@ function addAffixes(content: ContentBlock[], prefix: string, suffix: string): Co
   if (suffix) {
     let index = -1;
     for (let i = next.length - 1; i >= 0; i--) {
-      if (next[i].type === "text") {
+      if (next[i]?.type === "text") {
         index = i;
         break;
       }
     }
     const block = next[index];
-    if (index >= 0 && block.type === "text") {
+    if (block?.type === "text") {
       next[index] = { ...block, text: `${block.text}${suffix}` };
     } else {
       next.push({ type: "text", text: suffix });
@@ -239,8 +243,8 @@ function truncateHead(text: string, maxBytes: number, maxLines: number): { conte
 function truncateStringToBytes(value: string, maxBytes: number): string {
   if (byteLength(value) <= maxBytes) return value;
   const buffer = Buffer.from(value, "utf8");
-  let end = Math.max(0, maxBytes);
-  while (end > 0 && (buffer[end] & 0xc0) === 0x80) end--;
+  let end = Number.isFinite(maxBytes) ? Math.max(0, Math.floor(maxBytes)) : 0;
+  while (end > 0 && (buffer.readUInt8(end) & 0xc0) === 0x80) end--;
   return buffer.subarray(0, end).toString("utf8");
 }
 
@@ -280,8 +284,8 @@ async function summarizeMcpResult(result: unknown, raw: string, rawBytes: number
     contentBlocks: content.length,
     contentSummary: summarizeContent(content),
     rawResultBytes: rawBytes,
-    fullResultPath,
-    resultWriteError,
+    ...(fullResultPath !== undefined ? { fullResultPath } : {}),
+    ...(resultWriteError !== undefined ? { resultWriteError } : {}),
   };
 
   if (record && "structuredContent" in record) {

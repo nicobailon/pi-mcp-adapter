@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added a strict TypeScript typecheck command and CI gate.
+
 ## [2.19.0] - 2026-08-03
 
 ### Added

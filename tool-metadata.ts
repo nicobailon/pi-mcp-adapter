@@ -44,14 +44,15 @@ export function buildToolMetadata(
     } catch {
       failedTools.push(tool.name);
     }
+    const uiStreamMode = extractToolUiStreamMode(tool._meta);
     metadata.push({
       name,
       originalName: tool.name,
       description: tool.description ?? "",
-      inputSchema: tool.inputSchema,
-      uiResourceUri,
-      uiVisibility,
-      uiStreamMode: extractToolUiStreamMode(tool._meta),
+      ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+      ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
+      ...(uiVisibility !== undefined ? { uiVisibility } : {}),
+      ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
     });
   }
 

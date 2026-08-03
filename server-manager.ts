@@ -70,6 +70,12 @@ function isUnauthorizedHttpError(error: unknown): boolean {
   return error instanceof UnauthorizedError || (error instanceof StreamableHTTPError && error.code === 401);
 }
 
+function asSdkTransport(transport: StreamableHTTPClientTransport): Transport {
+  // SDK 1.30 declares its class field as `sessionId?: string` in a way that is
+  // structurally incompatible with its own Transport interface under exact optional types.
+  return transport as Transport;
+}
+
 function boundedStderrChunk(chunk: Buffer | string): Buffer {
   if (Buffer.isBuffer(chunk)) {
     const start = Math.max(0, chunk.byteLength - MAX_CAPTURED_STDERR_BYTES);
@@ -339,11 +345,12 @@ export class McpServerManager {
       }
       throwIfAborted(signal);
 
+      const cwd = resolveConfigPath(definition.cwd) ?? this.defaultCwd;
       const stdioTransport = new StdioClientTransport({
         command,
         args,
         env: resolveEnv(definition.env, name),
-        cwd: resolveConfigPath(definition.cwd) ?? this.defaultCwd,
+        ...(cwd !== undefined ? { cwd } : {}),
         stderr: definition.debug ? "inherit" : "pipe",
       });
       // Keep non-debug child diagnostics available for connection failures without
@@ -373,6 +380,7 @@ export class McpServerManager {
       await this.connectClientWithAbort(client, transport, requestOptions, signal);
       this.attachAdapterNotificationHandlers(name, client);
 
+      const instructions = client.getInstructions?.();
       const connection: ServerConnection = {
         client,
         transport,
@@ -380,7 +388,7 @@ export class McpServerManager {
         tools: [],
         resources: [],
         prompts: [],
-        instructions: client.getInstructions?.(),
+        ...(instructions !== undefined ? { instructions } : {}),
         lastUsedAt: Date.now(),
         inFlight: 0,
         status: "connected",
@@ -708,10 +716,10 @@ export class McpServerManager {
     // creating the provider until the server proves that authentication is needed.
     for (;;) {
       const authProvider = "provider" in authState ? authState.provider : undefined;
-      const streamableTransport = new StreamableHTTPClientTransport(url, {
-        requestInit,
-        authProvider,
-      });
+      const streamableTransport = asSdkTransport(new StreamableHTTPClientTransport(url, {
+        ...(requestInit !== undefined ? { requestInit } : {}),
+        ...(authProvider !== undefined ? { authProvider } : {}),
+      }));
       const probeTransport = traceObserver
         ? wrapTransportWithMcpTrace(streamableTransport, serverName, "streamable-http", traceObserver)
         : streamableTransport;
@@ -732,7 +740,10 @@ export class McpServerManager {
         }
 
         // StreamableHTTP works - create fresh transport for actual use
-        return new StreamableHTTPClientTransport(url, { requestInit, authProvider });
+        return asSdkTransport(new StreamableHTTPClientTransport(url, {
+          ...(requestInit !== undefined ? { requestInit } : {}),
+          ...(authProvider !== undefined ? { authProvider } : {}),
+        }));
       } catch (error) {
         if (error instanceof AggregateError && (
           error.message === "MCP connection abort cleanup failed" ||
@@ -772,7 +783,10 @@ export class McpServerManager {
         }
 
         // SSE is the legacy transport
-        return new SSEClientTransport(url, { requestInit, authProvider });
+        return new SSEClientTransport(url, {
+          ...(requestInit !== undefined ? { requestInit } : {}),
+          ...(authProvider !== undefined ? { authProvider } : {}),
+        });
       }
     }
   }

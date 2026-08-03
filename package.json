@@ -25,6 +25,7 @@
     "pi-mcp-adapter": "cli.js"
   },
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -157,11 +158,12 @@
     "@earendil-works/pi-tui": "0.74.2",
     "@modelcontextprotocol/conformance": "0.1.16",
     "@types/bun": "^1.0.0",
-    "@types/node": "^20.0.0",
+    "@types/cross-spawn": "6.0.6",
+    "@types/node": "20.19.43",
     "@types/open": "^6.2.1",
     "tsx": "^4.21.0",
     "typebox": "1.3.3",
-    "typescript": "^5.0.0",
+    "typescript": "5.9.3",
     "vitest": "^3.0.0"
   }
 }

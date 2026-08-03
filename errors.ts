@@ -17,8 +17,8 @@ export interface McpUiErrorContext {
 export class McpUiError extends Error {
   readonly code: string;
   readonly context: McpUiErrorContext;
-  readonly recoveryHint?: string;
-  readonly cause?: Error;
+  readonly recoveryHint: string | undefined;
+  readonly cause: Error | undefined;
 
   constructor(
     message: string,
@@ -65,9 +65,9 @@ export class ResourceFetchError extends McpUiError {
   ) {
     super(`Failed to fetch UI resource "${uri}": ${reason}`, {
       code: "RESOURCE_FETCH_ERROR",
-      context: { uri, server: options?.server },
+      context: { uri, ...(options?.server !== undefined ? { server: options.server } : {}) },
       recoveryHint: "Check that the MCP server is connected and the resource URI is valid.",
-      cause: options?.cause,
+      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
     });
     this.name = "ResourceFetchError";
   }
@@ -84,7 +84,11 @@ export class ResourceParseError extends McpUiError {
   ) {
     super(`Invalid UI resource "${uri}": ${reason}`, {
       code: "RESOURCE_PARSE_ERROR",
-      context: { uri, server: options?.server, mimeType: options?.mimeType },
+      context: {
+        uri,
+        ...(options?.server !== undefined ? { server: options.server } : {}),
+        ...(options?.mimeType !== undefined ? { mimeType: options.mimeType } : {}),
+      },
       recoveryHint: "Ensure the resource returns valid HTML with the correct MIME type.",
     });
     this.name = "ResourceParseError";
@@ -98,9 +102,9 @@ export class BridgeConnectionError extends McpUiError {
   constructor(reason: string, options?: { session?: string; cause?: Error }) {
     super(`AppBridge connection failed: ${reason}`, {
       code: "BRIDGE_CONNECTION_ERROR",
-      context: { session: options?.session },
+      context: options?.session !== undefined ? { session: options.session } : {},
       recoveryHint: "Check browser console for detailed errors. The iframe may have failed to load.",
-      cause: options?.cause,
+      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
     });
     this.name = "BridgeConnectionError";
   }
@@ -142,9 +146,9 @@ export class SessionError extends McpUiError {
   ) {
     super(`Session error: ${reason}`, {
       code: "SESSION_ERROR",
-      context: { session: options?.session },
+      context: options?.session !== undefined ? { session: options.session } : {},
       recoveryHint: "The session may have expired or been closed. Try opening the UI again.",
-      cause: options?.cause,
+      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
     });
     this.name = "SessionError";
   }
@@ -160,9 +164,9 @@ export class ServerError extends McpUiError {
   ) {
     super(`UI server error: ${reason}`, {
       code: "SERVER_ERROR",
-      context: { port: options?.port },
+      context: options?.port !== undefined ? { port: options.port } : {},
       recoveryHint: "Check if the port is available. Another process may be using it.",
-      cause: options?.cause,
+      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
     });
     this.name = "ServerError";
   }
@@ -179,9 +183,9 @@ export class McpServerError extends McpUiError {
   ) {
     super(`MCP server "${server}" error: ${reason}`, {
       code: "MCP_SERVER_ERROR",
-      context: { server, tool: options?.tool },
+      context: { server, ...(options?.tool !== undefined ? { tool: options.tool } : {}) },
       recoveryHint: "Check that the MCP server is running and responsive.",
-      cause: options?.cause,
+      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
     });
     this.name = "McpServerError";
   }
@@ -196,8 +200,8 @@ export function wrapError(error: unknown, context?: McpUiErrorContext): McpUiErr
     return new McpUiError(error.message, {
       code: error.code,
       context: { ...error.context, ...context },
-      recoveryHint: error.recoveryHint,
-      cause: error.cause,
+      ...(error.recoveryHint !== undefined ? { recoveryHint: error.recoveryHint } : {}),
+      ...(error.cause !== undefined ? { cause: error.cause } : {}),
     });
   }
 
@@ -206,8 +210,8 @@ export function wrapError(error: unknown, context?: McpUiErrorContext): McpUiErr
 
   return new McpUiError(message, {
     code: "UNKNOWN_ERROR",
-    context,
-    cause,
+    ...(context !== undefined ? { context } : {}),
+    ...(cause !== undefined ? { cause } : {}),
   });
 }
 

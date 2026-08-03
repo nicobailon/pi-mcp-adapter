@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpAdapterOptions, McpConfig, PromptMetadata } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
@@ -259,7 +259,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function startInitialization(ctx: ExtensionContext, owner: McpRuntimeOwner, oauthRuntime: McpOAuthRuntime, generation: number, staleReason: string): Promise<void> {
     const promise = initializeMcp(pi, ctx, owner, {
       ...(programmaticConfig || options.configPath !== undefined
-        ? { configPath: earlyConfigPath, config: sessionConfig }
+        ? {
+            ...(earlyConfigPath !== undefined ? { configPath: earlyConfigPath } : {}),
+            ...(sessionConfig !== undefined ? { config: sessionConfig } : {}),
+          }
         : {}),
       oauthRuntime,
       statusEvents: pi.events,
@@ -427,7 +430,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
 
       const [, subcommand, argumentPrefix] = argumentMatch;
-      if ((subcommand !== "reconnect" && subcommand !== "logout" && subcommand !== "disable" && subcommand !== "enable") || !state) return null;
+      if (
+        (subcommand !== "reconnect" && subcommand !== "logout" && subcommand !== "disable" && subcommand !== "enable")
+        || argumentPrefix === undefined
+        || !state
+      ) return null;
 
       const servers = Object.keys(state.config.mcpServers)
         .filter((serverName) => serverName.startsWith(argumentPrefix.trimStart()))
@@ -619,7 +626,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         timeoutMs: Type.Optional({ type: "number", minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" } as any),
       }),
       renderResult: renderMcpToolResult,
-      async execute(_toolCallId, params: { code: string; timeoutMs?: number }, signal) {
+      async execute(_toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined) {
         const executeOwner = currentOwner;
         if (!state && initPromise) {
           try {
@@ -682,7 +689,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages', 'auth-start', or 'auth-complete'" })),
       }),
       renderResult: renderMcpToolResult,
-      async execute(_toolCallId, params: {
+      async execute(_toolCallId: string, params: {
         tool?: string;
         args?: string | Record<string, unknown>;
         connect?: string;
@@ -695,7 +702,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         offset?: number;
         server?: string;
         action?: string;
-      }, signal, _onUpdate, _ctx) {
+      }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, _ctx: ExtensionContext) {
         const executeOwner = currentOwner;
         let parsedArgs: Record<string, unknown> | undefined;
         if (params.args !== undefined && params.args !== "") {
@@ -849,8 +856,8 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
   const factoryConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
   return function mcpAdapter(pi: ExtensionAPI) {
     installMcpAdapter(pi, {
-      configPath: options.configPath,
-      config: factoryConfig !== undefined ? cloneMcpConfig(factoryConfig) : undefined,
+      ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
+      ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
     });
   };
 }

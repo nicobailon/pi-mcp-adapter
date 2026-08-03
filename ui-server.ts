@@ -164,7 +164,8 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       streamSummary.phases.push(envelope.phase);
     }
     streamSummary.finalStatus = envelope.status;
-    streamSummary.lastMessage = envelope.message;
+    if (envelope.message !== undefined) streamSummary.lastMessage = envelope.message;
+    else delete streamSummary.lastMessage;
   };
 
   const serializeEvent = (eventId: number, name: string, payload: unknown): string => {
@@ -174,6 +175,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   const getLatestCheckpointIndex = () => {
     for (let index = eventLog.length - 1; index >= 0; index -= 1) {
       const entry = eventLog[index];
+      if (!entry) continue;
       const envelope = getVisualizationStreamEnvelope((entry.payload as { structuredContent?: unknown } | null)?.structuredContent);
       if (envelope?.frameType === "checkpoint" || envelope?.frameType === "final") {
         return index;
@@ -411,8 +413,8 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           name: callParams.name,
           originalName: callParams.name,
           description: toolDefinition?.description ?? "",
-          inputSchema: toolDefinition?.inputSchema,
-          uiVisibility,
+          ...(toolDefinition?.inputSchema !== undefined ? { inputSchema: toolDefinition.inputSchema } : {}),
+          ...(uiVisibility !== undefined ? { uiVisibility } : {}),
         };
         const approval = options.state
           ? await ensureToolCallApproved(
@@ -449,7 +451,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           options.manager.incrementInFlight(options.serverName);
           const result = options.config
             ? await withSessionRecovery(
-                { manager: options.manager, config: options.config, onNeedsAuth: options.onNeedsAuth },
+                {
+                  manager: options.manager,
+                  config: options.config,
+                  ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
+                },
                 options.serverName,
                 (conn) => conn.client.callTool(callArgs, undefined, options.manager.getRequestOptions?.(options.serverName)),
               )
@@ -481,9 +487,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         } else if (msgParams.type === "intent" || msgParams.intent) {
           const intentName = msgParams.intent ?? "";
           if (intentName) {
-            sessionMessages.intents.push({ 
-              intent: intentName, 
-              params: msgParams.params 
+            sessionMessages.intents.push({
+              intent: intentName,
+              ...(msgParams.params !== undefined ? { params: msgParams.params } : {}),
             });
             log.debug("UI intent received", { intent: intentName });
           }
@@ -639,7 +645,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         return;
       }
       log.error("Failed to start server", error);
-      reject(new ServerError(error.message, { port: candidates[candidateIndex], cause: error }));
+      const port = candidates[candidateIndex];
+      reject(new ServerError(error.message, {
+        ...(port !== undefined ? { port } : {}),
+        cause: error,
+      }));
     };
 
     const onListening = () => {

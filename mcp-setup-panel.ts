@@ -169,9 +169,9 @@ export class McpSetupPanel {
     return [...new Set(paths)];
   }
 
-  private getSelectedAction(): Action | null {
+  private getSelectedAction(): Action | undefined {
     const actions = this.getActions();
-    return actions[this.actionCursor] ?? null;
+    return actions[this.actionCursor];
   }
 
   handleInput(data: string): void {
@@ -414,6 +414,7 @@ export class McpSetupPanel {
     }
     for (let index = start; index < end; index++) {
       const action = actions[index];
+      if (!action) continue;
       if (action.id === "add-known-server" && (index === start || actions[index - 1]?.id !== "add-known-server")) {
         lines.push(this.padLine(fg(this.t.title, "Add a known server"), innerW));
       }
@@ -442,6 +443,7 @@ export class McpSetupPanel {
     lines.push(this.padLine("", innerW));
     for (let index = 0; index < this.discovery.imports.length; index++) {
       const entry = this.discovery.imports[index];
+      if (!entry) continue;
       const selected = this.selectedImports.has(entry.kind) ? "[x]" : "[ ]";
       const cursor = index === this.importCursor ? fg(this.t.selected, "›") : " ";
       lines.push(this.padLine(`${cursor} ${selected} ${entry.kind}  ${entry.path}`, innerW));
@@ -462,7 +464,8 @@ export class McpSetupPanel {
     const paths = this.getDetectedPaths();
     for (let index = 0; index < paths.length; index++) {
       const cursor = index === this.pathCursor ? fg(this.t.selected, "›") : " ";
-      lines.push(this.padLine(`${cursor} ${paths[index]}`, innerW));
+      const path = paths[index];
+      if (path !== undefined) lines.push(this.padLine(`${cursor} ${path}`, innerW));
     }
     return lines;
   }

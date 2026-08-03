@@ -66,16 +66,16 @@ export async function handleSamplingRequest(
   const result = await complete(
     model,
     {
-      systemPrompt: params.systemPrompt,
+      ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
       messages,
     },
     {
-      apiKey,
-      headers,
+      ...(apiKey !== undefined ? { apiKey } : {}),
+      ...(headers !== undefined ? { headers } : {}),
       maxTokens: params.maxTokens,
-      temperature: params.temperature,
-      metadata: params.metadata as Record<string, unknown> | undefined,
-      signal,
+      ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+      ...(params.metadata !== undefined ? { metadata: params.metadata as Record<string, unknown> } : {}),
+      ...(signal ? { signal } : {}),
     },
   );
 
@@ -160,7 +160,11 @@ async function resolveSamplingModel(
       errors.push(`${model.provider}/${model.id}: ${auth.error}`);
       continue;
     }
-    return { model, apiKey: auth.apiKey, headers: auth.headers };
+    return {
+      model,
+      ...(auth.apiKey !== undefined ? { apiKey: auth.apiKey } : {}),
+      ...(auth.headers !== undefined ? { headers: auth.headers } : {}),
+    };
   }
 
   if (errors.length > 0) {

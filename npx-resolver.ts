@@ -95,6 +95,7 @@ function parseNpxArgs(args: string[]): ParsedInvocation | null {
 
   for (let i = 0; i < before.length; i++) {
     const arg = before[i];
+    if (arg === undefined) return null;
     if (foundFirstPositional) {
       positionals.push(arg);
       continue;
@@ -149,6 +150,7 @@ function parseNpmExecArgs(args: string[]): ParsedInvocation | null {
   let packageSpec: string | undefined;
   for (let i = 0; i < before.length; i++) {
     const arg = before[i];
+    if (arg === undefined) return null;
     if (arg === "-y" || arg === "--yes") continue;
     if (arg === "--package") {
       const value = before[i + 1];
@@ -239,7 +241,7 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
   return {
     resolvedBin,
     resolvedAt: Date.now(),
-    packageVersion: pkg?.version,
+    ...(pkg?.version !== undefined ? { packageVersion: pkg.version } : {}),
     isJs,
   };
 }
@@ -329,9 +331,9 @@ function parsePackageSpec(spec: string): ParsedPackageSpec | null {
   const normalizedVersion = requestedVersion?.replace(/^=/, "").replace(/^v/i, "");
   return {
     packageName,
-    exactVersion: normalizedVersion && EXACT_PACKAGE_VERSION_RE.test(normalizedVersion)
-      ? normalizedVersion
-      : undefined,
+    ...(normalizedVersion && EXACT_PACKAGE_VERSION_RE.test(normalizedVersion)
+      ? { exactVersion: normalizedVersion }
+      : {}),
   };
 }
 

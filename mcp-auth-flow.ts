@@ -239,7 +239,7 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
           clientInfo: { name: "pi-mcp-adapter", version: "2.11.0" },
         },
       }),
-      signal: discoverySignal,
+      ...(discoverySignal ? { signal: discoverySignal } : {}),
     })
     const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response)
     await response.body?.cancel().catch(() => {})
@@ -658,7 +658,11 @@ export async function authenticate(
 
   const operation = (async (): Promise<AuthStatus> => {
     // Start auth flow
-    const { authorizationUrl } = await startAuth(serverName, serverUrl, definition, { ...options, signal, runtime })
+    const { authorizationUrl } = await startAuth(serverName, serverUrl, definition, {
+      ...options,
+      ...(signal ? { signal } : {}),
+      runtime,
+    })
 
     // If no auth URL needed, already authenticated
     if (!authorizationUrl) {
@@ -701,7 +705,11 @@ export async function authenticate(
       throwIfAborted(signal)
 
       // Complete the auth
-      return await completeAuth(serverName, callbackResult, { ...options, signal, runtime })
+      return await completeAuth(serverName, callbackResult, {
+        ...options,
+        ...(signal ? { signal } : {}),
+        runtime,
+      })
     } catch (error) {
       if (oauthState) cancelPendingCallback(oauthState)
       try {

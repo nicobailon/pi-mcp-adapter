@@ -201,10 +201,10 @@ export function reconstructToolMetadata(
       name,
       originalName: tool.name,
       description: tool.description ?? "",
-      inputSchema: tool.inputSchema,
-      uiResourceUri: tool.uiResourceUri,
-      uiVisibility: tool.uiVisibility,
-      uiStreamMode: tool.uiStreamMode,
+      ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+      ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
+      ...(tool.uiVisibility !== undefined ? { uiVisibility: tool.uiVisibility } : {}),
+      ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
     });
   }
 
@@ -237,14 +237,19 @@ export function reconstructToolMetadata(
 export function serializeTools(tools: McpTool[]): CachedTool[] {
   return tools
     .filter(t => t?.name)
-    .map(t => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-      uiResourceUri: tryGetToolUiResourceUri(t),
-      uiVisibility: extractUiToolVisibility(t._meta),
-      uiStreamMode: extractToolUiStreamMode(t._meta),
-    }));
+    .map(t => {
+      const uiResourceUri = tryGetToolUiResourceUri(t);
+      const uiVisibility = extractUiToolVisibility(t._meta);
+      const uiStreamMode = extractToolUiStreamMode(t._meta);
+      return {
+        name: t.name,
+        ...(t.description !== undefined ? { description: t.description } : {}),
+        ...(t.inputSchema !== undefined ? { inputSchema: t.inputSchema } : {}),
+        ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
+        ...(uiVisibility !== undefined ? { uiVisibility } : {}),
+        ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
+      };
+    });
 }
 
 export function serializeResources(resources: McpResource[]): CachedResource[] {
@@ -253,7 +258,7 @@ export function serializeResources(resources: McpResource[]): CachedResource[] {
     .map(r => ({
       uri: r.uri,
       name: r.name,
-      description: r.description,
+      ...(r.description !== undefined ? { description: r.description } : {}),
     }));
 }
 
@@ -262,15 +267,17 @@ export function serializePrompts(prompts: McpPrompt[]): CachedPrompt[] {
     .filter(prompt => prompt?.name)
     .map(prompt => ({
       name: prompt.name,
-      title: prompt.title,
-      description: prompt.description,
-      arguments: Array.isArray(prompt.arguments)
-        ? prompt.arguments.filter(argument => argument?.name).map(argument => ({
-            name: argument.name,
-            description: argument.description,
-            required: argument.required,
-          }))
-        : undefined,
+      ...(prompt.title !== undefined ? { title: prompt.title } : {}),
+      ...(prompt.description !== undefined ? { description: prompt.description } : {}),
+      ...(Array.isArray(prompt.arguments)
+        ? {
+            arguments: prompt.arguments.filter(argument => argument?.name).map(argument => ({
+              name: argument.name,
+              ...(argument.description !== undefined ? { description: argument.description } : {}),
+              ...(argument.required !== undefined ? { required: argument.required } : {}),
+            })),
+          }
+        : {}),
     }));
 }
 
@@ -285,15 +292,15 @@ export function reconstructPromptMetadata(
     const args: McpPromptArgument[] = Array.isArray(prompt.arguments)
       ? prompt.arguments.filter(argument => argument?.name).map(argument => ({
           name: argument.name,
-          description: argument.description,
-          required: argument.required,
+          ...(argument.description !== undefined ? { description: argument.description } : {}),
+          ...(argument.required !== undefined ? { required: argument.required } : {}),
         }))
       : [];
     return {
       serverName,
       originalName: prompt.name,
       commandName: formatPromptCommandName(prompt.name, serverName, effectivePrefix),
-      title: prompt.title,
+      ...(prompt.title !== undefined ? { title: prompt.title } : {}),
       description: prompt.description ?? "",
       arguments: args,
     };

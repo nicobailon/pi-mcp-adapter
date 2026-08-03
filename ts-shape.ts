@@ -39,7 +39,10 @@ export function renderTsShape(inputSchema: unknown): string | null {
         if (typeof schema.$ref !== "string") return null;
         const match = schema.$ref.match(/^#\/(\$defs|definitions)\/([^/]+)$/);
         if (!match) return null;
-        const definitionKey = `${match[1]}/${decodePointerToken(match[2])}`;
+        const definitionGroup = match[1];
+        const definitionName = match[2];
+        if (definitionGroup === undefined || definitionName === undefined) return null;
+        const definitionKey = `${definitionGroup}/${decodePointerToken(definitionName)}`;
         if (!definitions.has(definitionKey)) return null;
         return aliasFor(definitionKey);
       }

@@ -277,8 +277,8 @@ export async function authenticateServer(
           "info"
         );
       },
-      signal,
-      runtime,
+      ...(signal ? { signal } : {}),
+      ...(runtime ? { runtime } : {}),
     });
     if (signal?.aborted) signal.throwIfAborted();
 
