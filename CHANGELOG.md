@@ -7,23 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.18.0] - 2026-08-03
-
 ### Added
-- `mcp_script` now records each search, describe, and call with its input, outcome, and duration in result details; emitted, returned, and console values retain readable Maps, Sets, cycles, functions, symbols, and BigInts. Its docs now lead with the plain JavaScript agents write and position it as the primary MCP multi-call workflow surface.
 - Added opt-in per-server MCP protocol selection with `protocolVersion: "legacy" | "auto" | "2026-07-28"`. Legacy remains the default; auto negotiates the modern era with conservative legacy fallback, while the pinned mode fails instead of falling back.
-- Added `settings.freezeDirectTools` to keep direct MCP tool registration stable after initial sync while preserving explicit reconnect refreshes. Thanks @ddfourtwo for PR #254.
-- Added best-effort Linux OAuth credential recovery when Pi inherits a revoked session keyring, allowing explicit re-authentication through a fresh `keyctl` session helper. Thanks @anthod0 for issue #248 and the validation prototype.
-- Ranked, paginated MCP tool search: best matches come first in a short page of 12 instead of an unranked dump of every match with full schemas, so the model stops guessing and each search costs a fraction of the tokens. Misses on describe/call now return top-5 "Did you mean" suggestions, letting the model self-correct a typo or missing prefix in the same turn instead of burning a round trip.
-- Optional `approveTools` patterns (global and per-server) add the missing middle tier between "tool runs instantly" and "tool hidden entirely": flag risky tools and Pi asks before running them — Allow once / Allow for session / Deny — across proxy, direct, resource, and iframe-originated calls. Safe tools keep full speed; a deny is a normal result the model adapts to, not a crash.
-- Default-on `mcp_script` trusted JavaScript MCP scripting turns multi-call MCP jobs into one request: loop, filter, chain, or fan out between calls, while `mcp` remains the right tool for status, discovery, auth, and single calls. Scripts discover tools with `await tools.search({ query })`, inspect exact shapes with `await tools.describe({ path })`, and call them with `tools.call(path, args)` — no more guessing names from outside the script. A runaway script can never freeze Pi itself: scripts run isolated from the main process and are force-stopped at their time limit, even if stuck in an infinite loop. Result details include a `calls` trace of every invoked path and outcome, and a bundled `mcp-scripting` skill teaches the full workflow on demand. Every scripted call still goes through auth, output guarding, and the approval gate. Set `settings.scriptMode` to `false` to hide the tool.
-- HTTP connection failures are now probe-classified into a plain-language diagnosis (for example "endpoint returned HTML (200) — this URL does not appear to speak MCP") instead of an opaque "fetch failed", so setup mistakes are fixed in seconds. Healthy connections are never probed.
-- Tool parameters render as compact TypeScript shapes (`{ query: string; limit?: number }`) in describe and search, replacing multi-line schema dumps — the model reads less and acts sooner, with the previous formatting kept as a fallback for exotic schemas.
-- `/mcp setup` gained curated one-click presets (DeepWiki, Context7, Notion, GitHub, Chrome DevTools): pick, preview the exact config write, confirm — new servers in under a minute with no hand-typed setup.
-- Documented how to hide the bundled `mcp-scripting` Pi skill while keeping the adapter extension installed. Thanks @aryzing for issue #267.
-- Documented Linux revoked-keyring recovery in the OAuth guide and `_meta.ui.visibility` behavior in the MCP UI guide.
-
-The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint shape probe, TypeScript-shaped schemas, and codemode design in this release are adapted from [Executor](https://github.com/UsefulSoftwareCo/executor) by Rhys Sullivan (@RhysSullivan). Thanks Rhys.
 
 ### Changed
 - Migrated the MCP client from the monolithic SDK v1 package to the stable modular `@modelcontextprotocol/client` and `@modelcontextprotocol/core` v2 packages. The stable release restores conservative legacy discovery fallback and declared JSON Schema dialect support while retaining strict OAuth issuer validation.
@@ -31,6 +16,34 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ### Fixed
 - Removed the adapter's throwaway Streamable HTTP initialize probe. HTTP connections now initialize once on the real client and use narrowly classified SSE fallback, avoiding duplicate sessions and preventing authentication, cancellation, timeout, negotiation, and server failures from being misclassified as transport incompatibility.
 
+## [2.19.0] - 2026-08-03
+
+### Added
+- `mcp_script` now records each search, describe, and call with its input, outcome, and duration in result details; emitted, returned, and console values retain readable Maps, Sets, cycles, functions, symbols, and BigInts. Its docs now lead with the plain JavaScript agents write and position it as the primary MCP multi-call workflow surface.
+- Documented how to hide the bundled `mcp-scripting` Pi skill while keeping the adapter extension installed. Thanks @aryzing for issue #267.
+- Documented Linux revoked-keyring recovery in the OAuth guide and `_meta.ui.visibility` behavior in the MCP UI guide.
+
+### Changed
+- `mcp_script` is now registered by default for trusted JavaScript MCP multi-call workflows, while `mcp` remains the right tool for status, discovery, auth, and single calls. Set `settings.scriptMode` to `false` to hide the tool.
+
+### Fixed
+- `mcp_script` traces now include missing describe attempts, and shared acyclic values no longer render as circular in script output formatting.
+
+## [2.18.0] - 2026-08-02
+
+### Added
+- Added `settings.freezeDirectTools` to keep direct MCP tool registration stable after initial sync while preserving explicit reconnect refreshes. Thanks @ddfourtwo for PR #254.
+- Added best-effort Linux OAuth credential recovery when Pi inherits a revoked session keyring, allowing explicit re-authentication through a fresh `keyctl` session helper. Thanks @anthod0 for issue #248 and the validation prototype.
+- Ranked, paginated MCP tool search: best matches come first in a short page of 12 instead of an unranked dump of every match with full schemas, so the model stops guessing and each search costs a fraction of the tokens. Misses on describe/call now return top-5 "Did you mean" suggestions, letting the model self-correct a typo or missing prefix in the same turn instead of burning a round trip.
+- Optional `approveTools` patterns (global and per-server) add the missing middle tier between "tool runs instantly" and "tool hidden entirely": flag risky tools and Pi asks before running them — Allow once / Allow for session / Deny — across proxy, direct, resource, and iframe-originated calls. Safe tools keep full speed; a deny is a normal result the model adapts to, not a crash.
+- Opt-in `mcp_script` trusted JavaScript MCP scripting turns N-step jobs into one call: loop, filter, and chain tools for tool-restricted subagents where every round trip costs child context. Scripts discover tools with `await tools.search({ query })`, inspect exact shapes with `await tools.describe({ path })`, and call them with `tools.call(path, args)` — no more guessing names from outside the script. A runaway script can never freeze Pi itself: scripts run isolated from the main process and are force-stopped at their time limit, even if stuck in an infinite loop. Result details include a `calls` trace of every invoked path and outcome, and a bundled `mcp-scripting` skill teaches the full workflow on demand. Every scripted call still goes through auth, output guarding, and the approval gate.
+- HTTP connection failures are now probe-classified into a plain-language diagnosis (for example "endpoint returned HTML (200) — this URL does not appear to speak MCP") instead of an opaque "fetch failed", so setup mistakes are fixed in seconds. Healthy connections are never probed.
+- Tool parameters render as compact TypeScript shapes (`{ query: string; limit?: number }`) in describe and search, replacing multi-line schema dumps — the model reads less and acts sooner, with the previous formatting kept as a fallback for exotic schemas.
+- `/mcp setup` gained curated one-click presets (DeepWiki, Context7, Notion, GitHub, Chrome DevTools): pick, preview the exact config write, confirm — new servers in under a minute with no hand-typed setup.
+
+The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint shape probe, TypeScript-shaped schemas, and codemode design in this release are adapted from [Executor](https://github.com/UsefulSoftwareCo/executor) by Rhys Sullivan (@RhysSullivan). Thanks Rhys.
+
+### Fixed
 - Brought MCP Apps UI hosting in line with the current spec: provider HTML now runs in a real sandbox, gets a restrictive default CSP even when the resource omits one, and `_meta.ui.visibility` is honored so app-only tools stay out of the model tool list while model-only tools cannot be called from the UI.
 - MCP Apps UI sessions are now easier to open from Moshi and remote terminals: the local UI server uses Moshi-discoverable low ports, answers preview discovery probes, serves a loopback-only landing shell, prints Moshi/SSH access hints for remote sessions, and fits the host shell better in narrow in-app browsers. UI-submitted model context is now captured as a bounded handoff, wakes the agent like prompts and intents, and remains available through `mcp({ action: "ui-messages" })` after the UI closes.
 
