@@ -17,7 +17,7 @@ function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] 
 }
 
 describe("runMcpScript", () => {
-  it("registers mcp_script by default and allows explicit opt-out", () => {
+  it("registers mcp_script by default", () => {
     const registerTool = vi.fn();
     createMcpAdapter({ config: { settings: {}, mcpServers: {} } })({
       registerTool,
@@ -28,17 +28,20 @@ describe("runMcpScript", () => {
     } as any);
 
     expect(registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "mcp_script" }));
+  });
 
-    const registerToolWithOptOut = vi.fn();
+  it("skips mcp_script when scriptMode is false", () => {
+    const registerTool = vi.fn();
     createMcpAdapter({ config: { settings: { scriptMode: false }, mcpServers: {} } })({
-      registerTool: registerToolWithOptOut,
+      registerTool,
       registerFlag: vi.fn(),
       registerCommand: vi.fn(),
       on: vi.fn(),
       getAllTools: vi.fn(() => []),
     } as any);
 
-    expect(registerToolWithOptOut).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp_script" }));
+    expect(registerTool).toHaveBeenCalled();
+    expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp_script" }));
   });
 
   beforeAll(async () => {
