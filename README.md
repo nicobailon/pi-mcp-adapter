@@ -531,6 +531,7 @@ Returns accumulated messages from UI sessions. Each message includes `type`, `se
 **Technical notes:**
 
 - Tool consent gates whether UIs can call MCP tools (never/once-per-server/always)
+- `_meta.ui.visibility` controls audience: tools marked app-only stay out of the model tool list, and tools marked model-only cannot be called from the UI iframe.
 - Works with both stdio and HTTP MCP servers
 - Uses a local 408KB AppBridge bundle (MCP SDK + Zod) for browser↔server communication
 - Enforces CSP from standard `_meta.ui.csp` and OpenAI-compatible `_meta["openai/widgetCSP"]` metadata in the response header while preserving provider HTML.

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tool parameters render as compact TypeScript shapes (`{ query: string; limit?: number }`) in describe and search, replacing multi-line schema dumps — the model reads less and acts sooner, with the previous formatting kept as a fallback for exotic schemas.
 - `/mcp setup` gained curated one-click presets (DeepWiki, Context7, Notion, GitHub, Chrome DevTools): pick, preview the exact config write, confirm — new servers in under a minute with no hand-typed setup.
 - Documented how to hide the bundled `mcp-scripting` Pi skill while keeping the adapter extension installed. Thanks @aryzing for issue #267.
+- Documented Linux revoked-keyring recovery in the OAuth guide and `_meta.ui.visibility` behavior in the MCP UI guide.
 
 The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint shape probe, TypeScript-shaped schemas, and codemode design in this release are adapted from [Executor](https://github.com/UsefulSoftwareCo/executor) by Rhys Sullivan (@RhysSullivan). Thanks Rhys.
 
