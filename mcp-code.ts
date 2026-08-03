@@ -115,9 +115,13 @@ export async function runMcpScript(
     const result = await executeCall(state, path, args, undefined, getPiTools, callSignal);
     const details = result.details;
     if (details.error !== undefined) {
-      const message = typeof details.message === "string"
+      const rawMessage = typeof details.message === "string"
         ? details.message
         : textFromContent(result.content);
+      const message = rawMessage.replace(
+        'Use mcp({ search: "..." }) to search.',
+        'Use await tools.search({ query: "..." }) inside mcp_script.',
+      );
       calls[index] = { path, ok: false, error: String(details.error) };
       return {
         ok: false as const,

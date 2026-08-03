@@ -5,7 +5,7 @@ description: Write mcp_script JavaScript for discovering, inspecting, and callin
 
 # MCP scripting
 
-Use `mcp_script` when a task needs to discover, filter, or orchestrate MCP tools in one JavaScript request.
+Use `mcp_script` when a task needs multiple MCP tool calls in one JavaScript request, with loops, filtering, chaining, fan-out, or other logic between calls. For a single MCP search, describe, status check, auth action, or tool call, use `mcp` instead.
 
 ## Workflow
 

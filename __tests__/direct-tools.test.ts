@@ -74,6 +74,8 @@ describe("buildProxyDescription", () => {
 
     expect(description).toContain('mcp({ action: "ui-messages" })');
     expect(description).toContain("Retrieve accumulated messages from completed UI sessions");
+    expect(description).toContain("server status, tool search/describe, auth, and single MCP tool calls");
+    expect(description).toContain("When one request needs several MCP calls with logic between them, use mcp_script.");
     expect(description).toContain("Search MCP tools by name/description");
     expect(description).toContain("Non-MCP Pi tools should be called directly, not through mcp.");
     expect(description).not.toContain("MCP + pi");

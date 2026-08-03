@@ -27,7 +27,11 @@ describe("runMcpScript", () => {
       getAllTools: vi.fn(() => []),
     } as any);
 
-    expect(registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "mcp_script" }));
+    expect(registerTool).toHaveBeenCalledWith(expect.objectContaining({
+      name: "mcp_script",
+      description: expect.stringContaining("multiple MCP tool calls in one request"),
+      promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
+    }));
   });
 
   it("skips mcp_script when scriptMode is false", () => {
@@ -64,6 +68,18 @@ describe("runMcpScript", () => {
 
   afterAll(async () => {
     await manager.closeAll();
+  });
+
+  it("uses script-local discovery guidance when a tool call misses", async () => {
+    const result = await runMcpScript(state, 'return await tools.call("missing_tool", {});');
+
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+      ok: false,
+      error: {
+        code: "tool_not_found",
+        message: expect.stringContaining('Use await tools.search({ query: "..." }) inside mcp_script.'),
+      },
+    });
   });
 
   it("searches the script-visible tool catalog with pagination and server filtering", async () => {
