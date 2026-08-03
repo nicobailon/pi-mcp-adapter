@@ -72,14 +72,16 @@ describe("runMcpScript", () => {
 
   it("uses script-local discovery guidance when a tool call misses", async () => {
     const result = await runMcpScript(state, 'return await tools.call("missing_tool", {});');
+    const payload = JSON.parse(textBlocks(result).at(-1)!);
 
-    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+    expect(payload).toMatchObject({
       ok: false,
       error: {
         code: "tool_not_found",
         message: expect.stringContaining('Use await tools.search({ query: "..." }) inside mcp_script.'),
       },
     });
+    expect(payload.error.message).not.toContain("mcp({ search:");
   });
 
   it("searches the script-visible tool catalog with pagination and server filtering", async () => {

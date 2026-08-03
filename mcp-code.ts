@@ -115,17 +115,19 @@ export async function runMcpScript(
     const result = await executeCall(state, path, args, undefined, getPiTools, callSignal);
     const details = result.details;
     if (details.error !== undefined) {
-      const rawMessage = typeof details.message === "string"
-        ? details.message
-        : textFromContent(result.content);
-      const message = rawMessage.replace(
-        'Use mcp({ search: "..." }) to search.',
-        'Use await tools.search({ query: "..." }) inside mcp_script.',
-      );
-      calls[index] = { path, ok: false, error: String(details.error) };
+      const errorCode = String(details.error);
+      const suggestions = Array.isArray(details.suggestions)
+        ? details.suggestions.filter((suggestion): suggestion is string => typeof suggestion === "string")
+        : [];
+      const message = errorCode === "tool_not_found"
+        ? `Tool "${path}" not found. Use await tools.search({ query: "..." }) inside mcp_script.${suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : ""}`
+        : typeof details.message === "string"
+          ? details.message
+          : textFromContent(result.content);
+      calls[index] = { path, ok: false, error: errorCode };
       return {
         ok: false as const,
-        error: { code: String(details.error), message },
+        error: { code: errorCode, message },
       };
     }
     calls[index] = { path, ok: true };
