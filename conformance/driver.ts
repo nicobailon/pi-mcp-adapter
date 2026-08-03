@@ -22,7 +22,7 @@
  */
 
 import { rmSync } from "node:fs"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
+import { UnauthorizedError } from "@modelcontextprotocol/client"
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent"
 import { McpServerManager } from "../server-manager.ts"
 import {
@@ -210,7 +210,6 @@ async function callTool(toolName: string, args: Record<string, unknown>) {
     try {
       const result = await connection.client.callTool(
         { name: toolName, arguments: args },
-        undefined,
         manager.getRequestOptions(SERVER_NAME),
       )
       if (result.isError) {

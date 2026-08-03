@@ -209,7 +209,7 @@ describe("McpServerManager StreamableHTTP transport", () => {
         .trim()
         .split("\n")
         .map(line => JSON.parse(line) as { direction: string; method?: string });
-      expect(traceLines.filter(event => event.direction === "outbound" && event.method === "initialize")).toHaveLength(2);
+      expect(traceLines.filter(event => event.direction === "outbound" && event.method === "initialize")).toHaveLength(1);
     } finally {
       await manager.close("post-only").catch(() => {});
     }

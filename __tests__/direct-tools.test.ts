@@ -171,6 +171,14 @@ describe("buildProxyDescription", () => {
 });
 
 describe("metadata cache hashing", () => {
+  it("invalidates metadata when the protocol era changes", () => {
+    const legacy = computeServerHash({ command: "node" });
+    const automatic = computeServerHash({ command: "node", protocolVersion: "auto" });
+    const modern = computeServerHash({ command: "node", protocolVersion: "2026-07-28" });
+
+    expect(new Set([legacy, automatic, modern]).size).toBe(3);
+  });
+
   it("hashes interpolated URLs", () => {
     process.env.MCP_HASH_URL = "https://one.example.test/mcp";
     const first = computeServerHash({ url: "${MCP_HASH_URL}" });

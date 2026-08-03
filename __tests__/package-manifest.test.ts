@@ -61,10 +61,11 @@ describe("package.json dependency policy", () => {
     }
   });
 
-  it("uses the SDK v1 dependency without the SDK v2 beta packages", () => {
+  it("uses the stable modular SDK v2 client/core packages without the legacy monolithic SDK", () => {
     expect(packageJson.dependencies?.["@modelcontextprotocol/ext-apps"]).toBeDefined();
-    expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBe("^1.30.0");
-    expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBeUndefined();
+    expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBeUndefined();
+    expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBe("2.0.0");
+    expect(packageJson.dependencies?.["@modelcontextprotocol/core"]).toBe("2.0.0");
     expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
   });
 });

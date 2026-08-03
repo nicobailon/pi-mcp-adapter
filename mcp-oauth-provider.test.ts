@@ -22,8 +22,8 @@ import {
   type McpOAuthConfig,
 } from "./mcp-oauth-provider.ts"
 import { getAuthForUrl, saveAuthEntry } from "./mcp-auth.ts"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
-import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
+import { UnauthorizedError } from "@modelcontextprotocol/client"
+import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/client"
 
 describe("McpOAuthProvider", () => {
   const serverName = "test-server"

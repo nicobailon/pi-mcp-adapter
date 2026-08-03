@@ -1,16 +1,15 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { Client } from "@modelcontextprotocol/client";
 import {
-  ElicitRequestSchema,
-  ErrorCode,
-  McpError,
+  ProtocolError,
+  ProtocolErrorCode,
   type ElicitRequest,
   type ElicitRequestFormParams,
   type ElicitRequestURLParams,
   type ElicitResult,
-} from "@modelcontextprotocol/sdk/types.js";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
-import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation/types.js";
+} from "@modelcontextprotocol/client";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
+import type { JsonSchemaType } from "@modelcontextprotocol/client";
 import open from "open";
 
 export type ElicitationValue = string | number | boolean | string[] | undefined;
@@ -28,7 +27,7 @@ export interface ElicitationHandlerOptions {
 export type ServerElicitationConfig = Omit<ElicitationHandlerOptions, "serverName" | "onUrlAccepted">;
 
 export function registerElicitationHandler(client: Client, options: ElicitationHandlerOptions): void {
-  client.setRequestHandler(ElicitRequestSchema, request =>
+  client.setRequestHandler("elicitation/create", request =>
     handleElicitationRequest(options, request));
 }
 
@@ -305,16 +304,16 @@ export async function handleUrlElicitation(
   options: ElicitationHandlerOptions,
   params: ElicitRequestURLParams,
 ): Promise<ElicitResult> {
-  if (!options.allowUrl) throw new McpError(ErrorCode.InvalidParams, "URL elicitation is not supported");
+  if (!options.allowUrl) throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation is not supported");
 
   let parsed: URL;
   try {
     parsed = new URL(params.url);
   } catch {
-    throw new McpError(ErrorCode.InvalidParams, "URL elicitation supplied an invalid URL");
+    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation supplied an invalid URL");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new McpError(ErrorCode.InvalidParams, "URL elicitation only supports HTTP and HTTPS URLs");
+    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation only supports HTTP and HTTPS URLs");
   }
 
   const decision = await options.ui.select([

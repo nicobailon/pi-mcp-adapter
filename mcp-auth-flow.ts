@@ -8,8 +8,8 @@ import {
   auth as runSdkAuth,
   extractWWWAuthenticateParams,
   UnauthorizedError,
-} from "@modelcontextprotocol/sdk/client/auth.js"
-import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js"
+} from "@modelcontextprotocol/client"
+import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/client"
 import open from "open"
 import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {

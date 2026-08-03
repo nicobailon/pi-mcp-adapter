@@ -10,12 +10,12 @@ import {
   type AddClientAuthentication,
   type OAuthClientProvider,
   type OAuthDiscoveryState,
-} from "@modelcontextprotocol/sdk/client/auth.js"
+} from "@modelcontextprotocol/client"
 import type {
   OAuthClientInformationMixed,
   OAuthClientMetadata,
   OAuthTokens,
-} from "@modelcontextprotocol/sdk/shared/auth.js"
+} from "@modelcontextprotocol/client"
 import {
   getAuthForUrl,
   updateTokens,
