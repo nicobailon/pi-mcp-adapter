@@ -607,7 +607,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     },
   });
 
-  if (earlyConfig.settings?.scriptMode === true) {
+  if (earlyConfig.settings?.scriptMode !== false) {
     (pi.registerTool as (tool: unknown) => unknown)({
       name: "mcp_script",
       label: "MCP Script",

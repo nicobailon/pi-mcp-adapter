@@ -263,7 +263,6 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
     "mcpFooterStatus": "full",
     "hostConfigDiscovery": "off",
     "approveTools": ["github_delete_*", "notion_update_*"],
-    "scriptMode": true,
     "oauthDir": ".pi/mcp-oauth",
     "trace": {
       "enabled": true,
@@ -289,7 +288,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ connect: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false. |
-| `scriptMode` | Register the MCP-only `mcp_script` plain-JavaScript tool (default: false). |
+| `scriptMode` | Register the MCP-only `mcp_script` plain-JavaScript tool (default: true). Set to `false` to hide it. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
@@ -340,7 +339,7 @@ Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — t
 
 ### MCP Scripting
 
-Set `settings.scriptMode` to `true` to register `mcp_script({ code, timeoutMs? })`, a trusted agent-authored JavaScript layer for orchestrating MCP tools. See the bundled `mcp-scripting` skill for the complete workflow guide. The canonical API is ordinary JavaScript with `await tools.search({ query, server?, limit?, offset? })`, `await tools.describe({ path })`, `tools.call(path, args)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each invoked path and outcome. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds; each script runs in a worker thread that is terminated at the deadline, including for infinite loops.
+`mcp_script({ code, timeoutMs? })` is registered by default as a trusted agent-authored JavaScript layer for orchestrating MCP tools. Set `settings.scriptMode` to `false` to hide it. See the bundled `mcp-scripting` skill for the complete workflow guide. The canonical API is ordinary JavaScript with `await tools.search({ query, server?, limit?, offset? })`, `await tools.describe({ path })`, `tools.call(path, args)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each invoked path and outcome. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds; each script runs in a worker thread that is terminated at the deadline, including for infinite loops.
 
 ```js
 const first = await tools.github_search_issues({ query: "is:open label:bug" });
@@ -350,7 +349,7 @@ emit({ searched: true });
 return selected;
 ```
 
-For a tool-restricted subagent, enable script mode in the adapter configuration, then launch the child Pi with its tool allowlist set to `["mcp_script"]`. Have the parent discover MCP tool names with `mcp({ search: "..." })` and include the relevant prefixed names in the child's task; the child can then loop, filter, and chain those MCP calls without filesystem, shell, or edit tools. The adapter's ordinary lazy connection, authentication, output guard, abort handling, and approval gates still apply to every call.
+For a tool-restricted subagent, launch the child Pi with its tool allowlist set to `["mcp_script"]`. Have the parent discover MCP tool names with `mcp({ search: "..." })` and include the relevant prefixed names in the child's task; the child can then loop, filter, and chain those MCP calls without filesystem, shell, or edit tools. The adapter's ordinary lazy connection, authentication, output guard, abort handling, and approval gates still apply to every call.
 
 `mcp_script` is a trusted agent-authored MCP scripting layer, not an isolation boundary. If you need isolation, run Pi in an isolated environment. It is distinct from Pi's code-mode skill: Pi's skill batches general Pi tools, while `mcp_script` exposes MCP calls only and can be the child's sole tool.
 
