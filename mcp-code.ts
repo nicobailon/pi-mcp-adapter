@@ -210,6 +210,7 @@ export async function runMcpScript(
         };
       }
       const suggestions = path ? rankSuggestions(state, path, 5) : [];
+      error = "tool_not_found";
       return {
         path,
         error: {

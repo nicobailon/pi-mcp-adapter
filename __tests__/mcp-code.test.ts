@@ -134,13 +134,14 @@ describe("runMcpScript", () => {
   it("records operation metadata and timing for search, describe, and calls", async () => {
     const result = await runMcpScript(
       state,
-      'await tools.search({ query: "fixture" }); await tools.describe({ path: "fixture_echo" }); return await tools.call("fixture_echo", { value: "traced" });',
+      'await tools.search({ query: "fixture" }); await tools.describe({ path: "fixture_echo" }); await tools.describe({ path: "fixture_missing" }); return await tools.call("fixture_echo", { value: "traced" });',
     );
 
     expect(result.details).toMatchObject({
       calls: [
         { operation: "search", query: "fixture", ok: true, durationMs: expect.any(Number) },
         { operation: "describe", path: "fixture_echo", ok: true, durationMs: expect.any(Number) },
+        { operation: "describe", path: "fixture_missing", ok: false, error: "tool_not_found", durationMs: expect.any(Number) },
         { operation: "call", path: "fixture_echo", ok: true, durationMs: expect.any(Number) },
       ],
     });
