@@ -131,6 +131,21 @@ describe("runMcpScript", () => {
     });
   });
 
+  it("records operation metadata and timing for search, describe, and calls", async () => {
+    const result = await runMcpScript(
+      state,
+      'await tools.search({ query: "fixture" }); await tools.describe({ path: "fixture_echo" }); return await tools.call("fixture_echo", { value: "traced" });',
+    );
+
+    expect(result.details).toMatchObject({
+      calls: [
+        { operation: "search", query: "fixture", ok: true, durationMs: expect.any(Number) },
+        { operation: "describe", path: "fixture_echo", ok: true, durationMs: expect.any(Number) },
+        { operation: "call", path: "fixture_echo", ok: true, durationMs: expect.any(Number) },
+      ],
+    });
+  });
+
   it("calls exact paths and returns an invalid-path envelope without throwing", async () => {
     const result = await runMcpScript(
       state,
@@ -275,6 +290,25 @@ describe("runMcpScript", () => {
     );
 
     expect(textBlocks(result)).toEqual(["first", "[console.log] second", "last"]);
+  });
+
+  it("formats non-JSON values in emitted, returned, and console output", async () => {
+    const result = await runMcpScript(
+      state,
+      `const cycle = {}; cycle.self = cycle;
+      const value = { map: new Map([["key", 1]]), set: new Set(["value"]), cycle, fn: function named() {}, symbol: Symbol("token"), bigint: 1n };
+      emit(value); console.log(new Map([["console", 2]])); return value;`,
+    );
+
+    for (const block of [textBlocks(result)[0], textBlocks(result).at(-1)!]) {
+      expect(block).toContain("Map(1)");
+      expect(block).toContain("Set(1)");
+      expect(block).toContain("[Circular");
+      expect(block).toContain("[Function: named]");
+      expect(block).toContain("Symbol(token)");
+      expect(block).toContain("1n");
+    }
+    expect(textBlocks(result)[1]).toContain("Map(1) { 'console' => 2 }");
   });
 
   it("rejects tools enumeration with discovery guidance without exposing host globals", async () => {

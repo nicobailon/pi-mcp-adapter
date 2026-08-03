@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `mcp_script` now records each search, describe, and call with its input, outcome, and duration in result details; emitted, returned, and console values retain readable Maps, Sets, cycles, functions, symbols, and BigInts. Its docs now lead with the plain JavaScript agents write and position it as the primary MCP multi-call workflow surface.
 - Added `settings.freezeDirectTools` to keep direct MCP tool registration stable after initial sync while preserving explicit reconnect refreshes. Thanks @ddfourtwo for PR #254.
 - Added best-effort Linux OAuth credential recovery when Pi inherits a revoked session keyring, allowing explicit re-authentication through a fresh `keyctl` session helper. Thanks @anthod0 for issue #248 and the validation prototype.
 - Ranked, paginated MCP tool search: best matches come first in a short page of 12 instead of an unranked dump of every match with full schemas, so the model stops guessing and each search costs a fraction of the tokens. Misses on describe/call now return top-5 "Did you mean" suggestions, letting the model self-correct a typo or missing prefix in the same turn instead of burning a round trip.

@@ -339,7 +339,7 @@ Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — t
 
 ### MCP Scripting
 
-`mcp_script({ code, timeoutMs? })` is registered by default for requests that need multiple MCP tool calls with JavaScript logic between them: loop, filter, chain, or fan out, then return one result. For a single MCP call, search, describe, status check, or auth action, use `mcp` instead. Set `settings.scriptMode` to `false` to hide the scripting tool.
+For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. Run that code with the default-on `mcp_script` tool. For a single MCP call, search, describe, status check, or auth action, use `mcp` instead. Set `settings.scriptMode` to `false` to hide the scripting tool.
 
 The bundled `mcp-scripting` skill is a separate Pi package resource. To hide that skill while keeping the adapter extension installed, replace the package entry in Pi settings with the object form and disable package skills:
 
@@ -353,15 +353,23 @@ The bundled `mcp-scripting` skill is a separate Pi package resource. To hide tha
 
 Preserve any version pin in `source` if your existing package entry has one. You can also disable package resources through `pi config`.
 
-See the bundled `mcp-scripting` skill for the complete workflow guide. The canonical API is ordinary JavaScript with `await tools.search({ query, server?, limit?, offset? })`, `await tools.describe({ path })`, `tools.call(path, args)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each invoked path and outcome. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds; each script runs in a worker thread that is terminated at the deadline, including for infinite loops.
+For example, this is the JavaScript passed as the `code` argument to `mcp_script`:
 
 ```js
-const first = await tools.github_search_issues({ query: "is:open label:bug" });
-if (!first.ok) return first;
-const selected = first.data.content.filter((item) => item.type === "text");
-emit({ searched: true });
-return selected;
+const { items } = await tools.search({ query: "search issues", server: "github" });
+const candidate = items[0];
+if (!candidate) return { error: "No matching tool" };
+
+const details = await tools.describe({ path: candidate.path });
+if (details.error) return details;
+
+const result = await tools.call(details.path, { query: "is:open label:bug" });
+if (!result.ok) return result;
+emit({ tool: details.path, completed: true });
+return result.data;
 ```
+
+See the bundled `mcp-scripting` skill for the complete workflow guide. The API is `await tools.search({ query, server?, limit?, offset? })`, `await tools.describe({ path })`, `tools.call(path, args)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each operation, its path or query, outcome, and duration. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds; each script runs in a worker thread that is terminated at the deadline, including for infinite loops.
 
 For a tool-restricted subagent, launch the child Pi with its tool allowlist set to `["mcp_script"]`. Have the parent discover MCP tool names with `mcp({ search: "..." })` and include the relevant prefixed names in the child's task; the child can then loop, filter, and chain those MCP calls without filesystem, shell, or edit tools. The adapter's ordinary lazy connection, authentication, output guard, abort handling, and approval gates still apply to every call.
 

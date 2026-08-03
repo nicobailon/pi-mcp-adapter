@@ -5,17 +5,25 @@ import vm from "node:vm";
 const TOOLS_ENUMERATION_ERROR = "tools is not enumerable — use tools.search({ query })";
 const RESERVED_TOOL_PROPS = new Set(["then", "catch", "finally", "toJSON", "toString", "valueOf"]);
 
+function needsInspectableFormatting(value, seen = new WeakSet()) {
+  if (value === undefined || typeof value === "bigint" || typeof value === "function" || typeof value === "symbol") return true;
+  if (typeof value !== "object" || value === null) return false;
+  if (seen.has(value)) return true;
+  if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) return true;
+  seen.add(value);
+  return Object.values(value).some((entry) => needsInspectableFormatting(entry, seen));
+}
+
 function formatValue(value) {
   if (typeof value === "string") return value;
-  if (value === undefined) return "undefined";
   try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    try {
-      return String(value);
-    } catch {
-      return "[unserializable value]";
+    if (!needsInspectableFormatting(value)) {
+      const json = JSON.stringify(value, null, 2);
+      if (json !== undefined) return json;
     }
+    return formatWithOptions({ colors: false, depth: 6 }, value);
+  } catch {
+    return "[unserializable value]";
   }
 }
 

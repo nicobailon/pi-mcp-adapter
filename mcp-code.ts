@@ -1,4 +1,5 @@
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
+import { formatWithOptions } from "node:util";
 import { Worker } from "node:worker_threads";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { executeCall } from "./proxy-modes.ts";
@@ -30,17 +31,25 @@ type WorkerMessage =
 
 type WorkerResultMessage = { type: "result"; id: number; envelope: unknown };
 
+function needsInspectableFormatting(value: unknown, seen = new WeakSet<object>()): boolean {
+  if (value === undefined || typeof value === "bigint" || typeof value === "function" || typeof value === "symbol") return true;
+  if (typeof value !== "object" || value === null) return false;
+  if (seen.has(value)) return true;
+  if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) return true;
+  seen.add(value);
+  return Object.values(value).some((entry) => needsInspectableFormatting(entry, seen));
+}
+
 function formatValue(value: unknown): string {
   if (typeof value === "string") return value;
-  if (value === undefined) return "undefined";
   try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    try {
-      return String(value);
-    } catch {
-      return "[unserializable value]";
+    if (!needsInspectableFormatting(value)) {
+      const json = JSON.stringify(value, null, 2);
+      if (json !== undefined) return json;
     }
+    return formatWithOptions({ colors: false, depth: 6 }, value);
+  } catch {
+    return "[unserializable value]";
   }
 }
 
@@ -106,12 +115,26 @@ export async function runMcpScript(
   const timeoutController = new AbortController();
   const callSignal = combineAbortSignals(externalSignal, timeoutController.signal);
 
-  type ScriptCall = { path: string; ok: true } | { path: string; ok: false; error: string };
-  const calls: ScriptCall[] = [];
-  let callsSnapshot: ScriptCall[] | undefined;
+  type ScriptOperation =
+    | { operation: "call"; path: string; ok: true; durationMs: number }
+    | { operation: "call"; path: string; ok: false; error: string; durationMs: number }
+    | { operation: "search"; query: string; ok: true; durationMs: number }
+    | { operation: "search"; query: string; ok: false; error: string; durationMs: number }
+    | { operation: "describe"; path: string; ok: true; durationMs: number }
+    | { operation: "describe"; path: string; ok: false; error: string; durationMs: number };
+  type TrackedScriptOperation = ScriptOperation & { startedAt: number };
+  const calls: TrackedScriptOperation[] = [];
+  const snapshotCalls = (): ScriptOperation[] => calls.map(({ startedAt, ...operation }) => ({
+    ...operation,
+    durationMs: "error" in operation && operation.error === "incomplete"
+      ? Math.max(0, Date.now() - startedAt)
+      : operation.durationMs,
+  }));
+  let callsSnapshot: ScriptOperation[] | undefined;
   const callTool = async (path: string, args?: Record<string, unknown>) => {
     // Record before dispatch so calls still in flight at timeout/abort appear in the trace.
-    const index = calls.push({ path, ok: false, error: "incomplete" }) - 1;
+    const startedAt = Date.now();
+    const index = calls.push({ operation: "call", path, ok: false, error: "incomplete", durationMs: 0, startedAt }) - 1;
     const result = await executeCall(state, path, args, undefined, getPiTools, callSignal);
     const details = result.details;
     if (details.error !== undefined) {
@@ -124,13 +147,13 @@ export async function runMcpScript(
         : typeof details.message === "string"
           ? details.message
           : textFromContent(result.content);
-      calls[index] = { path, ok: false, error: errorCode };
+      calls[index] = { operation: "call", path, ok: false, error: errorCode, durationMs: Date.now() - startedAt, startedAt };
       return {
         ok: false as const,
         error: { code: errorCode, message },
       };
     }
-    calls[index] = { path, ok: true };
+    calls[index] = { operation: "call", path, ok: true, durationMs: Date.now() - startedAt, startedAt };
     return {
       ok: true as const,
       data: details.mcpResult !== undefined ? details.mcpResult : textFromContent(result.content),
@@ -138,48 +161,71 @@ export async function runMcpScript(
   };
 
   const searchTools = (input?: SearchInput) => {
-    if (typeof input?.query !== "string" || input.query.trim() === "") {
-      return { items: [], total: 0, hasMore: false, nextOffset: null };
+    const startedAt = Date.now();
+    const query = typeof input?.query === "string" ? input.query : "";
+    let error: unknown;
+    try {
+      if (query.trim() === "") {
+        return { items: [], total: 0, hasMore: false, nextOffset: null };
+      }
+      const server = typeof input.server === "string" ? input.server : undefined;
+      const limit = typeof input.limit === "number" ? input.limit : 12;
+      const offset = typeof input.offset === "number" ? input.offset : 0;
+      const page = paginate(rankToolMatches(state, query, server), offset, limit);
+      return {
+        ...page,
+        items: page.items.map(({ server: matchServer, tool, score }) => ({
+          path: tool.name,
+          name: tool.originalName,
+          server: matchServer,
+          ...(tool.description ? { description: tool.description } : {}),
+          score,
+        })),
+      };
+    } catch (caught) {
+      error = caught;
+      throw caught;
+    } finally {
+      calls.push(error === undefined
+        ? { operation: "search", query, ok: true, durationMs: Date.now() - startedAt, startedAt }
+        : { operation: "search", query, ok: false, error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt, startedAt });
     }
-    const server = typeof input.server === "string" ? input.server : undefined;
-    const limit = typeof input.limit === "number" ? input.limit : 12;
-    const offset = typeof input.offset === "number" ? input.offset : 0;
-    const page = paginate(rankToolMatches(state, input.query, server), offset, limit);
-    return {
-      ...page,
-      items: page.items.map(({ server: matchServer, tool, score }) => ({
-        path: tool.name,
-        name: tool.originalName,
-        server: matchServer,
-        ...(tool.description ? { description: tool.description } : {}),
-        score,
-      })),
-    };
   };
 
   const describeTool = (input?: DescribeInput) => {
+    const startedAt = Date.now();
     const path = typeof input?.path === "string" ? input.path : "";
-    for (const [server, metadata] of state.toolMetadata) {
-      const tool = findToolByName(metadata, path);
-      if (!tool) continue;
-      const inputTypeScript = tool.inputSchema ? renderTsShape(tool.inputSchema) : null;
+    let error: unknown;
+    try {
+      for (const [server, metadata] of state.toolMetadata) {
+        const tool = findToolByName(metadata, path);
+        if (!tool) continue;
+        const inputTypeScript = tool.inputSchema ? renderTsShape(tool.inputSchema) : null;
+        return {
+          path: tool.name,
+          name: tool.originalName,
+          server,
+          ...(tool.description ? { description: tool.description } : {}),
+          ...(inputTypeScript ? { inputTypeScript } : {}),
+        };
+      }
+      const suggestions = path ? rankSuggestions(state, path, 5) : [];
       return {
-        path: tool.name,
-        name: tool.originalName,
-        server,
-        ...(tool.description ? { description: tool.description } : {}),
-        ...(inputTypeScript ? { inputTypeScript } : {}),
+        path,
+        error: {
+          code: "tool_not_found",
+          message: `Tool not found: ${path}`,
+          suggestions,
+        },
       };
+    } catch (caught) {
+      error = caught;
+      throw caught;
+    } finally {
+      calls.push(error === undefined
+        ? { operation: "describe", path, ok: true, durationMs: Date.now() - startedAt, startedAt }
+        : { operation: "describe", path, ok: false, error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt, startedAt });
     }
-    const suggestions = path ? rankSuggestions(state, path, 5) : [];
-    return {
-      path,
-      error: {
-        code: "tool_not_found",
-        message: `Tool not found: ${path}`,
-        suggestions,
-      },
-    };
   };
 
   let worker: Worker | undefined;
@@ -240,7 +286,7 @@ export async function runMcpScript(
     const timeoutError = new McpScriptTimeoutError(resolvedTimeoutMs);
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
-        callsSnapshot = [...calls];
+        callsSnapshot = snapshotCalls();
         timeoutController.abort(timeoutError);
         void activeWorker.terminate();
         reject(timeoutError);
@@ -249,7 +295,7 @@ export async function runMcpScript(
     const aborted = externalSignal
       ? new Promise<never>((_resolve, reject) => {
           const onAbort = () => {
-            callsSnapshot = [...calls];
+            callsSnapshot = snapshotCalls();
             void activeWorker.terminate();
             reject(abortReasonError(externalSignal.reason));
           };
@@ -276,7 +322,7 @@ export async function runMcpScript(
     removeAbortListener();
     // "incomplete" means the call had not settled when the script finished
     // (deadline, abort, or early return). Snapshot before aborting stragglers.
-    callsSnapshot ??= [...calls];
+    callsSnapshot ??= snapshotCalls();
     // A script may finish without awaiting every call; abort leftovers so
     // parent-side dispatches do not outlive the script.
     timeoutController.abort(new Error("mcp_script finished"));
@@ -294,7 +340,7 @@ export async function runMcpScript(
       mode: "script",
       ...(errorCode ? { error: errorCode, message: errorMessage } : {}),
       timeoutMs: resolvedTimeoutMs,
-      ...((callsSnapshot ?? calls).length > 0 ? { calls: [...(callsSnapshot ?? calls)] } : {}),
+      ...(callsSnapshot.length > 0 ? { calls: callsSnapshot } : {}),
       ...guardedMcpDetails(guarded),
     },
   };
