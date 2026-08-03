@@ -5,13 +5,18 @@ import vm from "node:vm";
 const TOOLS_ENUMERATION_ERROR = "tools is not enumerable — use tools.search({ query })";
 const RESERVED_TOOL_PROPS = new Set(["then", "catch", "finally", "toJSON", "toString", "valueOf"]);
 
-function needsInspectableFormatting(value, seen = new WeakSet()) {
+// Keep this formatting logic in sync with mcp-code.ts; the standalone worker cannot import the TypeScript host module.
+function needsInspectableFormatting(value, stack = new WeakSet()) {
   if (value === undefined || typeof value === "bigint" || typeof value === "function" || typeof value === "symbol") return true;
   if (typeof value !== "object" || value === null) return false;
-  if (seen.has(value)) return true;
+  if (stack.has(value)) return true;
   if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) return true;
-  seen.add(value);
-  return Object.values(value).some((entry) => needsInspectableFormatting(entry, seen));
+  stack.add(value);
+  try {
+    return Object.values(value).some((entry) => needsInspectableFormatting(entry, stack));
+  } finally {
+    stack.delete(value);
+  }
 }
 
 function formatValue(value) {

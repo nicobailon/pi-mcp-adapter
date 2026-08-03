@@ -31,13 +31,17 @@ type WorkerMessage =
 
 type WorkerResultMessage = { type: "result"; id: number; envelope: unknown };
 
-function needsInspectableFormatting(value: unknown, seen = new WeakSet<object>()): boolean {
+function needsInspectableFormatting(value: unknown, stack = new WeakSet<object>()): boolean {
   if (value === undefined || typeof value === "bigint" || typeof value === "function" || typeof value === "symbol") return true;
   if (typeof value !== "object" || value === null) return false;
-  if (seen.has(value)) return true;
+  if (stack.has(value)) return true;
   if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) return true;
-  seen.add(value);
-  return Object.values(value).some((entry) => needsInspectableFormatting(entry, seen));
+  stack.add(value);
+  try {
+    return Object.values(value).some((entry) => needsInspectableFormatting(entry, stack));
+  } finally {
+    stack.delete(value);
+  }
 }
 
 function formatValue(value: unknown): string {

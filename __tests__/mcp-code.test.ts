@@ -312,6 +312,17 @@ describe("runMcpScript", () => {
     expect(textBlocks(result)[1]).toContain("Map(1) { 'console' => 2 }");
   });
 
+  it("does not format shared acyclic references as circular", async () => {
+    const result = await runMcpScript(
+      state,
+      'const shared = { id: "same" }; return { first: shared, second: shared };',
+    );
+
+    const block = textBlocks(result).at(-1)!;
+    expect(block).not.toContain("Circular");
+    expect(JSON.parse(block)).toEqual({ first: { id: "same" }, second: { id: "same" } });
+  });
+
   it("rejects tools enumeration with discovery guidance without exposing host globals", async () => {
     const result = await runMcpScript(
       state,
