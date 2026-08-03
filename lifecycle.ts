@@ -12,15 +12,15 @@ export class McpLifecycleManager {
   private allServers = new Map<string, ServerDefinition>();
   private serverSettings = new Map<string, { idleTimeout?: number }>();
   private globalIdleTimeout = 10 * 60 * 1000;
-  private healthCheckInterval?: NodeJS.Timeout;
-  private onReconnect?: ReconnectCallback;
-  private onReconnectFailure?: ReconnectFailureCallback;
-  private onIdleShutdown?: (serverName: string) => void;
-  private activeHealthCheck?: Promise<void>;
-  private shutdownPromise?: Promise<void>;
+  private healthCheckInterval: NodeJS.Timeout | undefined;
+  private onReconnect: ReconnectCallback | undefined;
+  private onReconnectFailure: ReconnectFailureCallback | undefined;
+  private onIdleShutdown: ((serverName: string) => void) | undefined;
+  private activeHealthCheck: Promise<void> | undefined;
+  private shutdownPromise: Promise<void> | undefined;
   private stopped = false;
-  private healthSignal?: AbortSignal;
-  private removeHealthAbortListener?: () => void;
+  private healthSignal: AbortSignal | undefined;
+  private removeHealthAbortListener: (() => void) | undefined;
 
   constructor(
     private readonly manager: McpServerManager,

@@ -99,8 +99,10 @@ function withStreamEnvelope(
     return result;
   }
 
-  const structuredContent = result.structuredContent && typeof result.structuredContent === "object" && !Array.isArray(result.structuredContent)
-    ? { ...result.structuredContent }
+  const structuredContent: Record<string, unknown> = result.structuredContent
+    && typeof result.structuredContent === "object"
+    && !Array.isArray(result.structuredContent)
+    ? { ...(result.structuredContent as Record<string, unknown>) }
     : {};
 
   const rawEnvelope = structuredContent[UI_STREAM_STRUCTURED_CONTENT_KEY];
@@ -239,10 +241,10 @@ export async function maybeStartUiSession(
         serverName: request.serverName,
         toolName: request.toolName,
         reused: true,
-        streamId,
-        streamToken,
-        streamMode,
-        requestMeta: streamToken ? { [UI_STREAM_REQUEST_META_KEY]: streamToken } : undefined,
+        ...(streamId !== undefined ? { streamId } : {}),
+        ...(streamToken !== undefined ? { streamToken } : {}),
+        ...(streamMode !== undefined ? { streamMode } : {}),
+        ...(streamToken ? { requestMeta: { [UI_STREAM_REQUEST_META_KEY]: streamToken } } : {}),
         url: existingHandle.url,
         viewer: existingHandle.viewer ?? "browser",
         windowOpen: existingHandle.windowOpen ?? true,
@@ -326,9 +328,9 @@ export async function maybeStartUiSession(
       manager: state.manager,
       config: state.config,
       state,
-      onNeedsAuth: request.onNeedsAuth,
+      ...(request.onNeedsAuth ? { onNeedsAuth: request.onNeedsAuth } : {}),
       consentManager: state.consentManager,
-      hostContext,
+      ...(hostContext !== undefined ? { hostContext } : {}),
 
       onMessage: (params: UiMessageParams) => {
         const prompt = extractUiPromptText(params);
@@ -410,7 +412,7 @@ export async function maybeStartUiSession(
               completedAt: new Date(),
               reason,
               messages,
-              stream,
+              ...(stream !== undefined ? { stream } : {}),
             });
 
             while (state.completedUiSessions.length > MAX_COMPLETED_SESSIONS) {
@@ -527,10 +529,10 @@ export async function maybeStartUiSession(
       serverName: request.serverName,
       toolName: request.toolName,
       reused: false,
-      streamId,
-      streamToken,
-      streamMode,
-      requestMeta: streamToken ? { [UI_STREAM_REQUEST_META_KEY]: streamToken } : undefined,
+      ...(streamId !== undefined ? { streamId } : {}),
+      ...(streamToken !== undefined ? { streamToken } : {}),
+      ...(streamMode !== undefined ? { streamMode } : {}),
+      ...(streamToken ? { requestMeta: { [UI_STREAM_REQUEST_META_KEY]: streamToken } } : {}),
       url: handle.url,
       viewer,
       windowOpen,

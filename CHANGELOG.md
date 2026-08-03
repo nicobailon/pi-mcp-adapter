@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added opt-in per-server MCP protocol selection with `protocolVersion: "legacy" | "auto" | "2026-07-28"`. Legacy remains the default; auto negotiates the modern era with conservative legacy fallback, while the pinned mode fails instead of falling back.
+- Added a strict TypeScript typecheck command and CI gate.
 
 ### Changed
 - Migrated the MCP client from the monolithic SDK v1 package to the stable modular `@modelcontextprotocol/client` and `@modelcontextprotocol/core` v2 packages. The stable release restores conservative legacy discovery fallback and declared JSON Schema dialect support while retaining strict OAuth issuer validation.

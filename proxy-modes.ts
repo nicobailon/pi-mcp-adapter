@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
-import { UrlElicitationRequiredError } from "@modelcontextprotocol/client";
+import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/client";
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
@@ -20,6 +20,7 @@ import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts"
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
+type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
 const require = createRequire(import.meta.url);
 const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
@@ -1086,7 +1087,12 @@ export async function executeCall(
 
     if (toolMeta.resourceUri) {
       const result = await withSessionRecovery(
-        { manager: state.manager, config: state.config, signal: ownedSignal, onNeedsAuth: recoverAuthConnection },
+        {
+          manager: state.manager,
+          config: state.config,
+          ...(ownedSignal ? { signal: ownedSignal } : {}),
+          onNeedsAuth: recoverAuthConnection,
+        },
         serverName,
         (conn) => conn.client.readResource({ uri: toolMeta.resourceUri! }, requestOptions),
       );
@@ -1107,14 +1113,19 @@ export async function executeCall(
           toolName: toolMeta.originalName,
           toolArgs: args ?? {},
           uiResourceUri: toolMeta.uiResourceUri,
-          streamMode: toolMeta.uiStreamMode,
-          signal,
+          ...(toolMeta.uiStreamMode !== undefined ? { streamMode: toolMeta.uiStreamMode } : {}),
+          ...(signal ? { signal } : {}),
           onNeedsAuth: recoverAuthConnection,
         })
       : null;
 
-    const result = await withSessionRecovery(
-      { manager: state.manager, config: state.config, signal: ownedSignal, onNeedsAuth: recoverAuthConnection },
+    const result = await withSessionRecovery<ClientCallToolResult>(
+      {
+        manager: state.manager,
+        config: state.config,
+        ...(ownedSignal ? { signal: ownedSignal } : {}),
+        onNeedsAuth: recoverAuthConnection,
+      },
       serverName,
       (conn) => abortable(conn.client.callTool({
         name: toolMeta.originalName,

@@ -52,6 +52,7 @@ function rainbowProgress(filled: number, total: number): string {
   const dots: string[] = [];
   for (let i = 0; i < total; i++) {
     const color = RAINBOW_COLORS[i % RAINBOW_COLORS.length];
+    if (!color) continue;
     dots.push(fg(color, i < filled ? "●" : "○"));
   }
   return dots.join(" ");
@@ -220,7 +221,10 @@ class McpPanel {
             }
 
             const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(baseName));
-            const ct: CachedTool = { name: baseName, description: resource.description };
+            const ct: CachedTool = {
+              name: baseName,
+              ...(resource.description !== undefined ? { description: resource.description } : {}),
+            };
             tools.push({
               name: baseName,
               description: resource.description ?? `Read resource: ${resource.uri}`,
@@ -239,9 +243,9 @@ class McpPanel {
         name: serverName,
         expanded: false,
         source: prov?.kind ?? "user",
-        importKind: prov?.importKind,
-        includeTools: definition.includeTools,
-        excludeTools: definition.excludeTools,
+        ...(prov?.importKind !== undefined ? { importKind: prov.importKind } : {}),
+        ...(definition.includeTools !== undefined ? { includeTools: definition.includeTools } : {}),
+        ...(definition.excludeTools !== undefined ? { excludeTools: definition.excludeTools } : {}),
         exposeResources: definition.exposeResources !== false,
         connectionStatus: status,
         failureMessage,
@@ -276,6 +280,7 @@ class McpPanel {
     this.visibleItems = [];
     for (let si = 0; si < this.servers.length; si++) {
       const server = this.servers[si];
+      if (!server) continue;
       if (query && this.authOnly) {
         const score = mode === "name" ? fuzzyScore(query, server.name) : 0;
         if (score > 0) {
@@ -288,6 +293,7 @@ class McpPanel {
       if (server.expanded || query) {
         for (let ti = 0; ti < server.tools.length; ti++) {
           const tool = server.tools[ti];
+          if (!tool) continue;
           if (query) {
             const score = mode === "name"
               ? Math.max(
@@ -422,6 +428,7 @@ class McpPanel {
       const item = this.visibleItems[this.cursorIndex];
       if (!item) return;
       const server = this.servers[item.serverIndex];
+      if (!server) return;
       if (item.type === "server") {
         if (server.connectionStatus === "disabled") return;
         if (this.authOnly || server.connectionStatus === "needs-auth") {
@@ -433,6 +440,7 @@ class McpPanel {
         this.cursorIndex = Math.min(this.cursorIndex, Math.max(0, this.visibleItems.length - 1));
       } else if (item.toolIndex !== undefined) {
         const tool = server.tools[item.toolIndex];
+        if (!tool) return;
         tool.isDirect = !tool.isDirect;
         if (tool.isDirect && server.source === "import") {
           this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
@@ -451,7 +459,8 @@ class McpPanel {
     if (matchesKey(data, "ctrl+r")) {
       const item = this.visibleItems[this.cursorIndex];
       if (!item) return;
-      this.reconnectServer(this.servers[item.serverIndex]);
+      const server = this.servers[item.serverIndex];
+      if (server) this.reconnectServer(server);
       return;
     }
 
@@ -459,7 +468,7 @@ class McpPanel {
       const item = this.visibleItems[this.cursorIndex];
       if (!item) return;
       const server = this.servers[item.serverIndex];
-      if (server.connectionStatus !== "failed" || !server.failureMessage) return;
+      if (!server || server.connectionStatus !== "failed" || !server.failureMessage) return;
       const serverName = sanitizeDisplayText(server.name);
       const failureMessage = sanitizeDisplayText(server.failureMessage);
       copyToClipboard(failureMessage).then(() => {
@@ -502,7 +511,8 @@ class McpPanel {
   }
 
   private authenticateSelectedServer(item: VisibleItem): void {
-    this.authenticateServer(this.servers[item.serverIndex]);
+    const server = this.servers[item.serverIndex];
+    if (server) this.authenticateServer(server);
   }
 
   private authenticateServer(server: ServerState): void {
@@ -574,6 +584,7 @@ class McpPanel {
   private toggleItem(item: VisibleItem): void {
     if (this.authOnly) return;
     const server = this.servers[item.serverIndex];
+    if (!server) return;
     if (item.type === "server") {
       const newState = !server.tools.every((t) => t.isDirect);
       if (server.source === "import" && newState) {
@@ -582,6 +593,7 @@ class McpPanel {
       for (const t of server.tools) t.isDirect = newState;
     } else if (item.toolIndex !== undefined) {
       const tool = server.tools[item.toolIndex];
+      if (!tool) return;
       tool.isDirect = !tool.isDirect;
       if (tool.isDirect && server.source === "import") {
         this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
@@ -654,7 +666,10 @@ class McpPanel {
 
         const prev = existingState.get(baseName);
         const isDirect = prev !== undefined ? prev : false;
-        const ct: CachedTool = { name: baseName, description: resource.description };
+        const ct: CachedTool = {
+          name: baseName,
+          ...(resource.description !== undefined ? { description: resource.description } : {}),
+        };
         newTools.push({
           name: baseName,
           description: resource.description ?? `Read resource: ${resource.uri}`,
@@ -724,8 +739,10 @@ class McpPanel {
 
       for (let i = startIdx; i < endIdx; i++) {
         const item = this.visibleItems[i];
+        if (!item) continue;
         const isCursor = i === this.cursorIndex;
         const server = this.servers[item.serverIndex];
+        if (!server) continue;
 
         if (item.type === "server") {
           lines.push(row(this.renderServerRow(server, isCursor)));
@@ -735,7 +752,8 @@ class McpPanel {
             }
           }
         } else if (item.toolIndex !== undefined) {
-          lines.push(row(this.renderToolRow(server.tools[item.toolIndex], isCursor, innerW)));
+          const tool = server.tools[item.toolIndex];
+          if (tool) lines.push(row(this.renderToolRow(tool, isCursor, innerW)));
         }
       }
 
@@ -871,7 +889,7 @@ class McpPanel {
     const item = this.visibleItems[this.cursorIndex];
     if (!item) return false;
     const server = this.servers[item.serverIndex];
-    return server.connectionStatus === "failed" && !!server.failureMessage;
+    return server?.connectionStatus === "failed" && !!server.failureMessage;
   }
 
   private wrapText(text: string, width: number): string[] {
@@ -884,11 +902,11 @@ class McpPanel {
       while (visibleWidth(rest) > max) {
         let take = "";
         let index = 0;
-        while (index < rest.length && visibleWidth(take + rest[index]) <= max) {
-          take += rest[index];
+        while (index < rest.length && visibleWidth(take + rest.charAt(index)) <= max) {
+          take += rest.charAt(index);
           index++;
         }
-        if (!take) take = rest[0];
+        if (!take) take = rest.charAt(0);
         lines.push(take);
         rest = rest.slice(take.length);
       }

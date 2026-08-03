@@ -117,7 +117,7 @@ function findUnquotedEquals(token: string): number {
 }
 
 function stripQuotes(value: string): string {
-  if (value.length >= 2 && (value.startsWith('"') || value.startsWith("'")) && value.endsWith(value[0])) {
+  if (value.length >= 2 && (value.startsWith('"') || value.startsWith("'")) && value.endsWith(value.charAt(0))) {
     return value.slice(1, -1);
   }
   return value;

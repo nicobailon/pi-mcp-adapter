@@ -82,7 +82,8 @@ export function scoreToolMatch(tool: ToolMetadata, server: string, query: string
   if (!phraseMatched && (queryTokens.length <= 2 ? coverage !== 1 : coverage < 0.6)) return null;
 
   score += coverage === 1 ? 25 : Math.round(coverage * 10);
-  if (tokenize(fields.name).includes(queryTokens[0])) score += 8;
+  const firstQueryToken = queryTokens[0];
+  if (firstQueryToken !== undefined && tokenize(fields.name).includes(firstQueryToken)) score += 8;
   if (wholeFieldExact) score += 20;
   return score;
 }

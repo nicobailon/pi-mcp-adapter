@@ -172,9 +172,9 @@ export async function runMcpScript(
       if (query.trim() === "") {
         return { items: [], total: 0, hasMore: false, nextOffset: null };
       }
-      const server = typeof input.server === "string" ? input.server : undefined;
-      const limit = typeof input.limit === "number" ? input.limit : 12;
-      const offset = typeof input.offset === "number" ? input.offset : 0;
+      const server = typeof input?.server === "string" ? input.server : undefined;
+      const limit = typeof input?.limit === "number" ? input.limit : 12;
+      const offset = typeof input?.offset === "number" ? input.offset : 0;
       const page = paginate(rankToolMatches(state, query, server), offset, limit);
       return {
         ...page,

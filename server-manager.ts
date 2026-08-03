@@ -362,11 +362,12 @@ export class McpServerManager {
       }
       throwIfAborted(signal);
 
+      const cwd = resolveConfigPath(definition.cwd) ?? this.defaultCwd;
       const stdioTransport = new StdioClientTransport({
         command,
         args,
         env: resolveEnv(definition.env, name),
-        cwd: resolveConfigPath(definition.cwd) ?? this.defaultCwd,
+        ...(cwd !== undefined ? { cwd } : {}),
         stderr: definition.debug ? "inherit" : "pipe",
       });
       // Keep non-debug child diagnostics available for connection failures without
@@ -419,6 +420,7 @@ export class McpServerManager {
       }
       this.attachAdapterNotificationHandlers(name, client);
 
+      const instructions = client.getInstructions?.();
       const connection: ServerConnection = {
         client,
         transport,
@@ -426,7 +428,7 @@ export class McpServerManager {
         tools: [],
         resources: [],
         prompts: [],
-        instructions: client.getInstructions?.(),
+        ...(instructions !== undefined ? { instructions } : {}),
         lastUsedAt: Date.now(),
         inFlight: 0,
         status: "connected",
@@ -749,9 +751,13 @@ export class McpServerManager {
       | { status: "failed"; client: Client; transport: Transport; error: unknown }
     > => {
       const authProvider = "provider" in authState ? authState.provider : undefined;
+      const transportOptions = {
+        ...(requestInit !== undefined ? { requestInit } : {}),
+        ...(authProvider !== undefined ? { authProvider } : {}),
+      };
       const baseTransport: Transport = kind === "streamable-http"
-        ? new StreamableHTTPClientTransport(url, { requestInit, authProvider })
-        : new SSEClientTransport(url, { requestInit, authProvider });
+        ? new StreamableHTTPClientTransport(url, transportOptions)
+        : new SSEClientTransport(url, transportOptions);
       const transport = traceObserver
         ? wrapTransportWithMcpTrace(baseTransport, serverName, kind, traceObserver)
         : baseTransport;

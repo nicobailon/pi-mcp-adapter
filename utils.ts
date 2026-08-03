@@ -8,14 +8,18 @@ async function execOpen(pi: ExtensionAPI, target: string, browser?: string, sign
   const os = platform();
 
   if (os === "darwin") {
-    return browser ? pi.exec("open", ["-a", browser, target], { signal }) : pi.exec("open", [target], { signal });
+    return browser
+      ? pi.exec("open", ["-a", browser, target], signal ? { signal } : {})
+      : pi.exec("open", [target], signal ? { signal } : {});
   }
   if (os === "win32") {
     return browser
-      ? pi.exec("cmd", ["/c", "start", "", browser, target], { signal })
-      : pi.exec("cmd", ["/c", "start", "", target], { signal });
+      ? pi.exec("cmd", ["/c", "start", "", browser, target], signal ? { signal } : {})
+      : pi.exec("cmd", ["/c", "start", "", target], signal ? { signal } : {});
   }
-  return browser ? pi.exec(browser, [target], { signal }) : pi.exec("xdg-open", [target], { signal });
+  return browser
+    ? pi.exec(browser, [target], signal ? { signal } : {})
+    : pi.exec("xdg-open", [target], signal ? { signal } : {});
 }
 
 export async function openUrl(pi: ExtensionAPI, url: string, browser?: string, signal?: AbortSignal): Promise<void> {
@@ -38,12 +42,14 @@ export async function parallelLimit<T, R>(
   fn: (item: T) => Promise<R>
 ): Promise<R[]> {
   const results: R[] = [];
-  let index = 0;
+  const iterator = items.entries();
 
   async function worker() {
-    while (index < items.length) {
-      const i = index++;
-      results[i] = await fn(items[i]);
+    while (true) {
+      const next = iterator.next();
+      if (next.done) return;
+      const [index, item] = next.value;
+      results[index] = await fn(item);
     }
   }
 
@@ -106,6 +112,9 @@ const COMMAND_SECRET_TIMEOUT_MS = 10_000;
 const COMMAND_SECRET_MAX_OUTPUT_BYTES = 1024 * 1024;
 
 /** Resolve a secret value, executing only a single leading `!` command marker. */
+export function resolveCommandSecret(value: string, context: string): string;
+export function resolveCommandSecret(value: undefined, context: string): undefined;
+export function resolveCommandSecret(value: string | undefined, context: string): string | undefined;
 export function resolveCommandSecret(value: string | undefined, context: string): string | undefined {
   if (value === undefined) return undefined;
   if (value.startsWith("!!")) return interpolateEnvVars(value.slice(1));

@@ -417,10 +417,12 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
 }
 
 function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
+  const imports = mergeImports(base.imports, next.imports);
+  const settings = next.settings ? { ...base.settings, ...next.settings } : base.settings;
   return {
     mcpServers: mergeServerMaps(base.mcpServers, next.mcpServers),
-    imports: mergeImports(base.imports, next.imports),
-    settings: next.settings ? { ...base.settings, ...next.settings } : base.settings,
+    ...(imports !== undefined ? { imports } : {}),
+    ...(settings !== undefined ? { settings } : {}),
   };
 }
 
@@ -499,7 +501,7 @@ function expandImports(config: McpConfig, cwd = process.cwd()): McpConfig {
 
   return {
     imports: config.imports,
-    settings: config.settings,
+    ...(config.settings !== undefined ? { settings: config.settings } : {}),
     mcpServers: mergeServerMaps(importedServers, config.mcpServers),
   };
 }
@@ -609,8 +611,8 @@ function validateConfig(raw: unknown): McpConfig {
 
   return {
     mcpServers: servers as Record<string, ServerEntry>,
-    imports: Array.isArray(obj.imports) ? (obj.imports as ImportKind[]) : undefined,
-    settings: obj.settings as McpSettings | undefined,
+    ...(Array.isArray(obj.imports) ? { imports: obj.imports as ImportKind[] } : {}),
+    ...(obj.settings !== undefined ? { settings: obj.settings as McpSettings } : {}),
   };
 }
 
@@ -708,8 +710,10 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
 
       if (raw.type === "local" && Array.isArray(raw.command) && raw.command.length > 0 && raw.command.every((value): value is string => typeof value === "string")) {
         const env = toStringRecord(raw.environment);
+        const command = raw.command[0];
+        if (command === undefined) continue;
         const mapped: ServerEntry = {
-          command: raw.command[0],
+          command,
           args: raw.command.slice(1),
           ...(env ? { env } : {}),
           ...(typeof raw.cwd === "string" ? { cwd: raw.cwd } : {}),
@@ -789,9 +793,12 @@ function buildUnifiedDiff(beforeText: string, afterText: string): string {
 
   for (let i = rows - 1; i >= 0; i--) {
     for (let j = cols - 1; j >= 0; j--) {
-      lcs[i][j] = before[i] === after[j]
-        ? lcs[i + 1][j + 1] + 1
-        : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      const row = lcs[i];
+      const nextRow = lcs[i + 1];
+      if (!row || !nextRow) continue;
+      row[j] = before[i] === after[j]
+        ? (nextRow[j + 1] ?? 0) + 1
+        : Math.max(nextRow[j] ?? 0, row[j + 1] ?? 0);
     }
   }
 
@@ -805,7 +812,7 @@ function buildUnifiedDiff(beforeText: string, afterText: string): string {
       j++;
       continue;
     }
-    if (j < cols && (i === rows || lcs[i][j + 1] >= lcs[i + 1][j])) {
+    if (j < cols && (i === rows || (lcs[i]?.[j + 1] ?? 0) >= (lcs[i + 1]?.[j] ?? 0))) {
       lines.push(`+ ${after[j]}`);
       j++;
       continue;
@@ -1108,7 +1115,7 @@ export function getServerProvenance(overridePath?: string, cwd = process.cwd()):
       provenance.set(name, {
         path: source.writePath,
         kind: source.kind,
-        importKind: source.importKind,
+        ...(source.importKind !== undefined ? { importKind: source.importKind } : {}),
       });
     }
   }

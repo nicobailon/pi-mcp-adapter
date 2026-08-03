@@ -95,6 +95,7 @@ export function createMcpTraceEvent(
   options?: { relatedRequestId?: unknown; durationMs?: number },
 ): McpTraceEvent {
   const kind = messageKind(message);
+  const bytes = messageBytes(message);
   const event: McpTraceEvent = {
     version: MCP_TRACE_SCHEMA_VERSION,
     timestamp: new Date().toISOString(),
@@ -103,7 +104,7 @@ export function createMcpTraceEvent(
     transport,
     kind,
     status,
-    bytes: messageBytes(message),
+    ...(bytes !== undefined ? { bytes } : {}),
   };
   if ("method" in message) event.method = redactTraceText(message.method, 120);
   if ("id" in message) event.id = traceId(message.id) ?? null;
@@ -210,8 +211,8 @@ export function createMcpTraceWriter(
     : resolve(sessionCwd ?? process.cwd(), ".pi", "mcp-traces", `mcp-${timestamp}-${randomSuffix}.jsonl`);
   return new McpTraceWriter({
     filePath,
-    maxBytes: settings.maxBytes,
-    maxEvents: settings.maxEvents,
+    ...(settings.maxBytes !== undefined ? { maxBytes: settings.maxBytes } : {}),
+    ...(settings.maxEvents !== undefined ? { maxEvents: settings.maxEvents } : {}),
   });
 }
 
@@ -231,12 +232,12 @@ export function isMcpTraceEnabled(
  * assigns `onmessage` during connect, so the setter must keep the observer in
  * front of whichever callback the SDK installs.
  */
-export function wrapTransportWithMcpTrace<T extends Transport>(
-  transport: T,
+export function wrapTransportWithMcpTrace(
+  transport: Transport,
   server: string,
   transportKind: McpTraceTransport,
   observer: McpTraceObserver,
-): T {
+): Transport {
   let messageHandler: Transport["onmessage"];
   const record = (event: McpTraceEvent): void => {
     try {
@@ -245,9 +246,9 @@ export function wrapTransportWithMcpTrace<T extends Transport>(
       // An observer failure must never alter SDK transport behavior.
     }
   };
-  const traced: Transport = {
+  const traced = {
     start: () => transport.start(),
-    send: async (message, options) => {
+    send: async (message: JSONRPCMessage, options?: Parameters<Transport["send"]>[1]) => {
       const started = performance.now();
       const messages = Array.isArray(message) ? message : [message];
       try {
@@ -270,35 +271,35 @@ export function wrapTransportWithMcpTrace<T extends Transport>(
     get onclose() {
       return transport.onclose;
     },
-    set onclose(handler) {
-      transport.onclose = handler;
+    set onclose(handler: Transport["onclose"]) {
+      Reflect.set(transport, "onclose", handler);
     },
     get onerror() {
       return transport.onerror;
     },
-    set onerror(handler) {
-      transport.onerror = handler;
+    set onerror(handler: Transport["onerror"]) {
+      Reflect.set(transport, "onerror", handler);
     },
     get onmessage() {
       return messageHandler;
     },
-    set onmessage(handler) {
+    set onmessage(handler: Transport["onmessage"]) {
       messageHandler = handler;
-      transport.onmessage = handler
+      Reflect.set(transport, "onmessage", handler
         ? ((message: JSONRPCMessage, extra?: MessageExtraInfo) => {
             record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
             handler(message, extra);
-          }) as Transport["onmessage"]
-        : undefined;
+          })
+        : undefined);
     },
     get sessionId() {
       return transport.sessionId;
     },
     setProtocolVersion: transport.setProtocolVersion
-      ? version => transport.setProtocolVersion!(version)
+      ? (version: string) => transport.setProtocolVersion?.(version)
       : undefined,
   };
-  return traced as T;
+  return traced as Transport;
 }
 
 export function traceTransportKind(definition: { command?: string; url?: string; socket?: string }, transport: Transport): McpTraceTransport {
