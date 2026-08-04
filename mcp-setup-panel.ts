@@ -540,7 +540,7 @@ export class McpSetupPanel {
           '  "mcpServers": {',
           '    "chrome-devtools": {',
           '      "command": "npx",',
-          '      "args": ["-y", "chrome-devtools-mcp@latest"]',
+          '      "args": ["-y", "chrome-devtools-mcp@1.6.0"]',
           "    }",
           "  }",
           "}",
