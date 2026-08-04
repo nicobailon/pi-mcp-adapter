@@ -41,4 +41,13 @@ describe("openUrl on darwin", () => {
 
     expect(exec).toHaveBeenCalledWith("open", ["https://example.com"], {});
   });
+
+  it("forwards an AbortSignal for an absolute-path browser override", async () => {
+    const { pi, exec } = fakePi();
+    const controller = new AbortController();
+
+    await openUrl(pi, "https://example.com", "/usr/bin/open", controller.signal);
+
+    expect(exec).toHaveBeenCalledWith("/usr/bin/open", ["https://example.com"], { signal: controller.signal });
+  });
 });
