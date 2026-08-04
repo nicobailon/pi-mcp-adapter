@@ -1,4 +1,4 @@
-import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { RESOURCE_MIME_TYPE } from "./ui-app-bridge-helpers.ts";
 import { UrlElicitationRequiredError, type ReadResourceResult } from "@modelcontextprotocol/client";
 import { ResourceFetchError, ResourceParseError } from "./errors.ts";
 import { logger } from "./logger.ts";

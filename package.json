@@ -81,6 +81,7 @@
     "types.ts",
     "ui-stream-types.ts",
     "ui-tool-visibility.ts",
+    "ui-app-bridge-helpers.ts",
     "config.ts",
     "server-manager.ts",
     "unix-socket-transport.ts",

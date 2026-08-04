@@ -47,6 +47,19 @@ describe("package.json files", () => {
     expect(runtimeModules.length).toBeGreaterThan(0);
     expect(runtimeModules.filter((entry) => !publishedFiles.has(entry))).toEqual([]);
   });
+
+  it("does not import the peer-dependent MCP app bridge from runtime modules", () => {
+    const runtimeModules = readdirSync(repoRoot)
+      .filter((entry) => entry.endsWith(".ts"))
+      .filter((entry) => !entry.endsWith(".test.ts"))
+      .filter((entry) => entry !== "vitest.config.ts");
+
+    const offenders = runtimeModules.filter((entry) =>
+      readFileSync(join(repoRoot, entry), "utf-8").includes("@modelcontextprotocol/ext-apps/app-bridge")
+    );
+
+    expect(offenders).toEqual([]);
+  });
 });
 
 describe("package.json dependency policy", () => {

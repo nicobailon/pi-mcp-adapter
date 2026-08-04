@@ -2,7 +2,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { buildAllowAttribute } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { buildAllowAttribute } from "./ui-app-bridge-helpers.ts";
 import {
   type CallToolRequest,
   type CallToolResult,
