@@ -1,16 +1,21 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawnSync } from "node:child_process";
 import { homedir, platform } from "node:os";
-import { join } from "node:path";
+import { extname, isAbsolute, join } from "node:path";
 import type { McpConfig, ServerEntry } from "./types.ts";
 
 async function execOpen(pi: ExtensionAPI, target: string, browser?: string, signal?: AbortSignal) {
   const os = platform();
 
   if (os === "darwin") {
-    return browser
-      ? pi.exec("open", ["-a", browser, target], signal ? { signal } : {})
-      : pi.exec("open", [target], signal ? { signal } : {});
+    if (browser) {
+      // An absolute executable path (e.g. from $BROWSER) names a launcher
+      // binary. App bundles still go through `open -a`, which handles them.
+      return isAbsolute(browser) && extname(browser).toLowerCase() !== ".app"
+        ? pi.exec(browser, [target], signal ? { signal } : {})
+        : pi.exec("open", ["-a", browser, target], signal ? { signal } : {});
+    }
+    return pi.exec("open", [target], signal ? { signal } : {});
   }
   if (os === "win32") {
     return browser
