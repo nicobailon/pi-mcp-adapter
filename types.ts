@@ -440,6 +440,23 @@ export interface McpTraceSettings {
   maxEvents?: number;
 }
 
+export const MCP_TOOL_APPROVAL_REQUEST_EVENT = "pi-mcp-adapter:tool-approval-request" as const;
+
+export type McpToolApprovalOrigin = "proxy" | "direct" | "script" | "resource" | "iframe";
+export type McpToolApprovalDecision = "allow_once" | "allow_for_session" | "deny" | "abstain";
+export type McpToolApprovalHandler = () => McpToolApprovalDecision | Promise<McpToolApprovalDecision>;
+
+export interface McpToolApprovalRequest {
+  requestId: string;
+  serverName: string;
+  originalToolName: string;
+  prefixedToolName: string;
+  args: Record<string, unknown>;
+  origin: McpToolApprovalOrigin;
+  signal?: AbortSignal;
+  claim(handler: McpToolApprovalHandler): boolean;
+}
+
 export interface McpSettings {
   toolPrefix?: ToolPrefix;
   /** Show the plug prefix in MCP status and connection text (default: true). Set to false to disable it. */

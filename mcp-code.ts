@@ -139,7 +139,7 @@ export async function runMcpScript(
     // Record before dispatch so calls still in flight at timeout/abort appear in the trace.
     const startedAt = Date.now();
     const index = calls.push({ operation: "call", path, ok: false, error: "incomplete", durationMs: 0, startedAt }) - 1;
-    const result = await executeCall(state, path, args, undefined, getPiTools, callSignal);
+    const result = await executeCall(state, path, args, undefined, getPiTools, callSignal, "script");
     const details = result.details;
     if (details.error !== undefined) {
       const errorCode = String(details.error);

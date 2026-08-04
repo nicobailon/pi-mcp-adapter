@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ConsentManager } from "./consent-manager.ts";
 import type { McpLifecycleManager } from "./lifecycle.ts";
 import type { McpServerManager } from "./server-manager.ts";
@@ -48,6 +48,8 @@ export interface McpExtensionState {
   failureMessages: Map<string, string>;
   /** Session-only approvals keyed by server and original tool name. */
   approvedToolCalls: Map<string, true>;
+  /** Shared event bus used by permission extensions to broker MCP approvals. */
+  approvalEvents?: ExtensionAPI["events"];
   uiResourceHandler: UiResourceHandler;
   consentManager: ConsentManager;
   uiServer: UiServerHandle | null;

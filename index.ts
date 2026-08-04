@@ -23,9 +23,14 @@ export type { McpAdapterOptions } from "./types.ts";
 export {
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
+  MCP_TOOL_APPROVAL_REQUEST_EVENT,
   type McpServerRuntimeStatus,
   type McpServerStatusSnapshot,
   type McpStatusSnapshot,
+  type McpToolApprovalDecision,
+  type McpToolApprovalHandler,
+  type McpToolApprovalOrigin,
+  type McpToolApprovalRequest,
 } from "./types.ts";
 
 const INIT_WAIT_TIMEOUT_MS = 30_000;

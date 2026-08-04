@@ -166,6 +166,7 @@ export async function initializeMcp(
     failureTracker,
     failureMessages,
     approvedToolCalls,
+    approvalEvents: pi.events,
     uiResourceHandler,
     consentManager,
     uiServer: null,

@@ -328,6 +328,23 @@ Use `approveTools` when a tool should stay visible but not run without confirmat
 
 When a matching tool is called from the proxy tool, a direct MCP tool, a resource call, or an MCP UI iframe, Pi asks: **Allow once**, **Allow for session**, or **Deny**. Session approvals are kept in memory only. In headless sessions, matching calls fail closed with an `approval_required` result instead of running. `excludeTools` still removes tools entirely; `approveTools` only gates visible tools at call time.
 
+Permission extensions can broker these decisions by listening on `pi-mcp-adapter:tool-approval-request` and claiming the request synchronously:
+
+```ts
+import {
+  MCP_TOOL_APPROVAL_REQUEST_EVENT,
+  type McpToolApprovalRequest,
+} from "pi-mcp-adapter";
+
+pi.events.on(MCP_TOOL_APPROVAL_REQUEST_EVENT, (request: McpToolApprovalRequest) => {
+  request.claim(async () => {
+    return "allow_once"; // "allow_for_session" | "deny" | "abstain"
+  });
+});
+```
+
+The request includes `serverName`, `originalToolName`, `prefixedToolName`, `args`, `origin`, and optional `signal`. The first synchronous claim wins. `allow_for_session` updates the same in-memory approval cache as the built-in dialog; `deny` blocks the MCP call; `abstain` or no claim preserves the fallback behavior above. Brokered approval runs for every uncached MCP call regardless of `approveTools` configuration, across proxy, direct, `mcpScript`, resource, and iframe origins.
+
 ### Output Guard
 
 Oversized MCP tool/resource results are guarded by default so a single huge response can't blow up the model context window or the session file:

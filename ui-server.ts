@@ -423,6 +423,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               toolMeta,
               callArgs.arguments,
               options.state.owner?.signal,
+              "iframe",
             )
           : options.config && isToolCallApprovalRequired(options.config, options.serverName, toolMeta)
             ? { ok: false as const, reason: "approval_required_headless" as const }

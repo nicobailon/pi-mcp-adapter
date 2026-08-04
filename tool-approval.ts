@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { abortable } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
@@ -5,7 +6,12 @@ import {
   getToolNameCandidates,
   matchesToolPattern,
   resolveToolPrefix,
+  MCP_TOOL_APPROVAL_REQUEST_EVENT,
   type McpConfig,
+  type McpToolApprovalDecision,
+  type McpToolApprovalHandler,
+  type McpToolApprovalOrigin,
+  type McpToolApprovalRequest,
   type ToolMetadata,
 } from "./types.ts";
 import { sanitizeTerminalText } from "./utils.ts";
@@ -34,19 +40,76 @@ export function isToolCallApprovalRequired(
   );
 }
 
+function isMcpToolApprovalDecision(value: unknown): value is McpToolApprovalDecision {
+  return value === "allow_once"
+    || value === "allow_for_session"
+    || value === "deny"
+    || value === "abstain";
+}
+
+async function requestBrokerApproval(
+  state: McpExtensionState,
+  serverName: string,
+  toolMeta: ToolMetadata,
+  args: Record<string, unknown> | undefined,
+  origin: McpToolApprovalOrigin,
+  signal?: AbortSignal,
+): Promise<McpToolApprovalDecision> {
+  if (!state.approvalEvents) return "abstain";
+
+  let acceptingClaim = true;
+  let handler: McpToolApprovalHandler | undefined;
+  const request: McpToolApprovalRequest = {
+    requestId: randomUUID(),
+    serverName,
+    originalToolName: toolMeta.originalName,
+    prefixedToolName: toolMeta.name,
+    args: args ?? {},
+    origin,
+    ...(signal !== undefined ? { signal } : {}),
+    claim(candidate: McpToolApprovalHandler) {
+      if (!acceptingClaim || handler) return false;
+      handler = candidate;
+      return true;
+    },
+  };
+
+  state.approvalEvents.emit(MCP_TOOL_APPROVAL_REQUEST_EVENT, request);
+  acceptingClaim = false;
+  if (!handler) return "abstain";
+
+  try {
+    const decision = await abortable(Promise.resolve().then(handler), signal);
+    return isMcpToolApprovalDecision(decision) ? decision : "deny";
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return "deny";
+  }
+}
+
 export async function ensureToolCallApproved(
   state: McpExtensionState,
   serverName: string,
   toolMeta: ToolMetadata,
   args: Record<string, unknown> | undefined,
   signal?: AbortSignal,
+  origin: McpToolApprovalOrigin = toolMeta.resourceUri ? "resource" : "proxy",
 ): Promise<ToolCallApprovalResult> {
-  if (!isToolCallApprovalRequired(state.config, serverName, toolMeta)) {
+  const cacheKey = `${serverName}\u0000${toolMeta.originalName}`;
+  const approvedToolCalls = state.approvedToolCalls ??= new Map<string, true>();
+  if (approvedToolCalls.has(cacheKey)) {
     return { ok: true };
   }
 
-  const cacheKey = `${serverName}\u0000${toolMeta.originalName}`;
-  if (state.approvedToolCalls.has(cacheKey)) {
+  const brokerDecision = await requestBrokerApproval(state, serverName, toolMeta, args, origin, signal);
+  if (brokerDecision === "allow_once") return { ok: true };
+  if (brokerDecision === "allow_for_session") {
+    approvedToolCalls.set(cacheKey, true);
+    return { ok: true };
+  }
+  if (brokerDecision === "deny") return { ok: false, reason: "denied" };
+
+  if (!isToolCallApprovalRequired(state.config, serverName, toolMeta)) {
     return { ok: true };
   }
 
@@ -71,7 +134,7 @@ export async function ensureToolCallApproved(
     return { ok: true };
   }
   if (decision === "Allow for session") {
-    state.approvedToolCalls.set(cacheKey, true);
+    approvedToolCalls.set(cacheKey, true);
     return { ok: true };
   }
   return { ok: false, reason: "denied" };

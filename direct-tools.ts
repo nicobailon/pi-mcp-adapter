@@ -386,7 +386,7 @@ export function createDirectToolExecutor(
       ...(spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : {}),
       ...(spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : {}),
       ...(spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : {}),
-    }, params, ownedSignal);
+    }, params, ownedSignal, spec.resourceUri ? "resource" : "direct");
     if (approval.ok === false) {
       const denied = approval.reason === "denied";
       const message = denied

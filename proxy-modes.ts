@@ -749,6 +749,7 @@ export async function executeCall(
   serverOverride?: string,
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
+  origin?: "proxy" | "script",
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
@@ -1034,7 +1035,14 @@ export async function executeCall(
     return disabledCallResult(serverName, toolMeta);
   }
 
-  const approval = await ensureToolCallApproved(state, serverName, toolMeta, args, ownedSignal);
+  const approval = await ensureToolCallApproved(
+    state,
+    serverName,
+    toolMeta,
+    args,
+    ownedSignal,
+    origin ?? (toolMeta.resourceUri ? "resource" : "proxy"),
+  );
   if (approval.ok === false) {
     const denied = approval.reason === "denied";
     const message = denied

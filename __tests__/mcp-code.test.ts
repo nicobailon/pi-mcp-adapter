@@ -4,6 +4,7 @@ import { createMcpAdapter } from "../index.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
+import { MCP_TOOL_APPROVAL_REQUEST_EVENT, type McpToolApprovalRequest } from "../types.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/mcp-code-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
@@ -189,6 +190,39 @@ describe("runMcpScript", () => {
     expect(result.details).toMatchObject({
       calls: [{ path: "fixture_echo", ok: false, error: "approval_required" }],
     });
+  });
+
+  it("lets approval brokers handle internal script calls", async () => {
+    const broker = vi.fn((request: McpToolApprovalRequest) => {
+      expect(request).toMatchObject({
+        serverName: "fixture",
+        originalToolName: "echo",
+        prefixedToolName: "fixture_echo",
+        args: { value: "brokered" },
+        origin: "script",
+      });
+      expect(request.claim(() => "allow_once")).toBe(true);
+    });
+    const brokeredState = {
+      ...state,
+      config: { settings: { approveTools: ["echo"] }, mcpServers: { fixture: definition } },
+      approvedToolCalls: new Map(),
+      approvalEvents: { emit: vi.fn((channel: string, data: unknown) => {
+        expect(channel).toBe(MCP_TOOL_APPROVAL_REQUEST_EVENT);
+        broker(data as McpToolApprovalRequest);
+      }) },
+    } as unknown as McpExtensionState;
+
+    const result = await runMcpScript(
+      brokeredState,
+      'return await tools.fixture_echo({ value: "brokered" });',
+    );
+
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+      ok: true,
+      data: { structuredContent: { echoed: "brokered" } },
+    });
+    expect(broker).toHaveBeenCalledOnce();
   });
 
   it("calls a prefixed MCP tool through the flat tools proxy", async () => {
