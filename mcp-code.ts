@@ -14,7 +14,7 @@ export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 
 class McpScriptTimeoutError extends Error {
   constructor(timeoutMs: number) {
-    super(`mcp_script timed out after ${timeoutMs}ms`);
+    super(`mcpScript timed out after ${timeoutMs}ms`);
     this.name = "McpScriptTimeoutError";
   }
 }
@@ -147,7 +147,7 @@ export async function runMcpScript(
         ? details.suggestions.filter((suggestion): suggestion is string => typeof suggestion === "string")
         : [];
       const message = errorCode === "tool_not_found"
-        ? `Tool "${path}" not found. Use await tools.search({ query: "..." }) inside mcp_script.${suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : ""}`
+        ? `Tool "${path}" not found. Use await tools.search({ query: "..." }) inside mcpScript.${suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : ""}`
         : typeof details.message === "string"
           ? details.message
           : textFromContent(result.content);
@@ -285,7 +285,7 @@ export async function runMcpScript(
       });
       activeWorker.once("error", reject);
       activeWorker.once("exit", (code) => {
-        if (!completed && code !== 0) reject(new Error(`mcp_script worker exited with code ${code}`));
+        if (!completed && code !== 0) reject(new Error(`mcpScript worker exited with code ${code}`));
       });
     });
     const timeoutError = new McpScriptTimeoutError(resolvedTimeoutMs);
@@ -313,7 +313,7 @@ export async function runMcpScript(
   } catch (error) {
     if (error instanceof McpScriptTimeoutError) {
       errorCode = "timeout";
-      errorMessage = `mcp_script timed out after ${resolvedTimeoutMs}ms`;
+      errorMessage = `mcpScript timed out after ${resolvedTimeoutMs}ms`;
     } else if (externalSignal?.aborted) {
       errorCode = "aborted";
       errorMessage = error instanceof Error ? error.message : String(error);
@@ -330,7 +330,7 @@ export async function runMcpScript(
     callsSnapshot ??= snapshotCalls();
     // A script may finish without awaiting every call; abort leftovers so
     // parent-side dispatches do not outlive the script.
-    timeoutController.abort(new Error("mcp_script finished"));
+    timeoutController.abort(new Error("mcpScript finished"));
     await worker?.terminate();
   }
 

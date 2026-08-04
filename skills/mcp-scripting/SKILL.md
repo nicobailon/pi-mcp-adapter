@@ -1,13 +1,13 @@
 ---
 name: mcp-scripting
-description: Write mcp_script JavaScript for discovering, inspecting, and calling MCP tools.
+description: Write mcpScript JavaScript for discovering, inspecting, and calling MCP tools.
 ---
 
 # MCP scripting
 
-For multi-call MCP work, write ordinary JavaScript with loops, filtering, chaining, fan-out, or other logic between calls. Run that source with `mcp_script`; it is the primary MCP orchestration surface. For a single MCP search, describe, status check, auth action, or tool call, use `mcp` instead.
+For multi-call MCP work, write ordinary JavaScript with loops, filtering, chaining, fan-out, or other logic between calls. Run that source with `mcpScript`; it is the primary MCP orchestration surface. For a single MCP search, describe, status check, auth action, or tool call, use `mcp` instead.
 
-Write the source naturally, then pass it as `mcp_script`'s `code` argument:
+Write the source naturally, then pass it as `mcpScript`'s `code` argument:
 
 ```js
 const { items } = await tools.search({ query: "search issues", server: "github" });

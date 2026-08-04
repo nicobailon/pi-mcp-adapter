@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated the MCP client from the monolithic SDK v1 package to the stable modular `@modelcontextprotocol/client` and `@modelcontextprotocol/core` v2 packages. The stable release restores conservative legacy discovery fallback and declared JSON Schema dialect support while retaining strict OAuth issuer validation.
 
 ### Fixed
+- Renamed the MCP scripting tool to camel-case `mcpScript` because Anthropic rejects the previous underscore-form name. Thanks @ritvij14 for issue #278 and @wierdbytes for confirmation and the workaround.
 - Pinned the Chrome DevTools setup preset and README examples to `chrome-devtools-mcp@1.6.0` instead of `@latest`, so reviewed scaffolded commands stay stable. Thanks @fitchmultz for issue #274.
 - Removed the adapter's throwaway Streamable HTTP initialize probe. HTTP connections now initialize once on the real client and use narrowly classified SSE fallback, avoiding duplicate sessions and preventing authentication, cancellation, timeout, negotiation, and server failures from being misclassified as transport incompatibility.
 - Stopped tokenless discovery requests, sandboxed MCP app documents, unrelated child windows, and app-opened popups from gaining session authority; discovery now serves a non-sensitive landing page, app HTML loads with a separate resource-only token, host messages accept only the app frame as their source, and the app response enforces sandboxing even when opened as a top-level page.

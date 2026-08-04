@@ -113,9 +113,9 @@ try {
     console: capturedConsole,
   }), {
     codeGeneration: { strings: false, wasm: false },
-    name: "mcp_script",
+    name: "mcpScript",
   });
-  const script = new vm.Script(`(async () => {\n${workerData.code}\n})()`, { filename: "mcp_script.js" });
+  const script = new vm.Script(`(async () => {\n${workerData.code}\n})()`, { filename: "mcpScript.js" });
   const returnValue = await Promise.resolve(script.runInContext(context));
   parentPort.postMessage(returnValue === undefined
     ? { type: "done" }

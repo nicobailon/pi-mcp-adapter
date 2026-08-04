@@ -17,7 +17,7 @@ function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] 
 }
 
 describe("runMcpScript", () => {
-  it("registers mcp_script by default", () => {
+  it("registers mcpScript by default", () => {
     const registerTool = vi.fn();
     createMcpAdapter({ config: { settings: {}, mcpServers: {} } })({
       registerTool,
@@ -28,13 +28,14 @@ describe("runMcpScript", () => {
     } as any);
 
     expect(registerTool).toHaveBeenCalledWith(expect.objectContaining({
-      name: "mcp_script",
+      name: "mcpScript",
       description: expect.stringContaining("multiple MCP tool calls in one request"),
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
     }));
+    expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp_script" }));
   });
 
-  it("skips mcp_script when scriptMode is false", () => {
+  it("skips mcpScript when scriptMode is false", () => {
     const registerTool = vi.fn();
     createMcpAdapter({ config: { settings: { scriptMode: false }, mcpServers: {} } })({
       registerTool,
@@ -45,7 +46,7 @@ describe("runMcpScript", () => {
     } as any);
 
     expect(registerTool).toHaveBeenCalled();
-    expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp_script" }));
+    expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcpScript" }));
   });
 
   beforeAll(async () => {
@@ -78,7 +79,7 @@ describe("runMcpScript", () => {
       ok: false,
       error: {
         code: "tool_not_found",
-        message: expect.stringContaining('Use await tools.search({ query: "..." }) inside mcp_script.'),
+        message: expect.stringContaining('Use await tools.search({ query: "..." }) inside mcpScript.'),
       },
     });
     expect(payload.error.message).not.toContain("mcp({ search:");
@@ -281,7 +282,7 @@ describe("runMcpScript", () => {
 
     expect(textBlocks(result)[0]).toBe("before timeout");
     expect(result.details).toMatchObject({ error: "timeout", timeoutMs: 250 });
-    expect(textBlocks(result).at(-1)).toBe("mcp_script timed out after 250ms");
+    expect(textBlocks(result).at(-1)).toBe("mcpScript timed out after 250ms");
   });
 
   it("orders emitted and captured console blocks before the return value", async () => {
