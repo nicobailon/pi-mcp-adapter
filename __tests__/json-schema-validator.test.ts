@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation/types.js";
+import type { JsonSchemaType } from "@modelcontextprotocol/client";
 import { createJsonSchemaValidator } from "../json-schema-validator.ts";
 
 const draft07 = "http://json-schema.org/draft-07/schema#";

@@ -1,12 +1,12 @@
 import { Ajv } from "ajv";
 import Ajv2020Import from "ajv/dist/2020.js";
 import addFormatsImport from "ajv-formats";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type {
   JsonSchemaType,
   JsonSchemaValidator,
   jsonSchemaValidator as JsonSchemaValidatorProvider,
-} from "@modelcontextprotocol/sdk/validation/types.js";
+} from "@modelcontextprotocol/client";
 
 // ajv-formats types target its bundled ajv; the runtime accepts both instances.
 const addFormats = addFormatsImport as unknown as (instance: Ajv) => void;

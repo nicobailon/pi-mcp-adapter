@@ -10,12 +10,12 @@ import {
   type AddClientAuthentication,
   type OAuthClientProvider,
   type OAuthDiscoveryState,
-} from "@modelcontextprotocol/sdk/client/auth.js"
+} from "@modelcontextprotocol/client"
 import type {
   OAuthClientInformationMixed,
   OAuthClientMetadata,
   OAuthTokens,
-} from "@modelcontextprotocol/sdk/shared/auth.js"
+} from "@modelcontextprotocol/client"
 import {
   getAuthForUrl,
   updateTokens,
@@ -288,7 +288,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
       }
       // Return all registration metadata and the local issuer extension.
-      // This keeps the SDK v1 view and the stored issuer binding consistent.
+      // This keeps the SDK OAuth view and the stored issuer binding consistent.
       return {
         client_id: clientInfo.clientId,
         client_secret: clientInfo.clientSecret,

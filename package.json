@@ -123,8 +123,9 @@
     "LICENSE"
   ],
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/core": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.2.2",
-    "@modelcontextprotocol/sdk": "^1.30.0",
     "@napi-rs/keyring": "^1.3.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",

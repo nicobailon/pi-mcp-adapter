@@ -1,9 +1,14 @@
+import { SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import http from "node:http";
 import { startUiServer, type UiServerHandle, type UiServerOptions } from "../ui-server.ts";
 import type { McpServerManager, ServerConnection } from "../server-manager.ts";
 import type { ConsentManager } from "../consent-manager.ts";
 import type { UiResourceContent, McpConfig } from "../types.ts";
+
+function httpError(status: number, message: string): SdkHttpError {
+  return new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, message, { status });
+}
 
 // Same HTTP helper as __tests__/ui-server.test.ts.
 async function request(
@@ -70,12 +75,12 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("recovers a terminated Streamable HTTP session transparently, when config is supplied", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+
 
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValueOnce(httpError(404, "Session not found")) },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
     const fresh = {
@@ -121,12 +126,12 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("returns auth guidance when recovery reconnect needs auth and no callback can refresh it", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+
 
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValueOnce(httpError(404, "Session not found")) },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
     const needsAuth = {
@@ -168,12 +173,12 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("uses the supplied auth callback when recovery reconnect returns needs-auth", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+
 
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValueOnce(httpError(404, "Session not found")) },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
     const needsAuth = {
@@ -222,12 +227,12 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("runs without recovery (unchanged pre-existing behavior) when config is not supplied", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+
 
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValue(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValue(httpError(404, "Session not found")) },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
 

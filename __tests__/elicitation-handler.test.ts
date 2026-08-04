@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ElicitRequest } from "@modelcontextprotocol/sdk/types.js";
+import type { ElicitRequest } from "@modelcontextprotocol/client";
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(async () => undefined),

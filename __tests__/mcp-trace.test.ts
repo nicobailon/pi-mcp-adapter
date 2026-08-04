@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Transport } from "@modelcontextprotocol/client";
 import {
   createMcpTraceEvent,
   isMcpTraceEnabled,
@@ -116,6 +116,7 @@ describe("MCP protocol tracing", () => {
     const wrapped = wrapTransportWithMcpTrace(underlying, "demo", "stdio", {
       record: event => writer.write(event),
     });
+    expect(wrapped).toBe(underlying);
     wrapped.onmessage = incoming;
     underlying.onmessage?.({ jsonrpc: "2.0", method: "notifications/ping", params: {} });
     await wrapped.send({ jsonrpc: "2.0", id: 1, method: "ping", params: {} });
@@ -135,5 +136,21 @@ describe("MCP protocol tracing", () => {
     underlying.onmessage?.({ jsonrpc: "2.0", method: "notifications/ping", params: {} });
     await wrapped.send({ jsonrpc: "2.0", id: 1, method: "ping", params: {} });
     expect(incoming).toHaveBeenCalledOnce();
+  });
+
+  it("keeps transport behavior when onmessage cannot be redefined", async () => {
+    const sent = vi.fn(async () => undefined);
+    const underlying = fakeTransport({ send: sent });
+    Object.defineProperty(underlying, "onmessage", {
+      value: undefined,
+      writable: true,
+      configurable: false,
+    });
+
+    const wrapped = wrapTransportWithMcpTrace(underlying, "demo", "stdio", { record: vi.fn() });
+
+    expect(wrapped).toBe(underlying);
+    await wrapped.send({ jsonrpc: "2.0", id: 1, method: "ping", params: {} });
+    expect(sent).toHaveBeenCalledOnce();
   });
 });

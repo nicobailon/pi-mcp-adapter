@@ -1,11 +1,11 @@
 // types.ts - Core type definitions
-import type { Transport as McpTransport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type {
   ContentBlock as McpContentBlock,
   ListPromptsResult,
   ListResourcesResult,
   ListToolsResult,
-} from "@modelcontextprotocol/sdk/types.js";
+  Transport as McpTransport,
+} from "@modelcontextprotocol/client";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import type { UiStreamMode } from "./ui-stream-types.ts";
 import type { UiToolVisibility } from "./ui-tool-visibility.ts";
@@ -397,6 +397,14 @@ export interface ServerEntry {
   debug?: boolean;  // Show server stderr (default: false)
   /** Enable metadata-only JSONL protocol tracing for this server. */
   trace?: boolean;
+  /**
+   * MCP protocol era negotiation for this server. Defaults to `"legacy"`
+   * (byte-equivalent to pre-2026 behavior — no `versionNegotiation` is sent).
+   * `"auto"` offers the SDK's default 2026-07-28+ modern versions with
+   * legacy fallback; `"2026-07-28"` pins the connection to that revision
+   * with no fallback. `auto` and `2026-07-28` must be set explicitly.
+   */
+  protocolVersion?: "legacy" | "auto" | "2026-07-28";
   // Keep configuration visible without allowing connections or execution.
   disabled?: boolean;
 }

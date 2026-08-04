@@ -20,8 +20,7 @@
 //     many things other than "your session is gone"
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
-import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, SdkHttpError } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { isServerDisabled, type McpConfig } from "./types.ts";
@@ -34,25 +33,25 @@ import type { McpServerManager, ServerConnection } from "./server-manager.ts";
  * gate response some servers emit before dispatching to a handler.
  *
  * `hadSessionId` must reflect the transport's session id from *before* the
- * call that produced `err` was made. The installed SDK (1.30.0) does not
- * clear `transport.sessionId` on a 404 response, so callers must capture it
- * before the call rather than rely on catch-time transport state.
+ * call that produced `err` was made. Callers must capture it before the call
+ * rather than rely on catch-time transport state.
  */
+const CONNECTION_CLOSED_PROTOCOL_CODE = -32000;
 const SERVER_NOT_INITIALIZED_MCP_MESSAGES = new Set([
-  `MCP error ${ErrorCode.ConnectionClosed}: Server not initialized`,
-  `MCP error ${ErrorCode.ConnectionClosed}: Bad Request: Server not initialized`,
+  "Server not initialized",
+  "Bad Request: Server not initialized",
 ]);
 
 export function isTerminatedSession(err: unknown, hadSessionId: boolean): boolean {
   if (!hadSessionId) return false;
-  if (err instanceof StreamableHTTPError) {
-    return err.code === 404
-      || (err.code === 400
+  if (err instanceof SdkHttpError) {
+    return err.status === 404
+      || (err.status === 400
         && /"code"\s*:\s*-32000/.test(err.message)
         && /"message"\s*:\s*"Bad Request: Server not initialized"/.test(err.message));
   }
-  return err instanceof McpError
-    && err.code === ErrorCode.ConnectionClosed
+  return err instanceof ProtocolError
+    && err.code === CONNECTION_CLOSED_PROTOCOL_CODE
     && SERVER_NOT_INITIALIZED_MCP_MESSAGES.has(err.message);
 }
 

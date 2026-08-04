@@ -625,14 +625,10 @@ describe("UiServer", () => {
         result: { content: [{ type: "text", text: "tool result" }] },
       });
       expect(manager.getRequestOptions).toHaveBeenCalledWith("test-server");
-      expect(mockClient.callTool).toHaveBeenCalledWith(
-        {
-          name: "some_tool",
-          arguments: { arg1: "value1" },
-        },
-        undefined,
-        requestOptions,
-      );
+      expect(mockClient.callTool).toHaveBeenCalledWith({
+        name: "some_tool",
+        arguments: { arg1: "value1" },
+      }, requestOptions);
     });
 
     it("returns a gated iframe call as an approval_denied tool result", async () => {

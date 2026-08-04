@@ -37,7 +37,7 @@ vi.mock("../init.ts", () => ({
   recordFailure: mocks.recordFailure,
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any, info: unknown, options: unknown) {
     this.info = info;
@@ -64,7 +64,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
   SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
     this.close = vi.fn(async () => undefined);
@@ -260,7 +260,7 @@ describe("proxy auto auth", () => {
   });
 
   it("runs URL elicitations returned by proxy tool calls", async () => {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/sdk/types.js");
+    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
     const { executeCall } = await import("../proxy-modes.ts");
     const error = new UrlElicitationRequiredError([{
       mode: "url",
@@ -368,15 +368,11 @@ describe("proxy auto auth", () => {
     );
     expect(manager.connect).toHaveBeenCalledTimes(1);
     expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
-    expect(connected.client.callTool).toHaveBeenCalledWith(
-      {
-        name: "search",
-        arguments: { q: "hello" },
-        _meta: undefined,
-      },
-      undefined,
-      { timeout: 1234 },
-    );
+    expect(connected.client.callTool).toHaveBeenCalledWith({
+      name: "search",
+      arguments: { q: "hello" },
+      _meta: undefined,
+    }, { timeout: 1234 });
     expect(result.content[0].text).toContain("ok");
   });
 
@@ -450,11 +446,7 @@ describe("proxy auto auth", () => {
     const result = await inFlight;
 
     expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
-    expect(connection.client.callTool).toHaveBeenCalledWith(
-      { name: "search", arguments: {}, _meta: undefined },
-      undefined,
-      requestOptions,
-    );
+    expect(connection.client.callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: undefined }, requestOptions);
     expect(result.details).toMatchObject({ error: "aborted", message: "request aborted" });
     expect(result.content[0].text).toContain("request aborted");
   });
@@ -553,18 +545,8 @@ describe("proxy auto auth", () => {
     expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000 });
     expect(client.listResources).toHaveBeenCalledTimes(1);
     expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000 });
-    expect(client.callTool).toHaveBeenNthCalledWith(
-      1,
-      { name: "search", arguments: { q: "one" }, _meta: undefined },
-      undefined,
-      { timeout: 5000 },
-    );
-    expect(client.callTool).toHaveBeenNthCalledWith(
-      2,
-      { name: "search", arguments: { q: "two" }, _meta: undefined },
-      undefined,
-      { timeout: 5000 },
-    );
+    expect(client.callTool).toHaveBeenNthCalledWith(1, { name: "search", arguments: { q: "one" }, _meta: undefined }, { timeout: 5000 });
+    expect(client.callTool).toHaveBeenNthCalledWith(2, { name: "search", arguments: { q: "two" }, _meta: undefined }, { timeout: 5000 });
     expect(first.content[0].text).toContain("ok");
     expect(second.content[0].text).toContain("ok");
   });

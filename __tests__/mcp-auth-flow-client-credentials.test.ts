@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
 
 class MockUnauthorizedError extends Error {}
 
-vi.mock("@modelcontextprotocol/sdk/client/auth.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   auth: mocks.sdkAuth,
   extractWWWAuthenticateParams: (response: Response) => {

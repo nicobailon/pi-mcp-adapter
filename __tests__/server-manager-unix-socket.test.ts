@@ -2,8 +2,8 @@ import { createServer, type Server } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
-import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/client";
+import type { JSONRPCMessage } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { McpServerManager } from "../server-manager.ts";
 
@@ -23,7 +23,10 @@ afterEach(async () => {
 });
 
 describe("McpServerManager Unix socket transport", () => {
-  it("connects to an rmcp-mux-compatible socket and discovers tools", async () => {
+  it.each([
+    { label: "legacy default", protocolVersion: undefined },
+    { label: "auto in-place fallback", protocolVersion: "auto" as const },
+  ])("connects to an rmcp-mux-compatible socket and discovers tools ($label)", async ({ protocolVersion }) => {
     const directory = await mkdtemp(join(tmpdir(), "pi-mcp-socket-"));
     temporaryDirectories.push(directory);
     const socketPath = join(directory, "shared.sock");
@@ -61,7 +64,10 @@ describe("McpServerManager Unix socket transport", () => {
 
     const manager = new McpServerManager();
     managers.push(manager);
-    const connection = await manager.connect("shared", { socket: socketPath });
+    const connection = await manager.connect("shared", {
+      socket: socketPath,
+      ...(protocolVersion ? { protocolVersion } : {}),
+    });
 
     expect(connection.status).toBe("connected");
     expect(connection.tools.map(tool => tool.name)).toEqual(["shared_tool"]);

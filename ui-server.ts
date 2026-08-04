@@ -4,10 +4,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { buildAllowAttribute } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
-  ContentBlockSchema,
   type CallToolRequest,
   type CallToolResult,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
+import { ContentBlockSchema } from "@modelcontextprotocol/core";
 import type { ConsentManager } from "./consent-manager.ts";
 import { ServerError, wrapError } from "./errors.ts";
 import { formatAuthRequiredMessage } from "./utils.ts";
@@ -457,9 +457,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
                   ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
                 },
                 options.serverName,
-                (conn) => conn.client.callTool(callArgs, undefined, options.manager.getRequestOptions?.(options.serverName)),
+                (conn) => conn.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName)),
               )
-            : await connection.client.callTool(callArgs, undefined, options.manager.getRequestOptions?.(options.serverName));
+            : await connection.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName));
           sendJson(res, 200, { ok: true, result });
         } finally {
           options.manager.decrementInFlight(options.serverName);

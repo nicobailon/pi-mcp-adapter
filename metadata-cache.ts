@@ -91,6 +91,7 @@ export function computeServerHash(definition: ServerEntry): string {
     url: resolveServerUrl(definition),
     headers: interpolateEnvRecord(definition.headers),
     auth: definition.auth,
+    protocolVersion: definition.protocolVersion,
     bearerToken: resolveBearerToken(definition),
     bearerTokenEnv: definition.bearerTokenEnv,
     exposeResources: definition.exposeResources,
