@@ -141,6 +141,13 @@ describe("mcp-auth-flow explicit auth", () => {
       `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://auth.example.com")}`,
     )).resolves.toBe("authenticated");
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(2);
+    expect(mocks.sdkAuth).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        authorizationCode: "auth-code",
+        iss: "https://auth.example.com",
+      }),
+    );
     expect(hasPendingAuth("rfc9207-missing")).toBe(false);
   });
 

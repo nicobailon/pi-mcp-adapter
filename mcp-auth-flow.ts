@@ -606,6 +606,7 @@ export async function completeAuth(
     const result = await abortable(runSdkAuth(pendingAuth.authProvider, {
       serverUrl: pendingAuth.serverUrl,
       authorizationCode: code,
+      ...(iss !== undefined ? { iss } : {}),
       ...pendingAuth.discovery,
     }), signal)
     throwIfAborted(signal)
