@@ -224,6 +224,42 @@ describe("mcpAdapter session lifecycle", () => {
     }));
   });
 
+  it("does not leak TypeBox internal markers into registered tool parameter schemas", async () => {
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    mcpAdapter(api);
+
+    const collectTildeKeys = (value: unknown, path = "$", keys: string[] = []): string[] => {
+      if (value === null || typeof value !== "object") return keys;
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => collectTildeKeys(item, `${path}[${index}]`, keys));
+        return keys;
+      }
+      for (const [key, child] of Object.entries(value)) {
+        if (key.startsWith("~")) keys.push(`${path}.${key}`);
+        collectTildeKeys(child, `${path}.${key}`, keys);
+      }
+      return keys;
+    };
+
+    for (const toolName of ["mcpScript", "mcp"]) {
+      const tool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === toolName)?.[0];
+      expect(tool, `expected ${toolName} to be registered`).toBeDefined();
+
+      const serialized = JSON.parse(JSON.stringify(tool.parameters));
+      expect(
+        collectTildeKeys(serialized),
+        `${toolName} parameters must not leak TypeBox internal markers (~optional etc.)`,
+      ).toEqual([]);
+
+      // Optional numeric fields must still be present with their options and not required.
+      for (const key of toolName === "mcpScript" ? ["timeoutMs"] : ["limit", "offset"]) {
+        expect(serialized.properties[key]).toMatchObject({ type: "number", description: expect.any(String) });
+        expect(serialized.required ?? []).not.toContain(key);
+      }
+    }
+  });
+
   it("registers direct MCP tools when the host TypeBox shim omits Unsafe", async () => {
     vi.doMock("typebox", () => ({
       Type: {

@@ -3,6 +3,7 @@ import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpAdapterOptions, McpConfig, PromptMetadata } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
+import type { TSchema } from "typebox";
 import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, authenticateServer, logoutServer, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
 import { cloneMcpConfig, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.ts";
@@ -49,6 +50,18 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Prom
   } finally {
     clearTimeout(timer);
   }
+}
+
+// TypeBox 1.x annotates raw objects passed to Type.Optional with an enumerable
+// "~optional" key that survives serialization into provider tool schemas (Gemini
+// rejects it with 400 INVALID_ARGUMENT). Prefer a real Type.Number schema; fall
+// back to a plain raw schema for host TypeBox shims that omit Type.Number, since
+// a property left out of `required` is optional by default.
+function optionalNumber(options: { minimum?: number; description: string }): TSchema {
+  const number = (Type as { Number?: (opts: typeof options) => TSchema }).Number;
+  return typeof number === "function"
+    ? Type.Optional(number(options))
+    : ({ type: "number", ...options } as unknown as TSchema);
 }
 
 function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
@@ -627,8 +640,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
       parameters: Type.Object({
         code: Type.String({ description: "Trusted JavaScript MCP script. Use tools.<prefixedToolName>(args) and emit(value)." }),
-        // Raw JSON schema: host TypeBox shims may omit Type.Number (see index-lifecycle shim test).
-        timeoutMs: Type.Optional({ type: "number", minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" } as any),
+        timeoutMs: optionalNumber({ minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" }),
       }),
       renderResult: renderMcpToolResult,
       async execute(_toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined) {
@@ -687,9 +699,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
         regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
-        // Raw JSON schema: host TypeBox shims may omit Type.Number (see index-lifecycle shim test).
-        limit: Type.Optional({ type: "number", minimum: 1, description: "Maximum search results to return (default: 12)" } as any),
-        offset: Type.Optional({ type: "number", minimum: 0, description: "Search result offset (default: 0)" } as any),
+        limit: optionalNumber({ minimum: 1, description: "Maximum search results to return (default: 12)" }),
+        offset: optionalNumber({ minimum: 0, description: "Search result offset (default: 0)" }),
         server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages', 'auth-start', or 'auth-complete'" })),
       }),
