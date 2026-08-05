@@ -145,3 +145,57 @@ describe("resolveServerFromToolName", () => {
 		});
 	});
 });
+
+describe("ambiguous prefix collisions (fail safe)", () => {
+	it("returns undefined when two servers normalize to the same prefix", () => {
+		// my-server and my_server both -> my_server under "server" mode
+		expect(
+			resolveServerFromToolName("my_server_run", ["my-server", "my_server"], "server"),
+		).toBe(undefined);
+	});
+
+	it("returns undefined regardless of collision order", () => {
+		expect(
+			resolveServerFromToolName("my_server_run", ["my_server", "my-server"], "server"),
+		).toBe(undefined);
+	});
+
+	it("does not false-trigger on a single server whose name contains a dash", () => {
+		// Only one configured server, no collision: dashes are fine.
+		expect(
+			resolveServerFromToolName("my_server_run", ["my-server"], "server"),
+		).toBe("my-server");
+	});
+
+	it("returns undefined when a collision happens under mcp mode too", () => {
+		// both -> mcp__my_server
+		expect(
+			resolveServerFromToolName(
+				"mcp__my_server_run",
+				["my-server", "my_server"],
+				"mcp",
+			),
+		).toBe(undefined);
+	});
+
+	it("still resolves when the colliding servers are unrelated to the call", () => {
+		// colliding my-server/my_server exist, but the call targets searxng.
+		expect(
+			resolveServerFromToolName(
+				"searxng_search",
+				["my-server", "my_server", "searxng"],
+				"server",
+			),
+		).toBe("searxng");
+	});
+
+	it("is deterministic: a collision between only two of many servers still fails safe", () => {
+		expect(
+			resolveServerFromToolName(
+				"my_server_run",
+				["searxng", "my-server", "my_server", "github"],
+				"server",
+			),
+		).toBe(undefined);
+	});
+});

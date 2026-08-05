@@ -688,6 +688,14 @@ export function resolveServerFromToolName(
   if (candidates.length === 0) return undefined;
   candidates.sort((a, b) => b.prefix.length - a.prefix.length);
   const best = candidates[0];
+  // Fail safe: two distinct server names can normalize to the same prefix
+  // (e.g. my-server and my_server both -> my_server under "server" mode).
+  // When that happens the owning server is ambiguous; return undefined so a
+  // downstream permission gate falls back to its existing wildcard path rather
+  // than enforcing a rule against the wrong server.
+  if (candidates.some((c) => c.prefix === best!.prefix && c.name !== best!.name)) {
+    return undefined;
+  }
   return best?.name;
 }
 
