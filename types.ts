@@ -657,6 +657,40 @@ export function resolveToolPrefix(
   return definition?.toolPrefix ?? globalPrefix ?? "server";
 }
 
+
+/**
+ * Resolve a configured MCP server name from a prefixed tool name.
+ *
+ * When the proxy tool is addressed with a fully-qualified name such as
+ * `searxng_searxng_web_search`, downstream policy systems (for example a
+ * permission gate) need to recover the owning server so they can evaluate
+ * server-scoped rules against the bare server name. This performs the inverse
+ * of {@link getServerPrefix}: it finds the longest configured server prefix
+ * that the tool name starts with and returns that server's name.
+ *
+ * @param toolName - the tool name as passed to the proxy `mcp({ tool })` call.
+ * @param serverNames - the configured MCP server names (keys of `mcpServers`).
+ * @param prefix - the active tool-prefix mode.
+ * @returns the resolved server name, or `undefined` when no prefix matches or
+ *   the prefix mode is `"none"`.
+ */
+export function resolveServerFromToolName(
+  toolName: string,
+  serverNames: Iterable<string>,
+  prefix: ToolPrefix,
+): string | undefined {
+  if (prefix === "none") return undefined;
+  const candidates: { name: string; prefix: string }[] = [];
+  for (const name of serverNames) {
+    const p = getServerPrefix(name, prefix);
+    if (p && toolName.startsWith(p + "_")) candidates.push({ name, prefix: p });
+  }
+  if (candidates.length === 0) return undefined;
+  candidates.sort((a, b) => b.prefix.length - a.prefix.length);
+  const best = candidates[0];
+  return best?.name;
+}
+
 export function sanitizePromptName(name: string): string {
   const cleaned = name.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^[_-]+|[_-]+$/g, "");
   if (!cleaned) return "prompt";
