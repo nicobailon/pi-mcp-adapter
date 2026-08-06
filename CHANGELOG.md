@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `resolveServerFromToolName` so permission brokers can map prefixed MCP tool names back to their owning server. Thanks @jagaliano for PR #295.
+
+### Fixed
+- Stopped optional numeric `mcp` and `mcpScript` tool parameters from leaking TypeBox internal markers into serialized schemas. Thanks @RainbowXie for issue #289 and PR #290.
+- Forwarded RFC 9207 OAuth callback issuers to the MCP SDK during manual authorization completion. Thanks @tkoenig for issue #293 and PR #294, and @ugur-murat-alt for independent live verification.
+- Kept `mcpScript` `tools.describe()` from omitting parameter information when TypeScript shape rendering falls back. Thanks @sheurich for issue #288.
+- Reduced repeated collapsed MCP result rendering allocation after large or truncated tool outputs. Thanks @cp-yu for issue #291.
+
 ## [2.20.1] - 2026-08-04
 
 ### Fixed

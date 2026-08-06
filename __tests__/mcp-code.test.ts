@@ -57,8 +57,26 @@ describe("runMcpScript", () => {
       config: { settings: {}, mcpServers: { fixture: definition } },
       toolMetadata: new Map([
         ["fixture", [
-          { name: "fixture_echo", originalName: "echo", description: "Echo a value" },
-          { name: "fixture_fail", originalName: "fail", description: "Return an MCP tool error" },
+          {
+            name: "fixture_echo",
+            originalName: "echo",
+            description: "Echo a value",
+            inputSchema: {
+              type: "object",
+              properties: { value: { type: "string" } },
+              required: ["value"],
+            },
+          },
+          {
+            name: "fixture_fail",
+            originalName: "fail",
+            description: "Return an MCP tool error",
+            inputSchema: {
+              type: "object",
+              properties: { value: { type: "string" } },
+              additionalProperties: false,
+            },
+          },
           { name: "fixture_hang", originalName: "hang", description: "Never resolves" },
         ]],
       ]),
@@ -109,18 +127,26 @@ describe("runMcpScript", () => {
     });
   });
 
-  it("describes exact script-visible paths and suggests corrections without throwing", async () => {
+  it("describes script-visible schemas and suggests corrections without throwing", async () => {
     const result = await runMcpScript(
       state,
-      'return { found: await tools.describe({ path: "fixture_echo" }), missing: await tools.describe({ path: "fixture_ech" }) };',
+      'return { supported: await tools.describe({ path: "fixture_echo" }), unsupported: await tools.describe({ path: "fixture_fail" }), missing: await tools.describe({ path: "fixture_ech" }) };',
     );
 
     expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
-      found: {
+      supported: {
         path: "fixture_echo",
         name: "echo",
         server: "fixture",
         description: "Echo a value",
+        inputTypeScript: "{ value: string; }",
+      },
+      unsupported: {
+        path: "fixture_fail",
+        name: "fail",
+        server: "fixture",
+        description: "Return an MCP tool error",
+        inputTypeScript: "  value (string)",
       },
       missing: {
         path: "fixture_ech",

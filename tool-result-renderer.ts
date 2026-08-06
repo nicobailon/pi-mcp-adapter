@@ -41,6 +41,7 @@ class CollapsibleText implements Component {
   private readonly fullText: Text;
   private readonly footerText: Text;
   private collapsedText: { charBudget: number; fullyIncluded: boolean; text: Text } | null = null;
+  private collapsedRender: { width: number; charBudget: number; lines: string[] } | null = null;
 
   constructor(
     private readonly text: string,
@@ -70,18 +71,29 @@ class CollapsibleText implements Component {
         fullyIncluded: prefix === this.text,
         text: new Text(prefix, 0, 0),
       };
+      this.collapsedRender = null;
     }
 
     const lines = this.collapsedText.text.render(width);
     if (!this.preTruncated && this.collapsedText.fullyIncluded && lines.length <= this.maxCollapsedLines) return lines;
+    if (this.collapsedRender?.width === width && this.collapsedRender.charBudget === charBudget) {
+      return this.collapsedRender.lines;
+    }
 
-    return [
+    const rendered = [
       ...lines.slice(0, this.maxCollapsedLines),
       ...this.footerText.render(width),
     ];
+    this.collapsedRender = { width, charBudget, lines: rendered };
+    return rendered;
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.fullText.invalidate();
+    this.footerText.invalidate();
+    this.collapsedText?.text.invalidate();
+    this.collapsedRender = null;
+  }
 }
 
 function truncateText(value: string, maxChars: number): string {

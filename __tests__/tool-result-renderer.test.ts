@@ -173,6 +173,20 @@ describe("MCP tool result renderer", () => {
     expect(output).not.toContain("tail-marker");
   });
 
+  it("reuses truncated collapsed lines at the same width", () => {
+    const renderer = renderMcpToolResult(
+      result([{ type: "text", text: "one\ntwo\nthree\nfour" }]),
+      collapsedOptions,
+      plainTheme,
+      { isError: false },
+    );
+
+    const first = renderer.render(80);
+    const second = renderer.render(80);
+    expect(second).toBe(first);
+    expect(second.join("\n")).toContain("Ctrl+O to expand");
+  });
+
   it("shows proxy call result identity without hiding the third content line", () => {
     const output = renderMcpToolResult(
       result([{ type: "text", text: "one\ntwo\nthree\nfour" }], { mode: "call", server: "figma", tool: "get_nodes" }),

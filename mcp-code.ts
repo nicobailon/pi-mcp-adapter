@@ -6,7 +6,7 @@ import { executeCall } from "./proxy-modes.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import type { McpExtensionState } from "./state.ts";
-import { findToolByName } from "./tool-metadata.ts";
+import { findToolByName, formatSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import type { ContentBlock } from "./types.ts";
 
@@ -204,7 +204,9 @@ export async function runMcpScript(
       for (const [server, metadata] of state.toolMetadata) {
         const tool = findToolByName(metadata, path);
         if (!tool) continue;
-        const inputTypeScript = tool.inputSchema ? renderTsShape(tool.inputSchema) : null;
+        const inputTypeScript = tool.inputSchema
+          ? renderTsShape(tool.inputSchema) ?? formatSchema(tool.inputSchema)
+          : null;
         return {
           path: tool.name,
           name: tool.originalName,
