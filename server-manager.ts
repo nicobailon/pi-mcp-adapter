@@ -754,6 +754,11 @@ export class McpServerManager {
       const transportOptions = {
         ...(requestInit !== undefined ? { requestInit } : {}),
         ...(authProvider !== undefined ? { authProvider } : {}),
+        ...(authProvider !== undefined
+          && definition.oauth !== false
+          && definition.oauth?.skipIssuerMetadataValidation === true
+          ? { skipIssuerMetadataValidation: true }
+          : {}),
       };
       const baseTransport: Transport = kind === "streamable-http"
         ? new StreamableHTTPClientTransport(url, transportOptions)

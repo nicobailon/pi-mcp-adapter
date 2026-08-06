@@ -1059,7 +1059,7 @@ describe("config discovery", () => {
           type: "remote",
           url: "https://global.test/mcp",
           headers: { "X-Global": "global", "X-Shared": "global" },
-          oauth: { clientId: "global-client", scope: "global-scope" },
+          oauth: { clientId: "global-client", scope: "global-scope", skipIssuerMetadataValidation: false },
         },
         globalOnly: { type: "local", command: ["global"] },
       },
@@ -1068,7 +1068,7 @@ describe("config discovery", () => {
       mcp: {
         shared: {
           headers: { "X-Project": "project", "X-Shared": "project" },
-          oauth: { scope: "project-scope", clientSecret: "project-secret" },
+          oauth: { scope: "project-scope", clientSecret: "project-secret", skipIssuerMetadataValidation: true },
         },
         projectOnly: { type: "local", command: ["project"] },
         oauthFalse: { type: "remote", url: "https://false.test/mcp", oauth: false },
@@ -1086,7 +1086,12 @@ describe("config discovery", () => {
         url: "https://global.test/mcp",
         headers: { "X-Global": "global", "X-Shared": "project", "X-Project": "project" },
         auth: "oauth",
-        oauth: { clientId: "global-client", scope: "project-scope", clientSecret: "project-secret" },
+        oauth: {
+          clientId: "global-client",
+          scope: "project-scope",
+          clientSecret: "project-secret",
+          skipIssuerMetadataValidation: true,
+        },
       },
       globalOnly: { command: "global", args: [] },
       projectOnly: { command: "project", args: [] },

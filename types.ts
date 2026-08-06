@@ -350,6 +350,8 @@ export interface OAuthConfig {
   clientName?: string;
   /** Client homepage URI for dynamic registration */
   clientUri?: string;
+  /** Security-weakening escape hatch for known-misconfigured authorization servers. */
+  skipIssuerMetadataValidation?: boolean;
 }
 
 // Server configuration

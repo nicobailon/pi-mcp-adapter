@@ -107,6 +107,23 @@ describe("mcp-auth-flow explicit auth", () => {
     )).toThrow("state mismatch");
   });
 
+  it("passes the issuer metadata validation opt-out to SDK auth", async () => {
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    await startAuth("issuer-skip", "https://api.example.com/mcp", {
+      auth: "oauth",
+      oauth: { skipIssuerMetadataValidation: true },
+    });
+
+    expect(mocks.sdkAuth).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        serverUrl: "https://api.example.com/mcp",
+        skipIssuerMetadataValidation: true,
+      }),
+    );
+  });
+
   it("keeps a pending flow when an advertised RFC 9207 issuer is missing", async () => {
     let oauthState = "";
     mocks.sdkAuth.mockImplementation(async (provider, options) => {
@@ -347,6 +364,35 @@ describe("mcp-auth-flow explicit auth", () => {
 
     expect(token?.accessToken).toBe("new-access");
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the issuer metadata validation opt-out during token refresh", async () => {
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await provider.saveTokens({
+        access_token: "new-access",
+        token_type: "Bearer",
+        refresh_token: "new-refresh",
+        expires_in: 3600,
+      });
+      return "AUTHORIZED";
+    });
+    const { getValidToken } = await import("../mcp-auth-flow.ts");
+    const { updateClientInfo, updateTokens } = await import("../mcp-auth.ts");
+
+    updateClientInfo("refresh-skip-issuer", { clientId: "client", redirectUris: ["http://localhost:19876/callback"] }, "https://api.example.com/mcp");
+    updateTokens("refresh-skip-issuer", {
+      accessToken: "old-access",
+      refreshToken: "old-refresh",
+      expiresAt: Date.now() / 1000 - 60,
+    }, "https://api.example.com/mcp");
+
+    await expect(getValidToken("refresh-skip-issuer", "https://api.example.com/mcp", {
+      skipIssuerMetadataValidation: true,
+    })).resolves.toMatchObject({ accessToken: "new-access" });
+    expect(mocks.sdkAuth).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ skipIssuerMetadataValidation: true }),
+    );
   });
 
   it("re-registers dynamic OAuth clients when only stale client info is stored", async () => {

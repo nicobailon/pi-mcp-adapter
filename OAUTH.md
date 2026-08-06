@@ -80,6 +80,7 @@ You can optionally provide a pre-registered client:
 - `oauth.redirectUri` - Exact browser callback URI to advertise and bind, such as `http://localhost:3118/callback` (optional)
 - `oauth.clientName` - Client display name used for dynamic registration (optional, defaults to `Pi Coding Agent`)
 - `oauth.clientUri` - Client homepage URI used for dynamic registration (optional)
+- `oauth.skipIssuerMetadataValidation` - Set `true` only for a known-misconfigured authorization server whose metadata issuer cannot be fixed immediately. This weakens OAuth issuer validation.
 
 Dynamic clients normally omit `oauth.redirectUri`; the adapter starts the callback server lazily on the default loopback host (`localhost`) and asks the OS for an available local port when auth begins. Use `oauth.redirectUri` when the provider requires a pre-registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`. The URI must use `http://` with `localhost`, `127.0.0.1`, or `[::1]`, include an explicit port, and its host/path become the bound callback endpoint.
 
@@ -245,6 +246,12 @@ All OAuth flows use PKCE with the S256 method, preventing authorization code int
 ### State Parameter
 
 A cryptographically secure random state parameter is generated for each flow and validated on callback.
+
+### Issuer Metadata Validation
+
+OAuth authorization-server metadata normally must echo the expected issuer. This protects against authorization-server mix-up. The adapter keeps this check on by default.
+
+For private servers with known-broken metadata, `oauth.skipIssuerMetadataValidation: true` forwards the SDK's issuer-validation opt-out for that server only. Use it only as a temporary workaround while the server metadata is fixed. Do not use it for public or untrusted servers.
 
 ### OS Credential Store
 

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added `resolveServerFromToolName` so permission brokers can map prefixed MCP tool names back to their owning server. Thanks @jagaliano for PR #295.
+- Added per-server `oauth.skipIssuerMetadataValidation` for known-misconfigured OAuth servers. Thanks @embik for issue #297.
 
 ### Fixed
 - Stopped `/mcp` from inspecting host-specific config files when host config discovery is disabled. Thanks @rtfmkiesel for issue #292.

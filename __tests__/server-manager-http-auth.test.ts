@@ -17,6 +17,7 @@ type TransportOptions = {
     headers?: Record<string, string>;
   };
   authProvider?: OAuthProviderLike;
+  skipIssuerMetadataValidation?: boolean;
 };
 
 type HttpTransportMock = {
@@ -209,7 +210,7 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(mocks.httpTransports.at(-1)!.options.authProvider).toBeUndefined();
   });
 
-  it("preserves OAuth redirect URI and client metadata for HTTP transports", async () => {
+  it("preserves OAuth redirect URI, client metadata, and issuer opt-out for HTTP transports", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
 
     const manager = new McpServerManager();
@@ -220,6 +221,7 @@ describe("McpServerManager HTTP bearer auth", () => {
         redirectUri: "http://127.0.0.1:3118/callback",
         clientName: "Custom MCP",
         clientUri: "https://example.com/custom-mcp",
+        skipIssuerMetadataValidation: true,
       },
     });
 
@@ -228,6 +230,7 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(authProvider?.clientMetadata?.redirect_uris).toEqual(["http://127.0.0.1:3118/callback"]);
     expect(authProvider?.clientMetadata?.client_name).toBe("Custom MCP");
     expect(authProvider?.clientMetadata?.client_uri).toBe("https://example.com/custom-mcp");
+    expect(mocks.httpTransports.at(-1)!.options.skipIssuerMetadataValidation).toBe(true);
   });
 
   it("closes the HTTP transport when cancellation lands as connect resolves", async () => {

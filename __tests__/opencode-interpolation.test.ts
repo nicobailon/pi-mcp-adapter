@@ -38,11 +38,13 @@ describe("OpenCode environment interpolation", () => {
         clientId: "{env:MCP_TEST_VALUE}-client",
         clientSecret: "{env:MCP_TEST_VALUE}-secret",
         scope: "scope-{env:MCP_TEST_VALUE}",
+        skipIssuerMetadataValidation: true,
       },
     })).toEqual({
       clientId: "interpolated-client",
       clientSecret: "interpolated-secret",
       scope: "scope-interpolated",
+      skipIssuerMetadataValidation: true,
     });
   });
 
@@ -64,11 +66,15 @@ describe("OpenCode environment interpolation", () => {
       .toThrow(/^Failed to resolve test secret: command returned empty output$/);
   });
 
-  it("rejects non-string OAuth fields before interpolation", () => {
+  it("rejects invalid OAuth fields before interpolation", () => {
     expect(() => extractOAuthConfig({
       url: "https://example.test/mcp",
       oauth: { clientId: 42 } as any,
     })).toThrow("OAuth clientId must be a string");
+    expect(() => extractOAuthConfig({
+      url: "https://example.test/mcp",
+      oauth: { skipIssuerMetadataValidation: "true" } as any,
+    })).toThrow("OAuth skipIssuerMetadataValidation must be a boolean");
   });
 
   it("fails closed before URL resolution when a brace variable is missing", () => {

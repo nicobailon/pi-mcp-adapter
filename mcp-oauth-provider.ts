@@ -86,6 +86,7 @@ export interface McpOAuthConfig {
   redirectUri?: string
   clientName?: string
   clientUri?: string
+  skipIssuerMetadataValidation?: boolean
 }
 
 const reservedAuthorizationParams = new Set([
