@@ -8,14 +8,31 @@ import type { McpConfig, McpPanelCallbacks } from "../types.ts";
 
 const CTRL_P = "\x10";
 const CTRL_N = "\x0e";
+const CTRL_S = "\x13";
 const UP = "\x1b[A";
 const DOWN = "\x1b[B";
 const ENTER = "\r";
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
 
 function createEmacsKeybindings(): KeybindingsManager {
   return new KeybindingsManager(TUI_KEYBINDINGS, {
     "tui.select.up": ["up", "ctrl+p"],
     "tui.select.down": ["down", "ctrl+n"],
+  });
+}
+
+function createSaveKeybindings(): KeybindingsManager {
+  return new KeybindingsManager(TUI_KEYBINDINGS, {
+    "mcp.panel.save": "ctrl+p",
+  });
+}
+
+function createUnboundSaveKeybindings(): KeybindingsManager {
+  return new KeybindingsManager(TUI_KEYBINDINGS, {
+    "mcp.panel.save": [],
   });
 }
 
@@ -81,6 +98,20 @@ describe("panel-keys", () => {
     expect(keys.selectConfirm(ENTER)).toBe(true);
   });
 
+  it("honors the MCP panel save keybinding", () => {
+    const keys = createPanelKeys(createSaveKeybindings());
+    expect(keys.save(CTRL_P)).toBe(true);
+    expect(keys.save(CTRL_S)).toBe(false);
+    expect(keys.saveLabel()).toBe("ctrl+p");
+  });
+
+  it("lets users unbind the MCP panel save keybinding", () => {
+    const keys = createPanelKeys(createUnboundSaveKeybindings());
+    expect(keys.save(CTRL_P)).toBe(false);
+    expect(keys.save(CTRL_S)).toBe(false);
+    expect(keys.saveLabel()).toBeNull();
+  });
+
   it("falls back to hardcoded defaults without a manager", () => {
     const keys = createPanelKeys();
     expect(keys.selectUp(UP)).toBe(true);
@@ -88,6 +119,9 @@ describe("panel-keys", () => {
     expect(keys.selectDown(DOWN)).toBe(true);
     expect(keys.selectDown(CTRL_N)).toBe(false);
     expect(keys.selectConfirm(ENTER)).toBe(true);
+    expect(keys.save(CTRL_S)).toBe(true);
+    expect(keys.save(CTRL_P)).toBe(false);
+    expect(keys.saveLabel()).toBe("ctrl+s");
   });
 
   it("respects rebinding that removes a default key", () => {
@@ -161,6 +195,47 @@ describe("mcp-panel custom keybindings", () => {
     await Promise.resolve();
     // Cursor did not move: still authenticates the first server.
     expect(callbacks.authenticate).toHaveBeenLastCalledWith("alpha");
+    panel.dispose();
+  });
+
+  it("uses the configured save key and hint", () => {
+    const done = vi.fn();
+    const panel = createMcpPanel(
+      createTwoServerConfig(),
+      null,
+      new Map(),
+      createAuthCallbacks(),
+      { requestRender: () => {} },
+      done,
+      { keybindings: createSaveKeybindings() },
+    );
+
+    expect(stripAnsi(panel.render(100).join("\n"))).toContain("ctrl+p save");
+    panel.handleInput(CTRL_S);
+    expect(done).not.toHaveBeenCalled();
+    panel.handleInput(CTRL_P);
+    expect(done).toHaveBeenCalledWith({ changes: new Map(), cancelled: false });
+    panel.dispose();
+  });
+
+  it("hides the save hint when the save keybinding is unbound", () => {
+    const done = vi.fn();
+    const panel = createMcpPanel(
+      createTwoServerConfig(),
+      null,
+      new Map(),
+      createAuthCallbacks(),
+      { requestRender: () => {} },
+      done,
+      { keybindings: createUnboundSaveKeybindings() },
+    );
+
+    const output = stripAnsi(panel.render(100).join("\n"));
+    expect(output).not.toContain("ctrl+s save");
+    expect(output).not.toContain("ctrl+p save");
+    panel.handleInput(CTRL_S);
+    panel.handleInput(CTRL_P);
+    expect(done).not.toHaveBeenCalled();
     panel.dispose();
   });
 });

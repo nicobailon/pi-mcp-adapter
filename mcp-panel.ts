@@ -358,7 +358,7 @@ class McpPanel {
       return;
     }
 
-    if (matchesKey(data, "ctrl+s")) {
+    if (this.keys.save(data)) {
       this.cleanup();
       this.done(this.buildResult());
       return;
@@ -802,6 +802,7 @@ class McpPanel {
     }
 
     lines.push(emptyRow());
+    const saveLabel = this.keys.saveLabel();
     const hints = this.authOnly
       ? [
           italic("↑↓") + " navigate",
@@ -818,7 +819,7 @@ class McpPanel {
           italic("ctrl+r") + " reconnect",
           ...(this.selectedServerHasFailureMessage() ? [italic("ctrl+y") + " copy error"] : []),
           italic("?") + " desc search",
-          italic("ctrl+s") + " save",
+          ...(saveLabel ? [italic(saveLabel) + " save"] : []),
           italic("esc") + " clear/close",
           italic("ctrl+c") + " quit",
         ];
