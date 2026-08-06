@@ -1181,4 +1181,12 @@ describe("config discovery", () => {
     expect(warning).toHaveBeenCalled();
     warning.mockRestore();
   });
+
+  it("uses automatic protocol negotiation for remote known-server presets", async () => {
+    const { KNOWN_SERVER_PRESETS } = await import("../config.ts");
+    for (const preset of KNOWN_SERVER_PRESETS.filter(({ entry }) => entry.url)) {
+      expect(preset.entry.protocolVersion).toBe("auto");
+    }
+    expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "chrome-devtools")?.entry.protocolVersion).toBeUndefined();
+  });
 });

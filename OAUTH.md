@@ -7,7 +7,7 @@ This document describes the OAuth 2.1 + PKCE authentication implementation for t
 The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, which provides:
 
 - **Automatic OAuth endpoint discovery** (RFC 9728) - No manual configuration needed
-- **Dynamic client registration** (RFC 7591) - No clientId needed for most servers
+- **Dynamic Client Registration fallback** (RFC 7591) - Used when no pre-registered `clientId` is configured and the server supports registration
 - **Automatic callback handling** - Built-in HTTP server handles callbacks automatically
 - **Automatic token refresh** - SDK handles token refresh transparently
 
@@ -16,7 +16,7 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 - ✅ **PKCE (S256)** - Mandatory code challenge method for OAuth 2.1
 - ✅ **Automatic Callback Server** - Local browser redirects automatically when available
 - ✅ **Manual Remote Flow** - Copy auth URLs and pasted redirect URLs/codes for headless SSH sessions
-- ✅ **Dynamic Client Registration** - Automatically registers with OAuth servers
+- ✅ **Dynamic Client Registration fallback** - Registers when no pre-registered `clientId` is configured and the server supports registration
 - ✅ **Auto-Discovery** - Discovers OAuth endpoints from server metadata
 - ✅ **Automatic Token Refresh** - SDK handles expired tokens automatically
 - ✅ **State Parameter Validation** - CSRF protection
@@ -41,7 +41,7 @@ For most MCP servers, you only need the URL:
 OAuth is automatically enabled for HTTP servers. The SDK will:
 - Auto-detect if the server requires OAuth
 - Discover OAuth endpoints from the server
-- Register a dynamic client (if supported by the server)
+- Use Dynamic Client Registration fallback when no pre-registered client is configured and the server supports it
 - Handle the entire OAuth flow including callback
 
 ### Optional Configuration
@@ -73,16 +73,16 @@ You can optionally provide a pre-registered client:
 - `url` - The MCP server URL (required)
 - `auth` - Set to `"oauth"` to force OAuth, `false` to disable, or omit to auto-detect
 - `oauth.grantType` - `"authorization_code"` (default, browser flow) or `"client_credentials"` (non-interactive)
-- `oauth.clientId` - Pre-registered client ID (optional, SDK tries dynamic registration if not provided)
+- `oauth.clientId` - Pre-registered client ID. MCP 2026 prefers pre-registered clients or Client ID Metadata Documents; this adapter falls back to Dynamic Client Registration when the ID is omitted and the server supports it.
 - `oauth.clientSecret` - Client secret for confidential clients (optional)
 - `oauth.scope` - Requested OAuth scopes (optional)
 - `oauth.authorizationParams` - Extra authorization URL parameters for provider-specific extensions, such as Google's `{ "access_type": "offline", "prompt": "consent" }`. Flow-owned parameters like `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden.
 - `oauth.redirectUri` - Exact browser callback URI to advertise and bind, such as `http://localhost:3118/callback` (optional)
-- `oauth.clientName` - Client display name used for dynamic registration (optional, defaults to `Pi Coding Agent`)
-- `oauth.clientUri` - Client homepage URI used for dynamic registration (optional)
+- `oauth.clientName` - Client display name used for Dynamic Client Registration fallback (optional, defaults to `Pi Coding Agent`)
+- `oauth.clientUri` - Client homepage URI used for Dynamic Client Registration fallback (optional)
 - `oauth.skipIssuerMetadataValidation` - Set `true` only for a known-misconfigured authorization server whose metadata issuer cannot be fixed immediately. This weakens OAuth issuer validation.
 
-Dynamic clients normally omit `oauth.redirectUri`; the adapter starts the callback server lazily on the default loopback host (`localhost`) and asks the OS for an available local port when auth begins. Use `oauth.redirectUri` when the provider requires a pre-registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`. The URI must use `http://` with `localhost`, `127.0.0.1`, or `[::1]`, include an explicit port, and its host/path become the bound callback endpoint.
+Dynamic fallback clients normally omit `oauth.redirectUri`; the adapter starts the callback server lazily on the default loopback host (`localhost`) and asks the OS for an available local port when auth begins. Use `oauth.redirectUri` when the provider requires a pre-registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`. The URI must use `http://` with `localhost`, `127.0.0.1`, or `[::1]`, include an explicit port, and its host/path become the bound callback endpoint.
 
 ### Non-Interactive `client_credentials`
 
@@ -122,7 +122,7 @@ Manual `/mcp-auth` is the default flow. If you set `settings.autoAuth: true`, pr
 This will:
 1. Start the callback server lazily on an OS-assigned local port, or on the exact `oauth.redirectUri` port for pre-registered callbacks
 2. Discover OAuth endpoints automatically
-3. Register a dynamic client (if no clientId provided)
+3. Use Dynamic Client Registration fallback when no `clientId` is configured and the server supports registration
 4. Open your browser for authentication
 5. Wait for the automatic callback
 6. Complete the OAuth flow
@@ -198,9 +198,9 @@ The SDK attempts to discover OAuth endpoints using:
 1. **RFC 9728 Metadata** - Fetches `/.well-known/oauth-protected-resource`
 2. **WWW-Authenticate Header** - Parses `resource_metadata` from 401 responses
 
-### Dynamic Client Registration
+### Dynamic Client Registration fallback
 
-If no `clientId` is provided, the SDK:
+MCP 2026 prefers pre-registered clients or Client ID Metadata Documents. The adapter exposes pre-registered `oauth.clientId` today. It does not publish an HTTPS Client ID Metadata Document yet, so when no `clientId` is provided the SDK uses Dynamic Client Registration as a fallback if the server supports it:
 
 1. Discovers the registration endpoint from OAuth metadata
 2. Registers a new client with:
@@ -210,7 +210,7 @@ If no `clientId` is provided, the SDK:
    - `grant_types`: `["authorization_code", "refresh_token"]`
 3. Stores the registered client credentials and the redirect URIs returned by the authorization server
 
-When a fresh browser auth starts, cached dynamic client info with tokens is re-registered if its stored redirect URIs are missing or do not include the current redirect URI. Token refresh does not perform this redirect check, so existing refresh-token grants keep working even after a callback setting changes.
+When a fresh browser auth starts, cached dynamic fallback client info with tokens is re-registered if its stored redirect URIs are missing or do not include the current redirect URI. Token refresh does not perform this redirect check, so existing refresh-token grants keep working even after a callback setting changes.
 
 ### Callback Server
 
@@ -292,7 +292,7 @@ Some servers require pre-registered clients. Obtain a client ID from your OAuth 
 
 ### Callback server already in use
 
-Dynamic browser OAuth uses a lazy OS-assigned port on the default loopback host (`localhost`), so the configured default port being busy should not block dynamic registration.
+Dynamic fallback browser OAuth uses a lazy OS-assigned port on the default loopback host (`localhost`), so the configured default port being busy should not block fallback registration.
 
 For pre-registered OAuth clients (`oauth.clientId`), the callback redirect URI must match exactly. Set `oauth.redirectUri` to the full registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`, or free/set `MCP_OAUTH_CALLBACK_PORT` when you rely on the default `/callback` path without an explicit redirect URI.
 
