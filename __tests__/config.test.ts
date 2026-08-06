@@ -106,6 +106,7 @@ describe("config discovery", () => {
       $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
       mcpServers: {
         unsafeCommand: { type: "stdio", command: "../bin/server" },
+        escapedCommand: { type: "stdio", command: "./../bin/server" },
         reservedEnv: { type: "stdio", command: "node", env: { PLUGIN_ROOT: "override" } },
         insecureRemote: { type: "streamable-http", url: "http://example.test/mcp" },
         duplicateHeader: { type: "streamable-http", url: "https://example.test/mcp", headers: { "X-Test": "one", "x-test": "two" } },
@@ -121,6 +122,37 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     expect(Object.keys(loadMcpConfig().mcpServers).sort()).toEqual(["bad-plugin__valid", "native"]);
     expect(warning).toHaveBeenCalled();
+    warning.mockRestore();
+  });
+
+  it("does not let Agent Plugin normalized server-name collisions overwrite servers", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-plugin-collision-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-agent-plugin-collision-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    const plugin = join(project, "plugins", "collision-plugin");
+    writeJson(join(plugin, "plugin.json"), {
+      $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+      name: "collision-plugin",
+    });
+    writeJson(join(plugin, "mcp.json"), {
+      $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+      mcpServers: {
+        "tools.db": { type: "stdio", command: "node", args: ["first.js"] },
+        tools_db: { type: "stdio", command: "node", args: ["second.js"] },
+      },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      settings: { agentPluginPaths: [plugin] },
+      mcpServers: {},
+    });
+
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers["collision-plugin__tools_db"].args).toEqual(["first.js"]);
+    expect(Object.keys(loadMcpConfig().mcpServers)).toEqual(["collision-plugin__tools_db"]);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("normalized server name collision-plugin__tools_db already exists"));
     warning.mockRestore();
   });
 

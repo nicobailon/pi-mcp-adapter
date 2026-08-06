@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `settings.agentPluginPaths` to load MCP servers from Agent Plugins 1.0 packages.
 
 ### Fixed
+- Rejected Agent Plugin command paths that escape the plugin directory and skipped normalized server-name collisions instead of overwriting servers.
 - Stopped `/mcp` from inspecting host-specific config files when host config discovery is disabled. Thanks @rtfmkiesel for issue #292.
 - Stopped optional numeric `mcp` and `mcpScript` tool parameters from leaking TypeBox internal markers into serialized schemas. Thanks @RainbowXie for issue #289 and PR #290.
 - Forwarded RFC 9207 OAuth callback issuers to the MCP SDK during manual authorization completion. Thanks @tkoenig for issue #293 and PR #294, and @ugur-murat-alt for independent live verification.

@@ -33,16 +33,19 @@ export interface AgentPluginSummary {
 }
 
 export function loadAgentPluginConfigs(paths: unknown, cwd = process.cwd()): McpConfig {
-  let config: McpConfig = { mcpServers: {} };
+  const mcpServers: Record<string, ServerEntry> = {};
   for (const pluginPath of getPluginPaths(paths)) {
     const loaded = loadAgentPluginMcpConfig(pluginPath, cwd);
-    if (loaded) {
-      config = {
-        mcpServers: { ...config.mcpServers, ...loaded.mcpServers },
-      };
+    if (!loaded) continue;
+    for (const [serverName, server] of Object.entries(loaded.mcpServers)) {
+      if (mcpServers[serverName]) {
+        console.warn(`Agent Plugin at ${resolvePluginPath(pluginPath, cwd)} skips duplicate normalized MCP server ${serverName}`);
+        continue;
+      }
+      mcpServers[serverName] = server;
     }
   }
-  return config;
+  return { mcpServers };
 }
 
 export function getAgentPluginSummaries(paths: unknown, cwd = process.cwd()): AgentPluginSummary[] {
@@ -154,7 +157,14 @@ function translateAgentPluginMcpConfig(raw: unknown, manifest: AgentPluginManife
   const mcpServers: Record<string, ServerEntry> = {};
   for (const [serverName, entry] of Object.entries(mcpConfig.mcpServers)) {
     const translated = translateAgentPluginServer(manifest, pluginRoot, serverName, entry);
-    if (translated) mcpServers[formatAgentPluginServerName(manifest.name, serverName)] = translated;
+    if (!translated) continue;
+
+    const normalizedName = formatAgentPluginServerName(manifest.name, serverName);
+    if (mcpServers[normalizedName]) {
+      console.warn(`Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: normalized server name ${normalizedName} already exists`);
+      continue;
+    }
+    mcpServers[normalizedName] = translated;
   }
   return { mcpServers };
 }
@@ -195,12 +205,15 @@ function translateStdioServer(
   const env = translateEnv(raw.env, manifest, serverName);
   if (env === null) return null;
 
+  const command = raw.command.startsWith("./") ? resolveContainedPath(pluginRoot, raw.command, pluginRoot) : raw.command;
+  if (command === null) return skipServer(manifest, serverName, "command must stay inside the plugin directory");
+
   const pluginDataDir = getAgentPath("agent-plugin-data", manifest.name);
   const cwd = resolvePluginCwd(raw.cwd, pluginRoot, pluginDataDir);
   if (cwd === null) return skipServer(manifest, serverName, "cwd must be plugin-relative, PLUGIN_ROOT-rooted, or PLUGIN_DATA-rooted");
 
   return {
-    command: raw.command.startsWith("./") ? resolveContainedPath(pluginRoot, raw.command, pluginRoot) ?? raw.command : raw.command,
+    command,
     args: args.map(value => expandPluginPlaceholders(value, pluginRoot, pluginDataDir)),
     env: {
       ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key, expandPluginPlaceholders(value, pluginRoot, pluginDataDir)])),
