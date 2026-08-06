@@ -4,6 +4,7 @@ import { isServerDisabled, type McpAuthResult, type McpConfig, type McpPanelCall
 import {
   ensureCompatibilityImports,
   getMcpDiscoverySummary,
+  getMcpStandardConfigSummary,
   getProjectConfigPath,
   type KnownServerPreset,
   getServerProvenance,
@@ -354,7 +355,7 @@ export interface PanelFlowResult {
 }
 
 function buildSharedConfigNoticeLines(configOverridePath: string | undefined, cwd: string): { lines: string[]; fingerprint: string | null } {
-  const discovery = getMcpDiscoverySummary(configOverridePath, cwd);
+  const discovery = getMcpStandardConfigSummary(configOverridePath, cwd);
   const onboardingState = loadOnboardingState();
   if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
     return { lines: [], fingerprint: null };
@@ -377,6 +378,7 @@ export async function openMcpSetup(
   ctx: ExtensionContext,
   configOverridePath?: string,
   mode: "empty" | "setup" = "setup",
+  options: { includeHostConfigs?: boolean } = {},
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) return { configChanged: false };
   if (state.programmaticConfig) {
@@ -384,7 +386,7 @@ export async function openMcpSetup(
     return { configChanged: false };
   }
 
-  const discovery = getMcpDiscoverySummary(configOverridePath, ctx.cwd);
+  const discovery = getMcpDiscoverySummary(configOverridePath, ctx.cwd, options);
   const onboardingState = loadOnboardingState();
   const { createMcpSetupPanel } = await import("./mcp-setup-panel.ts");
   let configChanged = false;
@@ -393,7 +395,7 @@ export async function openMcpSetup(
     previewImports: (imports: ImportKind[]) => previewCompatibilityImports(imports, configOverridePath),
     previewStarterProject: () => previewStarterProjectConfig(ctx.cwd),
     previewRepoPrompt: () => {
-      const repoPrompt = getMcpDiscoverySummary(configOverridePath, ctx.cwd).repoPrompt;
+      const repoPrompt = getMcpDiscoverySummary(configOverridePath, ctx.cwd, options).repoPrompt;
       if (!repoPrompt.entry || !repoPrompt.targetPath || !repoPrompt.serverName) return null;
       return previewSharedServerEntry(repoPrompt.targetPath, repoPrompt.serverName, repoPrompt.entry);
     },
@@ -409,7 +411,7 @@ export async function openMcpSetup(
       return { path };
     },
     addRepoPrompt: async () => {
-      const repoPrompt = getMcpDiscoverySummary(configOverridePath, ctx.cwd).repoPrompt;
+      const repoPrompt = getMcpDiscoverySummary(configOverridePath, ctx.cwd, options).repoPrompt;
       if (!repoPrompt.entry || !repoPrompt.targetPath || !repoPrompt.serverName) {
         throw new Error("RepoPrompt is not available to add from this setup screen.");
       }
@@ -514,7 +516,7 @@ export async function openMcpPanel(
     return { configChanged: false };
   }
   if (Object.keys(state.config.mcpServers).length === 0) {
-    return openMcpSetup(state, pi, ctx, configOverridePath, "empty");
+    return openMcpSetup(state, pi, ctx, configOverridePath, "empty", { includeHostConfigs: false });
   }
 
   const config = state.config;

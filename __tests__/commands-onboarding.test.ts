@@ -102,6 +102,63 @@ describe("commands onboarding", () => {
     expect(loadOnboardingState().sharedConfigHintShown).toBe(true);
   });
 
+  it("does not inspect host-specific configs when opening the MCP panel", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-commands-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-commands-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      mcpServers: { sharedServer: { command: "shared" } },
+    });
+    writeFileSync(join(home, ".claude.json"), "{ malformed", "utf-8");
+    mkdirSync(join(home, ".config", "opencode"), { recursive: true });
+    writeFileSync(join(home, ".config", "opencode", "opencode.json"), "{ malformed", "utf-8");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const ui = createUi();
+    const { loadMcpConfig } = await import("../config.ts");
+    const { openMcpPanel } = await import("../commands.ts");
+
+    await openMcpPanel({
+      config: loadMcpConfig(),
+      manager: { getConnection: () => null },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+    } as any, { getFlag: () => undefined } as any, { hasUI: true, ui, cwd: process.cwd() } as any);
+
+    expect(mocks.createMcpPanel).toHaveBeenCalled();
+    expect(warning).not.toHaveBeenCalled();
+    warning.mockRestore();
+  });
+
+  it("does not inspect host-specific configs when /mcp opens empty setup", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-commands-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-commands-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeFileSync(join(home, ".claude.json"), "{ malformed", "utf-8");
+    mkdirSync(join(home, ".config", "opencode"), { recursive: true });
+    writeFileSync(join(home, ".config", "opencode", "opencode.json"), "{ malformed", "utf-8");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const ui = createUi();
+    const { openMcpPanel } = await import("../commands.ts");
+
+    await openMcpPanel({
+      config: { mcpServers: {} },
+      manager: { getConnection: () => null },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+    } as any, { getFlag: () => undefined } as any, { hasUI: true, ui, cwd: process.cwd() } as any);
+
+    expect(mocks.createMcpSetupPanel).toHaveBeenCalled();
+    const discovery = mocks.createMcpSetupPanel.mock.calls[0]?.[0];
+    expect(discovery.imports).toEqual([]);
+    expect(discovery.hostConfigs).toEqual([]);
+    expect(warning).not.toHaveBeenCalled();
+    warning.mockRestore();
+  });
+
   it("clears OAuth credentials, cancels pending auth, and closes the server on logout", async () => {
     process.env.MCP_OAUTH_DIR = mkdtempSync(join(tmpdir(), "pi-mcp-commands-logout-"));
     const ui = createUi();

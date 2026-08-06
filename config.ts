@@ -147,6 +147,12 @@ export interface McpDiscoverySummary {
   repoPrompt: RepoPromptDiscovery;
 }
 
+export interface McpStandardConfigSummary {
+  sources: ConfigDiscoverySource[];
+  hasSharedServers: boolean;
+  fingerprint: string;
+}
+
 export interface ConfigWritePreview {
   path: string;
   existed: boolean;
@@ -193,9 +199,8 @@ export function findAvailableImportConfigs(cwd = process.cwd()): DiscoveredImpor
   return discovered;
 }
 
-export function getMcpDiscoverySummary(overridePath?: string, cwd = process.cwd()): McpDiscoverySummary {
-  const sourceSpecs = getConfigSources(overridePath, cwd);
-  const sources = sourceSpecs.map((source) => {
+function getConfigSourceSummaries(sourceSpecs: ConfigSourceSpec[]): ConfigDiscoverySource[] {
+  return sourceSpecs.map((source) => {
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
     return {
       id: source.id,
@@ -207,18 +212,39 @@ export function getMcpDiscoverySummary(overridePath?: string, cwd = process.cwd(
       serverCount: loaded ? Object.keys(loaded.mcpServers).length : 0,
     } satisfies ConfigDiscoverySource;
   });
+}
 
-  const imports = (Object.keys(IMPORT_PATHS) as ImportKind[])
-    .map((kind) => {
-      const imported = loadImportedConfig(kind, cwd, `Failed to inspect imported MCP config from ${kind}:`);
-      if (!imported) return null;
-      return {
-        kind,
-        path: imported.path,
-        serverCount: Object.keys(extractServers(imported.value, kind)).length,
-      } satisfies ImportConfigSummary;
-    })
-    .filter((value): value is ImportConfigSummary => value !== null);
+export function getMcpStandardConfigSummary(overridePath?: string, cwd = process.cwd()): McpStandardConfigSummary {
+  const sources = getConfigSourceSummaries(getConfigSources(overridePath, cwd));
+  return {
+    sources,
+    hasSharedServers: sources.some((source) => source.kind === "shared" && source.serverCount > 0),
+    fingerprint: JSON.stringify({ sources: sources.map((source) => [source.id, source.exists, source.serverCount]) }),
+  };
+}
+
+export function getMcpDiscoverySummary(
+  overridePath?: string,
+  cwd = process.cwd(),
+  options: { includeHostConfigs?: boolean } = {},
+): McpDiscoverySummary {
+  const sourceSpecs = getConfigSources(overridePath, cwd);
+  const sources = getConfigSourceSummaries(sourceSpecs);
+  const includeHostConfigs = options.includeHostConfigs !== false;
+
+  const imports = includeHostConfigs
+    ? (Object.keys(IMPORT_PATHS) as ImportKind[])
+      .map((kind) => {
+        const imported = loadImportedConfig(kind, cwd, `Failed to inspect imported MCP config from ${kind}:`);
+        if (!imported) return null;
+        return {
+          kind,
+          path: imported.path,
+          serverCount: Object.keys(extractServers(imported.value, kind)).length,
+        } satisfies ImportConfigSummary;
+      })
+      .filter((value): value is ImportConfigSummary => value !== null)
+    : [];
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
   const hostConfigs = imports.map((entry) => ({ ...entry, active: hostConfigDiscovery === "on" }));
   const totalServerCount = sources.reduce((sum, source) => sum + source.serverCount, 0);
