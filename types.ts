@@ -399,6 +399,12 @@ export interface ServerEntry {
   debug?: boolean;  // Show server stderr (default: false)
   /** Enable metadata-only JSONL protocol tracing for this server. */
   trace?: boolean;
+  /** Force a specific HTTP MCP transport. Used by Agent Plugins, whose `type` declares the transport and forbids client fallback. */
+  httpTransport?: "streamable-http" | "sse";
+  /** Client-managed persistent data directory for Agent Plugin stdio servers. */
+  pluginDataDir?: string;
+  /** Treat env values as already resolved literals. Used for Agent Plugin env rules. */
+  literalEnv?: boolean;
   /**
    * MCP protocol era negotiation for this server. Defaults to `"legacy"`
    * (byte-equivalent to pre-2026 behavior — no `versionNegotiation` is sent).
@@ -467,6 +473,8 @@ export interface McpSettings {
   mcpFooterStatus?: McpFooterStatus;
   /** Discover detected host-specific MCP configs only when explicitly enabled. */
   hostConfigDiscovery?: HostConfigDiscovery;
+  /** Agent Plugin package directories to load MCP servers from. */
+  agentPluginPaths?: string[];
   idleTimeout?: number; // minutes, default 10, 0 to disable
   requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
   directTools?: boolean;

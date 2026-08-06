@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import {
   Client,
   SdkHttpError,
@@ -362,11 +363,12 @@ export class McpServerManager {
       }
       throwIfAborted(signal);
 
+      if (definition.pluginDataDir) mkdirSync(definition.pluginDataDir, { recursive: true });
       const cwd = resolveConfigPath(definition.cwd) ?? this.defaultCwd;
       const stdioTransport = new StdioClientTransport({
         command,
         args,
-        env: resolveEnv(definition.env, name),
+        env: resolveEnv(definition.env, name, definition.literalEnv === true),
         ...(cwd !== undefined ? { cwd } : {}),
         stderr: definition.debug ? "inherit" : "pipe",
       });
@@ -787,7 +789,8 @@ export class McpServerManager {
 
     // Connect the real client once. Retry Streamable HTTP only for an implicit
     // OAuth challenge; use SSE only for definitive endpoint incompatibility.
-    let kind: "streamable-http" | "sse" = "streamable-http";
+    // Agent Plugins set httpTransport, and their declared transport is used without fallback.
+    let kind: "streamable-http" | "sse" = definition.httpTransport ?? "streamable-http";
     for (;;) {
       const result = await attempt(kind);
       if (result.status === "connected") return result;
@@ -808,7 +811,7 @@ export class McpServerManager {
         throw result.error;
       }
 
-      if (kind === "streamable-http" && shouldFallbackToSse(result.error, definition)) {
+      if (definition.httpTransport === undefined && kind === "streamable-http" && shouldFallbackToSse(result.error, definition)) {
         kind = "sse";
         continue;
       }
@@ -1067,11 +1070,13 @@ export class McpServerManager {
 /**
  * Resolve environment variables with interpolation.
  */
-function resolveEnv(env: Record<string, string> | undefined, serverName: string): Record<string, string> {
+function resolveEnv(env: Record<string, string> | undefined, serverName: string, literalEnv = false): Record<string, string> {
   const resolved: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) resolved[key] = value;
   }
+  if (literalEnv) return env ? { ...resolved, ...env } : resolved;
+
   const overrides = resolveCommandSecretsRecord(
     env,
     key => `MCP server "${serverName}" stdio env "${key}"`,

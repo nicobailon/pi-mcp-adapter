@@ -95,6 +95,7 @@
     "mcp-code.ts",
     "mcp-script-worker.mjs",
     "mcp-probe.ts",
+    "agent-plugin-loader.ts",
     "resource-tools.ts",
     "lifecycle.ts",
     "mcp-status.ts",

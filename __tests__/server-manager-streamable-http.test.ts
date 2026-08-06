@@ -110,6 +110,27 @@ describe("McpServerManager StreamableHTTP transport", () => {
     });
   });
 
+  it("does not recover through legacy fallback when a server declares Streamable HTTP", async () => {
+    const server = http.createServer((req, res) => {
+      if (req.method === "POST") {
+        res.writeHead(404).end("Not Found");
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/event-stream" }).end("event: endpoint\ndata: /messages\n\n");
+    });
+    servers.push(server);
+
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+
+    const manager = new McpServerManager();
+    await expect(manager.connect("agent-plugin-http", {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+      httpTransport: "streamable-http",
+    })).rejects.toThrow();
+  });
+
   it("resolves command-backed HTTP secrets without falling back to SSE on GET 405", async () => {
     const requests: string[] = [];
     const server = http.createServer(async (req, res) => {

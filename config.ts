@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAgentPath } from "./agent-dir.ts";
+import { getAgentPluginSummaries, loadAgentPluginConfigs, type AgentPluginSummary } from "./agent-plugin-loader.ts";
 import { isServerDisabled, type HostConfigDiscovery, type McpConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
 import { toStringRecord } from "./utils.ts";
 
@@ -137,6 +138,7 @@ export interface McpDiscoverySummary {
   imports: ImportConfigSummary[];
   hostConfigs: HostConfigSummary[];
   hostConfigDiscovery: HostConfigDiscovery;
+  agentPlugins: AgentPluginSummary[];
   conflicts: McpConfigConflict[];
   hasAnyConfig: boolean;
   hasAnyDetectedPaths: boolean;
@@ -247,10 +249,12 @@ export function getMcpDiscoverySummary(
     : [];
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
   const hostConfigs = imports.map((entry) => ({ ...entry, active: hostConfigDiscovery === "on" }));
-  const totalServerCount = sources.reduce((sum, source) => sum + source.serverCount, 0);
-  const hasSharedServers = sources.some((source) => source.kind === "shared" && source.serverCount > 0);
+  const settings = getMergedSettings(overridePath, cwd);
+  const agentPlugins = getAgentPluginSummaries(settings?.agentPluginPaths, cwd);
+  const totalServerCount = sources.reduce((sum, source) => sum + source.serverCount, 0) + agentPlugins.reduce((sum, plugin) => sum + plugin.serverCount, 0);
+  const hasSharedServers = sources.some((source) => source.kind === "shared" && source.serverCount > 0) || agentPlugins.some(plugin => plugin.serverCount > 0);
   const hasPiOwnedServers = sources.some((source) => source.kind === "pi" && source.serverCount > 0);
-  const hasAnyDetectedPaths = sources.some((source) => source.exists) || imports.length > 0;
+  const hasAnyDetectedPaths = sources.some((source) => source.exists) || imports.length > 0 || agentPlugins.length > 0;
   const hasAnyConfig = totalServerCount > 0 || imports.some((entry) => entry.serverCount > 0) || hasAnyDetectedPaths;
 
   const summaryWithoutRepoPrompt = {
@@ -258,6 +262,7 @@ export function getMcpDiscoverySummary(
     imports,
     hostConfigs,
     hostConfigDiscovery,
+    agentPlugins,
     conflicts: getConfigConflicts(sourceSpecs, imports, cwd),
     hasAnyConfig,
     hasAnyDetectedPaths,
@@ -269,6 +274,7 @@ export function getMcpDiscoverySummary(
   const fingerprint = JSON.stringify({
     sources: sources.map((source) => [source.id, source.exists, source.serverCount]),
     imports: imports.map((entry) => [entry.kind, entry.path, entry.serverCount]),
+    agentPlugins: agentPlugins.map((entry) => [entry.path, entry.name, entry.serverCount]),
     hostConfigDiscovery,
     conflicts: summaryWithoutRepoPrompt.conflicts,
   });
@@ -300,16 +306,24 @@ export function loadMcpConfig(overridePath?: string, cwd = process.cwd()): McpCo
     config = mergeConfigs(config, expandImports(loaded, cwd));
   }
 
-  return config;
+  const pluginConfig = loadAgentPluginConfigs(config.settings?.agentPluginPaths, cwd);
+  return mergeConfigs(pluginConfig, config);
+}
+
+function getMergedSettings(overridePath?: string, cwd = process.cwd()): McpSettings | undefined {
+  let settings: McpSettings | undefined;
+  for (const source of getConfigSources(overridePath, cwd)) {
+    const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
+    if (loaded?.settings) settings = { ...settings, ...loaded.settings };
+  }
+  return settings;
 }
 
 function getConfiguredHostConfigDiscovery(overridePath?: string, cwd = process.cwd()): HostConfigDiscovery {
   let configured: HostConfigDiscovery = "off";
-  for (const source of getConfigSources(overridePath, cwd)) {
-    const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-    const value = loaded?.settings?.hostConfigDiscovery;
-    if (value === "off" || value === "prompt" || value === "on") configured = value;
-  }
+  const settings = getMergedSettings(overridePath, cwd);
+  const value = settings?.hostConfigDiscovery;
+  if (value === "off" || value === "prompt" || value === "on") configured = value;
   return configured;
 }
 

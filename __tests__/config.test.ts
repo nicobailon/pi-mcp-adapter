@@ -21,6 +21,109 @@ describe("config discovery", () => {
     process.chdir(originalCwd);
   });
 
+  it("loads Agent Plugin MCP servers from configured plugin paths", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-plugin-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-agent-plugin-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    const plugin = join(project, "plugins", "acme-tools");
+    writeJson(join(plugin, "plugin.json"), {
+      $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+      name: "acme.tools",
+    });
+    writeJson(join(plugin, "mcp.json"), {
+      $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+      mcpServers: {
+        local: {
+          type: "stdio",
+          command: "./bin/server",
+          args: ["--config", "${PLUGIN_ROOT}/config.json", "--data", "${PLUGIN_DATA}/local"],
+          env: { CACHE: "${PLUGIN_DATA}/cache", LITERAL_HOME: "${HOME}", LITERAL_COMMAND: "!echo pwned" },
+        },
+        remote: {
+          type: "streamable-http",
+          url: "https://example.test/mcp",
+          headers: { "X-Tenant": "public" },
+        },
+        legacy: {
+          type: "sse",
+          url: "http://localhost:3845/sse",
+        },
+      },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      settings: { agentPluginPaths: ["./plugins/acme-tools"] },
+      mcpServers: {},
+    });
+
+    const { loadMcpConfig, getMcpDiscoverySummary } = await import("../config.ts");
+    const config = loadMcpConfig();
+    const realPlugin = realpathSync(plugin);
+    const pluginDataDir = join(home, ".pi", "agent", "agent-plugin-data", "acme.tools");
+    expect(config.mcpServers).toMatchObject({
+      acme_tools__local: {
+        command: join(realPlugin, "bin", "server"),
+        args: ["--config", join(realPlugin, "config.json"), "--data", join(pluginDataDir, "local")],
+        env: {
+          CACHE: join(pluginDataDir, "cache"),
+          LITERAL_HOME: "${HOME}",
+          LITERAL_COMMAND: "!echo pwned",
+          PLUGIN_ROOT: realPlugin,
+          PLUGIN_DATA: pluginDataDir,
+        },
+        cwd: realPlugin,
+        pluginDataDir,
+        literalEnv: true,
+      },
+      acme_tools__remote: {
+        url: "https://example.test/mcp",
+        headers: { "X-Tenant": "public" },
+        httpTransport: "streamable-http",
+      },
+      acme_tools__legacy: {
+        url: "http://localhost:3845/sse",
+        httpTransport: "sse",
+      },
+    });
+    expect(getMcpDiscoverySummary().agentPlugins).toEqual([
+      { path: realPlugin, name: "acme.tools", serverCount: 3 },
+    ]);
+  });
+
+  it("skips invalid Agent Plugin MCP server entries without loading credentials or unsafe paths", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-plugin-invalid-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-agent-plugin-invalid-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    const plugin = join(project, "plugins", "bad-plugin");
+    writeJson(join(plugin, "plugin.json"), {
+      $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+      name: "bad-plugin",
+    });
+    writeJson(join(plugin, "mcp.json"), {
+      $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+      mcpServers: {
+        unsafeCommand: { type: "stdio", command: "../bin/server" },
+        reservedEnv: { type: "stdio", command: "node", env: { PLUGIN_ROOT: "override" } },
+        insecureRemote: { type: "streamable-http", url: "http://example.test/mcp" },
+        duplicateHeader: { type: "streamable-http", url: "https://example.test/mcp", headers: { "X-Test": "one", "x-test": "two" } },
+        valid: { type: "stdio", command: "node" },
+      },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      settings: { agentPluginPaths: [plugin] },
+      mcpServers: { native: { command: "native" } },
+    });
+
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(Object.keys(loadMcpConfig().mcpServers).sort()).toEqual(["bad-plugin__valid", "native"]);
+    expect(warning).toHaveBeenCalled();
+    warning.mockRestore();
+  });
+
   it("loads standard MCP files first, then Pi overrides", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
