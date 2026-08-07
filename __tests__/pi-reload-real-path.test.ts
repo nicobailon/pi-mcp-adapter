@@ -3,10 +3,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -93,8 +91,6 @@ async function createReloadHarness() {
     additionalExtensionPaths: [resolve("index.ts")],
   });
   await loader.reload();
-  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
   const errors: Array<{ error: string; stack?: string }> = [];
   const statusCalls: string[] = [];
   const ui = {
@@ -108,8 +104,6 @@ async function createReloadHarness() {
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(cwd),
     settingsManager,
-    authStorage,
-    modelRegistry,
     noTools: "all",
   });
   await session.bindExtensions({ mode: "tui", uiContext: ui, onError: error => errors.push(error) });

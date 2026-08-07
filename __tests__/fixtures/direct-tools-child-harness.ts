@@ -1,8 +1,6 @@
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -25,15 +23,12 @@ const loader = new DefaultResourceLoader({
   additionalExtensionPaths: [adapterPath, probePath],
 });
 await loader.reload();
-const authStorage = AuthStorage.create(`${agentDir}/auth.json`);
 const { session } = await createAgentSession({
   cwd: projectDir,
   agentDir,
   resourceLoader: loader,
   sessionManager: SessionManager.inMemory(projectDir),
   settingsManager,
-  authStorage,
-  modelRegistry: ModelRegistry.inMemory(authStorage),
   tools: ["demo_reload_identity"],
 });
 await session.bindExtensions({ mode: "print", onError: error => console.error(error.error) });
