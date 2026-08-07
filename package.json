@@ -139,7 +139,7 @@
     "zod": "^3.25.0 || ^4.0.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-ai": "^0.84.1",
     "@earendil-works/pi-tui": "*",
     "typebox": "*",
     "zod": "^3.25.0 || ^4.0.0"
@@ -156,9 +156,9 @@
     }
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.74.2",
-    "@earendil-works/pi-coding-agent": "0.79.10",
-    "@earendil-works/pi-tui": "0.74.2",
+    "@earendil-works/pi-ai": "0.84.1",
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-tui": "0.84.1",
     "@modelcontextprotocol/conformance": "0.1.16",
     "@types/bun": "^1.0.0",
     "@types/cross-spawn": "6.0.6",

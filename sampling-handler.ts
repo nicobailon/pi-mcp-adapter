@@ -1,4 +1,5 @@
-import { complete, type Api, type AssistantMessage, type Message, type Model, type TextContent } from "@earendil-works/pi-ai";
+import { complete } from "@earendil-works/pi-ai/compat";
+import type { Api, AssistantMessage, Message, Model, ProviderHeaders, TextContent } from "@earendil-works/pi-ai";
 import { truncateAtWord } from "./utils.ts";
 import { throwIfAborted } from "./abort.ts";
 import type { ExtensionUIContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
@@ -126,7 +127,7 @@ async function resolveSamplingModel(
 ): Promise<{
   model: Model<Api>;
   apiKey?: string;
-  headers?: Record<string, string>;
+  headers?: ProviderHeaders;
 }> {
   const candidates: Model<Api>[] = [];
   const availableModels = options.modelRegistry.getAvailable();

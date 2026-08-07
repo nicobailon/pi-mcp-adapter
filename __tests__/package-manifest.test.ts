@@ -15,9 +15,9 @@ const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf
 };
 
 const hostPeerPackages = {
-  "@earendil-works/pi-ai": "0.74.2",
-  "@earendil-works/pi-tui": "0.74.2",
-  "typebox": "1.3.3",
+  "@earendil-works/pi-ai": { peer: "^0.84.1", dev: "0.84.1" },
+  "@earendil-works/pi-tui": { peer: "*", dev: "0.84.1" },
+  "typebox": { peer: "*", dev: "1.3.3" },
 };
 
 describe("package.json files", () => {
@@ -63,14 +63,14 @@ describe("package.json files", () => {
 });
 
 describe("package.json dependency policy", () => {
-  it("treats Pi host packages as optional wildcard peers with exact dev pins", () => {
+  it("treats Pi host packages as optional peers with exact dev pins", () => {
     const entries = Object.entries(hostPeerPackages);
 
-    for (const [name, exactVersion] of entries) {
-      expect(packageJson.peerDependencies?.[name]).toBe("*");
+    for (const [name, versions] of entries) {
+      expect(packageJson.peerDependencies?.[name]).toBe(versions.peer);
       expect(packageJson.peerDependenciesMeta?.[name]?.optional).toBe(true);
       expect(packageJson.dependencies?.[name]).toBeUndefined();
-      expect(packageJson.devDependencies?.[name]).toBe(exactVersion);
+      expect(packageJson.devDependencies?.[name]).toBe(versions.dev);
     }
   });
 
