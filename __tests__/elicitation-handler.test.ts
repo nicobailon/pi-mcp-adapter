@@ -150,24 +150,31 @@ describe("MCP elicitation", () => {
     expect(result).toEqual({ action: "accept", content: { quantity: 7 } });
   });
 
-  it("maps explicit refusal and dialog dismissal to decline and cancel", async () => {
+  it("uses one confirmation dialog for an empty form", async () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const params = request({
       mode: "form",
-      message: "Provide a value",
+      message: "Confirm the operation",
       requestedSchema: { type: "object", properties: {} },
     });
 
-    await expect(handleElicitationRequest({
-      serverName: "demo",
-      ui: { select: vi.fn().mockResolvedValue("Decline") } as any,
-      allowUrl: true,
-    }, params)).resolves.toEqual({ action: "decline" });
-    await expect(handleElicitationRequest({
-      serverName: "demo",
-      ui: { select: vi.fn().mockResolvedValue(undefined) } as any,
-      allowUrl: true,
-    }, params)).resolves.toEqual({ action: "cancel" });
+    for (const [selection, expected] of [
+      ["Continue", { action: "accept", content: {} }],
+      ["Decline", { action: "decline" }],
+      [undefined, { action: "cancel" }],
+    ]) {
+      const select = vi.fn().mockResolvedValue(selection);
+      await expect(handleElicitationRequest({
+        serverName: "demo",
+        ui: { select } as any,
+        allowUrl: true,
+      }, params)).resolves.toEqual(expected);
+      expect(select).toHaveBeenCalledOnce();
+      expect(select).toHaveBeenCalledWith(
+        "MCP Input Request\nServer: demo\n\nConfirm the operation",
+        ["Continue", "Decline"],
+      );
+    }
   });
 
   it("does not open URL elicitations that are declined or dismissed", async () => {

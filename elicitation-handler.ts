@@ -44,15 +44,16 @@ export async function handleFormElicitation(
   options: ElicitationHandlerOptions,
   params: ElicitRequestFormParams,
 ): Promise<ElicitResult> {
+  const properties = Object.entries(params.requestedSchema.properties);
   const decision = await options.ui.select(
     `MCP Input Request\nServer: ${options.serverName}\n\n${params.message}`,
     ["Continue", "Decline"],
   );
   if (decision === undefined) return { action: "cancel" };
   if (decision === "Decline") return { action: "decline" };
+  if (properties.length === 0) return { action: "accept", content: {} };
 
   const values: Record<string, ElicitationValue> = {};
-  const properties = Object.entries(params.requestedSchema.properties);
   for (const [name, schema] of properties) {
     const value = await collectValidField(options.ui, params, name, schema);
     if (!("value" in value)) return { action: "cancel" };
