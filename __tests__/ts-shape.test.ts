@@ -54,6 +54,43 @@ describe("renderTsShape", () => {
     })).toBe("{ query: string; }");
   });
 
+  it("renders closed objects with referenced union variants", () => {
+    expect(renderTsShape({
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        blocks: { type: "array", items: { $ref: "#/$defs/block" } },
+      },
+      required: ["blocks"],
+      $defs: {
+        text: {
+          type: "object",
+          additionalProperties: false,
+          properties: { type: { const: "text" }, text: { type: "string" } },
+          required: ["type", "text"],
+        },
+        qr: {
+          type: "object",
+          additionalProperties: false,
+          properties: { type: { const: "qr" }, data: { type: "string" } },
+          required: ["type", "data"],
+        },
+        block: {
+          oneOf: [
+            { $ref: "#/$defs/text" },
+            { $ref: "#/$defs/qr" },
+          ],
+        },
+      },
+    })).toBe([
+      'type block = text | qr;',
+      'type text = { type: "text"; text: string; };',
+      'type qr = { type: "qr"; data: string; };',
+      "",
+      "{ blocks: block[]; }",
+    ].join("\n"));
+  });
+
   it("returns null for exotic schemas", () => {
     expect(renderTsShape({ if: { type: "string" }, then: { type: "number" } })).toBeNull();
     expect(renderTsShape({ $ref: "https://example.com/schema" })).toBeNull();
