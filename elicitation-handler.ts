@@ -14,8 +14,9 @@ import open from "open";
 
 export type ElicitationValue = string | number | boolean | string[] | undefined;
 type FormProperty = ElicitRequestFormParams["requestedSchema"]["properties"][string];
+type FieldCollectionResult = { status: "cancelled" } | { status: "collected"; value: ElicitationValue };
 
-export type ElicitationUIContext = ExtensionUIContext;
+export type ElicitationUIContext = Pick<ExtensionUIContext, "select" | "input" | "notify">;
 
 export interface ElicitationHandlerOptions {
   serverName: string;
@@ -56,7 +57,7 @@ export async function handleFormElicitation(
   const values: Record<string, ElicitationValue> = {};
   for (const [name, schema] of properties) {
     const value = await collectValidField(options.ui, params, name, schema);
-    if (!("value" in value)) return { action: "cancel" };
+    if (value.status === "cancelled") return { action: "cancel" };
     values[name] = value.value;
   }
 
@@ -64,7 +65,7 @@ export async function handleFormElicitation(
     const content = coerceAndValidateFormValues(params, values);
     const action = await options.ui.select(
       formatReview(options.serverName, properties, content),
-      properties.length > 0 ? ["Submit", "Edit", "Decline"] : ["Submit", "Decline"],
+      ["Submit", "Edit", "Decline"],
     );
     if (action === undefined) return { action: "cancel" };
     if (action === "Decline") return { action: "decline" };
@@ -77,7 +78,7 @@ export async function handleFormElicitation(
     if (!property) continue;
     const [name, schema] = property;
     const value = await collectValidField(options.ui, params, name, schema, values[name]);
-    if (!("value" in value)) return { action: "cancel" };
+    if (value.status === "cancelled") return { action: "cancel" };
     values[name] = value.value;
   }
 }
@@ -88,11 +89,11 @@ async function collectValidField(
   name: string,
   schema: FormProperty,
   current?: ElicitationValue,
-): Promise<{ cancelled: true } | { cancelled: false; value: ElicitationValue }> {
+): Promise<FieldCollectionResult> {
   const required = params.requestedSchema.required?.includes(name) === true;
   while (true) {
     const result = await collectField(ui, params, name, schema, current);
-    if (!("value" in result)) return result;
+    if (result.status === "cancelled") return result;
     try {
       coerceAndValidateFormValues({
         ...params,
@@ -116,7 +117,7 @@ async function collectField(
   name: string,
   schema: FormProperty,
   current?: ElicitationValue,
-): Promise<{ cancelled: true } | { cancelled: false; value: ElicitationValue }> {
+): Promise<FieldCollectionResult> {
   const required = params.requestedSchema.required?.includes(name) === true;
   const title = [schema.title ?? humanizeName(name), required ? "(required)" : "", schema.description]
     .filter(Boolean)
@@ -136,10 +137,10 @@ async function collectField(
     const omit = required ? undefined : uniqueAction("Omit", actions);
     if (omit) actions.push(omit);
     const action = await ui.select(title, actions);
-    if (action === undefined) return { cancelled: true };
-    if (action === useDefault) return { cancelled: false, value: schema.default };
-    if (action === omit) return { cancelled: false, value: undefined };
-    return { cancelled: false, value: choices[displays.indexOf(action)]?.value };
+    if (action === undefined) return { status: "cancelled" };
+    if (action === useDefault) return { status: "collected", value: schema.default };
+    if (action === omit) return { status: "collected", value: undefined };
+    return { status: "collected", value: choices[displays.indexOf(action)]?.value };
   }
 
   if (schema.type === "boolean") {
@@ -147,10 +148,10 @@ async function collectField(
     if (schema.default !== undefined) actions.push("Use default");
     if (!required) actions.push("Omit");
     const action = await ui.select(title, actions);
-    if (action === undefined) return { cancelled: true };
-    if (action === "Use default") return { cancelled: false, value: schema.default };
-    if (action === "Omit") return { cancelled: false, value: undefined };
-    return { cancelled: false, value: action === "Yes" };
+    if (action === undefined) return { status: "cancelled" };
+    if (action === "Use default") return { status: "collected", value: schema.default };
+    if (action === "Omit") return { status: "collected", value: undefined };
+    return { status: "collected", value: action === "Yes" };
   }
 
   if (schema.type === "array") {
@@ -158,9 +159,9 @@ async function collectField(
     if (schema.default !== undefined) actions.push("Use default");
     if (!required) actions.push("Omit");
     const action = await ui.select(title, actions);
-    if (action === undefined) return { cancelled: true };
-    if (action === "Use default") return { cancelled: false, value: schema.default };
-    if (action === "Omit") return { cancelled: false, value: undefined };
+    if (action === undefined) return { status: "cancelled" };
+    if (action === "Use default") return { status: "collected", value: schema.default };
+    if (action === "Omit") return { status: "collected", value: undefined };
 
     const choices = extractMultiSelectOptions(schema);
     const selected = new Set(Array.isArray(current) ? current : []);
@@ -168,8 +169,8 @@ async function collectField(
       const displays = uniqueLabels(choices.map(choice => selected.has(choice.value) ? `✓ ${choice.display}` : choice.display));
       const done = uniqueAction("Done", displays);
       const picked = await ui.select(title, [...displays, done]);
-      if (picked === undefined) return { cancelled: true };
-      if (picked === done) return { cancelled: false, value: [...selected] };
+      if (picked === undefined) return { status: "cancelled" };
+      if (picked === done) return { status: "collected", value: [...selected] };
       const choice = choices[displays.indexOf(picked)];
       if (!choice) continue;
       if (selected.has(choice.value)) selected.delete(choice.value);
@@ -181,11 +182,11 @@ async function collectField(
   if (schema.default !== undefined) actions.push("Use default");
   if (!required) actions.push("Omit");
   const action = await ui.select(title, actions);
-  if (action === undefined) return { cancelled: true };
-  if (action === "Use default") return { cancelled: false, value: schema.default };
-  if (action === "Omit") return { cancelled: false, value: undefined };
+  if (action === undefined) return { status: "cancelled" };
+  if (action === "Use default") return { status: "collected", value: schema.default };
+  if (action === "Omit") return { status: "collected", value: undefined };
   const entered = await ui.input(title, current === undefined ? undefined : String(current));
-  return entered === undefined ? { cancelled: true } : { cancelled: false, value: entered };
+  return entered === undefined ? { status: "cancelled" } : { status: "collected", value: entered };
 }
 
 export function coerceAndValidateFormValues(

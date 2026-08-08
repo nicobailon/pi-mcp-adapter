@@ -12,11 +12,14 @@ import {
   type SamplingMessageContentBlock,
 } from "@modelcontextprotocol/client";
 
+export type SamplingUIContext = Pick<ExtensionUIContext, "confirm">;
+export type SamplingModelRegistry = Pick<ModelRegistry, "getAvailable" | "getApiKeyAndHeaders">;
+
 export interface SamplingHandlerOptions {
   serverName: string;
   autoApprove: boolean;
-  ui?: ExtensionUIContext;
-  modelRegistry: ModelRegistry;
+  ui?: SamplingUIContext;
+  modelRegistry: SamplingModelRegistry;
   getCurrentModel: () => Model<Api> | undefined;
   getSignal: () => AbortSignal | undefined;
 }

@@ -54,12 +54,8 @@ const geminiFlash = {
   baseUrl: "https://generativelanguage.googleapis.com",
 } satisfies Model<"google-generative-ai">;
 
-type SamplingTestOptions = Omit<SamplingHandlerOptions, "modelRegistry"> & {
-  modelRegistry: Pick<SamplingHandlerOptions["modelRegistry"], "getAvailable" | "getApiKeyAndHeaders">;
-};
-
-function createOptions(overrides: Partial<SamplingTestOptions> = {}): SamplingHandlerOptions {
-  const options = {
+function createOptions(overrides: Partial<SamplingHandlerOptions> = {}): SamplingHandlerOptions {
+  return {
     serverName: "i18n",
     autoApprove: true,
     modelRegistry: {
@@ -69,12 +65,11 @@ function createOptions(overrides: Partial<SamplingTestOptions> = {}): SamplingHa
     getCurrentModel: vi.fn(() => undefined),
     getSignal: vi.fn(() => undefined),
     ...overrides,
-  } satisfies SamplingTestOptions;
-  return options as SamplingHandlerOptions;
+  };
 }
 
 async function runBasicSampling(
-  overrides: Partial<SamplingTestOptions>,
+  overrides: Partial<SamplingHandlerOptions>,
   modelPreferences?: ModelPreferences,
 ): Promise<void> {
   const { handleSamplingRequest } = await import("../sampling-handler.ts");

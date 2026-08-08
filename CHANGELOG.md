@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Refined MCP elicitation and sampling handler TypeScript contracts without changing runtime behavior.
+
 ### Fixed
 - Restored MCP sampling builds with current Pi AI releases by using its compatibility entry point. Thanks @eric-kansas for issue #308.
 - Simplified empty MCP form elicitation to one confirmation dialog. Thanks @shardulbee for issue #309.
