@@ -17,7 +17,7 @@ import type { McpServerManager } from "./server-manager.ts";
 import type { McpExtensionState } from "./state.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
-import { extractUiToolVisibility, isUiToolCallableByApp } from "./ui-tool-visibility.ts";
+import { extractUiToolVisibility, isUiToolCallableByApp, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import {
   createUiModelContextUpdate,
   extractUiPromptText,
@@ -144,6 +144,41 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       };
     }
   }
+
+  const isAppOnlyTool = (toolName: string): boolean => {
+    const toolDefinition = options.manager.getConnection(options.serverName)?.tools?.find((tool) => tool.name === toolName);
+    if (!toolDefinition) return false;
+    const visibility = extractUiToolVisibility(toolDefinition._meta);
+    return isUiToolCallableByApp(visibility) && !isUiToolVisibleToModel(visibility);
+  };
+
+  const recordUiMessage = async (msgParams: UiMessageParams): Promise<void> => {
+    const promptText = extractUiPromptText(msgParams);
+
+    // Track messages by type (order: prompt → intent → notify)
+    // Must match the order in index.ts onMessage handler
+    if (promptText) {
+      sessionMessages.prompts.push(promptText);
+      log.debug("UI prompt received", { prompt: promptText.slice(0, 100) });
+    } else if (msgParams.type === "intent" || msgParams.intent) {
+      const intentName = msgParams.intent ?? "";
+      if (intentName) {
+        sessionMessages.intents.push({
+          intent: intentName,
+          ...(msgParams.params !== undefined ? { params: msgParams.params } : {}),
+        });
+        log.debug("UI intent received", { intent: intentName });
+      }
+    } else if (msgParams.type === "notify" || msgParams.message) {
+      const notifyText = msgParams.message ?? "";
+      if (notifyText) {
+        sessionMessages.notifications.push(notifyText);
+        log.debug("UI notification", { message: notifyText.slice(0, 100) });
+      }
+    }
+
+    await options.onMessage?.(msgParams);
+  };
 
   const touchHeartbeat = () => {
     lastHeartbeatAt = Date.now();
@@ -476,33 +511,27 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         return;
       }
 
-      if (url.pathname === "/proxy/ui/message") {
-        const msgParams = params as UiMessageParams;
-        const promptText = extractUiPromptText(msgParams);
-        
-        // Track messages by type (order: prompt → intent → notify)
-        // Must match the order in index.ts onMessage handler
-        if (promptText) {
-          sessionMessages.prompts.push(promptText);
-          log.debug("UI prompt received", { prompt: promptText.slice(0, 100) });
-        } else if (msgParams.type === "intent" || msgParams.intent) {
-          const intentName = msgParams.intent ?? "";
-          if (intentName) {
-            sessionMessages.intents.push({
-              intent: intentName,
-              ...(msgParams.params !== undefined ? { params: msgParams.params } : {}),
-            });
-            log.debug("UI intent received", { intent: intentName });
-          }
-        } else if (msgParams.type === "notify" || msgParams.message) {
-          const notifyText = msgParams.message ?? "";
-          if (notifyText) {
-            sessionMessages.notifications.push(notifyText);
-            log.debug("UI notification", { message: notifyText.slice(0, 100) });
-          }
+      if (url.pathname === "/proxy/ui/generated-tool-call-intent") {
+        const tool = typeof params.tool === "string" ? params.tool : undefined;
+        if (tool && isAppOnlyTool(tool)) {
+          log.debug("Ignored generated app-only tool call intent", { tool });
+        } else {
+          await recordUiMessage({
+            type: "intent",
+            intent: "call_tool",
+            params: {
+              ...(tool !== undefined ? { tool } : {}),
+              ...(params.arguments !== undefined ? { arguments: params.arguments } : {}),
+              ...(params.isError !== undefined ? { isError: params.isError } : {}),
+            },
+          });
         }
-        
-        await options.onMessage?.(msgParams);
+        sendJson(res, 200, { ok: true, result: {} });
+        return;
+      }
+
+      if (url.pathname === "/proxy/ui/message") {
+        await recordUiMessage(params as UiMessageParams);
         sendJson(res, 200, { ok: true, result: {} });
         return;
       }

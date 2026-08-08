@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Rendered closed JSON Schema object shapes that use `additionalProperties: false`. Thanks @giuseppecrj for PR #313.
+- Stopped app-only MCP tool calls from triggering model turns or persisting as UI intents. Thanks @VikashLoomba for issue #314.
 - Restored MCP sampling builds with current Pi AI releases by using its compatibility entry point. Thanks @eric-kansas for issue #308.
 - Simplified empty MCP form elicitation to one confirmation dialog. Thanks @shardulbee for issue #309.
 

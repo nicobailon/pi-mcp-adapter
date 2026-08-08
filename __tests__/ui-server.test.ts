@@ -631,6 +631,68 @@ describe("UiServer", () => {
       }, requestOptions);
     });
 
+    it("executes app-only tools without recording their synthetic call intent", async () => {
+      const callTool = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "app result" }] });
+      const onMessage = vi.fn();
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool },
+          tools: [{ name: "app_only", _meta: { ui: { visibility: ["app"] } } }],
+        }),
+      });
+      handle = await startUiServer(createServerOptions({ manager, onMessage }));
+
+      const call = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "app_only", arguments: { value: 1 } },
+        },
+      });
+      const message = await request(`http://localhost:${handle.port}/proxy/ui/generated-tool-call-intent`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { tool: "app_only", arguments: { value: 1 }, isError: false },
+        },
+      });
+
+      expect(call.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "app result" }] } });
+      expect(callTool).toHaveBeenCalledWith({ name: "app_only", arguments: { value: 1 } }, undefined);
+      expect(message.body).toEqual({ ok: true, result: {} });
+      expect(handle.getSessionMessages().intents).toEqual([]);
+      expect(onMessage).not.toHaveBeenCalled();
+    });
+
+    it("keeps app-authored call_tool intents for app-only tools", async () => {
+      const onMessage = vi.fn();
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool: vi.fn() },
+          tools: [{ name: "app_only", _meta: { ui: { visibility: ["app"] } } }],
+        }),
+      });
+      handle = await startUiServer(createServerOptions({ manager, onMessage }));
+      const params = {
+        type: "intent",
+        intent: "call_tool",
+        _piGeneratedToolCallIntent: true,
+        params: { tool: "app_only", reason: "user-requested" },
+      };
+
+      await request(`http://localhost:${handle.port}/proxy/ui/message`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params },
+      });
+
+      expect(handle.getSessionMessages().intents).toEqual([
+        { intent: "call_tool", params: { tool: "app_only", reason: "user-requested" } },
+      ]);
+      expect(onMessage).toHaveBeenCalledWith(params);
+    });
+
     it("returns a gated iframe call as an approval_denied tool result", async () => {
       const mockClient = { callTool: vi.fn() };
       const manager = createMockManager({
@@ -925,19 +987,39 @@ describe("UiServer", () => {
       expect(onMessage).toHaveBeenCalled();
     });
 
-    it("tracks intent messages", async () => {
-      handle = await startUiServer(createServerOptions());
+    it("tracks and forwards call_tool intents that do not name an app-only tool", async () => {
+      const onMessage = vi.fn();
+      handle = await startUiServer(createServerOptions({ onMessage }));
+      const params = { type: "intent", intent: "call_tool", params: { tool: "business_action" } };
 
       await request(`http://localhost:${handle.port}/proxy/ui/message`, {
         method: "POST",
-        body: {
-          token: handle.sessionToken,
-          params: { type: "intent", intent: "navigate", params: { to: "/home" } },
-        },
+        body: { token: handle.sessionToken, params },
       });
 
-      const messages = handle.getSessionMessages();
-      expect(messages.intents).toEqual([{ intent: "navigate", params: { to: "/home" } }]);
+      expect(handle.getSessionMessages().intents).toEqual([{ intent: "call_tool", params: { tool: "business_action" } }]);
+      expect(onMessage).toHaveBeenCalledWith(params);
+    });
+
+    it("tracks and forwards generated call intents for tools visible to both app and model", async () => {
+      const onMessage = vi.fn();
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool: vi.fn() },
+          tools: [{ name: "both", _meta: { ui: { visibility: ["model", "app"] } } }],
+        }),
+      });
+      handle = await startUiServer(createServerOptions({ manager, onMessage }));
+      const expected = { type: "intent", intent: "call_tool", params: { tool: "both", isError: false } };
+
+      await request(`http://localhost:${handle.port}/proxy/ui/generated-tool-call-intent`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params: { tool: "both", isError: false } },
+      });
+
+      expect(handle.getSessionMessages().intents).toEqual([{ intent: "call_tool", params: { tool: "both", isError: false } }]);
+      expect(onMessage).toHaveBeenCalledWith(expected);
     });
 
     it("tracks notification messages", async () => {

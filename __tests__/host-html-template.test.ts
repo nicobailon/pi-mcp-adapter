@@ -84,6 +84,14 @@ describe("buildHostHtmlTemplate", () => {
       expect(html).toContain("closeOrShowDone");
       expect(html).toContain("visibilitychange");
     });
+
+    it("sends generated tool-call intents through a host-only endpoint", () => {
+      const html = buildHostHtmlTemplate(createMinimalInput());
+
+      expect(html).toContain('await post("/proxy/ui/generated-tool-call-intent", {');
+      expect(html).toContain("tool: params.name");
+      expect(html).not.toContain("_piGeneratedToolCallIntent");
+    });
   });
 
   describe("data injection", () => {

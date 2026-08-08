@@ -226,10 +226,10 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
       }
       const result = await post("/proxy/tools/call", params);
       // Notify agent about the tool call
-      await post("/proxy/ui/message", {
-        type: "intent",
-        intent: "call_tool",
-        params: { tool: params.name, arguments: params.arguments, isError: result.isError }
+      await post("/proxy/ui/generated-tool-call-intent", {
+        tool: params.name,
+        arguments: params.arguments,
+        isError: result.isError
       }).catch(() => {});
       return result;
     };
