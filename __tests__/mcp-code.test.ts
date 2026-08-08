@@ -146,7 +146,7 @@ describe("runMcpScript", () => {
         name: "fail",
         server: "fixture",
         description: "Return an MCP tool error",
-        inputTypeScript: "  value (string)",
+        inputTypeScript: "{ value?: string; }",
       },
       missing: {
         path: "fixture_ech",
