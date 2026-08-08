@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refined MCP elicitation and sampling handler TypeScript contracts without changing runtime behavior.
 
 ### Fixed
+- Rendered closed JSON Schema object shapes that use `additionalProperties: false`. Thanks @giuseppecrj for PR #313.
 - Restored MCP sampling builds with current Pi AI releases by using its compatibility entry point. Thanks @eric-kansas for issue #308.
 - Simplified empty MCP form elicitation to one confirmation dialog. Thanks @shardulbee for issue #309.
 
