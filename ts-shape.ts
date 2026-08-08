@@ -113,8 +113,7 @@ function isSchema(value: unknown): value is Schema {
 function hasUnsupportedKeyword(schema: Schema): boolean {
   return UNSUPPORTED_KEYWORDS.some(keyword => {
     if (!Object.hasOwn(schema, keyword)) return false;
-    // `additionalProperties: false` is a closed-object constraint, not a
-    // shape that this renderer needs to understand.
+    // `additionalProperties: false` is a closed-object constraint, not a shape that this renderer needs to understand.
     return keyword !== "additionalProperties" || schema.additionalProperties !== false;
   });
 }
