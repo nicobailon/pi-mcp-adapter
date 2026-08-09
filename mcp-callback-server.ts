@@ -135,7 +135,6 @@ function htmlSuccess(): string {
     body: `You can close this window and return to <span class="app">${app}</span>.`,
     icon: CHECK_ICON,
     tone: "ok",
-    extra: '<p class="hint">This window closes itself in a moment.</p>',
     autoClose: true,
   })
 }
