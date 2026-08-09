@@ -30,7 +30,7 @@ import {
   type StoredClientInfo,
 } from "./mcp-auth.ts"
 import { resolveCommandSecret } from "./utils.ts"
-import { getAppName } from "./agent-dir.ts"
+import { getAppClientUri, getAppName } from "./agent-dir.ts"
 
 /**
  * Client name advertised during Dynamic Client Registration.
@@ -57,6 +57,8 @@ function defaultClientName(): string {
  * Stock pi keeps the historical value.
  */
 function defaultClientUri(): string | undefined {
+  const declared = getAppClientUri()
+  if (declared) return declared
   return getAppName() === "pi" ? "https://github.com/nicobailon/pi-mcp-adapter" : undefined
 }
 

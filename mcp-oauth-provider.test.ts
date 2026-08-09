@@ -150,6 +150,16 @@ describe("McpOAuthProvider", () => {
       try {
         // The client is arc; advertising the adapter's repo would misidentify it.
         assert.ok(!("client_uri" in createProvider().clientMetadata))
+        // A host that declares its own homepage gets it advertised.
+        const declaring = mkdtempSync(join(tmpdir(), "oauth-brand-declared-"))
+        writeFileSync(
+          join(declaring, "package.json"),
+          JSON.stringify({ name: "pi", piConfig: { name: "arc", clientUri: "https://arc.workos.tools" } }),
+        )
+        process.env.PI_PACKAGE_DIR = declaring
+        assert.strictEqual(createProvider().clientMetadata.client_uri, "https://arc.workos.tools")
+        process.env.PI_PACKAGE_DIR = dir
+
         // An explicit config still wins.
         assert.strictEqual(
           createProvider({ clientUri: "https://arc.example" }).clientMetadata.client_uri,

@@ -31,16 +31,30 @@ export function getAgentPath(...segments: string[]): string {
  *
  * Falls back to "pi", which is what pi's own APP_NAME resolves to.
  */
-export function getAppName(): string {
+function readPiConfig(): { name?: unknown; clientUri?: unknown } | undefined {
   const dir = process.env.PI_PACKAGE_DIR?.trim()
-  if (!dir) return "pi"
+  if (!dir) return undefined
   try {
     const manifest = JSON.parse(readFileSync(join(resolve(dir), "package.json"), "utf8")) as {
-      piConfig?: { name?: unknown }
+      piConfig?: { name?: unknown; clientUri?: unknown }
     }
-    const name = manifest.piConfig?.name
-    return typeof name === "string" && name.trim() ? name.trim() : "pi"
+    return manifest.piConfig
   } catch {
-    return "pi"
+    return undefined
   }
+}
+
+export function getAppName(): string {
+  const name = readPiConfig()?.name
+  return typeof name === "string" && name.trim() ? name.trim() : "pi"
+}
+
+/**
+ * Home page the host declares for itself, via `piConfig.clientUri` in the same
+ * manifest that carries `piConfig.name`. Only the distribution knows its own
+ * URL, so this is the one place it can come from without guessing.
+ */
+export function getAppClientUri(): string | undefined {
+  const uri = readPiConfig()?.clientUri
+  return typeof uri === "string" && uri.trim() ? uri.trim() : undefined
 }
