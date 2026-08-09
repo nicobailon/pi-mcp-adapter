@@ -117,6 +117,7 @@ export interface McpOAuthConfig {
   redirectUri?: string
   clientName?: string
   clientUri?: string
+  logoUri?: string
   skipIssuerMetadataValidation?: boolean
 }
 
@@ -234,6 +235,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       return {
         client_name: this.config.clientName ?? defaultClientName(),
         ...(this.clientUri !== undefined ? { client_uri: this.clientUri } : {}),
+        ...(this.config.logoUri !== undefined ? { logo_uri: this.config.logoUri } : {}),
         redirect_uris: [],
         grant_types: ["client_credentials"],
         token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
@@ -249,6 +251,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       redirect_uris: [redirectUrl],
       client_name: this.config.clientName ?? defaultClientName(),
       ...(this.clientUri !== undefined ? { client_uri: this.clientUri } : {}),
+      ...(this.config.logoUri !== undefined ? { logo_uri: this.config.logoUri } : {}),
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",

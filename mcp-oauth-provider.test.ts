@@ -176,6 +176,16 @@ describe("McpOAuthProvider", () => {
       }
     })
 
+    it("should omit logo_uri when unset", () => {
+      const provider = createProvider()
+      assert.ok(!("logo_uri" in provider.clientMetadata))
+    })
+
+    it("should advertise logo_uri when configured", () => {
+      const provider = createProvider({ logoUri: "https://example.com/logo.png" })
+      assert.strictEqual(provider.clientMetadata.logo_uri, "https://example.com/logo.png")
+    })
+
     it("should return correct metadata for confidential client", () => {
       const provider = createProvider({ clientSecret: "secret" })
       const metadata = provider.clientMetadata

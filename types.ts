@@ -350,6 +350,8 @@ export interface OAuthConfig {
   clientName?: string;
   /** Client homepage URI for dynamic registration */
   clientUri?: string;
+  /** Client logo URL for dynamic registration; shown on consent screens */
+  logoUri?: string;
   /** Security-weakening escape hatch for known-misconfigured authorization servers. */
   skipIssuerMetadataValidation?: boolean;
 }

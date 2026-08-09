@@ -297,6 +297,38 @@ describe("mcp-auth-flow", () => {
       )
     })
 
+    it("should accept an absolute http(s) OAuth logoUri", () => {
+      const config = extractOAuthConfig({
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: { logoUri: "https://example.com/logo.png" },
+      })
+      assert.strictEqual(config.logoUri, "https://example.com/logo.png")
+    })
+
+    it("should reject an OAuth logoUri that is not an absolute http(s) URL", () => {
+      // Consent screens fetch the logo server-side, so a local path renders
+      // nothing at all — failing here is the only place it can be explained.
+      for (const logoUri of ["./logo.png", "/Users/me/logo.png", "file:///tmp/logo.png"]) {
+        assert.throws(
+          () => extractOAuthConfig({
+            url: "https://api.example.com/mcp",
+            auth: "oauth",
+            oauth: { logoUri },
+          }),
+          /logoUri must be an absolute http\(s\) URL/
+        )
+      }
+      assert.throws(
+        () => extractOAuthConfig({
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { logoUri: 123 as unknown as string },
+        }),
+        /logoUri must be a string/
+      )
+    })
+
     it("should reject malformed OAuth authorizationParams", () => {
       assert.throws(
         () => extractOAuthConfig({

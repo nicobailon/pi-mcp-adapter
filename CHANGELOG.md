@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `oauth.logoUri` for OAuth Dynamic Client Registration, with validation that requires an absolute HTTP(S) URL. Thanks @grinich for PR #321.
+
 ### Fixed
 - Named OAuth callback pages and dynamic client registrations after rebranded Pi hosts, while preserving stock Pi defaults and avoiding guessed client homepages. Thanks @grinich for PR #320.
 

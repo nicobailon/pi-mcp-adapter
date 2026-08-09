@@ -211,6 +211,27 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     }
     config.clientUri = clientUri
   }
+  if (definition.oauth?.logoUri !== undefined) {
+    if (typeof definition.oauth.logoUri !== "string") {
+      throw new Error("OAuth logoUri must be a string")
+    }
+    const logoUri = interpolateEnvVars(definition.oauth.logoUri).trim()
+    if (!logoUri) {
+      throw new Error("OAuth logoUri must not be empty")
+    }
+    // Consent screens fetch this server-side, so a local path silently renders
+    // nothing. Fail here instead, where the message can say why.
+    let parsed: URL
+    try {
+      parsed = new URL(logoUri)
+    } catch {
+      throw new Error("OAuth logoUri must be an absolute http(s) URL")
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error("OAuth logoUri must be an absolute http(s) URL")
+    }
+    config.logoUri = logoUri
+  }
   if (definition.oauth?.skipIssuerMetadataValidation !== undefined) {
     if (typeof definition.oauth.skipIssuerMetadataValidation !== "boolean") {
       throw new Error("OAuth skipIssuerMetadataValidation must be a boolean")
