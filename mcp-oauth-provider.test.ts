@@ -142,6 +142,25 @@ describe("McpOAuthProvider", () => {
       }
     })
 
+    it("should omit client_uri under a rebranded host rather than name the adapter", () => {
+      const original = process.env.PI_PACKAGE_DIR
+      const dir = mkdtempSync(join(tmpdir(), "oauth-brand-uri-"))
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "pi", piConfig: { name: "arc" } }))
+      process.env.PI_PACKAGE_DIR = dir
+      try {
+        // The client is arc; advertising the adapter's repo would misidentify it.
+        assert.ok(!("client_uri" in createProvider().clientMetadata))
+        // An explicit config still wins.
+        assert.strictEqual(
+          createProvider({ clientUri: "https://arc.example" }).clientMetadata.client_uri,
+          "https://arc.example",
+        )
+      } finally {
+        if (original === undefined) delete process.env.PI_PACKAGE_DIR
+        else process.env.PI_PACKAGE_DIR = original
+      }
+    })
+
     it("should return correct metadata for confidential client", () => {
       const provider = createProvider({ clientSecret: "secret" })
       const metadata = provider.clientMetadata

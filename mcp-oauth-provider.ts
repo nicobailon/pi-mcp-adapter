@@ -45,6 +45,21 @@ function defaultClientName(): string {
   return app === "pi" ? "Pi Coding Agent" : app
 }
 
+/**
+ * Client homepage advertised during Dynamic Client Registration.
+ *
+ * RFC 7591 defines client_uri as the home page *of the client*. Under a
+ * rebranded pi the client is that distribution, not this adapter, so pointing
+ * at the adapter's repository misidentifies it on the consent screen. There is
+ * no way to guess the right URL and a wrong one is worse than none, so the
+ * field is omitted unless a server config supplies oauth.clientUri.
+ *
+ * Stock pi keeps the historical value.
+ */
+function defaultClientUri(): string | undefined {
+  return getAppName() === "pi" ? "https://github.com/nicobailon/pi-mcp-adapter" : undefined
+}
+
 type IssuerBoundClientInformation = OAuthClientInformationMixed & { issuer?: string }
 type IssuerBoundTokens = OAuthTokens & { issuer?: string }
 
@@ -203,7 +218,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return this.redirectUrlSnapshot
   }
 
-/**
+  /** Configured homepage, else the historical default on stock pi, else nothing. */
+  private get clientUri(): string | undefined {
+    return this.config.clientUri ?? defaultClientUri()
+  }
+
+  /**
    * Client metadata for dynamic registration.
    * Describes this client to the OAuth authorization server.
    */
@@ -211,7 +231,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (this.usesClientCredentials) {
       return {
         client_name: this.config.clientName ?? defaultClientName(),
-        client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
+        ...(this.clientUri !== undefined ? { client_uri: this.clientUri } : {}),
         redirect_uris: [],
         grant_types: ["client_credentials"],
         token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
@@ -226,7 +246,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return {
       redirect_uris: [redirectUrl],
       client_name: this.config.clientName ?? defaultClientName(),
-      client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
+      ...(this.clientUri !== undefined ? { client_uri: this.clientUri } : {}),
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
