@@ -5,6 +5,9 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert"
 import { createServer } from "node:http"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -436,5 +439,56 @@ describe("mcp-callback-server", () => {
       await assert.rejects(promise2, /Authorization cancelled/)
       await assert.rejects(promise3, /Authorization cancelled/)
     })
+  })
+})
+
+describe("callback page branding", () => {
+  const originalPackageDir = process.env.PI_PACKAGE_DIR
+
+  function brandedPackageDir(name?: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-callback-brand-"))
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify(name ? { name: "pi", piConfig: { name } } : { name: "pi" }),
+    )
+    return dir
+  }
+
+  /** Drive a real callback request and read the HTML the browser would get. */
+  async function fetchCallbackHtml(): Promise<string> {
+    await ensureCallbackServer()
+    const state = "brandingteststate"
+    const pending = waitForCallback(state)
+    const url = `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?state=${state}&code=abc123`
+    const response = await fetch(url)
+    const html = await response.text()
+    await pending
+    return html
+  }
+
+  afterEach(async () => {
+    if (originalPackageDir === undefined) delete process.env.PI_PACKAGE_DIR
+    else process.env.PI_PACKAGE_DIR = originalPackageDir
+    await stopCallbackServer()
+  })
+
+  it("names the host app rather than hardcoding Pi", async () => {
+    process.env.PI_PACKAGE_DIR = brandedPackageDir("arc")
+    const html = await fetchCallbackHtml()
+    assert.match(html, /return to <span class="app">arc<\/span>/)
+    assert.match(html, /<title>arc — Authorization Successful<\/title>/)
+    assert.doesNotMatch(html, /return to <span class="app">Pi<\/span>/)
+  })
+
+  it("falls back to pi when the host is not rebranded", async () => {
+    process.env.PI_PACKAGE_DIR = brandedPackageDir()
+    const html = await fetchCallbackHtml()
+    assert.match(html, /return to <span class="app">pi<\/span>/)
+  })
+
+  it("serves a self-contained page — no external assets", async () => {
+    delete process.env.PI_PACKAGE_DIR
+    const html = await fetchCallbackHtml()
+    assert.doesNotMatch(html, /https?:\/\//)
   })
 })
