@@ -667,14 +667,12 @@ export async function authenticate(
   }
 
   const operation = (async (): Promise<AuthStatus> => {
-    // Start auth flow
     const { authorizationUrl } = await startAuth(serverName, serverUrl, definition, {
       ...options,
       ...(signal ? { signal } : {}),
       runtime,
     })
 
-    // If no auth URL needed, already authenticated
     if (!authorizationUrl) {
       return "authenticated"
     }
@@ -708,13 +706,11 @@ export async function authenticate(
         console.warn(`MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`, { error })
       }
 
-      // Wait for callback
       const callbackResult = await abortable(callbackPromise, signal)
 
       // The callback server accepted only the flow-local reserved state.
       throwIfAborted(signal)
 
-      // Complete the auth
       return await completeAuth(serverName, callbackResult, {
         ...options,
         ...(signal ? { signal } : {}),
@@ -758,25 +754,21 @@ export async function getValidToken(
   const authStorageOptions = options.authStorageOptions ?? {}
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
-  // Check if we have valid tokens
   const entry = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
   throwIfAborted(signal)
   if (!entry?.tokens) {
     return null
   }
 
-  // Check expiration
   const expired = await isTokenExpired(serverName, authStorageOptions)
   if (expired === false) {
     return entry.tokens
   }
 
   if (expired === true && entry.tokens.refreshToken) {
-    // Token is expired, try to refresh
     console.log(`MCP Auth: Token expired for ${serverName}, attempting refresh`)
 
     try {
-      // Create auth provider for token refresh
       const authProvider = new McpOAuthProvider(serverName, serverUrl, {}, {
         onRedirect: async () => {},
       }, authStorageOptions, runtime.signal)

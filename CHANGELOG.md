@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Reported MCP servers still connecting after a zero-result tool search, so agents retry instead of treating the result as definitive. Thanks @Leon69924 for issue #316.
+- Rejected malformed MCP config server entries and persisted OAuth credential records at their trust boundaries, so invalid local state fails before it reaches runtime connection or token code.
 - Sized OAuth credential chunks below the Windows Credential Manager per-value limit, so oversized OAuth records persist on Windows instead of failing at every payload size. The previous 1800-character chunk size exceeded the 1280-character ceiling, which left the chunking added in #246 ineffective on Windows. Thanks @CrazyCoder for PR #318.
 
 ## [2.21.1] - 2026-08-08

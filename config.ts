@@ -638,22 +638,32 @@ function readValidatedConfig(path: string, label: string): McpConfig | null {
 }
 
 function validateConfig(raw: unknown): McpConfig {
-  if (!raw || typeof raw !== "object") {
-    return { mcpServers: {} };
-  }
-
-  const obj = raw as Record<string, unknown>;
-  const servers = obj.mcpServers ?? obj["mcp-servers"] ?? {};
-
-  if (typeof servers !== "object" || servers === null || Array.isArray(servers)) {
+  if (!isRecord(raw)) {
     return { mcpServers: {} };
   }
 
   return {
-    mcpServers: servers as Record<string, ServerEntry>,
-    ...(Array.isArray(obj.imports) ? { imports: obj.imports as ImportKind[] } : {}),
-    ...(obj.settings !== undefined ? { settings: obj.settings as McpSettings } : {}),
+    mcpServers: toServerEntries(raw.mcpServers ?? raw["mcp-servers"]),
+    ...(Array.isArray(raw.imports) ? { imports: raw.imports as ImportKind[] } : {}),
+    ...(raw.settings !== undefined ? { settings: raw.settings as McpSettings } : {}),
   };
+}
+
+function toServerEntries(servers: unknown): Record<string, ServerEntry> {
+  if (!isRecord(servers)) return {};
+  const entries: Record<string, ServerEntry> = {};
+  for (const [name, entry] of Object.entries(servers)) {
+    if (isServerEntry(entry)) entries[name] = entry;
+  }
+  return entries;
+}
+
+function isServerEntry(value: unknown): value is ServerEntry {
+  return isRecord(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function mergeOpenCodeConfigs(base: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -787,12 +797,13 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
       continue;
     }
 
-    if (kind !== "codex" || !entry || typeof entry !== "object" || Array.isArray(entry)) {
-      mappedServers[name] = entry as ServerEntry;
+    if (!isRecord(entry)) continue;
+    if (kind !== "codex") {
+      mappedServers[name] = entry;
       continue;
     }
 
-    const mapped = { ...(entry as Record<string, unknown>) };
+    const mapped = { ...entry };
     const bearerTokenEnv = mapped.bearer_token_env_var;
     const httpHeaders = mapped.http_headers;
     const envHttpHeaders = mapped.env_http_headers;

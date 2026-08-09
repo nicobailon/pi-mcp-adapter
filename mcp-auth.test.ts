@@ -159,6 +159,20 @@ describe("mcp-auth", () => {
       assert.strictEqual(getAuthEntry("legacy-import")?.tokens?.accessToken, "legacy-token")
     })
 
+    it("should reject malformed legacy plaintext entries", () => {
+      const filePath = getAuthEntryFilePath("legacy-invalid")
+      mkdirSync(dirname(filePath), { recursive: true })
+      writeFileSync(filePath, JSON.stringify({
+        tokens: { refreshToken: "missing-access-token" },
+      }), "utf-8")
+
+      assert.throws(
+        () => getAuthEntry("legacy-invalid"),
+        /Failed to parse OAuth credentials.*invalid credential shape/,
+      )
+      assert.strictEqual(existsSync(filePath), true)
+    })
+
     it("should fail closed when the secure credential store is unavailable", () => {
       const previous = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE
       process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable"

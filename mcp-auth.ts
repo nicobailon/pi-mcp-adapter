@@ -427,7 +427,99 @@ function parseJsonPayload(serverName: string, payload: string, source: string): 
 }
 
 function parseAuthEntryPayload(serverName: string, payload: string, source: string): AuthEntry {
-  return parseJsonPayload(serverName, payload, source) as AuthEntry;
+  const parsed = parseJsonPayload(serverName, payload, source);
+  const entry = toAuthEntry(parsed);
+  if (!entry) {
+    throw new Error(`Failed to parse OAuth credentials for ${serverName} from ${source}: invalid credential shape`);
+  }
+  return entry;
+}
+
+function toAuthEntry(value: unknown): AuthEntry | undefined {
+  const entry = toRecord(value);
+  if (!entry) return undefined;
+
+  const codeVerifier = optionalString(entry.codeVerifier);
+  const oauthState = optionalString(entry.oauthState);
+  const serverUrl = optionalString(entry.serverUrl);
+  if (codeVerifier === null || oauthState === null || serverUrl === null) return undefined;
+
+  const tokens = entry.tokens === undefined ? undefined : toStoredTokens(entry.tokens);
+  const clientInfo = entry.clientInfo === undefined ? undefined : toStoredClientInfo(entry.clientInfo);
+  if ((entry.tokens !== undefined && !tokens) || (entry.clientInfo !== undefined && !clientInfo)) return undefined;
+
+  const authEntry: AuthEntry = {};
+  if (tokens) authEntry.tokens = tokens;
+  if (clientInfo) authEntry.clientInfo = clientInfo;
+  if (codeVerifier !== undefined) authEntry.codeVerifier = codeVerifier;
+  if (oauthState !== undefined) authEntry.oauthState = oauthState;
+  if (serverUrl !== undefined) authEntry.serverUrl = serverUrl;
+  return authEntry;
+}
+
+function toStoredTokens(value: unknown): StoredTokens | undefined {
+  const tokens = toRecord(value);
+  if (!tokens || typeof tokens.accessToken !== 'string') return undefined;
+
+  const refreshToken = optionalString(tokens.refreshToken);
+  const scope = optionalString(tokens.scope);
+  const issuer = optionalString(tokens.issuer);
+  const expiresAt = optionalNumber(tokens.expiresAt);
+  if (refreshToken === null || scope === null || issuer === null || expiresAt === null) return undefined;
+
+  const storedTokens: StoredTokens = { accessToken: tokens.accessToken };
+  if (refreshToken !== undefined) storedTokens.refreshToken = refreshToken;
+  if (expiresAt !== undefined) storedTokens.expiresAt = expiresAt;
+  if (scope !== undefined) storedTokens.scope = scope;
+  if (issuer !== undefined) storedTokens.issuer = issuer;
+  return storedTokens;
+}
+
+function toStoredClientInfo(value: unknown): StoredClientInfo | undefined {
+  const clientInfo = toRecord(value);
+  if (!clientInfo || typeof clientInfo.clientId !== 'string') return undefined;
+
+  const clientSecret = optionalString(clientInfo.clientSecret);
+  const issuer = optionalString(clientInfo.issuer);
+  const clientIdIssuedAt = optionalNumber(clientInfo.clientIdIssuedAt);
+  const clientSecretExpiresAt = optionalNumber(clientInfo.clientSecretExpiresAt);
+  const configPreRegistered = optionalBoolean(clientInfo.configPreRegistered);
+  if (clientSecret === null || issuer === null || clientIdIssuedAt === null || clientSecretExpiresAt === null || configPreRegistered === null) return undefined;
+
+  const storedClient: StoredClientInfo = { clientId: clientInfo.clientId };
+  const redirectUris = stringArray(clientInfo.redirectUris);
+  if (clientSecret !== undefined) storedClient.clientSecret = clientSecret;
+  if (clientIdIssuedAt !== undefined) storedClient.clientIdIssuedAt = clientIdIssuedAt;
+  if (clientSecretExpiresAt !== undefined) storedClient.clientSecretExpiresAt = clientSecretExpiresAt;
+  if (redirectUris !== undefined) storedClient.redirectUris = redirectUris;
+  if (issuer !== undefined) storedClient.issuer = issuer;
+  if (configPreRegistered !== undefined) storedClient.configPreRegistered = configPreRegistered;
+  return storedClient;
+}
+
+function toRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function optionalString(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  return typeof value === 'string' ? value : null;
+}
+
+function optionalNumber(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  return typeof value === 'number' ? value : null;
+}
+
+function optionalBoolean(value: unknown): boolean | null | undefined {
+  if (value === undefined) return undefined;
+  return typeof value === 'boolean' ? value : null;
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every(uri => typeof uri === 'string') ? value : undefined;
 }
 
 function isAuthEntryChunkManifest(value: unknown): value is AuthEntryChunkManifest {

@@ -21,6 +21,26 @@ describe("config discovery", () => {
     process.chdir(originalCwd);
   });
 
+  it("drops malformed server entries at the config boundary", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: {
+        valid: { command: "node" },
+        nullEntry: null,
+        listEntry: [],
+        stringEntry: "node",
+      },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+
+    expect(loadMcpConfig().mcpServers).toEqual({ valid: { command: "node" } });
+  });
+
   it("loads Agent Plugin MCP servers from configured plugin paths", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-plugin-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-agent-plugin-project-"));

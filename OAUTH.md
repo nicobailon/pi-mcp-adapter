@@ -13,14 +13,14 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 
 ## Features
 
-- ✅ **PKCE (S256)** - Mandatory code challenge method for OAuth 2.1
-- ✅ **Automatic Callback Server** - Local browser redirects automatically when available
-- ✅ **Manual Remote Flow** - Copy auth URLs and pasted redirect URLs/codes for headless SSH sessions
-- ✅ **Dynamic Client Registration fallback** - Registers when no pre-registered `clientId` is configured and the server supports registration
-- ✅ **Auto-Discovery** - Discovers OAuth endpoints from server metadata
-- ✅ **Automatic Token Refresh** - SDK handles expired tokens automatically
-- ✅ **State Parameter Validation** - CSRF protection
-- ✅ **Secure Token Storage** - Persistent OAuth entries are stored in the operating system credential store
+- **PKCE (S256)** - Mandatory code challenge method for OAuth 2.1
+- **Automatic Callback Server** - Local browser redirects automatically when available
+- **Manual Remote Flow** - Copy auth URLs and pasted redirect URLs/codes for headless SSH sessions
+- **Dynamic Client Registration fallback** - Registers when no pre-registered `clientId` is configured and the server supports registration
+- **Auto-Discovery** - Discovers OAuth endpoints from server metadata
+- **Automatic Token Refresh** - SDK handles expired tokens automatically
+- **State Parameter Validation** - CSRF protection
+- **Secure Token Storage** - Persistent OAuth entries are stored in the operating system credential store
 
 ## Configuration
 
