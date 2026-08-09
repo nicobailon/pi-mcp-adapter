@@ -30,6 +30,20 @@ import {
   type StoredClientInfo,
 } from "./mcp-auth.ts"
 import { resolveCommandSecret } from "./utils.ts"
+import { getAppName } from "./agent-dir.ts"
+
+/**
+ * Client name advertised during Dynamic Client Registration.
+ *
+ * A distribution that rebrands pi (arc, tau, …) should register under its own
+ * name — otherwise every consent screen its users see asks them to authorize
+ * an app they have never run. Stock pi keeps the long-standing
+ * "Pi Coding Agent" so existing registrations are unaffected.
+ */
+function defaultClientName(): string {
+  const app = getAppName()
+  return app === "pi" ? "Pi Coding Agent" : app
+}
 
 type IssuerBoundClientInformation = OAuthClientInformationMixed & { issuer?: string }
 type IssuerBoundTokens = OAuthTokens & { issuer?: string }
@@ -189,14 +203,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return this.redirectUrlSnapshot
   }
 
-  /**
+/**
    * Client metadata for dynamic registration.
    * Describes this client to the OAuth authorization server.
    */
   get clientMetadata(): OAuthClientMetadata {
     if (this.usesClientCredentials) {
       return {
-        client_name: this.config.clientName ?? "Pi Coding Agent",
+        client_name: this.config.clientName ?? defaultClientName(),
         client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
         redirect_uris: [],
         grant_types: ["client_credentials"],
@@ -211,7 +225,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
     return {
       redirect_uris: [redirectUrl],
-      client_name: this.config.clientName ?? "Pi Coding Agent",
+      client_name: this.config.clientName ?? defaultClientName(),
       client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],

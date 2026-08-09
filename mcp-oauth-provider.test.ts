@@ -4,7 +4,7 @@
 
 import { describe, it, before, after } from "node:test"
 import assert from "node:assert"
-import { existsSync, rmSync, mkdirSync } from "fs"
+import { existsSync, rmSync, mkdirSync, mkdtempSync, writeFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 import { randomBytes } from "crypto"
@@ -97,6 +97,16 @@ describe("McpOAuthProvider", () => {
   })
 
   describe("clientMetadata", () => {
+    // client_name now follows the host app, so these assertions must not read
+    // whatever PI_PACKAGE_DIR the developer's shell happens to export.
+    const inheritedPackageDir = process.env.PI_PACKAGE_DIR
+    before(() => {
+      delete process.env.PI_PACKAGE_DIR
+    })
+    after(() => {
+      if (inheritedPackageDir !== undefined) process.env.PI_PACKAGE_DIR = inheritedPackageDir
+    })
+
     it("should return correct metadata for public client", () => {
       const provider = createProvider()
       const metadata = provider.clientMetadata
@@ -107,6 +117,29 @@ describe("McpOAuthProvider", () => {
       assert.deepStrictEqual(metadata.grant_types, ["authorization_code", "refresh_token"])
       assert.deepStrictEqual(metadata.response_types, ["code"])
       assert.strictEqual(metadata.token_endpoint_auth_method, "none")
+    })
+
+    it("should register under the host app name when pi is rebranded", () => {
+      const original = process.env.PI_PACKAGE_DIR
+      const dir = mkdtempSync(join(tmpdir(), "oauth-brand-"))
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "pi", piConfig: { name: "arc" } }))
+      process.env.PI_PACKAGE_DIR = dir
+      try {
+        assert.strictEqual(createProvider().clientMetadata.client_name, "arc")
+      } finally {
+        if (original === undefined) delete process.env.PI_PACKAGE_DIR
+        else process.env.PI_PACKAGE_DIR = original
+      }
+    })
+
+    it("should keep the historical client name on stock pi", () => {
+      const original = process.env.PI_PACKAGE_DIR
+      delete process.env.PI_PACKAGE_DIR
+      try {
+        assert.strictEqual(createProvider().clientMetadata.client_name, "Pi Coding Agent")
+      } finally {
+        if (original !== undefined) process.env.PI_PACKAGE_DIR = original
+      }
     })
 
     it("should return correct metadata for confidential client", () => {
