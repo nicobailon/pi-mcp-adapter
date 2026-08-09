@@ -16,6 +16,12 @@ import {
   saveAuthEntry,
 } from "../mcp-auth.ts";
 
+/**
+ * Windows Credential Manager stores at most CRED_MAX_CREDENTIAL_BLOB_SIZE
+ * (2560 bytes) as UTF-16, so a single value cannot exceed 1280 characters.
+ */
+const AUTH_SECRET_VALUE_LIMIT = 1280;
+
 describe("OAuth credential-store diagnostics", () => {
   it("recognizes a revoked Linux keyring through the error cause chain", () => {
     const nativeError = new Error("Couldn't access platform storage: KeyRevoked", {
@@ -156,7 +162,50 @@ describe("mcp-auth storage paths", () => {
     const manifest = JSON.parse(manifestEntry![1]) as { __piMcpAdapterOAuthChunked?: number; chunkCount?: number };
     expect(manifest.__piMcpAdapterOAuthChunked).toBe(1);
     expect(chunkEntries).toHaveLength(manifest.chunkCount);
-    expect(chunkEntries.every(([, payload]) => payload.length <= 1800)).toBe(true);
+    expect(chunkEntries.every(([, payload]) => payload.length <= AUTH_SECRET_VALUE_LIMIT)).toBe(true);
+  });
+
+  it("persists records that exceed the strictest per-value store limit", () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
+    const accessToken = "x".repeat(5000);
+
+    saveAuthEntry("size-limited-large", { tokens: { accessToken } }, "https://example.com/mcp");
+
+    expect(getAuthEntry("size-limited-large")?.tokens?.accessToken).toBe(accessToken);
+    expect(getTestAuthSecretStoreEntries().every(([, payload]) => payload.length <= AUTH_SECRET_VALUE_LIMIT)).toBe(true);
+  });
+
+  it("persists records just above the per-value limit that are too small for a naive chunk threshold", () => {
+    // Regression: a threshold above the store limit skipped chunking entirely,
+    // so records in this band failed to persist on Windows at any payload size.
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
+    const accessToken = "x".repeat(AUTH_SECRET_VALUE_LIMIT + 200);
+
+    saveAuthEntry("size-limited-boundary", { tokens: { accessToken } }, "https://example.com/mcp");
+
+    expect(getAuthEntry("size-limited-boundary")?.tokens?.accessToken).toBe(accessToken);
+    expect(getTestAuthSecretStoreEntries().every(([, payload]) => payload.length <= AUTH_SECRET_VALUE_LIMIT)).toBe(true);
+  });
+
+  it("keeps small records in a single entry on a size-limited store", () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
+
+    saveAuthEntry("size-limited-small", { tokens: { accessToken: "small" } }, "https://example.com/mcp");
+
+    expect(getAuthEntry("size-limited-small")?.tokens?.accessToken).toBe("small");
+    const entries = getTestAuthSecretStoreEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0][0]).not.toContain(".chunk.");
+  });
+
+  it("clears chunked records written to a size-limited store", () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
+    saveAuthEntry("size-limited-remove", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
+    expect(getTestAuthSecretStoreEntries().some(([account]) => account.includes(".chunk."))).toBe(true);
+
+    clearAllCredentials("size-limited-remove");
+
+    expect(getTestAuthSecretStoreEntries()).toHaveLength(0);
   });
 
   it("returns unavailable status when a stored chunk cannot be read", () => {

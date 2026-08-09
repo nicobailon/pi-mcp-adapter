@@ -22,7 +22,16 @@ import { resolveConfiguredOAuthDir } from './config.ts';
 const require = createRequire(import.meta.url);
 const AUTH_SECRET_SERVICE = 'pi-mcp-adapter.oauth';
 const TEST_AUTH_STORE_ENV = 'PI_MCP_ADAPTER_TEST_AUTH_STORE';
-const AUTH_SECRET_CHUNK_SIZE = 1800;
+/**
+ * Windows Credential Manager caps one value at CRED_MAX_CREDENTIAL_BLOB_SIZE
+ * (2560 bytes) and stores it as UTF-16, so the real ceiling is
+ * AUTH_SECRET_VALUE_LIMIT characters. Chunks must stay below that, and so must
+ * the threshold that decides whether to chunk at all, or oversized records still
+ * fail to persist on Windows.
+ */
+const AUTH_SECRET_CHUNK_SIZE = 1000;
+/** Largest single value the strictest supported credential store accepts. */
+const AUTH_SECRET_VALUE_LIMIT = 1280;
 const KEYRING_RECOVERY_DISABLED_ENV = 'PI_MCP_ADAPTER_DISABLE_KEYRING_RECOVERY';
 const KEYRING_RECOVERY_KEYCTL_ENV = 'PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL';
 const KEYRING_RECOVERY_NODE_ENV = 'PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE';
@@ -163,6 +172,22 @@ const keyringAuthSecretStore: AuthSecretStore = {
   },
 };
 
+/** Mimics the Windows Credential Manager per-value ceiling for tests. */
+const sizeLimitedAuthSecretStore: AuthSecretStore = {
+  read(account) {
+    return memoryAuthEntries.get(account);
+  },
+  write(account, payload) {
+    if (payload.length > AUTH_SECRET_VALUE_LIMIT) {
+      throw new Error(`Value of 'password encoded as UTF-16' is longer than the platform limit of ${AUTH_SECRET_VALUE_LIMIT * 2} chars`);
+    }
+    memoryAuthEntries.set(account, payload);
+  },
+  remove(account) {
+    memoryAuthEntries.delete(account);
+  },
+};
+
 const unavailableAuthSecretStore: AuthSecretStore = {
   read() {
     throw new Error('simulated secure credential store unavailable');
@@ -205,6 +230,7 @@ export function removeTestAuthSecretStoreEntry(account: string): void {
 
 function getAuthSecretStore(): AuthSecretStore {
   if (process.env[TEST_AUTH_STORE_ENV] === 'memory') return memoryAuthSecretStore;
+  if (process.env[TEST_AUTH_STORE_ENV] === 'sizelimited') return sizeLimitedAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'unavailable') return unavailableAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'keyrevoked') return keyRevokedAuthSecretStore;
   return keyringAuthSecretStore;
