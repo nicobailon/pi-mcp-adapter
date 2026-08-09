@@ -43,6 +43,7 @@ function disabledState() {
     manager: {
       getConnection: vi.fn((name: string) => name === "disabled" ? connection : undefined),
       getAllConnections: vi.fn(() => new Map([["disabled", connection]])),
+      isConnecting: vi.fn(() => false),
       connect: vi.fn(),
       close: vi.fn(),
     },

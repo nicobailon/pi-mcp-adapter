@@ -29,6 +29,7 @@ function createState(): McpExtensionState {
     ]),
     manager: {
       getConnection: () => undefined,
+      isConnecting: () => false,
     },
     failureTracker: new Map(),
   } as unknown as McpExtensionState;
@@ -40,6 +41,36 @@ describe("proxy discovery", () => {
 
     expect(result.content[0].text).toBe('No tools matching "read"');
     expect(result.details).toMatchObject({ count: 0, matches: [] });
+  });
+
+  it("reports only the filtered server that is still connecting after a zero-result search", () => {
+    const state = createState();
+    state.config.mcpServers.other = { command: "npx", args: ["other"] };
+    state.manager.isConnecting = () => true;
+
+    const result = executeSearch(state, "read", false, "demo");
+
+    expect(result.content[0].text).toBe(
+      'No tools matching "read" in "demo" Server "demo" is still connecting; retry in a moment.',
+    );
+    expect(result.details).toMatchObject({ count: 0, matches: [], connectingServers: ["demo"] });
+  });
+
+  it("reports all enabled servers that are still connecting after an unfiltered zero-result search", () => {
+    const state = createState();
+    state.config.mcpServers = {
+      zeta: { command: "npx", args: ["zeta"] },
+      disabled: { command: "npx", args: ["disabled"], disabled: true },
+      alpha: { command: "npx", args: ["alpha"] },
+    };
+    state.manager.isConnecting = name => name !== "disabled";
+
+    const result = executeSearch(state, "read");
+
+    expect(result.content[0].text).toBe(
+      'No tools matching "read" Servers "alpha", "zeta" are still connecting; retry in a moment.',
+    );
+    expect(result.details).toMatchObject({ count: 0, matches: [], connectingServers: ["alpha", "zeta"] });
   });
 
   it("rejects regex queries longer than the safety cap", () => {

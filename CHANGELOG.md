@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Reported MCP servers still connecting after a zero-result tool search, so agents retry instead of treating the result as definitive. Thanks @Leon69924 for issue #316.
+
 ## [2.21.1] - 2026-08-08
 
 ### Changed

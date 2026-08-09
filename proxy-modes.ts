@@ -525,10 +525,28 @@ export function executeSearch(
 
   const page = paginate(matches, offset, limit);
   if (page.total === 0) {
+    const connectingServers = server
+      ? state.config.mcpServers[server] && state.manager.isConnecting(server) ? [server] : []
+      : Object.keys(state.config.mcpServers)
+        .filter(name => !isServerDisabled(state.config.mcpServers[name]) && state.manager.isConnecting(name))
+        .sort((a, b) => a.localeCompare(b));
     const msg = server ? `No tools matching "${query}" in "${server}"` : `No tools matching "${query}"`;
+    const connectingMessage = connectingServers.length === 1
+      ? ` Server "${connectingServers[0]}" is still connecting; retry in a moment.`
+      : connectingServers.length > 1
+        ? ` Servers ${connectingServers.map(name => `"${name}"`).join(", ")} are still connecting; retry in a moment.`
+        : "";
     return {
-      content: [{ type: "text" as const, text: msg }],
-      details: { mode: "search", matches: [], count: 0, hasMore: false, nextOffset: null, query },
+      content: [{ type: "text" as const, text: `${msg}${connectingMessage}` }],
+      details: {
+        mode: "search",
+        matches: [],
+        count: 0,
+        hasMore: false,
+        nextOffset: null,
+        query,
+        ...(connectingServers.length > 0 ? { connectingServers } : {}),
+      },
     };
   }
 

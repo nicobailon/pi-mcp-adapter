@@ -1030,6 +1030,10 @@ export class McpServerManager {
     return false;
   }
 
+  isConnecting(name: string): boolean {
+    return this.connectPromises.has(name);
+  }
+
   getConnection(name: string): ServerConnection | undefined {
     return this.connections.get(name);
   }
