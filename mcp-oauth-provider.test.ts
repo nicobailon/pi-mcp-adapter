@@ -100,11 +100,13 @@ describe("McpOAuthProvider", () => {
     // client_name now follows the host app, so these assertions must not read
     // whatever PI_PACKAGE_DIR the developer's shell happens to export.
     const inheritedPackageDir = process.env.PI_PACKAGE_DIR
+    const packageDirs: string[] = []
     before(() => {
       delete process.env.PI_PACKAGE_DIR
     })
     after(() => {
       if (inheritedPackageDir !== undefined) process.env.PI_PACKAGE_DIR = inheritedPackageDir
+      for (const dir of packageDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
     })
 
     it("should return correct metadata for public client", () => {
@@ -122,6 +124,7 @@ describe("McpOAuthProvider", () => {
     it("should register under the host app name when pi is rebranded", () => {
       const original = process.env.PI_PACKAGE_DIR
       const dir = mkdtempSync(join(tmpdir(), "oauth-brand-"))
+      packageDirs.push(dir)
       writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "pi", piConfig: { name: "arc" } }))
       process.env.PI_PACKAGE_DIR = dir
       try {
@@ -145,6 +148,7 @@ describe("McpOAuthProvider", () => {
     it("should omit client_uri under a rebranded host rather than name the adapter", () => {
       const original = process.env.PI_PACKAGE_DIR
       const dir = mkdtempSync(join(tmpdir(), "oauth-brand-uri-"))
+      packageDirs.push(dir)
       writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "pi", piConfig: { name: "arc" } }))
       process.env.PI_PACKAGE_DIR = dir
       try {
@@ -152,6 +156,7 @@ describe("McpOAuthProvider", () => {
         assert.ok(!("client_uri" in createProvider().clientMetadata))
         // A host that declares its own homepage gets it advertised.
         const declaring = mkdtempSync(join(tmpdir(), "oauth-brand-declared-"))
+        packageDirs.push(declaring)
         writeFileSync(
           join(declaring, "package.json"),
           JSON.stringify({ name: "pi", piConfig: { name: "arc", clientUri: "https://arc.workos.tools" } }),

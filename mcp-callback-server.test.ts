@@ -5,7 +5,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert"
 import { createServer } from "node:http"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -444,9 +444,11 @@ describe("mcp-callback-server", () => {
 
 describe("callback page branding", () => {
   const originalPackageDir = process.env.PI_PACKAGE_DIR
+  const packageDirs: string[] = []
 
   function brandedPackageDir(name?: string): string {
     const dir = mkdtempSync(join(tmpdir(), "mcp-callback-brand-"))
+    packageDirs.push(dir)
     writeFileSync(
       join(dir, "package.json"),
       JSON.stringify(name ? { name: "pi", piConfig: { name } } : { name: "pi" }),
@@ -469,6 +471,7 @@ describe("callback page branding", () => {
   afterEach(async () => {
     if (originalPackageDir === undefined) delete process.env.PI_PACKAGE_DIR
     else process.env.PI_PACKAGE_DIR = originalPackageDir
+    for (const dir of packageDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
     await stopCallbackServer()
   })
 
