@@ -14,6 +14,11 @@
       "types": "./types.ts",
       "import": "./types.ts",
       "default": "./types.ts"
+    },
+    "./oauth": {
+      "types": "./oauth.ts",
+      "import": "./oauth.ts",
+      "default": "./oauth.ts"
     }
   },
   "license": "MIT",
@@ -29,7 +34,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:oauth": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --import tsx --test --test-concurrency=1 mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
+    "test:oauth": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --import tsx --test --test-concurrency=1 oauth-public-api.test.ts mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
     "test:oauth-provider": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --import tsx --test mcp-oauth-provider.test.ts",
     "test:conformance": "bash conformance/run.sh"
   },
@@ -107,6 +112,7 @@
     "glimpse-ui.ts",
     "npx-resolver.ts",
     "oauth-handler.ts",
+    "oauth.ts",
     "mcp-auth.ts",
     "mcp-keyring-helper.cjs",
     "mcp-oauth-provider.ts",

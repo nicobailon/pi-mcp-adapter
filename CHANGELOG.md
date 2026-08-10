@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added the `pi-mcp-adapter/oauth` subpath for URL-bound OAuth token reuse by cooperating Pi extensions. Thanks @ThePhoenixCoding for issue #323.
 - Added `oauth.logoUri` for OAuth Dynamic Client Registration, with validation that requires an absolute HTTP(S) URL. Thanks @grinich for PR #321.
 
 ### Fixed

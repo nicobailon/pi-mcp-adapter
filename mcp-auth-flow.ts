@@ -31,6 +31,7 @@ import {
   getOAuthState,
   clearOAuthState,
   getAuthBaseDir,
+  OAuthCredentialStoreError,
   type AuthStorageOptions,
   type StoredTokens,
 } from "./mcp-auth.ts"
@@ -820,7 +821,7 @@ export async function getValidToken(
         authProvider.deactivate()
       }
     } catch (error) {
-      if (isAbortError(error, signal)) throw error
+      if (isAbortError(error, signal) || error instanceof OAuthCredentialStoreError) throw error
       console.error(`MCP Auth: Token refresh failed for ${serverName}`, { error })
       return null
     }
