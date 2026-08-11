@@ -31,7 +31,7 @@ import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { logger } from "./logger.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
-import type { AuthStorageOptions } from "./mcp-auth.ts";
+import { invalidateAuthEntryCache, type AuthStorageOptions } from "./mcp-auth.ts";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
 import {
   handleUrlElicitation,
@@ -129,7 +129,10 @@ export interface ServerConnection {
   lastUsedAt: number;
   inFlight: number;
   status: "connected" | "closed" | "needs-auth";
+  /** True once this needs-auth episode discarded the cached credential. */
+  credentialsInvalidated?: boolean;
 }
+
 
 type UiStreamListener = (serverName: string, notification: ServerStreamResultPatchNotification["params"]) => void;
 type MetadataListChangedListener = (serverName: string, reason: string) => void;
@@ -238,10 +241,12 @@ export class McpServerManager {
       return existing;
     }
 
+    const credentialsInvalidated = existing?.status === "needs-auth"
+      && existing.credentialsInvalidated === true;
     const generation = this.closeGenerations.get(name) ?? 0;
     const attemptController = new AbortController();
     const attemptSignal = combineAbortSignals(ownedSignal, attemptController.signal);
-    const connectionAttempt = this.createConnection(name, definition, attemptSignal, ownedSignal);
+    const connectionAttempt = this.createConnection(name, definition, attemptSignal, ownedSignal, credentialsInvalidated);
     const promise = definition.url
       ? connectionAttempt.catch(async error => { throw await this.enrichHttpConnectionError(definition, error); })
       : connectionAttempt;
@@ -324,6 +329,7 @@ export class McpServerManager {
     definition: ServerDefinition,
     signal?: AbortSignal,
     requestSignal?: AbortSignal,
+    credentialsInvalidated = false,
   ): Promise<ServerConnection> {
     throwIfAborted(signal);
 
@@ -338,6 +344,7 @@ export class McpServerManager {
     let client: Client;
     let transport: Transport;
     let clientConnected = false;
+    let invalidated = credentialsInvalidated;
     let transportAlreadyTraced = false;
     let stderrTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     const configuredTransports = [definition.command, definition.url, definition.socket]
@@ -387,9 +394,11 @@ export class McpServerManager {
         requestOptions,
         signal,
         traceObserver,
+        invalidated,
       );
       client = httpConnection.client;
       transport = httpConnection.transport;
+      invalidated = httpConnection.credentialsInvalidated;
       if (httpConnection.status === "needs-auth") {
         return {
           client,
@@ -401,6 +410,7 @@ export class McpServerManager {
           lastUsedAt: Date.now(),
           inFlight: 0,
           status: "needs-auth",
+          credentialsInvalidated: invalidated,
         };
       }
       clientConnected = true;
@@ -477,6 +487,10 @@ export class McpServerManager {
       // A cleanup failure remains a setup failure rather than being hidden
       // behind needs-auth.
       if (isUnauthorizedHttpError(error) && supportsOAuth(definition) && cleanupFailures.length === 0) {
+        if (!invalidated) {
+          invalidateAuthEntryCache(name);
+          invalidated = true;
+        }
         return {
           client,
           transport,
@@ -487,6 +501,7 @@ export class McpServerManager {
           lastUsedAt: Date.now(),
           inFlight: 0,
           status: "needs-auth",
+          credentialsInvalidated: invalidated,
         };
       }
 
@@ -694,7 +709,8 @@ export class McpServerManager {
     requestOptions: RequestOptions | undefined,
     signal?: AbortSignal,
     traceObserver?: McpTraceObserver,
-  ): Promise<{ client: Client; transport: Transport; status: "connected" | "needs-auth" }> {
+    credentialsInvalidated = false,
+  ): Promise<{ client: Client; transport: Transport; status: "connected" | "needs-auth"; credentialsInvalidated: boolean }> {
     throwIfAborted(signal);
     const serverUrl = resolveServerUrl(definition)!;
     const url = new URL(serverUrl);
@@ -791,9 +807,10 @@ export class McpServerManager {
     // OAuth challenge; use SSE only for definitive endpoint incompatibility.
     // Agent Plugins set httpTransport, and their declared transport is used without fallback.
     let kind: "streamable-http" | "sse" = definition.httpTransport ?? "streamable-http";
+    let invalidated = credentialsInvalidated;
     for (;;) {
       const result = await attempt(kind);
-      if (result.status === "connected") return result;
+      if (result.status === "connected") return { ...result, credentialsInvalidated: invalidated };
       if (result.error instanceof AggregateError
         && result.error.message === "MCP connection abort cleanup failed") {
         throw result.error;
@@ -806,7 +823,16 @@ export class McpServerManager {
       }
       if (isUnauthorizedHttpError(result.error)) {
         if (supportsOAuth(definition)) {
-          return { client: result.client, transport: result.transport, status: "needs-auth" };
+          if (!invalidated) {
+            invalidateAuthEntryCache(serverName);
+            invalidated = true;
+          }
+          return {
+            client: result.client,
+            transport: result.transport,
+            status: "needs-auth",
+            credentialsInvalidated: invalidated,
+          };
         }
         throw result.error;
       }
@@ -850,6 +876,7 @@ export class McpServerManager {
       return { prompts, failed: false };
     } catch (error) {
       if (requestOptions?.signal?.aborted) throwIfAborted(requestOptions.signal);
+      if (isUnauthorizedHttpError(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       logger.debug(`MCP: prompts/list failed: ${message}`);
       return { prompts: [], failed: true };
@@ -871,10 +898,11 @@ export class McpServerManager {
       } while (cursor);
 
       return allResources;
-    } catch {
+    } catch (error) {
       if (requestOptions?.signal?.aborted) {
         throwIfAborted(requestOptions.signal);
       }
+      if (isUnauthorizedHttpError(error)) throw error;
       // The server advertises resources but the listing failed
       return [];
     }

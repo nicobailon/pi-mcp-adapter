@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  type AuthEntry,
   getAuthEntry,
   getTestAuthSecretStoreReadCount,
   inspectAuthForUrl,
@@ -126,6 +127,19 @@ describe("OAuth credential-entry cache — coherence", () => {
     expect(getTestAuthSecretStoreReadCount() - before).toBe(2);
   });
 
+
+  it("keeps inspection uncached after an ordinary read warms the cache", () => {
+    saveAuthEntry("inspected", { tokens: { accessToken: "a" } }, SERVER_URL);
+    enableAuthEntryCache();
+    resetAuthEntryCache();
+
+    expect(getAuthEntry("inspected")).toBeDefined();
+    const before = getTestAuthSecretStoreReadCount();
+
+    expect(inspectAuthForUrl("inspected", SERVER_URL).status).toBe("present");
+    expect(getTestAuthSecretStoreReadCount() - before).toBe(1);
+  });
+
   it("does not cache store failures and reconstructs chunked entries once", () => {
     enableAuthEntryCache();
     process.env[STORE_ENV] = "unavailable";
@@ -139,6 +153,32 @@ describe("OAuth credential-entry cache — coherence", () => {
     const afterFirst = getTestAuthSecretStoreReadCount();
     expect(getAuthEntry("chunked")?.tokens?.accessToken).toHaveLength(5000);
     expect(getTestAuthSecretStoreReadCount()).toBe(afterFirst);
+  });
+
+
+  it("leaves every read going to the store when the gate is off", () => {
+    saveAuthEntry("gated", { tokens: { accessToken: "a" } }, SERVER_URL);
+    const before = getTestAuthSecretStoreReadCount();
+
+    expect(getAuthEntry("gated")).toBeDefined();
+    expect(getAuthEntry("gated")).toBeDefined();
+
+    expect(getTestAuthSecretStoreReadCount() - before).toBe(2);
+  });
+
+  it("normalizes publication exactly as a later store reload does", () => {
+    enableAuthEntryCache();
+    saveAuthEntry("normalized", {
+      tokens: { accessToken: "a", unexpected: "discard" },
+      unexpected: true,
+    } as unknown as AuthEntry, SERVER_URL);
+
+    const onHit = getAuthEntry("normalized");
+    resetAuthEntryCache();
+    const onMiss = getAuthEntry("normalized");
+
+    expect(onHit).toEqual({ tokens: { accessToken: "a" }, serverUrl: SERVER_URL });
+    expect(onMiss).toEqual(onHit);
   });
 });
 
@@ -161,6 +201,7 @@ describe("OAuth credential-entry cache — invalidation", () => {
 
     expect(getAuthEntry("appearing")).toBeUndefined();
     writeBehindTheCache("appearing", "created");
+    expect(getAuthEntry("appearing")).toBeUndefined();
     invalidateAuthEntryCache("appearing");
     expect(getAuthEntry("appearing")?.tokens?.accessToken).toBe("created");
 
@@ -183,5 +224,18 @@ describe("OAuth credential-entry cache — invalidation", () => {
 
     process.env[DISABLE_ENV] = "1";
     expect(() => invalidateAuthEntryCache("keep")).not.toThrow();
+  });
+
+
+  it("evicts a removed credential even when the gate is turned off", () => {
+    enableAuthEntryCache();
+    saveAuthEntry("toggled", { tokens: { accessToken: "t" } }, SERVER_URL);
+    expect(getAuthEntry("toggled")).toBeDefined();
+
+    process.env[DISABLE_ENV] = "1";
+    removeAuthEntry("toggled");
+    delete process.env[DISABLE_ENV];
+
+    expect(getAuthEntry("toggled")).toBeUndefined();
   });
 });

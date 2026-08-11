@@ -680,7 +680,8 @@ function writeSecureAuthEntryToStore(store: AuthSecretStore, serverName: string,
 
 function publishAuthEntryToCache(serverName: string, payload: string): void {
   if (!isAuthEntryCacheEnabled()) return;
-  const normalized = JSON.parse(payload) as AuthEntry;
+  // Cache the same normalized shape a fresh persistent-store read returns.
+  const normalized = toAuthEntry(JSON.parse(payload) as unknown);
   if (!normalized) {
     authEntryCache.delete(serverName);
     return;
