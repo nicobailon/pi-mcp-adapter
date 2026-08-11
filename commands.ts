@@ -279,7 +279,7 @@ export async function authenticateServer(
         ui.notify(
           `Open this URL to authenticate ${serverName}:\n\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
           "After approving, Pi will complete automatically if the browser can reach its localhost callback. " +
-          "On a remote machine, copy the full localhost URL from the browser address bar and paste it into Pi."
+          "On a remote machine, copy the full localhost URL from the browser address bar and paste it into Pi.",
           "info"
         );
       },
