@@ -233,6 +233,10 @@ The adapter fails closed when the OS credential store is unavailable. On headles
 
 On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path requires `keyctl` and `node` on `PATH`; missing, locked, or otherwise unavailable credential stores still fail closed.
 
+Complete credential entries are held in memory for the lifetime of the Pi process on every supported credential-store platform. The MCP SDK reads the access token before every outbound request, so caching avoids a credential-store lookup on each tool call; on Linux this specifically avoids overloading the Secret Service daemon. The cache is filled on the first read for a server and covers both present and absent entries. Authenticating, refreshing, and logging out all update it immediately, so credential changes made through Pi take effect at once. Status-panel inspection deliberately bypasses it and still reads the store directly.
+
+A credential changed or deleted by another process while Pi is running is not observed immediately. The affected server picks it up after the first credential-backed authentication failure in that `needs-auth` episode: Pi discards the cached entry, and the following read reloads from the credential store. Restarting Pi also clears the cache. Set `PI_MCP_ADAPTER_DISABLE_AUTH_CACHE=1` to turn the cache off entirely and restore a credential-store read per request.
+
 Older versions stored plaintext entries at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json`, or under `settings.oauthDir` / `MCP_OAUTH_DIR`. On first read after upgrade, a valid legacy entry is imported into the OS credential store and the plaintext `tokens.json` file is removed. These directories are now legacy import locations, not persistent credential stores or isolation namespaces.
 
 The stored `serverUrl` field ensures credentials are invalidated if the server URL changes.
@@ -256,6 +260,8 @@ For private servers with known-broken metadata, `oauth.skipIssuerMetadataValidat
 ### OS Credential Store
 
 Persistent OAuth credentials are written to the OS credential store. Legacy plaintext files are read only for one-way migration and are removed after successful import. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
+
+Credential entries reside in process memory for the lifetime of the Pi process on every supported credential-store platform rather than being re-read per request. They are never written anywhere but the OS credential store, and the process-memory copy is discarded on exit.
 
 ### URL Validation
 
