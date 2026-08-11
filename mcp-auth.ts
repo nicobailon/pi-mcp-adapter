@@ -37,6 +37,7 @@ const KEYRING_RECOVERY_KEYCTL_ENV = 'PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL';
 const KEYRING_RECOVERY_NODE_ENV = 'PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE';
 const KEYRING_RECOVERY_HELPER_ENV = 'PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER';
 const TEST_LINUX_KEYRING_RECOVERY_ENV = 'PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY';
+const AUTH_CACHE_DISABLED_ENV = 'PI_MCP_ADAPTER_DISABLE_AUTH_CACHE';
 const KEYRING_RECOVERY_TIMEOUT_MS = 10_000;
 const AUTH_CHUNK_MANIFEST_KEY = '__piMcpAdapterOAuthChunked';
 
@@ -148,8 +149,20 @@ interface AuthEntryChunkManifest {
 let KeyringEntryClass: KeyringEntryConstructor | undefined;
 const memoryAuthEntries = new Map<string, string>();
 
+let testAuthSecretStoreReadCount = 0;
+const authEntryCache = new Map<string, AuthEntry | undefined>();
+
+function isAuthEntryCacheEnabled(): boolean {
+  return process.env[AUTH_CACHE_DISABLED_ENV] !== '1';
+}
+
+function cloneAuthEntry(entry: AuthEntry | undefined): AuthEntry | undefined {
+  return entry === undefined ? undefined : structuredClone(entry);
+}
+
 const memoryAuthSecretStore: AuthSecretStore = {
   read(account) {
+    testAuthSecretStoreReadCount++;
     return memoryAuthEntries.get(account);
   },
   write(account, payload) {
@@ -190,6 +203,7 @@ const sizeLimitedAuthSecretStore: AuthSecretStore = {
 
 const unavailableAuthSecretStore: AuthSecretStore = {
   read() {
+    testAuthSecretStoreReadCount++;
     throw new Error('simulated secure credential store unavailable');
   },
   write() {
@@ -206,6 +220,7 @@ function createKeyRevokedTestError(): Error {
 
 const keyRevokedAuthSecretStore: AuthSecretStore = {
   read() {
+    testAuthSecretStoreReadCount++;
     throw createKeyRevokedTestError();
   },
   write() {
@@ -218,6 +233,16 @@ const keyRevokedAuthSecretStore: AuthSecretStore = {
 
 export function resetTestAuthSecretStore(): void {
   memoryAuthEntries.clear();
+  authEntryCache.clear();
+  testAuthSecretStoreReadCount = 0;
+}
+
+export function resetAuthEntryCache(): void {
+  authEntryCache.clear();
+}
+
+export function getTestAuthSecretStoreReadCount(): number {
+  return testAuthSecretStoreReadCount;
 }
 
 export function getTestAuthSecretStoreEntries(): [string, string][] {
@@ -649,6 +674,18 @@ function writeSecureAuthEntryToStore(store: AuthSecretStore, serverName: string,
       error,
     );
   }
+
+  publishAuthEntryToCache(serverName, payload);
+}
+
+function publishAuthEntryToCache(serverName: string, payload: string): void {
+  if (!isAuthEntryCacheEnabled()) return;
+  const normalized = JSON.parse(payload) as AuthEntry;
+  if (!normalized) {
+    authEntryCache.delete(serverName);
+    return;
+  }
+  authEntryCache.set(serverName, cloneAuthEntry(normalized));
 }
 
 function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
@@ -704,12 +741,23 @@ function readAuthEntry(
   options?: AuthStorageOptions,
   behavior: { migrateLegacy?: boolean } = {},
 ): AuthEntry | undefined {
+  // Status-only reads deliberately bypass the cache because they do not
+  // migrate legacy entries.
+  const cacheable = behavior.migrateLegacy !== false && isAuthEntryCacheEnabled();
+  if (cacheable && authEntryCache.has(serverName)) {
+    return cloneAuthEntry(authEntryCache.get(serverName));
+  }
+
+  let entry: AuthEntry | undefined;
   try {
-    return readAuthEntryFromStore(getAuthSecretStore(), serverName, options, behavior);
+    entry = readAuthEntryFromStore(getAuthSecretStore(), serverName, options, behavior);
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
-    return readAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore, serverName, options, behavior);
+    entry = readAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore, serverName, options, behavior);
   }
+
+  if (cacheable) authEntryCache.set(serverName, cloneAuthEntry(entry));
+  return entry;
 }
 
 /**
@@ -794,7 +842,15 @@ export function removeAuthEntry(serverName: string, options?: AuthStorageOptions
     if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
     removeAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore, serverName);
   }
+  authEntryCache.delete(serverName);
   removeLegacyAuthEntry(serverName, options);
+}
+
+/**
+ * Forget a cached entry so the next ordinary read reloads secure storage.
+ */
+export function invalidateAuthEntryCache(serverName: string): void {
+  authEntryCache.delete(serverName);
 }
 
 /**

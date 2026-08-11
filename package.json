@@ -34,8 +34,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:oauth": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --import tsx --test --test-concurrency=1 oauth-public-api.test.ts mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
-    "test:oauth-provider": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --import tsx --test mcp-oauth-provider.test.ts",
+    "test:oauth": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory PI_MCP_ADAPTER_DISABLE_AUTH_CACHE=1 node --import tsx --test --test-concurrency=1 oauth-public-api.test.ts mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
+    "test:oauth-provider": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory PI_MCP_ADAPTER_DISABLE_AUTH_CACHE=1 node --import tsx --test mcp-oauth-provider.test.ts",
     "test:conformance": "bash conformance/run.sh"
   },
   "repository": {
