@@ -265,7 +265,9 @@ The adapter owns only its client socket and closes that connection when the Pi r
 
 ### Remote/headless OAuth
 
-If Pi is running on a remote server and cannot open a local browser, start OAuth through the proxy tool. Persistent OAuth still requires an available OS credential store; on headless Linux that usually means an unlocked Secret Service/libsecret keyring. The adapter fails closed instead of falling back to plaintext credentials when the secure store is unavailable.
+If Pi is running on a remote server, `/mcp-auth <server>` prints the authorization URL and opens a callback input. Open the URL in your local browser. After approval, the browser may fail to load the localhost callback page because localhost refers to your workstation; copy the full URL from its address bar and paste it into Pi. The input closes automatically instead when the browser can reach Pi's callback directly.
+
+The same flow is available through the proxy tool for non-interactive clients. Persistent OAuth still requires an available OS credential store; on headless Linux that usually means an unlocked Secret Service/libsecret keyring. The adapter fails closed instead of falling back to plaintext credentials when the secure store is unavailable.
 
 On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter uses a best-effort recovery path through `keyctl session - node <packaged helper>` so explicit re-authentication can write fresh credentials without killing a long-lived tmux server. This path requires `keyctl` and `node` on `PATH`; missing, locked, or otherwise unavailable credential stores still fail closed.
 

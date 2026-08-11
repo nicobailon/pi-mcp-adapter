@@ -278,10 +278,16 @@ export async function authenticateServer(
       onAuthorizationUrl: (authorizationUrl) => {
         ui.notify(
           `Open this URL to authenticate ${serverName}:\n\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
-          "After approving, return to Pi; the local callback will complete automatically.",
+          "After approving, Pi will complete automatically if the browser can reach its localhost callback. " +
+          "On a remote machine, copy the full localhost URL from the browser address bar and paste it into Pi."
           "info"
         );
       },
+      onAuthorizationInput: (_authorizationUrl, inputSignal) => ui.input(
+        `Complete ${serverName} OAuth`,
+        "Paste the full callback URL, or wait for automatic completion",
+        { signal: inputSignal },
+      ),
       ...(signal ? { signal } : {}),
       ...(runtime ? { runtime } : {}),
     });

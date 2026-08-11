@@ -24,6 +24,7 @@ import {
   extractOAuthConfig,
   initializeOAuth,
   shutdownOAuth,
+  waitForAuthorizationResponse,
   type AuthStatus,
 } from "./mcp-auth-flow.ts"
 import { isCallbackServerRunning } from "./mcp-callback-server.ts"
@@ -190,6 +191,115 @@ describe("mcp-auth-flow", () => {
       await initializeOAuth()
       await shutdownOAuth()
       assert.strictEqual(isCallbackServerRunning(), false)
+    })
+  })
+
+  describe("waitForAuthorizationResponse", () => {
+    it("should accept a pasted callback URL and validate its state", async () => {
+      let promptSignal: AbortSignal | undefined
+      const result = await waitForAuthorizationResponse(
+        new Promise(() => {}),
+        "https://auth.example.com/authorize",
+        "expected-state",
+        async (_authorizationUrl, signal) => {
+          promptSignal = signal
+          return "http://localhost:3118/callback?code=manual-code&state=expected-state"
+        },
+      )
+
+      assert.deepStrictEqual(result, {
+        input: { code: "manual-code" },
+        source: "manual",
+      })
+      assert.strictEqual(promptSignal?.aborted, true)
+    })
+
+    it("should dismiss manual input when the localhost callback wins", async () => {
+      let promptSignal: AbortSignal | undefined
+      const result = await waitForAuthorizationResponse(
+        Promise.resolve({ code: "callback-code" }),
+        "https://auth.example.com/authorize",
+        "expected-state",
+        async (_authorizationUrl, signal) => {
+          promptSignal = signal
+          await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }))
+          return undefined
+        },
+      )
+
+      assert.deepStrictEqual(result, {
+        input: { code: "callback-code" },
+        source: "callback",
+      })
+      assert.strictEqual(promptSignal?.aborted, true)
+    })
+
+    it("should reject a pasted callback URL with the wrong state", async () => {
+      await assert.rejects(
+        waitForAuthorizationResponse(
+          new Promise(() => {}),
+          "https://auth.example.com/authorize",
+          "expected-state",
+          async () => "http://localhost:3118/callback?code=manual-code&state=wrong-state",
+        ),
+        /OAuth state mismatch/,
+      )
+    })
+
+    it("should reject a pasted callback URL without state", async () => {
+      await assert.rejects(
+        waitForAuthorizationResponse(
+          new Promise(() => {}),
+          "https://auth.example.com/authorize",
+          "expected-state",
+          async () => "http://localhost:3118/callback?code=manual-code",
+        ),
+        /OAuth state missing/,
+      )
+    })
+
+    it("should reject a raw authorization code from manual input", async () => {
+      await assert.rejects(
+        waitForAuthorizationResponse(
+          new Promise(() => {}),
+          "https://auth.example.com/authorize",
+          "expected-state",
+          async () => "manual-code",
+        ),
+        /Paste the full OAuth callback URL/,
+      )
+    })
+
+    it("should abort manual input when the OAuth operation is cancelled", async () => {
+      const controller = new AbortController()
+      const reason = new Error("request cancelled")
+      let promptSignal: AbortSignal | undefined
+      const response = waitForAuthorizationResponse(
+        new Promise(() => {}),
+        "https://auth.example.com/authorize",
+        "expected-state",
+        async (_authorizationUrl, signal) => {
+          promptSignal = signal
+          return new Promise(() => {})
+        },
+        controller.signal,
+      )
+
+      controller.abort(reason)
+      await assert.rejects(response, (error) => error === reason)
+      assert.strictEqual(promptSignal?.aborted, true)
+    })
+
+    it("should treat dismissing manual input as cancellation", async () => {
+      await assert.rejects(
+        waitForAuthorizationResponse(
+          new Promise(() => {}),
+          "https://auth.example.com/authorize",
+          "expected-state",
+          async () => undefined,
+        ),
+        /OAuth authentication cancelled/,
+      )
     })
   })
 

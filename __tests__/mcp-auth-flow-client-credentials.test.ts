@@ -695,6 +695,43 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(getOAuthState("browser-fail")).toBeUndefined();
   });
 
+  it("completes from a pasted callback URL and clears the localhost waiter", async () => {
+    let oauthState = "";
+    mocks.sdkAuth
+      .mockImplementationOnce(async (provider) => {
+        oauthState = await provider.state();
+        await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+        return "REDIRECT";
+      })
+      .mockImplementationOnce(async (_provider, options) => {
+        expect(options).toEqual({
+          serverUrl: "https://api.example.com/mcp",
+          authorizationCode: "pasted-code",
+        });
+        return "AUTHORIZED";
+      });
+    mocks.waitForCallback.mockReturnValueOnce(new Promise(() => {}));
+    mocks.open.mockResolvedValueOnce(undefined);
+    const onAuthorizationInput = vi.fn(async () => (
+      `http://localhost:19876/callback?code=pasted-code&state=${encodeURIComponent(oauthState)}`
+    ));
+    const { authenticate, hasPendingAuth } = await import("../mcp-auth-flow.ts");
+    const { getOAuthState } = await import("../mcp-auth.ts");
+
+    await expect(authenticate("remote-manual", "https://api.example.com/mcp", {
+      url: "https://api.example.com/mcp",
+      auth: "oauth",
+    }, { onAuthorizationInput })).resolves.toBe("authenticated");
+
+    expect(onAuthorizationInput).toHaveBeenCalledWith(
+      "https://auth.example.com/authorize",
+      expect.any(AbortSignal),
+    );
+    expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(oauthState);
+    expect(hasPendingAuth("remote-manual")).toBe(false);
+    expect(getOAuthState("remote-manual")).toBeUndefined();
+  });
+
   it("clears a pending manual flow when cancellation happens after callback registration", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));

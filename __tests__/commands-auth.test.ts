@@ -51,7 +51,10 @@ describe("authenticateServer", () => {
         "sentry",
         "https://mcp.sentry.dev/mcp",
         definition,
-        { onAuthorizationUrl: expect.any(Function) },
+        {
+          onAuthorizationUrl: expect.any(Function),
+          onAuthorizationInput: expect.any(Function),
+        },
       );
     } finally {
       if (originalUrl === undefined) delete process.env.MCP_AUTH_URL;
@@ -122,13 +125,17 @@ describe("authenticateServer", () => {
     );
   });
 
-  it("surfaces the exact OAuth URL as one terminal hyperlink", async () => {
+  it("surfaces the OAuth URL as one terminal hyperlink and accepts a pasted remote callback", async () => {
     const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
+    const callbackUrl = "http://localhost:3118/callback?code=code&state=state";
+    const inputController = new AbortController();
     mocks.authenticate.mockImplementationOnce(async (_name, _url, _definition, options) => {
       await options.onAuthorizationUrl(authorizationUrl);
+      const input = await options.onAuthorizationInput(authorizationUrl, inputController.signal);
+      expect(input).toBe(callbackUrl);
       return "authenticated";
     });
-    const ui = { notify: vi.fn(), setStatus: vi.fn() };
+    const ui = { notify: vi.fn(), setStatus: vi.fn(), input: vi.fn(async () => callbackUrl) };
     const { authenticateServer } = await import("../commands.ts");
 
     const result = await authenticateServer("sentry", {
@@ -142,11 +149,19 @@ describe("authenticateServer", () => {
       "sentry",
       "https://mcp.sentry.dev/mcp",
       { url: "https://mcp.sentry.dev/mcp", auth: "oauth" },
-      { onAuthorizationUrl: expect.any(Function) },
+      {
+        onAuthorizationUrl: expect.any(Function),
+        onAuthorizationInput: expect.any(Function),
+      },
     );
     expect(ui.notify).toHaveBeenCalledWith(
       expect.stringContaining(`\u001B]8;;${authorizationUrl}\u001B\\${authorizationUrl}\u001B]8;;\u001B\\`),
       "info",
+    );
+    expect(ui.input).toHaveBeenCalledWith(
+      "Complete sentry OAuth",
+      "Paste the full callback URL, or wait for automatic completion",
+      { signal: inputController.signal },
     );
   });
 });

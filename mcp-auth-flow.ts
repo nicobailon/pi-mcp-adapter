@@ -49,6 +49,10 @@ export interface McpOAuthRuntime {
 
 export interface AuthenticateOptions {
   onAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>
+  onAuthorizationInput?: (
+    authorizationUrl: string,
+    signal: AbortSignal,
+  ) => Promise<string | undefined>
   authStorageOptions?: AuthStorageOptions
   signal?: AbortSignal
   runtime?: McpOAuthRuntime
@@ -568,6 +572,53 @@ export function parseAuthorizationCodeInput(input: string, expectedState?: strin
   return parseAuthorizationRedirectInput(input, expectedState).code
 }
 
+type AuthorizationResponse = {
+  input: AuthorizationCodeInput
+  source: "callback" | "manual"
+}
+
+/**
+ * Wait for either the localhost callback or a manually pasted redirect URL.
+ * The manual input prompt is dismissed as soon as either path finishes.
+ */
+export async function waitForAuthorizationResponse(
+  callbackPromise: Promise<AuthorizationCodeInput>,
+  authorizationUrl: string,
+  expectedState: string,
+  onAuthorizationInput?: AuthenticateOptions["onAuthorizationInput"],
+  signal?: AbortSignal,
+): Promise<AuthorizationResponse> {
+  if (!onAuthorizationInput) {
+    return {
+      input: await abortable(callbackPromise, signal),
+      source: "callback",
+    }
+  }
+
+  const inputController = new AbortController()
+  try {
+    const response = await abortable(Promise.race([
+      callbackPromise.then((input) => ({ input, source: "callback" as const })),
+      onAuthorizationInput(authorizationUrl, inputController.signal).then((input) => ({
+        input,
+        source: "manual" as const,
+      })),
+    ]), signal)
+
+    if (response.source === "callback") return response
+    if (!response.input?.trim()) throw new Error("OAuth authentication cancelled")
+    if (!getSearchParamsFromInput(response.input.trim())) {
+      throw new Error("Paste the full OAuth callback URL, including its code and state parameters")
+    }
+    return {
+      input: parseAuthorizationRedirectInput(response.input, expectedState),
+      source: "manual",
+    }
+  } finally {
+    inputController.abort()
+  }
+}
+
 /**
  * Complete OAuth authentication from manual user input.
  */
@@ -728,12 +779,22 @@ export async function authenticate(
         console.warn(`MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`, { error })
       }
 
-      const callbackResult = await abortable(callbackPromise, signal)
+      const authorizationResponse = await waitForAuthorizationResponse(
+        callbackPromise,
+        authorizationUrl,
+        oauthState,
+        options.onAuthorizationInput,
+        signal,
+      )
+      if (authorizationResponse.source === "manual") {
+        cancelPendingCallback(oauthState)
+      }
 
-      // The callback server accepted only the flow-local reserved state.
+      // The callback server accepted only the flow-local reserved state. Manual
+      // input is checked against the same state before token exchange.
       throwIfAborted(signal)
 
-      return await completeAuth(serverName, callbackResult, {
+      return await completeAuth(serverName, authorizationResponse.input, {
         ...options,
         ...(signal ? { signal } : {}),
         runtime,
