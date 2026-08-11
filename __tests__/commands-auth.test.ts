@@ -135,7 +135,12 @@ describe("authenticateServer", () => {
       expect(input).toBe(callbackUrl);
       return "authenticated";
     });
-    const ui = { notify: vi.fn(), setStatus: vi.fn(), input: vi.fn(async () => callbackUrl) };
+    const ui = {
+      notify: vi.fn(),
+      setStatus: vi.fn(),
+      confirm: vi.fn(async () => true),
+      input: vi.fn(async () => callbackUrl),
+    };
     const { authenticateServer } = await import("../commands.ts");
 
     const result = await authenticateServer("sentry", {
@@ -158,10 +163,16 @@ describe("authenticateServer", () => {
       expect.stringContaining(`\u001B]8;;${authorizationUrl}\u001B\\${authorizationUrl}\u001B]8;;\u001B\\`),
       "info",
     );
-    expect(ui.input).toHaveBeenCalledWith(
-      "Complete sentry OAuth",
-      "Paste the full callback URL, or wait for automatic completion",
+    expect(ui.confirm).toHaveBeenCalledWith(
+      "Authorize sentry",
+      expect.stringContaining(authorizationUrl),
       { signal: inputController.signal },
     );
+    expect(ui.input).toHaveBeenCalledWith(
+      "Complete sentry OAuth",
+      "Paste the full callback URL",
+      { signal: inputController.signal },
+    );
+    expect(ui.confirm.mock.invocationCallOrder[0]).toBeLessThan(ui.input.mock.invocationCallOrder[0]);
   });
 });
