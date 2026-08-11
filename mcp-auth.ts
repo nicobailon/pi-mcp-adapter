@@ -188,6 +188,7 @@ const keyringAuthSecretStore: AuthSecretStore = {
 /** Mimics the Windows Credential Manager per-value ceiling for tests. */
 const sizeLimitedAuthSecretStore: AuthSecretStore = {
   read(account) {
+    testAuthSecretStoreReadCount++;
     return memoryAuthEntries.get(account);
   },
   write(account, payload) {

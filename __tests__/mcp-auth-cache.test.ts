@@ -18,6 +18,7 @@ import {
 const STORE_ENV = "PI_MCP_ADAPTER_TEST_AUTH_STORE";
 const DISABLE_ENV = "PI_MCP_ADAPTER_DISABLE_AUTH_CACHE";
 const RECOVERY_OVERRIDE_ENV = "PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY";
+const DISABLE_KEYRING_RECOVERY_ENV = "PI_MCP_ADAPTER_DISABLE_KEYRING_RECOVERY";
 const SERVER_URL = "https://example.com/mcp";
 
 function enableAuthEntryCache(): void {
@@ -29,6 +30,7 @@ function useAuthCacheHarness(): void {
     MCP_OAUTH_DIR: process.env.MCP_OAUTH_DIR,
     [STORE_ENV]: process.env[STORE_ENV],
     [DISABLE_ENV]: process.env[DISABLE_ENV],
+    [DISABLE_KEYRING_RECOVERY_ENV]: process.env[DISABLE_KEYRING_RECOVERY_ENV],
   };
   let authDir: string;
 
@@ -54,14 +56,37 @@ describe("OAuth credential-entry cache — foundation", () => {
     expect(process.env[DISABLE_ENV]).toBe("1");
   });
 
-  it("counts every attempted secure-store read and resets independently", () => {
-    expect(getAuthEntry("counted")).toBeUndefined();
-    expect(getAuthEntry("counted")).toBeUndefined();
-    expect(getTestAuthSecretStoreReadCount()).toBe(2);
-    resetAuthEntryCache();
-    expect(getTestAuthSecretStoreReadCount()).toBe(2);
-    resetTestAuthSecretStore();
-    expect(getTestAuthSecretStoreReadCount()).toBe(0);
+  it("counts reads and resets independently for memory and size-limited stores", () => {
+    for (const store of ["memory", "sizelimited"]) {
+      process.env[STORE_ENV] = store;
+      resetTestAuthSecretStore();
+
+      expect(getAuthEntry("counted")).toBeUndefined();
+      expect(getAuthEntry("counted")).toBeUndefined();
+      expect(getTestAuthSecretStoreReadCount()).toBe(2);
+
+      resetAuthEntryCache();
+      expect(getTestAuthSecretStoreReadCount()).toBe(2);
+
+      resetTestAuthSecretStore();
+      expect(getTestAuthSecretStoreReadCount()).toBe(0);
+    }
+    process.env[STORE_ENV] = "memory";
+  });
+
+  it("counts throwing reads for unavailable and key-revoked stores", () => {
+    const recoveryBefore = process.env[DISABLE_KEYRING_RECOVERY_ENV];
+    process.env[DISABLE_KEYRING_RECOVERY_ENV] = "1";
+    for (const store of ["unavailable", "keyrevoked"]) {
+      process.env[STORE_ENV] = store;
+      resetTestAuthSecretStore();
+
+      expect(() => getAuthEntry("counted")).toThrow();
+      expect(getTestAuthSecretStoreReadCount()).toBe(1);
+    }
+    if (recoveryBefore === undefined) delete process.env[DISABLE_KEYRING_RECOVERY_ENV];
+    else process.env[DISABLE_KEYRING_RECOVERY_ENV] = recoveryBefore;
+    process.env[STORE_ENV] = "memory";
   });
 
   it("opts in independently of Linux keyring recovery", () => {
@@ -69,6 +94,11 @@ describe("OAuth credential-entry cache — foundation", () => {
     enableAuthEntryCache();
     expect(process.env[DISABLE_ENV]).toBeUndefined();
     expect(process.env[RECOVERY_OVERRIDE_ENV]).toBe(recoveryBefore);
+  });
+
+
+  it("restores the suite-wide disable after an opt-in test", () => {
+    expect(process.env[DISABLE_ENV]).toBe("1");
   });
 });
 
@@ -125,6 +155,10 @@ describe("OAuth credential-entry cache — coherence", () => {
     inspectAuthForUrl("aliased", SERVER_URL);
     inspectAuthForUrl("aliased", SERVER_URL);
     expect(getTestAuthSecretStoreReadCount() - before).toBe(2);
+
+    const beforeOrdinaryRead = getTestAuthSecretStoreReadCount();
+    expect(getAuthEntry("aliased")).toBeDefined();
+    expect(getTestAuthSecretStoreReadCount() - beforeOrdinaryRead).toBe(1);
   });
 
 
@@ -146,6 +180,7 @@ describe("OAuth credential-entry cache — coherence", () => {
     expect(() => getAuthEntry("failing")).toThrow(/OS secure credential store/);
     expect(() => getAuthEntry("failing")).toThrow(/OS secure credential store/);
     process.env[STORE_ENV] = "memory";
+    expect(getAuthEntry("failing")).toBeUndefined();
 
     saveAuthEntry("chunked", { tokens: { accessToken: "x".repeat(5000) } }, SERVER_URL);
     resetAuthEntryCache();
@@ -224,6 +259,9 @@ describe("OAuth credential-entry cache — invalidation", () => {
 
     process.env[DISABLE_ENV] = "1";
     expect(() => invalidateAuthEntryCache("keep")).not.toThrow();
+    const beforeDisabledRead = getTestAuthSecretStoreReadCount();
+    expect(getAuthEntry("keep")?.tokens?.accessToken).toBe("k");
+    expect(getTestAuthSecretStoreReadCount() - beforeDisabledRead).toBe(1);
   });
 
 
