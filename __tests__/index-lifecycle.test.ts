@@ -822,6 +822,36 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.executeStatus).toHaveBeenCalledWith(state);
   });
 
+  it("does not fail load-time tool sync before Pi action methods are bound", async () => {
+    mocks.loadMcpConfig.mockReturnValue({
+      mcpServers: {
+        demo: { url: "http://localhost:3999/mcp", lifecycle: "eager" },
+      },
+    });
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api } = createPi();
+      api.getActiveTools.mockImplementation(() => {
+        throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
+      });
+      mcpAdapter(api);
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+      expect(mocks.updateStatusBar).toHaveBeenCalledWith(state);
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("does not initialize at load when startup servers are absent or disabled", async () => {
     mocks.loadMcpConfig.mockReturnValue({
       mcpServers: {

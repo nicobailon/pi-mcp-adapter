@@ -169,13 +169,23 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     return resolveDirectTools(config, cache, prefix, envDirectToolOverride);
   }
 
+  function getActiveToolsIfReady(): string[] | undefined {
+    try {
+      return pi.getActiveTools?.();
+    } catch (error) {
+      if (error instanceof Error
+        && error.message.includes("Action methods cannot be called during extension loading")) return undefined;
+      throw error;
+    }
+  }
+
   function deactivateTools(toolNames: string[]): string[] {
     if (toolNames.length === 0) return [];
     const unregisterTool = (pi as ExtensionAPI & { unregisterTool?: (name: string) => boolean }).unregisterTool;
     const unregistered = toolNames.filter((toolName) => unregisterTool?.(toolName) === true);
     const fallbackNames = toolNames.filter((toolName) => !unregistered.includes(toolName));
     const remove = new Set(toolNames);
-    const activeTools = pi.getActiveTools?.();
+    const activeTools = getActiveToolsIfReady();
     if (!activeTools || activeTools.length === 0) {
       for (const toolName of fallbackNames) fallbackDeactivatedTools.add(toolName);
       return unregistered;
@@ -207,7 +217,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         registerDirectTool(spec);
         registeredDirectTools.set(spec.prefixedName, fingerprint);
         if (fallbackDeactivatedTools.delete(spec.prefixedName)) {
-          const activeTools = pi.getActiveTools?.();
+          const activeTools = getActiveToolsIfReady();
           if (activeTools && !activeTools.includes(spec.prefixedName)) {
             pi.setActiveTools([...activeTools, spec.prefixedName]);
           }
@@ -849,7 +859,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         registerProxyTool(description);
         return;
       }
-      const activeTools = pi.getActiveTools?.();
+      const activeTools = getActiveToolsIfReady();
       if (activeTools && !activeTools.includes("mcp")) {
         pi.setActiveTools([...activeTools, "mcp"]);
       }
