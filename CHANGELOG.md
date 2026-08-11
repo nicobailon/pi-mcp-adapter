@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Stopped load-time MCP initialization from printing a TUI startup error when Pi action methods are not bound yet. Thanks @21307369 for issue #327.
+- Kept interactive OAuth authorization URLs clickable as a single terminal hyperlink. Thanks @rfccg for PR #329.
 
 ## [2.22.0] - 2026-08-11
 

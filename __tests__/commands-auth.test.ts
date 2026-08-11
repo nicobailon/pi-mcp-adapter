@@ -122,7 +122,7 @@ describe("authenticateServer", () => {
     );
   });
 
-  it("surfaces the exact OAuth URL through UI notification", async () => {
+  it("surfaces the exact OAuth URL as one terminal hyperlink", async () => {
     const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
     mocks.authenticate.mockImplementationOnce(async (_name, _url, _definition, options) => {
       await options.onAuthorizationUrl(authorizationUrl);
@@ -145,7 +145,7 @@ describe("authenticateServer", () => {
       { onAuthorizationUrl: expect.any(Function) },
     );
     expect(ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining(authorizationUrl),
+      expect.stringContaining(`\u001B]8;;${authorizationUrl}\u001B\\${authorizationUrl}\u001B]8;;\u001B\\`),
       "info",
     );
   });

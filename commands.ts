@@ -24,7 +24,10 @@ import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
 import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
-import { hyperlink } from "@earendil-works/pi-tui";
+
+function terminalHyperlink(label: string, url: string): string {
+  return `\u001B]8;;${sanitizeTerminalText(url)}\u001B\\${sanitizeTerminalText(label)}\u001B]8;;\u001B\\`;
+}
 
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return;
@@ -274,7 +277,7 @@ export async function authenticateServer(
       ...(authStorageOptions.baseDir ? { authStorageOptions } : {}),
       onAuthorizationUrl: (authorizationUrl) => {
         ui.notify(
-          `Open this URL to authenticate ${serverName}:\n\n${hyperlink(authorizationUrl, authorizationUrl)}\n\n` +
+          `Open this URL to authenticate ${serverName}:\n\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
           "After approving, return to Pi; the local callback will complete automatically.",
           "info"
         );
