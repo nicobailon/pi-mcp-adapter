@@ -42,12 +42,19 @@ vi.mock("../npx-resolver.ts", () => ({
 }));
 
 describe("McpServerManager stderr capture", () => {
+  const originalStdioArg = process.env.MCP_TEST_STDIO_ARG;
+
   beforeEach(() => {
     mocks.transports.length = 0;
     mocks.connectImpl = null;
   });
 
   afterEach(() => {
+    if (originalStdioArg === undefined) {
+      delete process.env.MCP_TEST_STDIO_ARG;
+    } else {
+      process.env.MCP_TEST_STDIO_ARG = originalStdioArg;
+    }
     vi.clearAllMocks();
     vi.unstubAllGlobals();
   });
@@ -61,6 +68,19 @@ describe("McpServerManager stderr capture", () => {
 
     await manager.connect("debug", { command: "node", args: ["server.js"], debug: true });
     expect(mocks.transports[1].options.stderr).toBe("inherit");
+  });
+
+  it("interpolates environment placeholders in stdio arguments", async () => {
+    process.env.MCP_TEST_STDIO_ARG = "interpolated";
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+
+    await manager.connect("demo", {
+      command: "node",
+      args: ["--first=${MCP_TEST_STDIO_ARG}", "--second=$env:MCP_TEST_STDIO_ARG"],
+    });
+
+    expect(mocks.transports[0].options.args).toEqual(["--first=interpolated", "--second=interpolated"]);
   });
 
   it("appends captured stderr to the connection error", async () => {

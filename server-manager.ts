@@ -39,6 +39,7 @@ import {
   type ServerElicitationConfig,
 } from "./elicitation-handler.ts";
 import {
+  interpolateEnvVars,
   resolveBearerToken,
   resolveCommandSecret,
   resolveCommandSecretsRecord,
@@ -358,7 +359,7 @@ export class McpServerManager {
     if (definition.command) {
       client = this.createClient(name, definition);
       let command = definition.command;
-      let args = definition.args ?? [];
+      let args = (definition.args ?? []).map(interpolateEnvVars);
 
       if (command === "npx" || command === "npm") {
         const resolved = await resolveNpxBinary(command, args, signal);
