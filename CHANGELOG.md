@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Kept remote `/mcp-auth` authorization links reachable before the callback input opens. Thanks @trevorleibert-mixpanel for PR #331.
+
 ## [2.23.0] - 2026-08-11
 
 ### Added
