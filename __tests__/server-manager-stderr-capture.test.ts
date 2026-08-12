@@ -41,6 +41,8 @@ vi.mock("../npx-resolver.ts", () => ({
   resolveNpxBinary: vi.fn(async () => null),
 }));
 
+import { resolveNpxBinary } from "../npx-resolver.ts";
+
 describe("McpServerManager stderr capture", () => {
   const originalStdioArg = process.env.MCP_TEST_STDIO_ARG;
 
@@ -81,6 +83,27 @@ describe("McpServerManager stderr capture", () => {
     });
 
     expect(mocks.transports[0].options.args).toEqual(["--first=interpolated", "--second=interpolated"]);
+  });
+
+  it("passes interpolated npx arguments to the resolver", async () => {
+    process.env.MCP_TEST_STDIO_ARG = "interpolated";
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+
+    await manager.connect("demo", {
+      command: "npx",
+      args: ["-y", "demo-pkg", "--token=${MCP_TEST_STDIO_ARG}"],
+    });
+
+    expect(resolveNpxBinary).toHaveBeenCalledWith(
+      "npx",
+      ["-y", "demo-pkg", "--token=interpolated"],
+      expect.any(AbortSignal),
+    );
+    expect(mocks.transports[0].options).toMatchObject({
+      command: "npx",
+      args: ["-y", "demo-pkg", "--token=interpolated"],
+    });
   });
 
   it("appends captured stderr to the connection error", async () => {

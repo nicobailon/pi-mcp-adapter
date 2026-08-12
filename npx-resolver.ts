@@ -5,7 +5,7 @@ import { getAgentPath } from "./agent-dir.ts";
 import { throwIfAborted } from "./abort.ts";
 import crossSpawn from "cross-spawn";
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const EXACT_PACKAGE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
@@ -53,7 +53,7 @@ export async function resolveNpxBinary(
   if (!parsed) return null;
 
   const packageSpec = parsePackageSpec(parsed.packageSpec);
-  const cacheKey = JSON.stringify([command, ...args]);
+  const cacheKey = JSON.stringify([command, parsed.packageSpec, parsed.binName ?? ""]);
   const cache = loadCache();
   const cached = cache?.entries?.[cacheKey];
 
