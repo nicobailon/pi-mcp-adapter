@@ -20,10 +20,12 @@
 //     many things other than "your session is gone"
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
-import { ProtocolError, SdkHttpError } from "@modelcontextprotocol/client";
+import { ProtocolError, SdkHttpError, UnauthorizedError } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { isServerDisabled, type McpConfig } from "./types.ts";
+import { supportsOAuth } from "./mcp-auth-flow.ts";
+import { invalidateAuthEntryCache } from "./mcp-auth.ts";
 import type { McpServerManager, ServerConnection } from "./server-manager.ts";
 
 /**
@@ -106,6 +108,11 @@ export async function withSessionRecovery<T>(
   try {
     return await fn(connection);
   } catch (err) {
+    const definition = deps.config.mcpServers[serverName];
+    if (definition && supportsOAuth(definition)
+      && (err instanceof UnauthorizedError || (err instanceof SdkHttpError && err.status === 401))) {
+      invalidateAuthEntryCache(serverName);
+    }
     if (!isTerminatedSession(err, hadSessionId)) {
       throw err;
     }
@@ -114,7 +121,6 @@ export async function withSessionRecovery<T>(
     // connection's definition, in case config changed since connect. If the
     // server was removed from config in the meantime there is nothing to
     // reconnect to, so surface the original error.
-    const definition = deps.config.mcpServers[serverName];
     if (!definition) {
       throw err;
     }

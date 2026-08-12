@@ -1,5 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { ProtocolError, SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
+
+const authCacheMocks = vi.hoisted(() => ({
+  invalidate: vi.fn(),
+}));
+
+vi.mock("../mcp-auth.ts", async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  invalidateAuthEntryCache: authCacheMocks.invalidate,
+}));
+
 import { SessionRecoveryAuthRequiredError, isTerminatedSession, withSessionRecovery } from "../session-recovery.ts";
 import type { ServerConnection } from "../server-manager.ts";
 import type { McpConfig } from "../types.ts";
@@ -157,6 +167,20 @@ describe("withSessionRecovery", () => {
     expect(fn).toHaveBeenNthCalledWith(2, fresh);
     expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale);
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates OAuth credentials after a runtime 401 and preserves the error", async () => {
+    const connection = makeConnection("session-1");
+    const manager = makeManager({ getConnection: () => connection, reconnect: async () => connection });
+    const oauthConfig: McpConfig = {
+      mcpServers: { demo: { url: "https://example.test/mcp", auth: "oauth" } },
+    };
+    const err = httpError(401, "Unauthorized");
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withSessionRecovery({ manager: manager as any, config: oauthConfig }, "demo", fn)).rejects.toBe(err);
+    expect(authCacheMocks.invalidate).toHaveBeenCalledWith("demo");
+    expect(manager.reconnect).not.toHaveBeenCalled();
   });
 
   it("does not recover unrelated -32000 MCP errors", async () => {
