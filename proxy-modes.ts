@@ -16,7 +16,7 @@ import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } 
 import { formatAuthRequiredMessage, formatMcpStatus, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
-import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
+import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
@@ -503,11 +503,15 @@ export function executeSearch(
     }
 
     matches = [];
+    const globalPrefix = state.config.settings?.toolPrefix ?? "server";
     for (const [serverName, metadata] of state.toolMetadata.entries()) {
-      if (isServerDisabled(state.config.mcpServers[serverName])) continue;
+      const definition = state.config.mcpServers[serverName];
+      if (isServerDisabled(definition)) continue;
       if (server && serverName !== server) continue;
       for (const tool of metadata) {
-        if (pattern.test(tool.name) || pattern.test(tool.description)) matches.push({ server: serverName, tool, score: 0 });
+        const matched = pattern.test(tool.name) || pattern.test(tool.description)
+          || resolveSearchKeywords(definition, tool.originalName, serverName, globalPrefix).some(keyword => pattern.test(keyword));
+        if (matched) matches.push({ server: serverName, tool, score: 0 });
       }
     }
   } else if (query.trim().length === 0) {

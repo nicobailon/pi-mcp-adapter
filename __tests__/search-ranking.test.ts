@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { paginate, scoreToolMatch } from "../search-ranking.ts";
+import { paginate, resolveSearchKeywords, scoreToolMatch } from "../search-ranking.ts";
+import type { ServerEntry } from "../types.ts";
 
 const tool = (name: string, description: string) => ({
   name,
@@ -26,6 +27,45 @@ describe("search ranking", () => {
     expect(scoreToolMatch(tool("sync_icon", "Sync an icon."), "better-icons", "synchronize")).not.toBeNull();
   });
 
+  it("matches through configured keywords where the query would otherwise miss", () => {
+    const advanced = tool("search_records_advanced", "Advanced record search with filters");
+
+    expect(scoreToolMatch(advanced, "demo", "fuzzy lookup")).toBeNull();
+    expect(scoreToolMatch(advanced, "demo", "fuzzy lookup", ["fuzzy lookup", "legacy"])).not.toBeNull();
+    // Single-token queries pass the coverage gate through keyword tokens too.
+    expect(scoreToolMatch(advanced, "demo", "fuzzy")).toBeNull();
+    expect(scoreToolMatch(advanced, "demo", "fuzzy", ["fuzzy lookup"])).not.toBeNull();
+  });
+
+  it("ranks an exact keyword alias above a description phrase match", () => {
+    const aliased = scoreToolMatch(
+      tool("search_records_advanced", "Advanced record search with filters"),
+      "demo",
+      "fuzzy lookup",
+      ["fuzzy lookup"],
+    )!;
+    const description = scoreToolMatch(tool("record_search", "Fuzzy lookup across records"), "demo", "fuzzy lookup")!;
+
+    expect(aliased).toBeGreaterThan(description);
+  });
+
+  it("scores an exact alias above incidental cross-phrase token matches", () => {
+    const advanced = tool("search_records_advanced", "Advanced record search with filters");
+    const keywords = ["fuzzy lookup", "legacy"];
+
+    // "lookup legacy" spans two phrases; it may token-match but must not get
+    // the phrase-level bonus a real alias hit gets.
+    const exact = scoreToolMatch(advanced, "demo", "fuzzy lookup", keywords)!;
+    const crossPhrase = scoreToolMatch(advanced, "demo", "lookup legacy", keywords)!;
+    expect(exact).toBeGreaterThan(crossPhrase);
+  });
+
+  it("does not change scoring when the keyword list is empty", () => {
+    const advanced = tool("search_records_advanced", "Advanced record search");
+
+    expect(scoreToolMatch(advanced, "demo", "advanced", [])).toEqual(scoreToolMatch(advanced, "demo", "advanced"));
+  });
+
   it("paginates including offsets beyond the result set", () => {
     expect(paginate(["a", "b", "c"], 1, 1)).toEqual({
       items: ["b"], total: 3, hasMore: true, nextOffset: 2,
@@ -33,5 +73,39 @@ describe("search ranking", () => {
     expect(paginate(["a", "b", "c"], 5, 1)).toEqual({
       items: [], total: 3, hasMore: false, nextOffset: null,
     });
+  });
+});
+
+describe("resolveSearchKeywords", () => {
+  const definition = (searchKeywords: unknown): ServerEntry =>
+    ({ command: "npx", searchKeywords }) as ServerEntry;
+
+  it("matches keys by original name, prefixed name, and glob", () => {
+    expect(resolveSearchKeywords(definition({ search_records_advanced: ["fuzzy lookup"] }), "search_records_advanced", "demo", "server"))
+      .toEqual(["fuzzy lookup"]);
+    expect(resolveSearchKeywords(definition({ demo_search_records_advanced: ["fuzzy lookup"] }), "search_records_advanced", "demo", "server"))
+      .toEqual(["fuzzy lookup"]);
+    expect(resolveSearchKeywords(definition({ "search_*": ["records"] }), "search_records_advanced", "demo", "server"))
+      .toEqual(["records"]);
+    expect(resolveSearchKeywords(definition({ "*": ["records"] }), "anything", "demo", "server"))
+      .toEqual(["records"]);
+  });
+
+  it("unions and dedupes values from all matching keys", () => {
+    const entry = definition({
+      "search_*": ["records", "fuzzy lookup"],
+      search_records_advanced: ["fuzzy lookup", "legacy"],
+    });
+
+    expect(resolveSearchKeywords(entry, "search_records_advanced", "demo", "server"))
+      .toEqual(["records", "fuzzy lookup", "legacy"]);
+  });
+
+  it("returns nothing for non-matching keys or malformed config", () => {
+    expect(resolveSearchKeywords(definition({ other_tool: ["nope"] }), "search_records_advanced", "demo", "server")).toEqual([]);
+    expect(resolveSearchKeywords(definition({ search_records_advanced: "not-an-array" }), "search_records_advanced", "demo", "server")).toEqual([]);
+    expect(resolveSearchKeywords(definition({ search_records_advanced: ["ok", 42, "  "] }), "search_records_advanced", "demo", "server")).toEqual(["ok"]);
+    expect(resolveSearchKeywords(definition(["not", "a", "record"]), "search_records_advanced", "demo", "server")).toEqual([]);
+    expect(resolveSearchKeywords(undefined, "search_records_advanced", "demo", "server")).toEqual([]);
   });
 });

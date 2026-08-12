@@ -395,6 +395,13 @@ export interface ServerEntry {
   // Include/exclude specific MCP tools/resources by original or prefixed name
   includeTools?: string[];
   excludeTools?: string[];
+  /**
+   * Extra search keywords per tool, keyed by original name, prefixed name, or
+   * glob (same matching rules as includeTools/excludeTools). Keywords boost
+   * mcp({ search }) ranking only — they never appear in tool schemas,
+   * describe output, or the metadata cache.
+   */
+  searchKeywords?: Record<string, string[]>;
   // Require interactive approval before calling matching MCP tools/resources.
   approveTools?: boolean | string[];
   // Debug

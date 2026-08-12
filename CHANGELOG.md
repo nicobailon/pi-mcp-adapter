@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added per-server `searchKeywords` so `mcp({ search })` and `mcpScript` `tools.search` understand user-defined synonyms and aliases for tools. Keywords are keyed by tool name or glob and boost ranked and regex search only. They never appear in tool schemas, describe output, or the metadata cache.
+
 ### Fixed
 - Kept remote `/mcp-auth` authorization links reachable before the callback input opens. Thanks @trevorleibert-mixpanel for PR #331.
 

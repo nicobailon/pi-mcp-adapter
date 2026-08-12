@@ -1,6 +1,6 @@
 import type { McpExtensionState } from "./state.ts";
-import type { ToolMetadata } from "./types.ts";
-import { getServerPrefix, isServerDisabled } from "./types.ts";
+import type { ServerEntry, ToolMetadata, ToolPrefix } from "./types.ts";
+import { getServerPrefix, getToolNameCandidates, isServerDisabled, matchesToolPattern, resolveToolPrefix } from "./types.ts";
 
 /**
  * Shortest field token allowed to stem-match a longer query token.
@@ -14,12 +14,43 @@ const FIELD_WEIGHTS = {
   originalName: 10,
   server: 8,
   description: 5,
+  keywords: 5,
 } as const;
 
 export interface RankedToolMatch {
   server: string;
   tool: ToolMetadata;
   score: number;
+}
+
+/**
+ * Resolve the configured searchKeywords entries that apply to a tool.
+ * Keys match by original name, prefixed name, or glob — the same candidate
+ * set includeTools/excludeTools use — and all matching entries are unioned.
+ */
+export function resolveSearchKeywords(
+  definition: ServerEntry | undefined,
+  toolOriginalName: string,
+  serverName: string,
+  globalPrefix: ToolPrefix,
+): string[] {
+  const map = definition?.searchKeywords;
+  if (!map || typeof map !== "object" || Array.isArray(map)) return [];
+  const candidates = getToolNameCandidates(toolOriginalName, serverName, resolveToolPrefix(definition, globalPrefix));
+  const keywords: string[] = [];
+  const seen = new Set<string>();
+  for (const [pattern, values] of Object.entries(map)) {
+    if (!Array.isArray(values)) continue;
+    if (!matchesToolPattern(candidates, [pattern])) continue;
+    for (const value of values) {
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      keywords.push(trimmed);
+    }
+  }
+  return keywords;
 }
 
 export function normalizeSearchText(value: string): string {
@@ -33,7 +64,7 @@ export function tokenize(value: string): string[] {
   return normalizeSearchText(value).split(/[^a-z0-9]+/).filter(Boolean);
 }
 
-export function scoreToolMatch(tool: ToolMetadata, server: string, query: string): number | null {
+export function scoreToolMatch(tool: ToolMetadata, server: string, query: string, keywords?: string[]): number | null {
   const normalizedQuery = normalizeSearchText(query).trim();
   const queryTokens = tokenize(query);
   if (queryTokens.length === 0) return null;
@@ -78,6 +109,43 @@ export function scoreToolMatch(tool: ToolMetadata, server: string, query: string
     }
   }
 
+  // Configured keywords are discrete phrases, so the phrase-level bonus is
+  // computed per phrase (best match wins) rather than on a joined string,
+  // which would phrase-match queries spanning two unrelated keywords.
+  if (keywords !== undefined && keywords.length > 0) {
+    const weight = FIELD_WEIGHTS.keywords;
+    const phrases = keywords.map(keyword => normalizeSearchText(keyword).trim()).filter(Boolean);
+    let phraseScore = 0;
+    for (const phrase of phrases) {
+      if (phrase === normalizedQuery) {
+        phraseScore = Math.max(phraseScore, weight * 14);
+        phraseMatched = true;
+        wholeFieldExact = true;
+      } else if (phrase.startsWith(normalizedQuery)) {
+        phraseScore = Math.max(phraseScore, weight * 9);
+        phraseMatched = true;
+      } else if (phrase.includes(normalizedQuery)) {
+        phraseScore = Math.max(phraseScore, weight * 6);
+        phraseMatched = true;
+      }
+    }
+    score += phraseScore;
+
+    const keywordTokens = phrases.flatMap(tokenize);
+    for (const token of queryTokens) {
+      if (keywordTokens.includes(token)) {
+        score += weight * 4;
+        matchedTokens.add(token);
+      } else if (keywordTokens.some(keywordToken => keywordToken.startsWith(token) || (keywordToken.length >= MIN_STEM_LENGTH && token.startsWith(keywordToken)))) {
+        score += weight * 2;
+        matchedTokens.add(token);
+      } else if (phrases.some(phrase => phrase.includes(token))) {
+        score += weight;
+        matchedTokens.add(token);
+      }
+    }
+  }
+
   const coverage = matchedTokens.size / queryTokens.length;
   if (!phraseMatched && (queryTokens.length <= 2 ? coverage !== 1 : coverage < 0.6)) return null;
 
@@ -90,11 +158,17 @@ export function scoreToolMatch(tool: ToolMetadata, server: string, query: string
 
 export function rankToolMatches(state: McpExtensionState, query: string, server?: string): RankedToolMatch[] {
   const matches: RankedToolMatch[] = [];
+  const globalPrefix = state.config.settings?.toolPrefix ?? "server";
   for (const [serverName, metadata] of state.toolMetadata.entries()) {
     if (server && serverName !== server) continue;
-    if (isServerDisabled(state.config.mcpServers[serverName])) continue;
+    const definition = state.config.mcpServers[serverName];
+    if (isServerDisabled(definition)) continue;
+    const hasKeywords = definition?.searchKeywords !== undefined;
     for (const tool of metadata) {
-      const score = scoreToolMatch(tool, serverName, query);
+      const keywords = hasKeywords
+        ? resolveSearchKeywords(definition, tool.originalName, serverName, globalPrefix)
+        : undefined;
+      const score = scoreToolMatch(tool, serverName, query, keywords);
       if (score !== null) matches.push({ server: serverName, tool, score });
     }
   }
