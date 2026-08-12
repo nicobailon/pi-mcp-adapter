@@ -156,14 +156,19 @@ export function scoreToolMatch(tool: ToolMetadata, server: string, query: string
   return score;
 }
 
-export function rankToolMatches(state: McpExtensionState, query: string, server?: string): RankedToolMatch[] {
+export function rankToolMatches(
+  state: McpExtensionState,
+  query: string,
+  server?: string,
+  includeKeywords = true,
+): RankedToolMatch[] {
   const matches: RankedToolMatch[] = [];
   const globalPrefix = state.config.settings?.toolPrefix ?? "server";
   for (const [serverName, metadata] of state.toolMetadata.entries()) {
     if (server && serverName !== server) continue;
     const definition = state.config.mcpServers[serverName];
     if (isServerDisabled(definition)) continue;
-    const hasKeywords = definition?.searchKeywords !== undefined;
+    const hasKeywords = includeKeywords && definition?.searchKeywords !== undefined;
     for (const tool of metadata) {
       const keywords = hasKeywords
         ? resolveSearchKeywords(definition, tool.originalName, serverName, globalPrefix)
@@ -197,5 +202,5 @@ export function rankSuggestions(state: McpExtensionState, name: string, limit: n
     .sort((a, b) => b.length - a.length)
     .map(candidate => name.slice(candidate.length + 1));
   const query = stripped[0] ?? name;
-  return rankToolMatches(state, query).slice(0, limit).map(match => match.tool.name);
+  return rankToolMatches(state, query, undefined, false).slice(0, limit).map(match => match.tool.name);
 }

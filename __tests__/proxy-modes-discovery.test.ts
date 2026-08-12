@@ -176,6 +176,17 @@ describe("proxy discovery", () => {
     expect(result.content[0].text).toContain("Did you mean: demo_search");
   });
 
+  it("does not suggest tools through configured search keywords", async () => {
+    const state = createState();
+    state.config.mcpServers.demo!.searchKeywords = { find: ["zzalias"] };
+
+    expect(executeSearch(state, "zzalias").details).toMatchObject({ count: 1, matches: [{ tool: "demo_find" }] });
+    expect(executeDescribe(state, "zzalias").details).toMatchObject({ suggestions: [] });
+
+    const call = await executeCall(state, "zzalias");
+    expect(call.details).toMatchObject({ error: "tool_not_found", suggestions: [] });
+  });
+
   it("tells callers to invoke native Pi tools directly", async () => {
     const result = await executeCall(
       createState(),
