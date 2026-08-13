@@ -448,7 +448,11 @@ function loadCache(): NpxCache | null {
   if (!parsed || typeof parsed !== "object") return null;
   const raw = parsed as Record<string, unknown>;
   if (raw.version === 1) {
-    unlinkSync(cachePath);
+    try {
+      unlinkSync(cachePath);
+    } catch {
+      // Cache cleanup is best effort; resolution must still proceed.
+    }
     return null;
   }
   if (raw.version !== CACHE_VERSION) return null;
@@ -457,26 +461,30 @@ function loadCache(): NpxCache | null {
 }
 
 function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
-  const cachePath = getNpxCachePath();
-  const dir = dirname(cachePath);
-  mkdirSync(dir, { recursive: true });
-
-  let merged: NpxCache = { version: CACHE_VERSION, entries: {} };
   try {
-    if (existsSync(cachePath)) {
-      const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as NpxCache;
-      if (existing && existing.version === CACHE_VERSION && existing.entries) {
-        merged.entries = { ...existing.entries };
-      }
-    }
-  } catch {
-    // Ignore parse errors
-  }
+    const cachePath = getNpxCachePath();
+    const dir = dirname(cachePath);
+    mkdirSync(dir, { recursive: true });
 
-  merged.entries[key] = entry;
-  const tmpPath = `${cachePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
-  renameSync(tmpPath, cachePath);
+    let merged: NpxCache = { version: CACHE_VERSION, entries: {} };
+    try {
+      if (existsSync(cachePath)) {
+        const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as NpxCache;
+        if (existing && existing.version === CACHE_VERSION && existing.entries) {
+          merged.entries = { ...existing.entries };
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+
+    merged.entries[key] = entry;
+    const tmpPath = `${cachePath}.${process.pid}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
+    renameSync(tmpPath, cachePath);
+  } catch {
+    // Cache writes are best effort; resolution must still proceed.
+  }
 }
 
 function safeRealpath(path: string): string {
