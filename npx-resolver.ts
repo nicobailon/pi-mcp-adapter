@@ -434,18 +434,54 @@ function getNpxCachePath(): string {
   return getAgentPath("mcp-npx-cache.json");
 }
 
+function readNpxCachePayload(cachePath: string): unknown | null {
+  if (!existsSync(cachePath)) return null;
+  try {
+    return JSON.parse(readFileSync(cachePath, "utf-8")) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function toNpxCacheEntry(value: unknown): NpxCacheEntry | null {
+  const raw = asRecord(value);
+  if (!raw) return null;
+  if (typeof raw.resolvedBin !== "string") return null;
+  if (typeof raw.resolvedAt !== "number" || !Number.isFinite(raw.resolvedAt)) return null;
+  if (typeof raw.isJs !== "boolean") return null;
+  if (raw.packageVersion !== undefined && typeof raw.packageVersion !== "string") return null;
+  return {
+    resolvedBin: raw.resolvedBin,
+    resolvedAt: raw.resolvedAt,
+    ...(raw.packageVersion !== undefined ? { packageVersion: raw.packageVersion } : {}),
+    isJs: raw.isJs,
+  };
+}
+
+function toNpxCache(value: unknown): NpxCache | null {
+  const raw = asRecord(value);
+  if (!raw || raw.version !== CACHE_VERSION) return null;
+  const rawEntries = asRecord(raw.entries);
+  if (!rawEntries) return null;
+
+  const entries: Record<string, NpxCacheEntry> = {};
+  for (const [key, rawEntry] of Object.entries(rawEntries)) {
+    const entry = toNpxCacheEntry(rawEntry);
+    if (entry) entries[key] = entry;
+  }
+  return { version: CACHE_VERSION, entries };
+}
+
 function clearLegacyCache(): boolean {
   const cachePath = getNpxCachePath();
-  if (!existsSync(cachePath)) return false;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(cachePath, "utf-8"));
-  } catch {
-    return false;
-  }
-
-  if (!parsed || typeof parsed !== "object" || (parsed as Record<string, unknown>).version !== 1) return false;
+  const raw = asRecord(readNpxCachePayload(cachePath));
+  if (raw?.version !== 1) return false;
   try {
     unlinkSync(cachePath);
   } catch {
@@ -463,21 +499,7 @@ clearLegacyCache();
 function loadCache(): NpxCache | null {
   if (clearLegacyCache()) return null;
 
-  const cachePath = getNpxCachePath();
-  if (!existsSync(cachePath)) return null;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(cachePath, "utf-8"));
-  } catch {
-    return null;
-  }
-
-  if (!parsed || typeof parsed !== "object") return null;
-  const raw = parsed as Record<string, unknown>;
-  if (raw.version !== CACHE_VERSION) return null;
-  if (!raw.entries || typeof raw.entries !== "object") return null;
-  return raw as unknown as NpxCache;
+  return toNpxCache(readNpxCachePayload(getNpxCachePath()));
 }
 
 function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
@@ -486,17 +508,11 @@ function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
     const dir = dirname(cachePath);
     mkdirSync(dir, { recursive: true });
 
-    let merged: NpxCache = { version: CACHE_VERSION, entries: {} };
-    try {
-      if (existsSync(cachePath)) {
-        const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as NpxCache;
-        if (existing && existing.version === CACHE_VERSION && existing.entries) {
-          merged.entries = { ...existing.entries };
-        }
-      }
-    } catch {
-      // Ignore parse errors
-    }
+    const existing = toNpxCache(readNpxCachePayload(cachePath));
+    const merged: NpxCache = {
+      version: CACHE_VERSION,
+      entries: existing ? { ...existing.entries } : {},
+    };
 
     merged.entries[key] = entry;
     const tmpPath = `${cachePath}.${process.pid}.tmp`;
