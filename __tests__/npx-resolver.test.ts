@@ -48,6 +48,37 @@ describe("npx-resolver", () => {
     expect(existsSync(join(home, ".pi", "agent", "mcp-npx-cache.json"))).toBe(false);
   });
 
+  it("removes stale version-1 cache files before resolution", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
+    const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
+
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.NPM_CONFIG_CACHE = npmCache;
+
+    writeFileSync(
+      join(agentDir, "mcp-npx-cache.json"),
+      JSON.stringify({
+        version: 1,
+        entries: {
+          [JSON.stringify(["npx", "-y", "demo-pkg", "--token=secret-value"] as const)]: {},
+        },
+      }),
+      "utf-8",
+    );
+    vi.doMock("cross-spawn", () => ({
+      default: vi.fn(() => {
+        throw new Error("npm unavailable");
+      }),
+    }));
+
+    const { resolveNpxBinary } = await import("../npx-resolver.ts");
+    await expect(resolveNpxBinary("npx", ["-y", "missing-pkg"])).resolves.toBeNull();
+
+    expect(existsSync(join(agentDir, "mcp-npx-cache.json"))).toBe(false);
+  });
+
   it("uses cross-spawn to read npm's cache directory", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));

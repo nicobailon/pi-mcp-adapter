@@ -1,5 +1,5 @@
 // npx-resolver.ts - Resolve npx/npm exec binaries to avoid npm parent processes
-import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync, unlinkSync } from "node:fs";
 import { join, dirname, extname, resolve, sep } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { throwIfAborted } from "./abort.ts";
@@ -437,15 +437,23 @@ function getNpxCachePath(): string {
 function loadCache(): NpxCache | null {
   const cachePath = getNpxCachePath();
   if (!existsSync(cachePath)) return null;
+
+  let parsed: unknown;
   try {
-    const raw = JSON.parse(readFileSync(cachePath, "utf-8"));
-    if (!raw || typeof raw !== "object") return null;
-    if (raw.version !== CACHE_VERSION) return null;
-    if (!raw.entries || typeof raw.entries !== "object") return null;
-    return raw as NpxCache;
+    parsed = JSON.parse(readFileSync(cachePath, "utf-8"));
   } catch {
     return null;
   }
+
+  if (!parsed || typeof parsed !== "object") return null;
+  const raw = parsed as Record<string, unknown>;
+  if (raw.version === 1) {
+    unlinkSync(cachePath);
+    return null;
+  }
+  if (raw.version !== CACHE_VERSION) return null;
+  if (!raw.entries || typeof raw.entries !== "object") return null;
+  return raw as unknown as NpxCache;
 }
 
 function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
