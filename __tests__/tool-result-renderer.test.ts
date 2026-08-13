@@ -2,6 +2,7 @@ import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/p
 import { describe, expect, it } from "vitest";
 import {
   createMcpDirectToolCallRenderer,
+  resolveMcpToolRenderOptions,
   formatMcpDirectToolCallLines,
   formatMcpProxyToolCallLines,
   formatMcpToolResultIdentity,
@@ -142,7 +143,7 @@ describe("MCP tool result renderer", () => {
     expect(formatMcpToolResultIdentity({ mode: "list", server: "figma", tool: "get_nodes" })).toBeNull();
   });
 
-  it("collapses a single line that wraps beyond the compact viewport height", () => {
+  it("renders collapsed results as a compact single line by default", () => {
     const output = renderMcpToolResult(
       result([{
         type: "text",
@@ -154,8 +155,8 @@ describe("MCP tool result renderer", () => {
     ).render(20).join("\n");
 
     expect(output).toContain("segment-1");
+    expect(output).toContain("Ctrl+O");
     expect(output).toContain("…");
-    expect(output).toContain("Ctrl+O to expand");
     expect(output).not.toContain("segment-8");
   });
 
@@ -187,12 +188,13 @@ describe("MCP tool result renderer", () => {
     expect(second.join("\n")).toContain("Ctrl+O to expand");
   });
 
-  it("shows proxy call result identity without hiding the third content line", () => {
+  it("keeps legacy boxed rendering available", () => {
     const output = renderMcpToolResult(
       result([{ type: "text", text: "one\ntwo\nthree\nfour" }], { mode: "call", server: "figma", tool: "get_nodes" }),
       collapsedOptions,
       plainTheme,
       { isError: false },
+      { resultRendering: "boxed", collapsedResultLines: 3 },
     ).render(80).join("\n");
 
     expect(output).toContain("MCP figma/get_nodes");
@@ -201,6 +203,38 @@ describe("MCP tool result renderer", () => {
     expect(output).toContain("three");
     expect(output).not.toContain("four");
     expect(output).toContain("Ctrl+O to expand");
+  });
+
+  it("combines the compact final result with the call title", () => {
+    const state: { compactTitle?: string } = {};
+    const call = createMcpDirectToolCallRenderer("demo_search")(
+      {},
+      plainTheme,
+      { isError: false, isPartial: false, expanded: false, state },
+    );
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "ok\nextra" }]),
+      collapsedOptions,
+      plainTheme,
+      { isError: false, state },
+    ).render(80).join("\n");
+
+    expect(call.render(80)).toEqual([]);
+    expect(output).toContain("demo_search → ok");
+    expect(output).toContain("Ctrl+O to expand");
+    expect(output).not.toContain("extra");
+  });
+
+  it("resolves compact and boxed rendering settings", () => {
+    expect(resolveMcpToolRenderOptions()).toEqual({ resultRendering: "compact", collapsedResultLines: 1 });
+    expect(resolveMcpToolRenderOptions({ toolResultRendering: "boxed" })).toEqual({
+      resultRendering: "boxed",
+      collapsedResultLines: 3,
+    });
+    expect(resolveMcpToolRenderOptions({ collapsedResultLines: 2 })).toEqual({
+      resultRendering: "compact",
+      collapsedResultLines: 2,
+    });
   });
 
   it("shows the full wrapped single line when expanded", () => {

@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { type Component, Text } from "@earendil-works/pi-tui";
+import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -23,8 +23,27 @@ export interface McpProxyToolCallInput {
   action?: string;
 }
 
+interface McpToolRenderState {
+  compactTitle?: string;
+}
+
 interface McpToolRenderContext {
   isError: boolean;
+  isPartial?: boolean;
+  expanded?: boolean;
+  state?: McpToolRenderState;
+}
+
+export type McpToolResultRendering = "compact" | "boxed";
+
+export interface McpToolRenderOptions {
+  resultRendering: McpToolResultRendering;
+  collapsedResultLines: 1 | 2 | 3;
+}
+
+export interface McpToolRenderSettings {
+  toolResultRendering?: unknown;
+  collapsedResultLines?: unknown;
 }
 
 export interface McpToolResultDisplay {
@@ -33,9 +52,61 @@ export interface McpToolResultDisplay {
 }
 
 const DEFAULT_MAX_CALL_INPUT_CHARS = 1500;
-const DEFAULT_MAX_COLLAPSED_LINES = 3;
+const DEFAULT_BOXED_COLLAPSED_LINES = 3;
+const DEFAULT_COMPACT_COLLAPSED_LINES = 1;
 const DEFAULT_MAX_COLLAPSED_CHARS = 8000;
 const COLLAPSED_RENDER_CHAR_SLACK = 8;
+
+class EmptyComponent implements Component {
+  render(): string[] {
+    return [];
+  }
+
+  invalidate(): void {}
+}
+
+class CompactMcpToolResult implements Component {
+  private rendered: { width: number; lines: string[] } | null = null;
+
+  constructor(
+    private readonly title: string,
+    private readonly display: McpToolResultDisplay,
+    private readonly theme: RenderTheme,
+  ) {}
+
+  render(width: number): string[] {
+    const safeWidth = Math.max(1, Math.floor(width));
+    if (this.rendered?.width === safeWidth) return this.rendered.lines;
+
+    const resultLines = this.display.lines.filter((line, index, lines) => {
+      return !(this.display.truncated && index === lines.length - 1 && line === "…");
+    });
+    const lines = resultLines.length > 0 ? resultLines : [""];
+    const bodies = lines.map((line, index) => {
+      const prefix = index === 0 && this.title ? `${this.theme.fg("toolTitle", this.title)} → ` : "";
+      return `${prefix}${this.theme.fg("toolOutput", line)}`;
+    });
+    const hiddenText = this.display.truncated || bodies.some((body) => visibleWidth(body) > safeWidth);
+    const rendered = bodies.map((body, index) => {
+      const suffix = hiddenText && index === bodies.length - 1 ? " … (Ctrl+O to expand)" : "";
+      if (!suffix) return truncateToWidth(body, safeWidth, "…");
+      if (safeWidth >= suffix.length + 20) {
+        return `${truncateToWidth(body, safeWidth - suffix.length, "…")}${this.theme.fg("muted", suffix)}`;
+      }
+      const shortSuffix = " (Ctrl+O)";
+      if (safeWidth >= shortSuffix.length + 5) {
+        return `${truncateToWidth(body, safeWidth - shortSuffix.length, "…")}${this.theme.fg("muted", shortSuffix)}`;
+      }
+      return truncateToWidth(this.theme.fg("muted", shortSuffix.trim()), safeWidth, "…");
+    });
+    this.rendered = { width: safeWidth, lines: rendered };
+    return rendered;
+  }
+
+  invalidate(): void {
+    this.rendered = null;
+  }
+}
 
 class CollapsibleText implements Component {
   private readonly fullText: Text;
@@ -168,13 +239,52 @@ function renderToolCallLines(lines: string[], theme?: RenderTheme) {
   return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
 }
 
-export function renderMcpProxyToolCall(args: McpProxyToolCallInput, theme?: RenderTheme) {
-  return renderToolCallLines(formatMcpProxyToolCallLines(args), theme);
+export function resolveMcpToolRenderOptions(settings?: McpToolRenderSettings): McpToolRenderOptions {
+  const resultRendering = settings?.toolResultRendering === "boxed" ? "boxed" : "compact";
+  const collapsedLines = settings?.collapsedResultLines;
+  const defaultLines = resultRendering === "boxed" ? DEFAULT_BOXED_COLLAPSED_LINES : DEFAULT_COMPACT_COLLAPSED_LINES;
+  return {
+    resultRendering,
+    collapsedResultLines: collapsedLines === 1 || collapsedLines === 2 || collapsedLines === 3 ? collapsedLines : defaultLines,
+  };
 }
 
-export function createMcpDirectToolCallRenderer(displayName: string) {
-  return (args: Record<string, unknown>, theme?: RenderTheme) => {
-    return renderToolCallLines(formatMcpDirectToolCallLines(displayName, args), theme);
+function shouldUseCompactFinalRender(options: McpToolRenderOptions, context?: McpToolRenderContext): boolean {
+  return options.resultRendering === "compact"
+    && context !== undefined
+    && context.isPartial === false
+    && context.expanded !== true
+    && context.isError !== true;
+}
+
+function renderToolCall(
+  lines: string[],
+  theme: RenderTheme | undefined,
+  context: McpToolRenderContext | undefined,
+  options: McpToolRenderOptions,
+) {
+  if (context?.state) context.state.compactTitle = lines[0] ?? "mcp";
+  if (shouldUseCompactFinalRender(options, context)) return new EmptyComponent();
+  return renderToolCallLines(lines, theme);
+}
+
+export function renderMcpProxyToolCall(
+  args: McpProxyToolCallInput,
+  theme?: RenderTheme,
+  context?: McpToolRenderContext,
+) {
+  return renderToolCall(formatMcpProxyToolCallLines(args), theme, context, resolveMcpToolRenderOptions());
+}
+
+export function createMcpProxyToolCallRenderer(options: McpToolRenderOptions) {
+  return (args: McpProxyToolCallInput, theme?: RenderTheme, context?: McpToolRenderContext) => {
+    return renderToolCall(formatMcpProxyToolCallLines(args), theme, context, options);
+  };
+}
+
+export function createMcpDirectToolCallRenderer(displayName: string, options = resolveMcpToolRenderOptions()) {
+  return (args: Record<string, unknown>, theme?: RenderTheme, context?: McpToolRenderContext) => {
+    return renderToolCall(formatMcpDirectToolCallLines(displayName, args), theme, context, options);
   };
 }
 
@@ -254,7 +364,7 @@ export function formatMcpToolResultIdentity(details: McpToolResultDetails | unde
 export function formatMcpToolResultLines(
   result: Pick<AgentToolResult<McpToolResultDetails>, "content">,
   expanded: boolean,
-  maxCollapsedLines = 3,
+  maxCollapsedLines = DEFAULT_BOXED_COLLAPSED_LINES,
   maxCollapsedChars = DEFAULT_MAX_COLLAPSED_CHARS,
 ): McpToolResultDisplay {
   if (!expanded) {
@@ -271,6 +381,7 @@ export function renderMcpToolResult(
   options: ToolRenderResultOptions,
   theme?: RenderTheme,
   context?: McpToolRenderContext,
+  renderOptions = resolveMcpToolRenderOptions(),
 ) {
   const activeTheme = theme ?? plainTheme;
   if (options.isPartial) {
@@ -279,7 +390,13 @@ export function renderMcpToolResult(
 
   const hasErrorDetails = Boolean(result.details.error);
   const expanded = options.expanded || context?.isError === true || hasErrorDetails;
-  const display = formatMcpToolResultLines(result, expanded);
+  if (!expanded && renderOptions.resultRendering === "compact") {
+    const display = formatMcpToolResultLines(result, false, renderOptions.collapsedResultLines);
+    const title = context?.state?.compactTitle ?? formatMcpToolResultIdentity(result.details) ?? "";
+    return new CompactMcpToolResult(title, display, activeTheme);
+  }
+
+  const display = formatMcpToolResultLines(result, expanded, renderOptions.collapsedResultLines);
   const identity = formatMcpToolResultIdentity(result.details);
   const output = [
     ...(identity ? [activeTheme.fg("muted", identity)] : []),
@@ -289,9 +406,18 @@ export function renderMcpToolResult(
   return new CollapsibleText(
     output,
     expanded,
-    DEFAULT_MAX_COLLAPSED_LINES + (identity ? 1 : 0),
+    renderOptions.collapsedResultLines + (identity ? 1 : 0),
     activeTheme.fg("muted", "…"),
     activeTheme.fg("muted", "(Ctrl+O to expand)"),
     display.truncated,
   );
+}
+
+export function createMcpToolResultRenderer(renderOptions: McpToolRenderOptions) {
+  return (
+    result: AgentToolResult<McpToolResultDetails>,
+    options: ToolRenderResultOptions,
+    theme?: RenderTheme,
+    context?: McpToolRenderContext,
+  ) => renderMcpToolResult(result, options, theme, context, renderOptions);
 }

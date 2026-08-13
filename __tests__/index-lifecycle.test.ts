@@ -224,6 +224,51 @@ describe("mcpAdapter session lifecycle", () => {
     }));
   });
 
+  it("uses compact self-rendered rows for proxy and direct tools by default", async () => {
+    mocks.loadMcpConfig.mockReturnValue({
+      mcpServers: {
+        demo: { command: "npx", args: ["-y", "demo-server"], directTools: true },
+      },
+    });
+    mocks.resolveDirectTools.mockReturnValue([
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search demo",
+      },
+    ]);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    mcpAdapter(api);
+
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
+      name: "demo_search",
+      renderShell: "self",
+    }));
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
+      name: "mcp",
+      renderShell: "self",
+    }));
+  });
+
+  it("keeps legacy boxed rows when configured", async () => {
+    mocks.loadMcpConfig.mockReturnValue({
+      settings: { toolResultRendering: "boxed" },
+      mcpServers: {},
+    });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    mcpAdapter(api);
+
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
+      name: "mcp",
+      renderShell: "default",
+    }));
+  });
+
   it("does not leak TypeBox internal markers into registered tool parameter schemas", async () => {
     const { default: mcpAdapter } = await import("../index.ts");
     const { api } = createPi();

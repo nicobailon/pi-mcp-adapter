@@ -491,6 +491,10 @@ export interface McpSettings {
   directTools?: boolean;
   /** Register the trusted MCP-only JavaScript scripting tool. Defaults to true; set false to hide it. */
   scriptMode?: boolean;
+  /** Render MCP tool results as compact self-rendered rows by default, or as the legacy boxed row. */
+  toolResultRendering?: "compact" | "boxed";
+  /** Number of result text lines to show before expansion. Supports 1, 2, or 3. Defaults to 1 in compact mode and 3 in boxed mode. */
+  collapsedResultLines?: 1 | 2 | 3;
   /** Default approval gate for matching tools/resources; per-server settings override it. */
   approveTools?: boolean | string[];
   disableProxyTool?: boolean;

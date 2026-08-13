@@ -14,7 +14,7 @@ import { logger } from "./logger.ts";
 import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeInstructions, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
 import { formatTerminalError, getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
 import { createOAuthRuntime, shutdownOAuth } from "./mcp-auth-flow.ts";
-import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
+import { createMcpDirectToolCallRenderer, createMcpProxyToolCallRenderer, createMcpToolResultRenderer, resolveMcpToolRenderOptions } from "./tool-result-renderer.ts";
 import { toolErrorOverride } from "./error-signal.ts";
 import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
@@ -124,6 +124,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const envDirectToolOverride = envRaw?.split(",").map(s => s.trim()).filter(Boolean);
   const registeredDirectTools = new Map<string, string>();
   const fallbackDeactivatedTools = new Set<string>();
+  const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
+  const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
+  const renderMcpToolResult = createMcpToolResultRenderer(toolRenderOptions);
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
   let directToolsFrozen = false;
@@ -158,7 +161,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: toToolParameters(normalizeDirectToolInputSchema(spec.inputSchema)),
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
-      renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
+      renderShell: toolRenderShell,
+      renderCall: createMcpDirectToolCallRenderer(spec.prefixedName, toolRenderOptions),
       renderResult: renderMcpToolResult,
     });
   }
@@ -695,7 +699,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       label: "MCP",
       description,
       promptSnippet: "MCP gateway — status, search, describe, auth, and single MCP tool calls",
-      renderCall: renderMcpProxyToolCall,
+      renderShell: toolRenderShell,
+      renderCall: createMcpProxyToolCallRenderer(toolRenderOptions),
       parameters: Type.Object({
         tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
         args: Type.Optional(Type.Union([
