@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `settings.notifyOnStartupConnect` to suppress successful MCP startup connection notices. Thanks @pierre-mgmt for issue #341.
+
 ### Fixed
 - Kept `mcpScript` tool-call replies flowing when Pi runs as a Bun-compiled binary by starting worker execution without module-level top-level await. Thanks @AndreiKopylov for issue #340 and @thesobercoder for the verified fix.
 

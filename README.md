@@ -307,6 +307,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
     "requestTimeoutMs": 30000,
     "showStatusIcon": true,
     "mcpFooterStatus": "full",
+    "notifyOnStartupConnect": true,
     "hostConfigDiscovery": "off",
     "approveTools": ["github_delete_*", "notion_update_*"],
     "oauthDir": ".pi/mcp-oauth",
@@ -328,6 +329,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
 | `showStatusIcon` | Show the plug icon in MCP status and connection text (default: `true`). Set to `false` for plain `MCP: ...` text. |
 | `mcpFooterStatus` | MCP footer verbosity: `"full"` (default), `"compact"` for `MCP connected/enabled`, or `"off"` to clear the persistent footer status. `/mcp status` remains available. |
+| `notifyOnStartupConnect` | Show successful startup connection notices (default: `true`). Set to `false` to suppress routine `MCP: N servers connected (M tools)` notices. Connection errors and authentication warnings remain visible. |
 | `hostConfigDiscovery` | Host-specific config policy: `"off"` (default), `"prompt"` (detect/report only), or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
 | `agentPluginPaths` | Agent Plugins package directories to load MCP servers from. Relative paths resolve from the active project cwd. |
 | `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |

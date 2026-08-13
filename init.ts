@@ -327,7 +327,7 @@ export async function initializeMcp(
 
   const connectedCount = results.filter(r => r.connection).length;
   const failedCount = results.filter(r => r.error).length;
-  if (ui && connectedCount > 0) {
+  if (ui && connectedCount > 0 && config.settings?.notifyOnStartupConnect !== false) {
     const totalTools = totalToolCount(state);
     const msg = failedCount > 0
       ? `MCP: ${connectedCount}/${startupServers.length} servers connected (${totalTools} tools)`

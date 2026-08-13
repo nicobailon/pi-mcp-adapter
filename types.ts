@@ -480,6 +480,8 @@ export interface McpSettings {
   showStatusIcon?: boolean;
   /** Footer status verbosity: full details, compact connected/enabled count, or no footer status. Defaults to full. */
   mcpFooterStatus?: McpFooterStatus;
+  /** Show successful startup connection notifications. Defaults to true. */
+  notifyOnStartupConnect?: boolean;
   /** Discover detected host-specific MCP configs only when explicitly enabled. */
   hostConfigDiscovery?: HostConfigDiscovery;
   /** Agent Plugin package directories to load MCP servers from. */

@@ -222,6 +222,70 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     expect(ui.setStatus).toHaveBeenCalledWith("mcp", "MCP: connecting to 1 servers...");
   });
 
+  it("suppresses successful startup notices when configured", async () => {
+    mkdirSync(tempDir, { recursive: true });
+    writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
+    mocks.config = {
+      settings: { notifyOnStartupConnect: false },
+      mcpServers: { srv: { command: "demo", lifecycle: "eager" } },
+    };
+    const { initializeMcp } = await import("../init.ts");
+    const ui = { setStatus: vi.fn(), notify: vi.fn() };
+
+    await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
+      cwd: tempDir,
+      hasUI: true,
+      mode: "tui",
+      ui,
+    } as any);
+
+    expect(ui.notify).not.toHaveBeenCalledWith("MCP: 1 servers connected (0 tools)", "info");
+  });
+
+  it("keeps startup notices enabled independently of the footer setting by default", async () => {
+    mkdirSync(tempDir, { recursive: true });
+    writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
+    mocks.config = {
+      settings: { mcpFooterStatus: "off" },
+      mcpServers: { srv: { command: "demo", lifecycle: "eager" } },
+    };
+    const { initializeMcp } = await import("../init.ts");
+    const ui = { setStatus: vi.fn(), notify: vi.fn() };
+
+    await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
+      cwd: tempDir,
+      hasUI: true,
+      mode: "tui",
+      ui,
+    } as any);
+
+    expect(ui.notify).toHaveBeenCalledWith("MCP: 1 servers connected (0 tools)", "info");
+    expect(ui.setStatus).toHaveBeenCalledWith("mcp", undefined);
+  });
+
+  it("keeps startup connection failures visible when success notices are suppressed", async () => {
+    mkdirSync(tempDir, { recursive: true });
+    writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
+    mocks.config = {
+      settings: { notifyOnStartupConnect: false },
+      mcpServers: { srv: { command: "demo", lifecycle: "eager" } },
+    };
+    mocks.manager.connect.mockRejectedValueOnce(new Error("startup failed"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { initializeMcp } = await import("../init.ts");
+    const ui = { setStatus: vi.fn(), notify: vi.fn() };
+
+    await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
+      cwd: tempDir,
+      hasUI: true,
+      mode: "tui",
+      ui,
+    } as any);
+
+    expect(ui.notify).toHaveBeenCalledWith("MCP: Failed to connect to srv: startup failed", "error");
+    expect(consoleError).toHaveBeenCalledWith("MCP: Failed to connect to srv: startup failed");
+  });
+
   it("does not record or notify an aborted eager startup", async () => {
     mkdirSync(tempDir, { recursive: true });
     writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
