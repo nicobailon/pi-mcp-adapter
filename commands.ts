@@ -12,7 +12,6 @@ import {
   previewSharedServerEntry,
   previewStarterProjectConfig,
   writeDirectToolsConfig,
-  writeProjectServerDisabledOverride,
   writeSharedServerEntry,
   writeStarterProjectConfig,
 } from "./config.ts";

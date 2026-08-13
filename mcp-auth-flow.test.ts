@@ -16,7 +16,6 @@ process.env.MCP_OAUTH_DIR = TEST_DIR
 import {
   authenticate,
   startAuth,
-  completeAuth,
   getAuthStatus,
   getValidToken,
   removeAuth,
@@ -25,7 +24,6 @@ import {
   initializeOAuth,
   shutdownOAuth,
   waitForAuthorizationResponse,
-  type AuthStatus,
 } from "./mcp-auth-flow.ts"
 import { isCallbackServerRunning } from "./mcp-callback-server.ts"
 import { updateTokens, updateClientInfo, getAuthForUrl, clearAllCredentials } from "./mcp-auth.ts"

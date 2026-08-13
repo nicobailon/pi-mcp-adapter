@@ -415,7 +415,6 @@ describe("McpOAuthProvider", () => {
 
     it("should calculate expires_in from stored expiresAt", async () => {
       const provider = createProvider()
-      const futureTime = Math.floor(Date.now() / 1000) + 3600
 
       await provider.saveTokens({
         access_token: "access",

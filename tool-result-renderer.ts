@@ -118,8 +118,8 @@ class CollapsibleText implements Component {
     private readonly text: string,
     private readonly expanded: boolean,
     private readonly maxCollapsedLines: number,
-    private readonly ellipsis: string,
-    private readonly expandHint: string,
+    ellipsis: string,
+    expandHint: string,
     private readonly preTruncated = false,
   ) {
     this.fullText = new Text(text, 0, 0);

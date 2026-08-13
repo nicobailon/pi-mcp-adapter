@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `settings.notifyOnStartupConnect` to suppress successful MCP startup connection notices. Thanks @pierre-mgmt for issue #341.
 - Added compact self-rendered MCP proxy and direct-tool result rows by default, with `settings.toolResultRendering: "boxed"` for the legacy boxed row and `settings.collapsedResultLines` for 1-3 collapsed result lines. Thanks @pierre-mgmt for issue #349.
 
+### Changed
+- Removed unused TypeScript declarations found by stricter compiler checks.
+
 ### Fixed
 - Kept `mcpScript` tool-call replies flowing when Pi runs as a Bun-compiled binary by starting worker execution without module-level top-level await. Thanks @AndreiKopylov for issue #340 and @thesobercoder for the verified fix.
 - Fixed direct-tool server prefixes to preserve provider-valid underscores and hyphens, including `codebase-memory-mcp`, while retaining safe escaping, collision handling, and exact proxy routing. Thanks @mightymatth for issue #342 and @JasonLandbridge for issue #343.

@@ -19,7 +19,6 @@ export class McpLifecycleManager {
   private activeHealthCheck: Promise<void> | undefined;
   private shutdownPromise: Promise<void> | undefined;
   private stopped = false;
-  private healthSignal: AbortSignal | undefined;
   private removeHealthAbortListener: (() => void) | undefined;
 
   constructor(
@@ -58,10 +57,8 @@ export class McpLifecycleManager {
     const signal = typeof signalOrInterval === "number" ? undefined : signalOrInterval;
     const intervalMs = typeof signalOrInterval === "number" ? signalOrInterval : maybeIntervalMs;
     this.stopped = false;
-    this.healthSignal = signal;
     if (signal?.aborted) {
       this.stopped = true;
-      this.healthSignal = undefined;
       return;
     }
     const stop = () => {
@@ -138,7 +135,6 @@ export class McpLifecycleManager {
     this.healthCheckInterval = undefined;
     this.removeHealthAbortListener?.();
     this.removeHealthAbortListener = undefined;
-    this.healthSignal = undefined;
     await this.activeHealthCheck;
     this.activeHealthCheck = undefined;
     this.onReconnect = undefined;

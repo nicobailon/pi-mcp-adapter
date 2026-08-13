@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import type { McpConfig, ServerEntry } from "./types.ts";
