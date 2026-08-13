@@ -170,6 +170,34 @@ describe("npx-resolver", () => {
     expect(readFileSync(cachePath, "utf-8")).not.toContain("\"resolvedBin\": 123");
   });
 
+  it("ignores persisted prototype keys during cache lookup", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
+    const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
+
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.NPM_CONFIG_CACHE = npmCache;
+
+    const poisonedBin = writeCachedPackage(npmCache, "poison-pkg");
+    const demoBin = writeCachedPackage(npmCache, "demo-pkg");
+    writeFileSync(join(agentDir, "mcp-npx-cache.json"), `{
+      "version": 2,
+      "entries": {
+        "__proto__": {
+          "resolvedBin": ${JSON.stringify(poisonedBin)},
+          "resolvedAt": ${Date.now()},
+          "isJs": true
+        }
+      }
+    }`, "utf-8");
+
+    const { resolveNpxBinary } = await import("../npx-resolver.ts");
+    const result = await resolveNpxBinary("npx", ["-y", "demo-pkg"]);
+
+    expect(result?.binPath).toBe(demoBin);
+  });
+
   it("uses cross-spawn to read npm's cache directory", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));

@@ -449,6 +449,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function createCacheEntries(): Record<string, NpxCacheEntry> {
+  return Object.create(null) as Record<string, NpxCacheEntry>;
+}
+
 function toNpxCacheEntry(value: unknown): NpxCacheEntry | null {
   const raw = asRecord(value);
   if (!raw) return null;
@@ -470,7 +474,7 @@ function toNpxCache(value: unknown): NpxCache | null {
   const rawEntries = asRecord(raw.entries);
   if (!rawEntries) return null;
 
-  const entries: Record<string, NpxCacheEntry> = {};
+  const entries = createCacheEntries();
   for (const [key, rawEntry] of Object.entries(rawEntries)) {
     const entry = toNpxCacheEntry(rawEntry);
     if (entry) entries[key] = entry;
@@ -509,10 +513,9 @@ function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
     mkdirSync(dir, { recursive: true });
 
     const existing = toNpxCache(readNpxCachePayload(cachePath));
-    const merged: NpxCache = {
-      version: CACHE_VERSION,
-      entries: existing ? { ...existing.entries } : {},
-    };
+    const entries = createCacheEntries();
+    if (existing) Object.assign(entries, existing.entries);
+    const merged: NpxCache = { version: CACHE_VERSION, entries };
 
     merged.entries[key] = entry;
     const tmpPath = `${cachePath}.${process.pid}.tmp`;
