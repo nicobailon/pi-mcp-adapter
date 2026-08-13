@@ -434,7 +434,35 @@ function getNpxCachePath(): string {
   return getAgentPath("mcp-npx-cache.json");
 }
 
+function clearLegacyCache(): boolean {
+  const cachePath = getNpxCachePath();
+  if (!existsSync(cachePath)) return false;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(cachePath, "utf-8"));
+  } catch {
+    return false;
+  }
+
+  if (!parsed || typeof parsed !== "object" || (parsed as Record<string, unknown>).version !== 1) return false;
+  try {
+    unlinkSync(cachePath);
+  } catch {
+    try {
+      writeFileSync(cachePath, "", "utf-8");
+    } catch {
+      // Cache cleanup is best effort; resolution must still proceed.
+    }
+  }
+  return true;
+}
+
+clearLegacyCache();
+
 function loadCache(): NpxCache | null {
+  if (clearLegacyCache()) return null;
+
   const cachePath = getNpxCachePath();
   if (!existsSync(cachePath)) return null;
 
@@ -447,18 +475,6 @@ function loadCache(): NpxCache | null {
 
   if (!parsed || typeof parsed !== "object") return null;
   const raw = parsed as Record<string, unknown>;
-  if (raw.version === 1) {
-    try {
-      unlinkSync(cachePath);
-    } catch {
-      try {
-        writeFileSync(cachePath, "", "utf-8");
-      } catch {
-        // Cache cleanup is best effort; resolution must still proceed.
-      }
-    }
-    return null;
-  }
   if (raw.version !== CACHE_VERSION) return null;
   if (!raw.entries || typeof raw.entries !== "object") return null;
   return raw as unknown as NpxCache;

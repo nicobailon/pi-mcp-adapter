@@ -49,7 +49,7 @@ describe("npx-resolver", () => {
     expect(existsSync(join(home, ".pi", "agent", "mcp-npx-cache.json"))).toBe(false);
   });
 
-  it("removes stale version-1 cache files before resolution", async () => {
+  it("removes stale version-1 cache files on module import", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
     const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
@@ -68,14 +68,7 @@ describe("npx-resolver", () => {
       }),
       "utf-8",
     );
-    vi.doMock("cross-spawn", () => ({
-      default: vi.fn(() => {
-        throw new Error("npm unavailable");
-      }),
-    }));
-
-    const { resolveNpxBinary } = await import("../npx-resolver.ts");
-    await expect(resolveNpxBinary("npx", ["-y", "missing-pkg"])).resolves.toBeNull();
+    await import("../npx-resolver.ts");
 
     expect(existsSync(join(agentDir, "mcp-npx-cache.json"))).toBe(false);
   });
@@ -139,13 +132,13 @@ describe("npx-resolver", () => {
     });
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
+    expect(readFileSync(cachePath, "utf-8")).not.toContain("secret-value");
+
     await expect(resolveNpxBinary("npx", ["-y", "demo-pkg", "--runtime=value"])).resolves.toEqual({
       binPath,
       extraArgs: ["--runtime=value"],
       isJs: true,
     });
-
-    expect(readFileSync(cachePath, "utf-8")).not.toContain("secret-value");
   });
 
   it("uses cross-spawn to read npm's cache directory", async () => {
