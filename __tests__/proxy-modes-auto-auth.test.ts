@@ -140,6 +140,79 @@ describe("proxy auto auth", () => {
     expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({ originalName: "fresh" });
   });
 
+  it("keeps a same-server tool when another current sibling matches the selector", async () => {
+    const { executeConnect } = await import("../proxy-modes.ts");
+    const connection = {
+      status: "connected",
+      tools: [
+        { name: "search-records", description: "Hyphen" },
+        { name: "search_records", description: "Underscore" },
+      ],
+      resources: [],
+      prompts: [],
+    };
+    const state = {
+      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo", excludeTools: ["search_records"] } } },
+      manager: { getConnection: vi.fn(() => undefined), connect: vi.fn(async () => connection) },
+      toolMetadata: new Map(),
+      serverInstructions: new Map(),
+      failureTracker: new Map(),
+      ui: undefined,
+    } as any;
+
+    await expect(executeConnect(state, "demo")).resolves.toMatchObject({ details: { mode: "list", server: "demo", count: 1 } });
+    expect(state.toolMetadata.get("demo")?.map((tool: any) => tool.name)).toEqual(["demo_search-records"]);
+  });
+
+  it("ignores stale same-server metadata during executeConnect", async () => {
+    const { executeConnect } = await import("../proxy-modes.ts");
+    const definition = { command: "demo", excludeTools: ["demo_search_records"] };
+    const state = {
+      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: definition } },
+      manager: {
+        getConnection: vi.fn(() => undefined),
+        connect: vi.fn(async () => ({ status: "connected", tools: [{ name: "search-records", description: "New" }], resources: [], prompts: [] })),
+      },
+      toolMetadata: new Map([["demo", [{ name: "demo_search_records", originalName: "search_records", description: "Old" }]]]),
+      serverInstructions: new Map(),
+      failureTracker: new Map(),
+      ui: undefined,
+    } as any;
+
+    await expect(executeConnect(state, "demo")).resolves.toMatchObject({ details: { mode: "list", server: "demo", count: 0 } });
+    expect(state.toolMetadata.get("demo")).toEqual([]);
+  });
+
+  it("uses known metadata during executeConnect filtering", async () => {
+    const { executeConnect } = await import("../proxy-modes.ts");
+    const connection = {
+      status: "connected",
+      tools: [{ name: "search-records", description: "Search" }],
+      resources: [],
+      prompts: [],
+    };
+    const state = {
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: {
+          "my-server": { command: "hyphen", excludeTools: ["search_records"] },
+          my_2d_server: { command: "escaped" },
+        },
+      },
+      manager: {
+        getConnection: vi.fn(() => undefined),
+        connect: vi.fn(async () => connection),
+      },
+      toolMetadata: new Map([["my_2d_server", [{ name: "my_2d_server_search_records", originalName: "search_records", description: "Other" }]]]),
+      serverInstructions: new Map(),
+      failureTracker: new Map(),
+      ui: undefined,
+    } as any;
+
+    await expect(executeConnect(state, "my-server")).resolves.toMatchObject({ details: { mode: "list", server: "my-server", count: 1 } });
+    expect(state.toolMetadata.get("my-server")?.map((tool: any) => tool.name)).toEqual(["my-server_search-records"]);
+  });
+
   it("auto-authenticates and retries executeConnect once", async () => {
     const { executeConnect } = await import("../proxy-modes.ts");
 
@@ -479,6 +552,98 @@ describe("proxy auto auth", () => {
     const result = await inFlight;
 
     expect(result.details).toMatchObject({ error: "aborted", message: "owner stopped" });
+  });
+
+  it("fails closed when lazy metadata has duplicate exact tool names", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+    const firstCall = vi.fn();
+    const secondCall = vi.fn();
+    mocks.lazyConnect.mockImplementation(async (state: any, serverName: string) => {
+      state.toolMetadata.set(serverName, [{ name: "my_20_server_get", originalName: "get", description: serverName }]);
+      return true;
+    });
+    const state = {
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: { "my server": { command: "first" }, my_20_server: { command: "second" } },
+      },
+      toolMetadata: new Map(),
+      manager: {
+        getConnection: (serverName: string) => ({ status: "connected", client: serverName === "my server" ? { callTool: firstCall } : { callTool: secondCall } }),
+        getRequestOptions: () => undefined,
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+
+    await expect(executeCall(state, "my_20_server_get", {})).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
+    expect(mocks.lazyConnect).toHaveBeenCalledTimes(2);
+    expect(firstCall).not.toHaveBeenCalled();
+    expect(secondCall).not.toHaveBeenCalled();
+  });
+
+  it("prefers a lazy exact match over a normalized fallback", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+    const exactCall = vi.fn(async () => ({ content: [{ type: "text", text: "exact" }] }));
+    const fallbackCall = vi.fn();
+    mocks.lazyConnect.mockImplementation(async (state: any, serverName: string) => {
+      state.toolMetadata.set(serverName, [serverName === "foo"
+        ? { name: "foo_ge_t", originalName: "ge_t", description: "Exact" }
+        : { name: "foo_ge-t", originalName: "ge-t", description: "Fallback" },
+      ]);
+      return true;
+    });
+    const state = {
+      config: {
+        settings: { toolPrefix: "short" },
+        mcpServers: { foo: { command: "exact" }, "foo-mcp": { command: "fallback" } },
+      },
+      toolMetadata: new Map(),
+      manager: {
+        getConnection: (serverName: string) => ({ status: "connected", client: serverName === "foo" ? { callTool: exactCall } : { callTool: fallbackCall } }),
+        getRequestOptions: () => undefined,
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+
+    await expect(executeCall(state, "foo_ge_t", {})).resolves.toMatchObject({ details: { server: "foo", tool: "ge_t" } });
+    expect(exactCall).toHaveBeenCalledOnce();
+    expect(fallbackCall).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when lazy metadata has duplicate normalized tool names", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+    const callTool = vi.fn();
+    mocks.lazyConnect.mockImplementation(async (state: any, serverName: string) => {
+      state.toolMetadata.set(serverName, [
+        { name: "demo_a-b_c", originalName: "a-b_c", description: "First" },
+        { name: "demo_a_b-c", originalName: "a_b-c", description: "Second" },
+      ]);
+      return true;
+    });
+    const state = {
+      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
+      toolMetadata: new Map(),
+      manager: {
+        getConnection: () => ({ status: "connected", client: { callTool } }),
+        getRequestOptions: () => undefined,
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+
+    await expect(executeCall(state, "demo_a_b_c", {})).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
+    expect(callTool).not.toHaveBeenCalled();
   });
 
   it("shares one cold connect across concurrent proxy calls and applies timeout during bootstrap", async () => {

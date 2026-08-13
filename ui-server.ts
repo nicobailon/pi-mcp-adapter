@@ -18,6 +18,7 @@ import type { McpExtensionState } from "./state.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { extractUiToolVisibility, isUiToolCallableByApp, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
+import { resourceNameToToolName } from "./resource-tools.ts";
 import {
   createUiModelContextUpdate,
   extractUiPromptText,
@@ -451,6 +452,23 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           ...(toolDefinition?.inputSchema !== undefined ? { inputSchema: toolDefinition.inputSchema } : {}),
           ...(uiVisibility !== undefined ? { uiVisibility } : {}),
         };
+        const approvalMetadata = new Map(options.state?.toolMetadata);
+        const definition = options.config?.mcpServers[options.serverName] ?? options.state?.config.mcpServers[options.serverName];
+        approvalMetadata.set(options.serverName, [
+          ...connection.tools.map(tool => ({
+            name: tool.name,
+            originalName: tool.name,
+            description: tool.description ?? "",
+          })),
+          ...(definition?.exposeResources !== false ? (connection.resources ?? []).map(resource => {
+            const originalName = `read_${resourceNameToToolName(resource.name)}`;
+            return {
+              name: originalName,
+              originalName,
+              description: resource.description ?? `Read resource: ${resource.uri}`,
+            };
+          }) : []),
+        ]);
         const approval = options.state
           ? await ensureToolCallApproved(
               options.state,
@@ -459,8 +477,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               callArgs.arguments,
               options.state.owner?.signal,
               "iframe",
+              approvalMetadata,
             )
-          : options.config && isToolCallApprovalRequired(options.config, options.serverName, toolMeta)
+          : options.config && isToolCallApprovalRequired(options.config, options.serverName, toolMeta, approvalMetadata)
             ? { ok: false as const, reason: "approval_required_headless" as const }
             : { ok: true as const };
         if (approval.ok === false) {

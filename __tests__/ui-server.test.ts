@@ -693,6 +693,113 @@ describe("UiServer", () => {
       expect(onMessage).toHaveBeenCalledWith(params);
     });
 
+    it("uses app-callable siblings for iframe approval collisions", async () => {
+      const callTool = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "called" }] });
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool },
+          tools: [
+            { name: "search-records", _meta: { ui: { visibility: ["app"] } } },
+            { name: "search_records", _meta: { ui: { visibility: ["app"] } } },
+          ],
+        }),
+      });
+      const config: McpConfig = {
+        settings: { approveTools: ["demo_search_records"] },
+        mcpServers: { demo: { command: "demo" } },
+      };
+      const state = { config, approvedToolCalls: new Map(), toolMetadata: new Map() } as unknown as McpExtensionState;
+      handle = await startUiServer(createServerOptions({ manager, config, state, serverName: "demo" }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params: { name: "search-records", arguments: {} } },
+      });
+
+      expect(res.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "called" }] } });
+      expect(callTool).toHaveBeenCalledOnce();
+    });
+
+    it("uses live resources for iframe approval collisions", async () => {
+      const callTool = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "called" }] });
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool },
+          tools: [{ name: "read-records", _meta: { ui: { visibility: ["app"] } } }],
+          resources: [{ name: "records", uri: "file://records" }],
+        }),
+      });
+      const config: McpConfig = {
+        settings: { approveTools: ["demo_read_records"] },
+        mcpServers: { demo: { command: "demo" } },
+      };
+      const state = { config, approvedToolCalls: new Map(), toolMetadata: new Map() } as unknown as McpExtensionState;
+      handle = await startUiServer(createServerOptions({ manager, config, state, serverName: "demo" }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params: { name: "read-records", arguments: {} } },
+      });
+
+      expect(res.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "called" }] } });
+      expect(callTool).toHaveBeenCalledOnce();
+    });
+
+    it("uses other-server metadata for iframe approval collisions", async () => {
+      const callTool = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "called" }] });
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool },
+          tools: [{ name: "search-records", _meta: { ui: { visibility: ["app"] } } }],
+        }),
+      });
+      const config: McpConfig = {
+        settings: { approveTools: ["search_records"] },
+        mcpServers: { "my-server": { command: "demo" }, other: { command: "other" } },
+      };
+      const state = {
+        config,
+        approvedToolCalls: new Map(),
+        toolMetadata: new Map([["other", [{ name: "other_search_records", originalName: "search_records", description: "Other" }]]]),
+      } as unknown as McpExtensionState;
+      handle = await startUiServer(createServerOptions({ manager, config, state, serverName: "my-server" }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params: { name: "search-records", arguments: {} } },
+      });
+
+      expect(res.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "called" }] } });
+      expect(callTool).toHaveBeenCalledOnce();
+    });
+
+    it("gates stateless iframe calls with safe legacy global approval selectors", async () => {
+      const callTool = vi.fn();
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool },
+          tools: [{ name: "search-records", _meta: { ui: { visibility: ["app"] } } }],
+        }),
+      });
+      const config: McpConfig = {
+        settings: { approveTools: ["demo_search_records"] },
+        mcpServers: { demo: { command: "demo" } },
+      };
+      handle = await startUiServer(createServerOptions({ manager, config, serverName: "demo" }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params: { name: "search-records", arguments: {} } },
+      });
+
+      expect(res.body).toMatchObject({ ok: true, result: { details: { error: "approval_required", tool: "search-records" } } });
+      expect(callTool).not.toHaveBeenCalled();
+    });
+
     it("returns a gated iframe call as an approval_denied tool result", async () => {
       const mockClient = { callTool: vi.fn() };
       const manager = createMockManager({

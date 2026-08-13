@@ -67,14 +67,14 @@ function createState(options: {
 }
 
 describe("tool approval", () => {
-  it("matches original, prefixed, normalized, and read_* resource tool names", () => {
+  it("matches original, prefixed, and read_* resource tool names", () => {
     const cases: Array<{ config: McpConfig; meta: ToolMetadata }> = [
       {
-        config: { mcpServers: { demo: { approveTools: ["search_records"] } } },
+        config: { mcpServers: { demo: { approveTools: ["search-records"] } } },
         meta: tool,
       },
       {
-        config: { mcpServers: { demo: { approveTools: ["demo_search_records"] } } },
+        config: { mcpServers: { demo: { approveTools: ["demo_search-records"] } } },
         meta: tool,
       },
       {
@@ -86,6 +86,78 @@ describe("tool approval", () => {
     for (const { config, meta } of cases) {
       expect(isToolCallApprovalRequired(config, Object.keys(config.mcpServers)[0], meta)).toBe(true);
     }
+  });
+
+  it("gates exact global selectors without applying them through a legacy collision", () => {
+    const config: McpConfig = {
+      settings: { approveTools: ["my_2d_server_do_thing"] },
+      mcpServers: {
+        "my-server": { command: "hyphen" },
+        my_2d_server: { command: "escaped" },
+      },
+    };
+    const hyphenTool: ToolMetadata = { name: "my-server_do-thing", originalName: "do-thing", description: "" };
+    const escapedTool: ToolMetadata = { name: "my_2d_server_do_thing", originalName: "do_thing", description: "" };
+    const metadata = new Map([
+      ["my-server", [hyphenTool]],
+      ["my_2d_server", [escapedTool]],
+    ]);
+
+    expect(isToolCallApprovalRequired(config, "my-server", hyphenTool, metadata)).toBe(false);
+    expect(isToolCallApprovalRequired(config, "my_2d_server", escapedTool, metadata)).toBe(true);
+  });
+
+  it("matches safe server-scoped normalized approval selectors", async () => {
+    const scopedTool: ToolMetadata = { name: "my-server_do_thing", originalName: "do_thing", description: "" };
+    const config: McpConfig = { mcpServers: { "my-server": { command: "demo", approveTools: ["my_server_do_thing"] } } };
+    const metadata = new Map([["my-server", [scopedTool]]]);
+
+    expect(isToolCallApprovalRequired(config, "my-server", scopedTool, metadata)).toBe(true);
+    const { state, callTool } = createState({ interactive: false });
+    state.config = config;
+    state.toolMetadata = metadata;
+    await expect(executeCall(state, scopedTool.name, {})).resolves.toMatchObject({
+      details: { error: "approval_required", server: "my-server", tool: "do_thing" },
+    });
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("matches safe global normalized approval selectors", async () => {
+    const scopedTool: ToolMetadata = { name: "my-server_do_thing", originalName: "do_thing", description: "" };
+    const config: McpConfig = {
+      settings: { approveTools: ["my_server_do_thing"] },
+      mcpServers: { "my-server": { command: "demo" } },
+    };
+    const metadata = new Map([["my-server", [scopedTool]]]);
+
+    expect(isToolCallApprovalRequired(config, "my-server", scopedTool, metadata)).toBe(true);
+    const { state, callTool } = createState({ interactive: false });
+    state.config = config;
+    state.toolMetadata = metadata;
+    await expect(executeCall(state, scopedTool.name, {})).resolves.toMatchObject({
+      details: { error: "approval_required", server: "my-server", tool: "do_thing" },
+    });
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("does not gate a same-server legacy collision", async () => {
+    const hyphenTool: ToolMetadata = { name: "demo_search-records", originalName: "search-records", description: "" };
+    const underscoreTool: ToolMetadata = { name: "demo_search_records", originalName: "search_records", description: "" };
+    const config: McpConfig = {
+      settings: { approveTools: ["demo_search_records"] },
+      mcpServers: { demo: { command: "demo" } },
+    };
+    const metadata = new Map([["demo", [hyphenTool, underscoreTool]]]);
+
+    expect(isToolCallApprovalRequired(config, "demo", hyphenTool, metadata)).toBe(false);
+    expect(isToolCallApprovalRequired(config, "demo", underscoreTool, metadata)).toBe(true);
+
+    const { state, callTool } = createState({ interactive: false });
+    state.config = config;
+    state.toolMetadata = metadata;
+    await expect(executeCall(state, hyphenTool.name, {})).resolves.toMatchObject({ details: { server: "demo", tool: "search-records" } });
+    await expect(executeCall(state, underscoreTool.name, {})).resolves.toMatchObject({ details: { error: "approval_required", server: "demo", tool: "search_records" } });
+    expect(callTool).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed headlessly with a structured approval_required result", async () => {

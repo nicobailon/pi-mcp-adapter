@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type McpAdapterOptions, type PromptMetadata, type ToolMetadata } from "./types.ts";
+import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata } from "./types.ts";
 import { existsSync } from "node:fs";
 import { cloneMcpConfig, loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
@@ -21,6 +21,7 @@ import {
 } from "./metadata-cache.ts";
 import { McpServerManager } from "./server-manager.ts";
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.ts";
+import { resourceNameToToolName } from "./resource-tools.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
 import { formatMcpStatus, openUrl, parallelLimit, sanitizeTerminalText } from "./utils.ts";
 import { logger } from "./logger.ts";
@@ -242,7 +243,7 @@ export async function initializeMcp(
 
     const cachedEntry = cache?.servers?.[name];
     if (cachedEntry && isServerCacheValid(cachedEntry, definition)) {
-      const metadata = reconstructToolMetadata(name, cachedEntry, prefix, definition);
+      const metadata = reconstructToolMetadata(name, cachedEntry, prefix, definition, config.mcpServers, cache ?? undefined);
       toolMetadata.set(name, metadata);
       if (Array.isArray(cachedEntry.resources)) {
         resourceCounts.set(name, cachedEntry.resources.length);
@@ -288,6 +289,29 @@ export async function initializeMcp(
   if (initialSignal?.aborted) return state;
   owner.throwIfInactive();
 
+  const startupKnownMetadata = new Map<string, ToolMetadata[]>();
+  for (const { name, definition, connection } of results) {
+    if (!connection) continue;
+    const effectivePrefix = resolveToolPrefix(definition, prefix);
+    const metadata: ToolMetadata[] = [
+      ...connection.tools.filter(tool => tool?.name).map(tool => ({
+        name: formatToolName(tool.name, name, effectivePrefix),
+        originalName: tool.name,
+        description: tool.description ?? "",
+      })),
+      ...(definition.exposeResources !== false ? connection.resources.filter(resource => resource?.name && resource?.uri).map(resource => {
+        const originalName = `read_${resourceNameToToolName(resource.name)}`;
+        return {
+          name: formatToolName(originalName, name, effectivePrefix),
+          originalName,
+          description: resource.description ?? `Read resource: ${resource.uri}`,
+          resourceUri: resource.uri,
+        };
+      }) : []),
+    ];
+    startupKnownMetadata.set(name, metadata);
+  }
+
   for (const { name, definition, connection, error } of results) {
     owner.throwIfInactive();
     if (error || !connection) {
@@ -301,7 +325,7 @@ export async function initializeMcp(
       continue;
     }
 
-    const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
+    const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix, config.mcpServers, startupKnownMetadata, true);
     toolMetadata.set(name, metadata);
     resourceCounts.set(name, connection.resources.length);
     if (!connection.promptDiscoveryFailed) {
@@ -437,7 +461,7 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
 
   const prefix = state.config.settings?.toolPrefix ?? "server";
 
-  const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
+  const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix, state.config.mcpServers, state.toolMetadata);
   state.toolMetadata.set(serverName, metadata);
   state.resourceCounts?.set(serverName, connection.resources.length);
   if (!connection.promptDiscoveryFailed) {

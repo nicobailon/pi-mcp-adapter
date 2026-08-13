@@ -170,7 +170,7 @@ export async function reconnectServer(
     }
 
     const prefix = state.config.settings?.toolPrefix ?? "server";
-    const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
+    const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix, state.config.mcpServers, state.toolMetadata);
     state.toolMetadata.set(name, metadata);
     if (!connection.promptDiscoveryFailed) {
       state.promptMetadata?.set(name, reconstructPromptMetadata(name, connection.prompts ?? [], prefix, definition));

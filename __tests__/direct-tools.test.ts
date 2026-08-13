@@ -12,6 +12,7 @@ import { buildToolMetadata } from "../tool-metadata.ts";
 import { formatToolName } from "../types.ts";
 import type { McpConfig } from "../types.ts";
 import { reconstructToolMetadata } from "../metadata-cache.ts";
+import { updateServerMetadata } from "../init.ts";
 
 const originalHashEnv = {
   MCP_HASH_CWD: process.env.MCP_HASH_CWD,
@@ -37,7 +38,7 @@ describe("formatToolName", () => {
     expect(formatToolName("namespace.tool", "demo", "server")).toBe("demo_namespace_tool");
     expect(formatToolName("namespace.tool", "demo-mcp", "short")).toBe("demo_namespace_tool");
     expect(formatToolName("namespace.tool", "demo", "none")).toBe("namespace_tool");
-    expect(formatToolName("namespace.tool", "demo-mcp", "mcp")).toBe("mcp__demo_2d_mcp_namespace_tool");
+    expect(formatToolName("namespace.tool", "demo-mcp", "mcp")).toBe("mcp__demo-mcp_namespace_tool");
   });
 
   it("sanitizes server names in live tool and resource metadata", () => {
@@ -131,6 +132,70 @@ describe("buildProxyDescription", () => {
     expect(description).not.toContain("figma (3 tools)");
   });
 
+  it("keeps safe cached tools in proxy server summaries", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        "my-server": { command: "hyphen", excludeTools: ["my_2d_server_do_thing"] },
+        my_2d_server: { command: "escaped", excludeTools: ["my_2d_server_do_thing"] },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: Object.fromEntries(Object.entries(config.mcpServers).map(([serverName, definition]) => [serverName, {
+        configHash: computeServerHash(definition),
+        cachedAt: Date.now(),
+        tools: [{ name: "do_thing", description: serverName }],
+        resources: [],
+      }])),
+    };
+
+    expect(buildProxyDescription(config, cache, [])).toContain("Servers: my-server (1 tools)");
+  });
+
+  it("does not expose cached app-only tools to model-facing surfaces", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server", directTools: true },
+      mcpServers: { demo: { command: "demo", directTools: true } },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: computeServerHash(config.mcpServers.demo),
+          cachedAt: Date.now(),
+          tools: [{ name: "app_only", description: "App", uiVisibility: ["app"] }],
+          resources: [],
+        },
+      },
+    };
+
+    expect(resolveDirectTools(config, cache, "server")).toEqual([]);
+    expect(buildProxyDescription(config, cache, [])).not.toContain("Servers: demo (1 tools)");
+  });
+
+  it("ignores invalid cache entries in proxy descriptions", () => {
+    const config: McpConfig = {
+      mcpServers: { demo: { command: "new", includeTools: ["demo_search"] } },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: "stale",
+          cachedAt: Date.now(),
+          tools: [{ name: "search", description: "Stale" }],
+          resources: [],
+          instructions: "stale instructions",
+        },
+      },
+    };
+
+    const description = buildProxyDescription(config, cache, []);
+    expect(description).not.toContain("Servers: demo (1 tools)");
+    expect(description).not.toContain("stale instructions");
+  });
+
   it("includes a truncated instructions snippet for servers that provide one", () => {
     const config: McpConfig = {
       mcpServers: {
@@ -142,7 +207,7 @@ describe("buildProxyDescription", () => {
       version: 1,
       servers: {
         demo: {
-          configHash: "hash",
+          configHash: computeServerHash(config.mcpServers.demo),
           cachedAt: Date.now(),
           tools: [{ name: "read_skill", description: "Read a skill" }],
           resources: [],
@@ -410,6 +475,111 @@ describe("excludeTools filtering", () => {
     expect(reconstructed.map((tool) => tool.name)).toEqual(["figma_get_nodes"]);
   });
 
+  it("matches normalized legacy server-prefix exclusions across metadata paths", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server", directTools: true },
+      mcpServers: {
+        "my-server": { command: "demo", directTools: true, excludeTools: ["my_server_do_thing"] },
+      },
+    };
+    const entry = {
+      configHash: computeServerHash(config.mcpServers["my-server"]),
+      cachedAt: Date.now(),
+      tools: [{ name: "do_thing", description: "Do thing" }],
+      resources: [],
+    };
+    const cache: MetadataCache = { version: 1, servers: { "my-server": entry } };
+
+    expect(buildToolMetadata(entry.tools as any, [], config.mcpServers["my-server"], "my-server", "server", config.mcpServers).metadata).toEqual([]);
+    expect(reconstructToolMetadata("my-server", entry, "server", config.mcpServers["my-server"], config.mcpServers, cache)).toEqual([]);
+    expect(resolveDirectTools(config, cache, "server")).toEqual([]);
+    expect(buildProxyDescription(config, cache, [])).not.toContain("my-server (1 tools)");
+  });
+
+  it("ignores invalid cache entries for collision candidates", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server", directTools: true },
+      mcpServers: {
+        "my-server": { command: "hyphen", directTools: true, excludeTools: ["my_2d_server_search_records"] },
+        my_2d_server: { command: "escaped", args: ["changed"] },
+      },
+    };
+    const currentEntry = {
+      configHash: computeServerHash(config.mcpServers["my-server"]),
+      cachedAt: Date.now(),
+      tools: [{ name: "search-records", description: "Current" }],
+      resources: [],
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        "my-server": currentEntry,
+        my_2d_server: {
+          configHash: "stale",
+          cachedAt: Date.now(),
+          tools: [{ name: "search_records", description: "Stale" }],
+          resources: [],
+        },
+      },
+    };
+
+    expect(reconstructToolMetadata("my-server", currentEntry, "server", config.mcpServers["my-server"], config.mcpServers, cache)).toEqual([]);
+    expect(resolveDirectTools(config, cache, "server")).toEqual([]);
+    expect(buildProxyDescription(config, cache, [])).not.toContain("my-server (1 tools)");
+  });
+
+  it("ignores cached app-only tools for reconstructed metadata collision candidates", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        "my-server": { command: "current", excludeTools: ["my_server_do_thing"] },
+        my_server: { command: "app" },
+      },
+    };
+    const currentEntry = {
+      configHash: computeServerHash(config.mcpServers["my-server"]),
+      cachedAt: Date.now(),
+      tools: [{ name: "do_thing", description: "Current" }],
+      resources: [],
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        "my-server": currentEntry,
+        my_server: {
+          configHash: computeServerHash(config.mcpServers.my_server),
+          cachedAt: Date.now(),
+          tools: [{ name: "do_thing", description: "App only", uiVisibility: ["app"] }],
+          resources: [],
+        },
+      },
+    };
+
+    expect(reconstructToolMetadata("my-server", currentEntry, "server", config.mcpServers["my-server"], config.mcpServers, cache)).toEqual([]);
+  });
+
+  it("keeps cached metadata filtering scoped to current server identities", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        "my-server": { command: "hyphen", excludeTools: ["my_2d_server_do_thing"] },
+        my_2d_server: { command: "escaped", excludeTools: ["my_2d_server_do_thing"] },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: Object.fromEntries(Object.entries(config.mcpServers).map(([serverName, definition]) => [serverName, {
+        configHash: computeServerHash(definition),
+        cachedAt: Date.now(),
+        tools: [{ name: "do_thing", description: serverName }],
+        resources: [],
+      }])),
+    };
+
+    expect(reconstructToolMetadata("my-server", cache.servers["my-server"]!, "server", config.mcpServers["my-server"], config.mcpServers, cache).map(tool => tool.name)).toEqual(["my-server_do_thing"]);
+    expect(reconstructToolMetadata("my_2d_server", cache.servers.my_2d_server!, "server", config.mcpServers.my_2d_server, config.mcpServers, cache)).toEqual([]);
+  });
+
   it("filters included tools from live and cached metadata before applying exclusions", () => {
     const definition = {
       command: "npx",
@@ -578,8 +748,37 @@ describe("excludeTools filtering", () => {
 
     expect(resolveDirectTools(config, cache, "server").map((spec) => [spec.serverName, spec.prefixedName])).toEqual([
       ["a b", "a_20_b_search"],
-      ["a-20-b", "a_2d_20_2d_b_search"],
+      ["a-20-b", "a-20-b_search"],
     ]);
+  });
+
+  it("keeps provider-valid server prefix characters and skips escaped-name collisions", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const config: McpConfig = {
+      settings: { toolPrefix: "server", directTools: true },
+      mcpServers: {
+        "my_server": { command: "underscore" },
+        "my-server": { command: "hyphen" },
+        "my server": { command: "space" },
+        "my_20_server": { command: "escaped" },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: Object.fromEntries(Object.entries(config.mcpServers).map(([serverName, definition]) => [serverName, {
+        configHash: computeServerHash(definition),
+        cachedAt: Date.now(),
+        tools: [{ name: "get", description: serverName }],
+        resources: [],
+      }])),
+    };
+
+    expect(resolveDirectTools(config, cache, "server").map((spec) => [spec.serverName, spec.prefixedName])).toEqual([
+      ["my_server", "my_server_get"],
+      ["my-server", "my-server_get"],
+      ["my server", "my_20_server_get"],
+    ]);
+    expect(warn).toHaveBeenCalledWith('MCP: skipping duplicate direct tool "my_20_server_get" from "my_20_server"');
   });
 
   it("honors per-server toolPrefix during direct tool registration from cache", () => {
@@ -680,6 +879,230 @@ describe("excludeTools filtering", () => {
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes", "figma_read_figjam"]);
   });
 
+  it("applies safe legacy exclusions alongside unrelated current selectors", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server", directTools: true },
+      mcpServers: {
+        "my-server": { command: "demo", excludeTools: ["my-server_other", "my_2d_server_search_records"] },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        "my-server": {
+          configHash: computeServerHash(config.mcpServers["my-server"]),
+          cachedAt: Date.now(),
+          tools: [
+            { name: "search-records", description: "Search" },
+            { name: "other", description: "Other" },
+          ],
+          resources: [],
+        },
+      },
+    };
+
+    expect(resolveDirectTools(config, cache, "server")).toEqual([]);
+    expect(buildToolMetadata(cache.servers["my-server"]!.tools as any, [], config.mcpServers["my-server"], "my-server", "server", config.mcpServers).metadata).toEqual([]);
+  });
+
+  it("keeps a same-server tool when another current sibling matches the selector", () => {
+    const definition = { command: "demo", excludeTools: ["search_records"] };
+    const tools = [
+      { name: "search-records", description: "Hyphen" },
+      { name: "search_records", description: "Underscore" },
+    ] as any;
+
+    expect(buildToolMetadata(tools, [], definition, "demo", "server", { demo: definition }).metadata.map(tool => tool.name)).toEqual(["demo_search-records"]);
+    const state = {
+      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: definition } },
+      toolMetadata: new Map(),
+      resourceCounts: new Map(),
+      promptMetadata: new Map(),
+      promptMetadataLive: new Set(),
+      serverInstructions: new Map(),
+      manager: { getConnection: () => ({ status: "connected", tools, resources: [], prompts: [] }) },
+    } as any;
+    updateServerMetadata(state, "demo");
+    expect(state.toolMetadata.get("demo")?.map((tool: any) => tool.name)).toEqual(["demo_search-records"]);
+  });
+
+  it("ignores stale same-server metadata during live updates", () => {
+    const definition = { command: "demo", excludeTools: ["demo_search_records"] };
+    const staleMetadata = [{ name: "demo_search_records", originalName: "search_records", description: "Old" }];
+    const tools = [{ name: "search-records", description: "New" }] as any;
+
+    expect(buildToolMetadata(tools, [], definition, "demo", "server", { demo: definition }, new Map([["demo", staleMetadata]])).metadata).toEqual([]);
+    const state = {
+      config: { settings: { toolPrefix: "server" }, mcpServers: { demo: definition } },
+      toolMetadata: new Map([["demo", staleMetadata]]),
+      resourceCounts: new Map(),
+      promptMetadata: new Map(),
+      promptMetadataLive: new Set(),
+      serverInstructions: new Map(),
+      manager: { getConnection: () => ({ status: "connected", tools, resources: [], prompts: [] }) },
+    } as any;
+    updateServerMetadata(state, "demo");
+    expect(state.toolMetadata.get("demo")).toEqual([]);
+  });
+
+  it("does not synthesize unavailable servers when live metadata is known", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        "my-server": { command: "demo", excludeTools: ["my_2d_server_search_records"] },
+        my_2d_server: { command: "unknown" },
+      },
+    };
+
+    expect(buildToolMetadata(
+      [{ name: "search-records", description: "Search" }] as any,
+      [],
+      config.mcpServers["my-server"],
+      "my-server",
+      "server",
+      config.mcpServers,
+      new Map(),
+    ).metadata).toEqual([]);
+  });
+
+  it("uses missing configured candidates only for startup metadata", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        "my-server": { command: "demo", excludeTools: ["my_server_do_thing"] },
+        my_server: { command: "other" },
+      },
+    };
+
+    expect(buildToolMetadata(
+      [{ name: "do_thing", description: "Current" }] as any,
+      [],
+      config.mcpServers["my-server"],
+      "my-server",
+      "server",
+      config.mcpServers,
+      new Map(),
+      true,
+    ).metadata.map(tool => tool.name)).toEqual(["my-server_do_thing"]);
+  });
+
+  it("normalizes missing startup candidates for hyphenated tool names", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        "my-server": { command: "demo", excludeTools: ["my_server_do_thing"] },
+        my_server: { command: "other" },
+      },
+    };
+
+    expect(buildToolMetadata(
+      [{ name: "do-thing", description: "Current" }] as any,
+      [],
+      config.mcpServers["my-server"],
+      "my-server",
+      "server",
+      config.mcpServers,
+      new Map(),
+      true,
+    ).metadata.map(tool => tool.name)).toEqual(["my-server_do-thing"]);
+  });
+
+  it("uses known live metadata to keep a safe legacy selector scoped", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        "my-server": { command: "hyphen", excludeTools: ["my_2d_server_search_records"] },
+        my_2d_server: { command: "escaped" },
+      },
+    };
+    const knownMetadata = new Map([["my_2d_server", [{ name: "my_2d_server_search_records", originalName: "search_records", description: "Other" }]]]);
+
+    expect(buildToolMetadata(
+      [{ name: "search-records", description: "Search" }] as any,
+      [],
+      config.mcpServers["my-server"],
+      "my-server",
+      "server",
+      config.mcpServers,
+      knownMetadata,
+    ).metadata.map(tool => tool.name)).toEqual(["my-server_search-records"]);
+  });
+
+  it("uses known state metadata during live updates", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
+    const state = {
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: {
+          "my-server": { command: "hyphen", excludeTools: ["search_records"] },
+          my_2d_server: { command: "escaped" },
+        },
+      },
+      toolMetadata: new Map([["my_2d_server", [{ name: "my_2d_server_search_records", originalName: "search_records", description: "Other" }]]]),
+      resourceCounts: new Map(),
+      promptMetadata: new Map(),
+      promptMetadataLive: new Set(),
+      serverInstructions: new Map(),
+      manager: {
+        getConnection: (name: string) => name === "my-server" ? {
+          status: "connected",
+          tools: [{ name: "search-records", description: "Search" }],
+          resources: [],
+          prompts: [],
+          client: { callTool },
+        } : undefined,
+        getRequestOptions: () => undefined,
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+
+    updateServerMetadata(state, "my-server");
+    expect(state.toolMetadata.get("my-server").map((tool: any) => tool.name)).toEqual(["my-server_search-records"]);
+    const { executeCall } = await import("../proxy-modes.ts");
+    await expect(executeCall(state, "my-server_search-records", {})).resolves.toMatchObject({ details: { server: "my-server", tool: "search-records" } });
+    expect(callTool).toHaveBeenCalledOnce();
+  });
+
+  it("does not apply live legacy exclusions to another server's current tool name", () => {
+    const configuredServers = {
+      "my-server": { command: "hyphen", excludeTools: ["my_2d_server_do_thing"] },
+      my_2d_server: { command: "escaped", excludeTools: ["my_2d_server_do_thing"] },
+    };
+    const tools = [{ name: "do_thing", description: "Do thing" }] as any;
+
+    expect(buildToolMetadata(tools, [], configuredServers["my-server"], "my-server", "server", configuredServers).metadata.map(tool => tool.name)).toEqual([
+      "my-server_do_thing",
+    ]);
+    expect(buildToolMetadata(tools, [], configuredServers.my_2d_server, "my_2d_server", "server", configuredServers).metadata).toEqual([]);
+  });
+
+  it("does not apply legacy exclusions to another server's current tool name", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server", directTools: true },
+      mcpServers: {
+        "my-server": { command: "hyphen", excludeTools: ["my_2d_server_do_thing"] },
+        my_2d_server: { command: "escaped", excludeTools: ["my_2d_server_do_thing"] },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: Object.fromEntries(Object.entries(config.mcpServers).map(([serverName, definition]) => [serverName, {
+        configHash: computeServerHash(definition),
+        cachedAt: Date.now(),
+        tools: [{ name: "do_thing", description: serverName }],
+        resources: [],
+      }])),
+    };
+
+    expect(resolveDirectTools(config, cache, "server").map(spec => [spec.serverName, spec.prefixedName])).toEqual([
+      ["my-server", "my-server_do_thing"],
+    ]);
+  });
+
   it("matches mcp-prefixed exclusions when toolPrefix is mcp", () => {
     const config: McpConfig = {
       settings: { toolPrefix: "mcp" },
@@ -710,7 +1133,7 @@ describe("excludeTools filtering", () => {
 
     const specs = resolveDirectTools(config, cache, "mcp");
 
-    expect(specs.map((spec) => spec.prefixedName)).toEqual(["mcp__my_2d_server_other_tool"]);
+    expect(specs.map((spec) => spec.prefixedName)).toEqual(["mcp__my-server_other_tool"]);
   });
 
   it("matches prefixed exclusions even when toolPrefix is none", () => {

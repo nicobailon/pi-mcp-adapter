@@ -1,11 +1,12 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { copyToClipboard } from "@earendil-works/pi-coding-agent";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
-import { isServerDisabled, isToolAllowed } from "./types.ts";
+import { getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance, ToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
-import type { MetadataCache, ServerCacheEntry, CachedTool } from "./metadata-cache.ts";
+import { isServerCacheValid, type MetadataCache, type ServerCacheEntry, type CachedTool } from "./metadata-cache.ts";
+import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 
 interface PanelTheme {
   border: string;
@@ -170,8 +171,8 @@ class McpPanel {
   private static readonly INACTIVITY_MS = 60_000;
 
   constructor(
-    config: McpConfig,
-    cache: MetadataCache | null,
+    private config: McpConfig,
+    private cache: MetadataCache | null,
     provenance: Map<string, ServerProvenance>,
     private callbacks: McpPanelCallbacks,
     tui: { requestRender(): void },
@@ -187,7 +188,8 @@ class McpPanel {
     for (const [serverName, definition] of Object.entries(config.mcpServers)) {
       if (this.authOnly && !callbacks.canAuthenticate(serverName)) continue;
       const prov = provenance.get(serverName);
-      const serverCache = cache?.servers?.[serverName];
+      const cachedEntry = this.cache?.servers?.[serverName];
+      const serverCache = cachedEntry && isServerCacheValid(cachedEntry, definition) ? cachedEntry : undefined;
 
       const globalDirect = config.settings?.directTools;
       let toolFilter: true | string[] | false = false;
@@ -200,7 +202,8 @@ class McpPanel {
       const tools: ToolState[] = [];
       if (serverCache && !this.authOnly && !isServerDisabled(definition)) {
         for (const tool of serverCache.tools ?? []) {
-          if (!isToolAllowed(tool.name, serverName, this.prefix, definition.includeTools, definition.excludeTools)) {
+          if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
+          if (!isToolAllowed(tool.name, serverName, this.prefix, definition.includeTools, definition.excludeTools, this.getOtherCurrentCandidates(serverName, definition, serverCache, tool.name))) {
             continue;
           }
 
@@ -216,7 +219,7 @@ class McpPanel {
         if (definition.exposeResources !== false) {
           for (const resource of serverCache.resources ?? []) {
             const baseName = `read_${resourceNameToToolName(resource.name)}`;
-            if (!isToolAllowed(baseName, serverName, this.prefix, definition.includeTools, definition.excludeTools)) {
+            if (!isToolAllowed(baseName, serverName, this.prefix, definition.includeTools, definition.excludeTools, this.getOtherCurrentCandidates(serverName, definition, serverCache, baseName))) {
               continue;
             }
 
@@ -563,6 +566,8 @@ class McpPanel {
       if (server.connectionStatus === "connected") {
         const entry = this.callbacks.refreshCacheAfterReconnect(server.name);
         if (entry) {
+          this.cache ??= { version: 1, servers: {} };
+          this.cache.servers[server.name] = entry;
           this.rebuildServerTools(server, entry);
         }
         server.hasCachedData = true;
@@ -636,13 +641,44 @@ class McpPanel {
     this.cursorIndex = Math.max(0, Math.min(this.visibleItems.length - 1, this.cursorIndex + delta));
   }
 
+  private getOtherCurrentCandidates(
+    serverName: string,
+    definition: McpConfig["mcpServers"][string],
+    currentEntry: ServerCacheEntry,
+    toolName: string,
+  ): Set<string> {
+    const candidates = new Set<string>();
+    for (const [otherServerName, otherDefinition] of Object.entries(this.config.mcpServers)) {
+      if (isServerDisabled(otherDefinition)) continue;
+      const cachedEntry = this.cache?.servers?.[otherServerName];
+      const entry = otherServerName === serverName
+        ? currentEntry
+        : cachedEntry && isServerCacheValid(cachedEntry, otherDefinition) ? cachedEntry : undefined;
+      if (!entry) continue;
+      const otherPrefix = resolveToolPrefix(otherDefinition, this.prefix);
+      for (const tool of entry.tools ?? []) {
+        if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
+        for (const candidate of getToolNameCandidates(tool.name, otherServerName, otherPrefix, false)) candidates.add(candidate);
+      }
+      if (otherDefinition.exposeResources !== false) {
+        for (const resource of entry.resources ?? []) {
+          const baseName = `read_${resourceNameToToolName(resource.name)}`;
+          for (const candidate of getToolNameCandidates(baseName, otherServerName, otherPrefix, false)) candidates.add(candidate);
+        }
+      }
+    }
+    for (const candidate of getToolNameCandidates(toolName, serverName, resolveToolPrefix(definition, this.prefix), false)) candidates.delete(candidate);
+    return candidates;
+  }
+
   private rebuildServerTools(server: ServerState, entry: ServerCacheEntry): void {
     const existingState = new Map<string, boolean>();
     for (const t of server.tools) existingState.set(t.name, t.isDirect);
 
     const newTools: ToolState[] = [];
     for (const tool of entry.tools ?? []) {
-      if (!isToolAllowed(tool.name, server.name, this.prefix, server.includeTools, server.excludeTools)) {
+      if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
+      if (!isToolAllowed(tool.name, server.name, this.prefix, server.includeTools, server.excludeTools, this.getOtherCurrentCandidates(server.name, server, entry, tool.name))) {
         continue;
       }
 
@@ -660,7 +696,7 @@ class McpPanel {
     if (server.exposeResources) {
       for (const resource of entry.resources ?? []) {
         const baseName = `read_${resourceNameToToolName(resource.name)}`;
-        if (!isToolAllowed(baseName, server.name, this.prefix, server.includeTools, server.excludeTools)) {
+        if (!isToolAllowed(baseName, server.name, this.prefix, server.includeTools, server.excludeTools, this.getOtherCurrentCandidates(server.name, server, entry, baseName))) {
           continue;
         }
 

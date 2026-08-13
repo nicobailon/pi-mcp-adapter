@@ -51,15 +51,15 @@ function commandCtx(overrides: Partial<ExtensionCommandContext> = {}): Extension
 
 describe("prompt command naming", () => {
   it("mirrors Claude Code's mcp__<server>__<prompt> convention", () => {
-    expect(formatPromptCommandName("plan", "agent-board", "server")).toBe("mcp__agent_2d_board__plan");
+    expect(formatPromptCommandName("plan", "agent-board", "server")).toBe("mcp__agent-board__plan");
   });
 
   it("honors the toolPrefix short mode", () => {
-    expect(formatPromptCommandName("plan", "agent-board-mcp", "short")).toBe("mcp__agent_2d_board__plan");
+    expect(formatPromptCommandName("plan", "agent-board-mcp", "short")).toBe("mcp__agent-board__plan");
   });
 
   it("falls back to the server name when toolPrefix is 'none'", () => {
-    expect(formatPromptCommandName("plan", "agent-board", "none")).toBe("mcp__agent_2d_board__plan");
+    expect(formatPromptCommandName("plan", "agent-board", "none")).toBe("mcp__agent-board__plan");
   });
 
   it("sanitizes server names with spaces", () => {

@@ -73,6 +73,43 @@ describe("AbortSignal propagation", () => {
     expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
   });
 
+  it("prefers an exact proxy tool name over an earlier normalized match", async () => {
+    const underscoreCallTool = vi.fn(async () => ({ content: [{ type: "text", text: "underscore" }] }));
+    const hyphenCallTool = vi.fn(async () => ({ content: [{ type: "text", text: "hyphen" }] }));
+    const state = {
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: {
+          my_server: { command: "underscore" },
+          "my-server": { command: "hyphen" },
+        },
+      },
+      manager: {
+        getConnection: vi.fn((server: string) => ({
+          status: "connected",
+          client: server === "my_server" ? { callTool: underscoreCallTool } : { callTool: hyphenCallTool },
+        })),
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+        getRequestOptions: vi.fn(() => undefined),
+      },
+      toolMetadata: new Map([
+        ["my_server", [{ name: "my_server_get", originalName: "get", description: "Underscore" }]],
+        ["my-server", [{ name: "my-server_get", originalName: "get", description: "Hyphen" }]],
+      ]),
+      serverInstructions: new Map(),
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+
+    const result = await executeCall(state, "my-server_get", {});
+
+    expect(result.details).toMatchObject({ server: "my-server", tool: "get" });
+    expect(hyphenCallTool).toHaveBeenCalledWith({ name: "get", arguments: {}, _meta: undefined }, undefined);
+    expect(underscoreCallTool).not.toHaveBeenCalled();
+  });
+
   it("proxy tool calls pass AbortSignal to MCP callTool and settle if the MCP SDK promise hangs", async () => {
     const controller = new AbortController();
     const callTool = vi.fn(() => new Promise<never>(() => {}));

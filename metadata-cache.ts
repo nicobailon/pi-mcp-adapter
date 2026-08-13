@@ -19,7 +19,7 @@ import type {
   ToolMetadata,
   PromptMetadata,
 } from "./types.ts";
-import { formatPromptCommandName, formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix, type ToolPrefix } from "./types.ts";
+import { formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, type ToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
   extractToolUiStreamMode,
@@ -177,18 +177,41 @@ export function reconstructToolMetadata(
   serverName: string,
   entry: ServerCacheEntry,
   prefix: ToolPrefix,
-  definition: Pick<ServerEntry, "exposeResources" | "includeTools" | "excludeTools" | "toolPrefix">
+  definition: Pick<ServerEntry, "exposeResources" | "includeTools" | "excludeTools" | "toolPrefix">,
+  configuredServers?: Record<string, ServerEntry>,
+  cache?: MetadataCache,
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
   const seenNames = new Set<string>();
   const effectivePrefix = resolveToolPrefix(definition, prefix);
+  const getOtherCurrentCandidates = (toolName: string): Set<string> | undefined => {
+    if (!configuredServers || !cache) return undefined;
+    const candidates = new Set<string>();
+    for (const [otherServerName, otherDefinition] of Object.entries(configuredServers)) {
+      const otherEntry = cache.servers[otherServerName];
+      if (!otherEntry || !isServerCacheValid(otherEntry, otherDefinition) || isServerDisabled(otherDefinition)) continue;
+      const otherPrefix = resolveToolPrefix(otherDefinition, prefix);
+      for (const otherTool of otherEntry.tools ?? []) {
+        if (!isUiToolVisibleToModel(otherTool.uiVisibility)) continue;
+        for (const candidate of getToolNameCandidates(otherTool.name, otherServerName, otherPrefix, false)) candidates.add(candidate);
+      }
+      if (otherDefinition.exposeResources !== false) {
+        for (const resource of otherEntry.resources ?? []) {
+          const baseName = `read_${resourceNameToToolName(resource.name)}`;
+          for (const candidate of getToolNameCandidates(baseName, otherServerName, otherPrefix, false)) candidates.add(candidate);
+        }
+      }
+    }
+    for (const candidate of getToolNameCandidates(toolName, serverName, effectivePrefix, false)) candidates.delete(candidate);
+    return candidates;
+  };
 
   for (const tool of entry.tools ?? []) {
     if (!tool?.name) continue;
     if (!isUiToolVisibleToModel(tool.uiVisibility)) {
       continue;
     }
-    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) {
+    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, getOtherCurrentCandidates(tool.name))) {
       continue;
     }
 
@@ -213,7 +236,7 @@ export function reconstructToolMetadata(
     for (const resource of entry.resources ?? []) {
       if (!resource?.name || !resource?.uri) continue;
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
-      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) {
+      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, getOtherCurrentCandidates(baseName))) {
         continue;
       }
 

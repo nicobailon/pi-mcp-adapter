@@ -644,9 +644,10 @@ export interface McpPanelResult {
 /**
  * Get server prefix based on tool prefix mode.
  */
-function sanitizeServerPrefix(serverName: string): string {
+function sanitizeServerPrefix(serverName: string, preserveProviderValid = true): string {
+  const validCharacters = preserveProviderValid ? /^[A-Za-z0-9_-]$/ : /^[A-Za-z0-9]$/;
   return Array.from(serverName, char =>
-    /^[A-Za-z0-9]$/.test(char) ? char : `_${char.codePointAt(0)!.toString(16)}_`,
+    validCharacters.test(char) ? char : `_${char.codePointAt(0)!.toString(16)}_`,
   ).join("");
 }
 
@@ -739,18 +740,44 @@ export function formatPromptCommandName(
   return `mcp__${serverPart}__${sanitizePromptName(promptName)}`;
 }
 
-function normalizeToolName(value: string): string {
-  return value.replace(/-/g, "_");
+function getLegacyServerPrefix(serverName: string, mode: ToolPrefix): string {
+  if (mode === "none") return "";
+  if (mode === "short") return sanitizeServerPrefix(serverName.replace(/-?mcp$/i, ""), false) || "mcp";
+  if (mode === "mcp") return `mcp__${sanitizeServerPrefix(serverName, false)}`;
+  return sanitizeServerPrefix(serverName, false);
 }
 
-export function getToolNameCandidates(toolName: string, serverName: string, prefix: ToolPrefix): Set<string> {
-  return new Set<string>([
-    normalizeToolName(toolName),
-    normalizeToolName(formatToolName(toolName, serverName, prefix)),
-    normalizeToolName(formatToolName(toolName, serverName, "server")),
-    normalizeToolName(formatToolName(toolName, serverName, "short")),
-    normalizeToolName(formatToolName(toolName, serverName, "mcp")),
+function formatLegacyToolName(toolName: string, serverName: string, prefix: ToolPrefix): string {
+  const serverPrefix = getLegacyServerPrefix(serverName, prefix);
+  const sanitizedToolName = toolName.replace(/[.-]/g, "_");
+  return serverPrefix ? `${serverPrefix}_${sanitizedToolName}` : sanitizedToolName;
+}
+
+export function getToolNameCandidates(toolName: string, serverName: string, prefix: ToolPrefix, includeLegacy = true): Set<string> {
+  const candidates = new Set<string>([
+    toolName,
+    formatToolName(toolName, serverName, prefix),
+    formatToolName(toolName, serverName, "server"),
+    formatToolName(toolName, serverName, "short"),
+    formatToolName(toolName, serverName, "mcp"),
   ]);
+  if (includeLegacy) {
+    const legacyToolName = toolName.replace(/-/g, "_");
+    candidates.add(legacyToolName);
+    candidates.add(formatToolName(legacyToolName, serverName, prefix));
+    candidates.add(formatToolName(legacyToolName, serverName, "server"));
+    candidates.add(formatToolName(legacyToolName, serverName, "short"));
+    candidates.add(formatToolName(legacyToolName, serverName, "mcp"));
+    candidates.add(formatLegacyToolName(toolName, serverName, prefix));
+    candidates.add(formatLegacyToolName(toolName, serverName, "server"));
+    candidates.add(formatLegacyToolName(toolName, serverName, "short"));
+    candidates.add(formatLegacyToolName(toolName, serverName, "mcp"));
+    candidates.add(formatToolName(toolName, serverName, prefix).replace(/-/g, "_"));
+    candidates.add(formatToolName(toolName, serverName, "server").replace(/-/g, "_"));
+    candidates.add(formatToolName(toolName, serverName, "short").replace(/-/g, "_"));
+    candidates.add(formatToolName(toolName, serverName, "mcp").replace(/-/g, "_"));
+  }
+  return candidates;
 }
 
 function globToRegExp(pattern: string): RegExp {
@@ -763,11 +790,10 @@ export function matchesToolPattern(candidates: Set<string>, patterns?: unknown):
 
   for (const pattern of patterns) {
     if (typeof pattern !== "string") continue;
-    const normalized = normalizeToolName(pattern);
-    if (!normalized.includes("*") && !normalized.includes("?") && candidates.has(normalized)) {
+    if (!pattern.includes("*") && !pattern.includes("?") && candidates.has(pattern)) {
       return true;
     }
-    if ((normalized.includes("*") || normalized.includes("?")) && [...candidates].some(candidate => globToRegExp(normalized).test(candidate))) {
+    if ((pattern.includes("*") || pattern.includes("?")) && [...candidates].some(candidate => globToRegExp(pattern).test(candidate))) {
       return true;
     }
   }
@@ -775,23 +801,45 @@ export function matchesToolPattern(candidates: Set<string>, patterns?: unknown):
   return false;
 }
 
+function matchesToolSelector(
+  toolName: string,
+  serverName: string,
+  prefix: ToolPrefix,
+  patterns: unknown,
+  otherCurrentCandidates?: Set<string>,
+): boolean {
+  const currentCandidates = getToolNameCandidates(toolName, serverName, prefix, false);
+  if (matchesToolPattern(currentCandidates, patterns)) return true;
+  if (!otherCurrentCandidates) return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), patterns);
+  const legacyCandidates = getToolNameCandidates(toolName, serverName, prefix);
+  for (const candidate of currentCandidates) legacyCandidates.delete(candidate);
+  if (!Array.isArray(patterns)) return false;
+  return patterns.some(pattern =>
+    typeof pattern === "string"
+    && !matchesToolPattern(otherCurrentCandidates, [pattern])
+    && matchesToolPattern(legacyCandidates, [pattern]),
+  );
+}
+
 export function isToolIncluded(
   toolName: string,
   serverName: string,
   prefix: ToolPrefix,
-  includeTools?: unknown
+  includeTools?: unknown,
+  otherCurrentCandidates?: Set<string>,
 ): boolean {
   if (!Array.isArray(includeTools) || includeTools.length === 0) return true;
-  return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), includeTools);
+  return matchesToolSelector(toolName, serverName, prefix, includeTools, otherCurrentCandidates);
 }
 
 export function isToolExcluded(
   toolName: string,
   serverName: string,
   prefix: ToolPrefix,
-  excludeTools?: unknown
+  excludeTools?: unknown,
+  otherCurrentCandidates?: Set<string>,
 ): boolean {
-  return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), excludeTools);
+  return matchesToolSelector(toolName, serverName, prefix, excludeTools, otherCurrentCandidates);
 }
 
 export function isToolAllowed(
@@ -800,7 +848,8 @@ export function isToolAllowed(
   prefix: ToolPrefix,
   includeTools?: unknown,
   excludeTools?: unknown,
+  otherCurrentCandidates?: Set<string>,
 ): boolean {
-  return isToolIncluded(toolName, serverName, prefix, includeTools)
-    && !isToolExcluded(toolName, serverName, prefix, excludeTools);
+  return isToolIncluded(toolName, serverName, prefix, includeTools, otherCurrentCandidates)
+    && !isToolExcluded(toolName, serverName, prefix, excludeTools, otherCurrentCandidates);
 }

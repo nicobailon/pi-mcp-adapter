@@ -5,6 +5,9 @@ import {
 	formatPromptCommandName,
 	formatToolName,
 	getToolNameCandidates,
+	isToolExcluded,
+	isToolAllowed,
+	matchesToolPattern,
 } from "../types.ts";
 
 describe("resolveServerFromToolName", () => {
@@ -39,12 +42,12 @@ describe("resolveServerFromToolName", () => {
 			const underscoredTool = formatToolName("search", "my_server", "server");
 
 			expect(spacedTool).toBe("my_20_server_search");
-			expect(underscoredTool).toBe("my_5f_server_search");
+			expect(underscoredTool).toBe("my_server_search");
 			expect(new Set([spacedTool, underscoredTool]).size).toBe(2);
 			expect(resolveServerFromToolName(spacedTool, ["my server", "my_server"], "server")).toBe("my server");
 			expect(resolveServerFromToolName(underscoredTool, ["my server", "my_server"], "server")).toBe("my_server");
 			expect(formatPromptCommandName("plan", "my server", "server")).toBe("mcp__my_20_server__plan");
-			expect(formatPromptCommandName("plan", "my_server", "server")).toBe("mcp__my_5f_server__plan");
+			expect(formatPromptCommandName("plan", "my_server", "server")).toBe("mcp__my_server__plan");
 			expect(getToolNameCandidates("search", "my server", "server")).toContain(spacedTool);
 			expect(getToolNameCandidates("search", "my_server", "server")).toContain(underscoredTool);
 		});
@@ -60,7 +63,7 @@ describe("resolveServerFromToolName", () => {
 		});
 
 		it("picks the longest matching prefix when server names share a stem", () => {
-			const tool = "searxng_2d_extra_deep_search";
+			const tool = "searxng-extra_deep_search";
 			expect(
 				resolveServerFromToolName(tool, ["searxng", "searxng-extra"], "server"),
 			).toBe("searxng-extra");
@@ -93,7 +96,7 @@ describe("resolveServerFromToolName", () => {
 	describe("mcp prefix mode", () => {
 		it("resolves the mcp__namespaced format", () => {
 			expect(
-				resolveServerFromToolName("mcp__my_2d_server_run", ["my-server"], "mcp"),
+				resolveServerFromToolName("mcp__my-server_run", ["my-server"], "mcp"),
 			).toBe("my-server");
 		});
 	});
@@ -173,22 +176,45 @@ describe("resolveServerFromToolName", () => {
 	});
 });
 
+describe("direct tool selector candidates", () => {
+	it("keeps hyphen and underscore prefixes distinct while matching legacy escaped prefixes", () => {
+		const hyphenCandidates = getToolNameCandidates("do_thing", "my-server", "server");
+		const underscoreCandidates = getToolNameCandidates("do_thing", "my_server", "server");
+
+		expect(matchesToolPattern(hyphenCandidates, ["my-server_do_thing"])).toBe(true);
+		expect(matchesToolPattern(hyphenCandidates, ["my_server_do_thing"])).toBe(true);
+		expect(matchesToolPattern(underscoreCandidates, ["my-server_do_thing"])).toBe(false);
+		expect(matchesToolPattern(hyphenCandidates, ["my_2d_server_do_thing"])).toBe(true);
+	});
+
+	it("matches normalized legacy emitted selectors when they are safe", () => {
+		expect(isToolExcluded("do_thing", "my-server", "server", ["my_server_do_thing"], new Set())).toBe(true);
+		expect(isToolAllowed("do_thing", "my-server", "server", undefined, ["my_server_do_thing"], new Set())).toBe(false);
+		expect(isToolExcluded("do_thing", "my-server", "server", ["my_2d_server_do_thing"], new Set())).toBe(true);
+		expect(isToolExcluded("do_thing", "my-server", "server", ["my-server_do_thing"], new Set())).toBe(true);
+	});
+
+	it("does not apply normalized legacy emitted selectors through current collisions", () => {
+		expect(isToolExcluded("do-thing", "my-server", "server", ["my_server_do_thing"], new Set(["my_server_do_thing"]))).toBe(false);
+	});
+});
+
 describe("distinct normalized server prefixes", () => {
 	it("resolves distinct space and hyphen prefixes", () => {
 		expect(
 			resolveServerFromToolName("a_20_b_run", ["a b", "a-20-b"], "server"),
 		).toBe("a b");
 		expect(
-			resolveServerFromToolName("a_2d_20_2d_b_run", ["a b", "a-20-b"], "server"),
+			resolveServerFromToolName("a-20-b_run", ["a b", "a-20-b"], "server"),
 		).toBe("a-20-b");
 	});
 
 	it("resolves distinct hyphen and underscore prefixes under mcp mode", () => {
 		expect(
-			resolveServerFromToolName("mcp__my_2d_server_run", ["my-server", "my_server"], "mcp"),
+			resolveServerFromToolName("mcp__my-server_run", ["my-server", "my_server"], "mcp"),
 		).toBe("my-server");
 		expect(
-			resolveServerFromToolName("mcp__my_5f_server_run", ["my-server", "my_server"], "mcp"),
+			resolveServerFromToolName("mcp__my_server_run", ["my-server", "my_server"], "mcp"),
 		).toBe("my_server");
 	});
 });

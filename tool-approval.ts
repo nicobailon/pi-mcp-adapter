@@ -24,19 +24,59 @@ export function isToolCallApprovalRequired(
   config: McpConfig,
   serverName: string,
   toolMeta: Pick<ToolMetadata, "originalName">,
+  toolMetadata?: ReadonlyMap<string, readonly ToolMetadata[]>,
 ): boolean {
   const definition = config.mcpServers[serverName];
-  const approval = definition?.approveTools !== undefined
-    ? definition.approveTools
-    : config.settings?.approveTools;
+  const serverApproval = definition?.approveTools;
+  const approval = serverApproval !== undefined ? serverApproval : config.settings?.approveTools;
 
   if (approval === true) return true;
   if (!Array.isArray(approval) || approval.length === 0) return false;
 
   const prefix = resolveToolPrefix(definition, config.settings?.toolPrefix);
-  return matchesToolPattern(
-    getToolNameCandidates(toolMeta.originalName, serverName, prefix),
-    approval,
+  const currentCandidates = getToolNameCandidates(toolMeta.originalName, serverName, prefix, false);
+  if (serverApproval !== undefined) {
+    if (matchesToolPattern(currentCandidates, approval)) return true;
+    if (!toolMetadata) return matchesToolPattern(getToolNameCandidates(toolMeta.originalName, serverName, prefix), approval);
+    const legacyCandidates = getToolNameCandidates(toolMeta.originalName, serverName, prefix);
+    const legacyEmittedName = [...currentCandidates].find(candidate => candidate !== toolMeta.originalName)?.replace(/-/g, "_");
+    if (legacyEmittedName) legacyCandidates.add(legacyEmittedName);
+    for (const candidate of currentCandidates) legacyCandidates.delete(candidate);
+    const otherCurrentCandidates = new Set<string>();
+    for (const tool of toolMetadata.get(serverName) ?? []) {
+      for (const candidate of getToolNameCandidates(tool.originalName, serverName, prefix, false)) {
+        otherCurrentCandidates.add(candidate);
+      }
+    }
+    for (const candidate of currentCandidates) otherCurrentCandidates.delete(candidate);
+    return approval.some(pattern =>
+      matchesToolPattern(legacyCandidates, [pattern])
+      && !matchesToolPattern(otherCurrentCandidates, [pattern]),
+    );
+  }
+
+
+  if (matchesToolPattern(currentCandidates, approval)) return true;
+  if (!toolMetadata) return false;
+
+  const legacyCandidates = getToolNameCandidates(toolMeta.originalName, serverName, prefix);
+  const legacyEmittedName = [...currentCandidates].find(candidate => candidate !== toolMeta.originalName)?.replace(/-/g, "_");
+  if (legacyEmittedName) legacyCandidates.add(legacyEmittedName);
+  for (const candidate of currentCandidates) legacyCandidates.delete(candidate);
+  const otherCurrentCandidates = new Set<string>();
+  for (const [name, metadata] of toolMetadata) {
+    const otherPrefix = resolveToolPrefix(config.mcpServers[name], config.settings?.toolPrefix);
+    for (const tool of metadata) {
+      for (const candidate of getToolNameCandidates(tool.originalName, name, otherPrefix, false)) {
+        otherCurrentCandidates.add(candidate);
+      }
+    }
+  }
+  for (const candidate of currentCandidates) otherCurrentCandidates.delete(candidate);
+
+  return approval.some(pattern =>
+    matchesToolPattern(legacyCandidates, [pattern])
+    && !matchesToolPattern(otherCurrentCandidates, [pattern]),
   );
 }
 
@@ -94,6 +134,7 @@ export async function ensureToolCallApproved(
   args: Record<string, unknown> | undefined,
   signal?: AbortSignal,
   origin: McpToolApprovalOrigin = toolMeta.resourceUri ? "resource" : "proxy",
+  approvalMetadata?: ReadonlyMap<string, readonly ToolMetadata[]>,
 ): Promise<ToolCallApprovalResult> {
   const cacheKey = `${serverName}\u0000${toolMeta.originalName}`;
   const approvedToolCalls = state.approvedToolCalls ??= new Map<string, true>();
@@ -109,7 +150,7 @@ export async function ensureToolCallApproved(
   }
   if (brokerDecision === "deny") return { ok: false, reason: "denied" };
 
-  if (!isToolCallApprovalRequired(state.config, serverName, toolMeta)) {
+  if (!isToolCallApprovalRequired(state.config, serverName, toolMeta, approvalMetadata ?? state.toolMetadata)) {
     return { ok: true };
   }
 

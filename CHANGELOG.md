@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Kept `mcpScript` tool-call replies flowing when Pi runs as a Bun-compiled binary by starting worker execution without module-level top-level await. Thanks @AndreiKopylov for issue #340 and @thesobercoder for the verified fix.
+- Fixed direct-tool server prefixes to preserve provider-valid underscores and hyphens, including `codebase-memory-mcp`, while retaining safe escaping, collision handling, and exact proxy routing. Thanks @mightymatth for issue #342 and @JasonLandbridge for issue #343.
 
 ## [2.24.0] - 2026-08-13
 

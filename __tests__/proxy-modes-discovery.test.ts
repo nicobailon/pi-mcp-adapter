@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { executeCall, executeDescribe, executeSearch } from "../proxy-modes.ts";
 import type { McpExtensionState } from "../state.ts";
 
@@ -185,6 +185,87 @@ describe("proxy discovery", () => {
 
     const call = await executeCall(state, "zzalias");
     expect(call.details).toMatchObject({ error: "tool_not_found", suggestions: [] });
+  });
+
+  it("prefers an exact describe name over an earlier normalized fallback", () => {
+    const state = {
+      config: { mcpServers: { "demo-a": { command: "fallback" }, demo: { command: "exact" } } },
+      toolMetadata: new Map([
+        ["demo-a", [{ name: "demo-a_b", originalName: "b", description: "Fallback" }]],
+        ["demo", [{ name: "demo_a_b", originalName: "a_b", description: "Exact" }]],
+      ]),
+      manager: { getConnection: () => undefined },
+      failureTracker: new Map(),
+    } as unknown as McpExtensionState;
+
+    expect(executeDescribe(state, "demo_a_b").details).toMatchObject({
+      server: "demo",
+      tool: { originalName: "a_b" },
+    });
+  });
+
+  it("fails closed for duplicate unqualified proxy names", async () => {
+    const firstCall = vi.fn(async () => ({ content: [{ type: "text", text: "first" }] }));
+    const secondCall = vi.fn(async () => ({ content: [{ type: "text", text: "second" }] }));
+    const state = {
+      config: {
+        mcpServers: {
+          "my server": { command: "first" },
+          my_20_server: { command: "second" },
+        },
+      },
+      toolMetadata: new Map([
+        ["my server", [{ name: "my_20_server_get", originalName: "get", description: "First" }]],
+        ["my_20_server", [{ name: "my_20_server_get", originalName: "get", description: "Second" }]],
+      ]),
+      manager: {
+        getConnection: (server: string) => ({ status: "connected", client: server === "my server" ? { callTool: firstCall } : { callTool: secondCall } }),
+        touch: () => {},
+        incrementInFlight: () => {},
+        decrementInFlight: () => {},
+        getRequestOptions: () => undefined,
+      },
+      failureTracker: new Map(),
+      serverInstructions: new Map(),
+      completedUiSessions: [],
+    } as unknown as McpExtensionState;
+
+    expect(executeDescribe(state, "my_20_server_get").details).toMatchObject({ error: "ambiguous_tool" });
+    await expect(executeCall(state, "my_20_server_get", {})).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
+    expect(firstCall).not.toHaveBeenCalled();
+    expect(secondCall).not.toHaveBeenCalled();
+    await expect(executeCall(state, "my_20_server_get", {}, "my server")).resolves.toMatchObject({ details: { server: "my server", tool: "get" } });
+    expect(firstCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed for same-server normalized fallback collisions", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
+    const state = {
+      config: { mcpServers: { demo: { command: "demo" } } },
+      toolMetadata: new Map([["demo", [
+        { name: "demo_a-b_c", originalName: "a-b_c", description: "First" },
+        { name: "demo_a_b-c", originalName: "a_b-c", description: "Second" },
+      ]]]),
+      manager: {
+        getConnection: () => ({ status: "connected", client: { callTool } }),
+        touch: () => {},
+        incrementInFlight: () => {},
+        decrementInFlight: () => {},
+        getRequestOptions: () => undefined,
+      },
+      failureTracker: new Map(),
+      serverInstructions: new Map(),
+      completedUiSessions: [],
+    } as unknown as McpExtensionState;
+
+    expect(executeDescribe(state, "demo_a_b_c").details).toMatchObject({ error: "ambiguous_tool" });
+    await expect(executeCall(state, "demo_a_b_c", {})).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
+    await expect(executeCall(state, "demo_a_b_c", {}, "demo")).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
+    expect(callTool).not.toHaveBeenCalled();
+    expect(executeDescribe(state, "demo_a-b_c").details).toMatchObject({ server: "demo", tool: { originalName: "a-b_c" } });
+    expect(executeDescribe(state, "demo_a_b-c").details).toMatchObject({ server: "demo", tool: { originalName: "a_b-c" } });
+    await expect(executeCall(state, "demo_a-b_c", {}, "demo")).resolves.toMatchObject({ details: { server: "demo", tool: "a-b_c" } });
+    expect(callTool).toHaveBeenCalledTimes(1);
   });
 
   it("tells callers to invoke native Pi tools directly", async () => {

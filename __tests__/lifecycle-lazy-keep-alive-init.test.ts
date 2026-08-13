@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   config: { settings: {}, mcpServers: {} } as any,
   manager: undefined as any,
   getMissingConfiguredDirectToolServers: vi.fn(() => [] as string[]),
+  isServerCacheValid: vi.fn(() => false),
   buildToolMetadata: vi.fn(() => ({ metadata: [], failedTools: [] })),
 }));
 
@@ -26,7 +27,7 @@ vi.mock("../metadata-cache.ts", () => ({
   computeServerHash: vi.fn(() => "hash"),
   getMetadataCachePath: vi.fn(() => mocks.cachePath),
   getMissingConfiguredDirectToolServers: mocks.getMissingConfiguredDirectToolServers,
-  isServerCacheValid: vi.fn(() => false),
+  isServerCacheValid: mocks.isServerCacheValid,
   loadMetadataCache: vi.fn(() => mocks.cache),
   reconstructToolMetadata: vi.fn(() => []),
   reconstructPromptMetadata: vi.fn(() => []),
@@ -102,6 +103,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     };
     mocks.manager = createManager();
     mocks.getMissingConfiguredDirectToolServers.mockReset().mockReturnValue([]);
+    mocks.isServerCacheValid.mockReset().mockReturnValue(false);
     mocks.buildToolMetadata.mockClear();
   });
 
@@ -113,6 +115,82 @@ describe("lazy-keep-alive initializeMcp integration", () => {
       process.env.MCP_DIRECT_TOOLS = originalDirectTools;
     }
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("provides all successful startup metadata for collision filtering", async () => {
+    mocks.cache = null;
+    mocks.config = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        "my-server": { command: "hyphen", lifecycle: "eager", excludeTools: ["search_records"] },
+        my_2d_server: { command: "escaped", lifecycle: "eager" },
+      },
+    };
+    mocks.manager = {
+      ...createManager(),
+      connect: vi.fn(async (name: string) => ({
+        status: "connected",
+        tools: [{ name: name === "my-server" ? "search-records" : "search_records", description: name }],
+        resources: [],
+      })),
+      getAllConnections: vi.fn(() => new Map()),
+    };
+    const { initializeMcp } = await import("../init.ts");
+
+    await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
+      cwd: tempDir,
+      hasUI: false,
+      mode: "headless",
+    } as any);
+
+    const knownMetadata = mocks.buildToolMetadata.mock.calls[0]?.[6] as Map<string, { originalName: string }[]>;
+    expect(knownMetadata.get("my-server")?.map(tool => tool.originalName)).toEqual(["search-records"]);
+    expect(knownMetadata.get("my_2d_server")?.map(tool => tool.originalName)).toEqual(["search_records"]);
+    expect(mocks.buildToolMetadata.mock.calls[0]?.[7]).toBe(true);
+  });
+
+  it("does not treat cached lazy metadata as successful startup metadata", async () => {
+    mocks.isServerCacheValid.mockReturnValue(true);
+    writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
+    mocks.cache = {
+      version: 1,
+      servers: {
+        my_server: {
+          configHash: "hash",
+          cachedAt: Date.now(),
+          tools: [{ name: "other", description: "Cached lazy tool" }],
+          resources: [],
+        },
+      },
+    };
+    mocks.config = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        "my-server": { command: "eager", lifecycle: "eager", excludeTools: ["my_server_do_thing"] },
+        my_server: { command: "lazy" },
+      },
+    };
+    mocks.manager = {
+      ...createManager(),
+      connect: vi.fn(async () => ({
+        status: "connected",
+        tools: [{ name: "do_thing", description: "Startup tool" }],
+        resources: [],
+      })),
+      getAllConnections: vi.fn(() => new Map()),
+    };
+    const { initializeMcp } = await import("../init.ts");
+
+    await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
+      cwd: tempDir,
+      hasUI: false,
+      mode: "headless",
+    } as any);
+
+    const knownMetadata = mocks.buildToolMetadata.mock.calls[0]?.[6] as Map<string, { originalName: string }[]>;
+    expect(knownMetadata.get("my-server")?.map(tool => tool.originalName)).toEqual(["do_thing"]);
+    expect(knownMetadata.has("my_server")).toBe(false);
+    expect(mocks.buildToolMetadata.mock.calls[0]?.[7]).toBe(true);
   });
 
   it("marks no-cache bootstrap spawns for health-check reconnects", async () => {
