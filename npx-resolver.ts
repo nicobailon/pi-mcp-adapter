@@ -451,7 +451,11 @@ function loadCache(): NpxCache | null {
     try {
       unlinkSync(cachePath);
     } catch {
-      // Cache cleanup is best effort; resolution must still proceed.
+      try {
+        writeFileSync(cachePath, "", "utf-8");
+      } catch {
+        // Cache cleanup is best effort; resolution must still proceed.
+      }
     }
     return null;
   }

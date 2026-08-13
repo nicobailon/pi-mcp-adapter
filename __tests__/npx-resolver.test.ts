@@ -93,7 +93,11 @@ describe("npx-resolver", () => {
     writeFileSync(cachePath, JSON.stringify({ version: 1, entries: {} }), "utf-8");
     vi.doMock("node:fs", async (importOriginal) => {
       const fs = await importOriginal<typeof import("node:fs")>();
-      return { ...fs, unlinkSync: vi.fn(() => { throw new Error("permission denied"); }) };
+      return {
+        ...fs,
+        unlinkSync: vi.fn(() => { throw new Error("permission denied"); }),
+        writeFileSync: vi.fn(() => { throw new Error("permission denied"); }),
+      };
     });
     vi.doMock("cross-spawn", () => ({
       default: vi.fn(() => {
@@ -107,7 +111,7 @@ describe("npx-resolver", () => {
     expect(existsSync(cachePath)).toBe(true);
   });
 
-  it("returns a cached package when version-1 cleanup and cache save fail", async () => {
+  it("clears version-1 secrets and returns a cached package when cache save fails", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
     const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
@@ -117,14 +121,20 @@ describe("npx-resolver", () => {
     process.env.NPM_CONFIG_CACHE = npmCache;
 
     const cachePath = join(agentDir, "mcp-npx-cache.json");
-    writeFileSync(cachePath, JSON.stringify({ version: 1, entries: {} }), "utf-8");
+    writeFileSync(cachePath, JSON.stringify({
+      version: 1,
+      entries: { [JSON.stringify(["npx", "demo-pkg", "--token=secret-value"])]: {} },
+    }), "utf-8");
     const binPath = writeCachedPackage(npmCache, "demo-pkg");
     vi.doMock("node:fs", async (importOriginal) => {
       const fs = await importOriginal<typeof import("node:fs")>();
       return {
         ...fs,
         unlinkSync: vi.fn(() => { throw new Error("permission denied"); }),
-        writeFileSync: vi.fn(() => { throw new Error("permission denied"); }),
+        writeFileSync: vi.fn((path: string, data: string, options?: Parameters<typeof fs.writeFileSync>[2]) => {
+          if (path === cachePath && data === "") return fs.writeFileSync(path, data, options);
+          throw new Error("permission denied");
+        }),
       };
     });
 
@@ -135,7 +145,7 @@ describe("npx-resolver", () => {
       isJs: true,
     });
 
-    expect(existsSync(cachePath)).toBe(true);
+    expect(readFileSync(cachePath, "utf-8")).not.toContain("secret-value");
   });
 
   it("uses cross-spawn to read npm's cache directory", async () => {
