@@ -106,23 +106,25 @@ const capturedConsole = Object.freeze({
   debug: (...args) => emit(`[console.debug] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
 });
 
-try {
-  const context = vm.createContext(Object.assign(Object.create(null), {
-    tools,
-    emit,
-    console: capturedConsole,
-  }), {
-    codeGeneration: { strings: false, wasm: false },
-    name: "mcpScript",
-  });
-  const script = new vm.Script(`(async () => {\n${workerData.code}\n})()`, { filename: "mcpScript.js" });
-  const returnValue = await Promise.resolve(script.runInContext(context));
-  parentPort.postMessage(returnValue === undefined
-    ? { type: "done" }
-    : { type: "done", returnBlock: toContentBlock(returnValue) });
-} catch (error) {
-  parentPort.postMessage({
-    type: "error",
-    message: error instanceof Error ? error.message : String(error),
-  });
-}
+void (async () => {
+  try {
+    const context = vm.createContext(Object.assign(Object.create(null), {
+      tools,
+      emit,
+      console: capturedConsole,
+    }), {
+      codeGeneration: { strings: false, wasm: false },
+      name: "mcpScript",
+    });
+    const script = new vm.Script(`(async () => {\n${workerData.code}\n})()`, { filename: "mcpScript.js" });
+    const returnValue = await Promise.resolve(script.runInContext(context));
+    parentPort.postMessage(returnValue === undefined
+      ? { type: "done" }
+      : { type: "done", returnBlock: toContentBlock(returnValue) });
+  } catch (error) {
+    parentPort.postMessage({
+      type: "error",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+})();

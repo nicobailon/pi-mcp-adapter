@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Kept `mcpScript` tool-call replies flowing when Pi runs as a Bun-compiled binary by starting worker execution without module-level top-level await. Thanks @AndreiKopylov for issue #340 and @thesobercoder for the verified fix.
+
 ## [2.24.0] - 2026-08-13
 
 ### Added
