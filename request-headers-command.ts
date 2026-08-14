@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type { FetchLike } from "@modelcontextprotocol/client";
 import type { HttpRequestHeadersCommand } from "./types.ts";
 import { interpolateEnvVars } from "./utils.ts";
@@ -12,6 +12,14 @@ function isNoSuchProcessError(error: unknown): boolean {
 }
 
 function killRequestHeadersCommand(child: ChildProcess): void {
+  if (process.platform === "win32" && child.pid !== undefined) {
+    const result = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    if (result.status === 0) return;
+  }
+
   try {
     if (USE_PROCESS_GROUP && child.pid !== undefined) {
       process.kill(-child.pid, "SIGKILL");
