@@ -69,10 +69,26 @@ function killRequestHeadersCommand(child: ChildProcess): void {
   }
 
   if (USE_PROCESS_GROUP && child.pid !== undefined) {
-    signalProcessGroup(child.pid, "SIGSTOP");
-    const descendantPids = collectPosixDescendantPids(child.pid);
-    signalProcessGroup(child.pid, "SIGKILL");
-    for (const pid of descendantPids) signalPid(pid, "SIGKILL");
+    const frozenPids = new Set<number>();
+    let cleanupError: Error | undefined;
+    try {
+      signalProcessGroup(child.pid, "SIGSTOP");
+      for (let pass = 0; pass < 8; pass++) {
+        const newPids = collectPosixDescendantPids(child.pid).filter(pid => !frozenPids.has(pid));
+        if (newPids.length === 0) return;
+        for (const pid of newPids) {
+          signalPid(pid, "SIGSTOP");
+          frozenPids.add(pid);
+        }
+      }
+      cleanupError = new Error("HTTP request headers command cleanup failed: descendant process tree did not stabilize");
+    } catch (error) {
+      cleanupError = error instanceof Error ? error : new Error(String(error));
+    } finally {
+      signalProcessGroup(child.pid, "SIGKILL");
+      for (const pid of frozenPids) signalPid(pid, "SIGKILL");
+    }
+    if (cleanupError) throw cleanupError;
     return;
   }
 

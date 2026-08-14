@@ -900,6 +900,25 @@ describe("config discovery", () => {
     expect(JSON.stringify(entry)).not.toContain("secret-bearer-token");
   });
 
+  it("drops an inherited request headers command when a url-only override repoints the server", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-rhc-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-rhc-project-"));
+    writeBakedAndOverride(
+      home,
+      project,
+      { url: URL_A, requestHeadersCommand: { command: "sign-old-url", args: ["${REQUEST_SECRET}"] } },
+      { url: URL_B },
+    );
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    const entry = config.mcpServers.litellm;
+    expect(entry).toEqual({ url: URL_B });
+    expect(entry.requestHeadersCommand).toBeUndefined();
+    expect(JSON.stringify(entry)).not.toContain("REQUEST_SECRET");
+  });
+
   it("drops inherited oauth config when a url-only override repoints the server", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-oauth-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-oauth-project-"));
