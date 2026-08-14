@@ -151,6 +151,33 @@ setInterval(() => {}, 1000);
     expect(existsSync(marker)).toBe(false);
   });
 
+  it.skipIf(process.platform === "win32")("kills descendants that reparent before timeout", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
+    const descendant = commandScript(`
+import { writeFileSync } from "node:fs";
+setTimeout(() => {
+  writeFileSync(${JSON.stringify(marker)}, "alive");
+}, 100);
+setInterval(() => {}, 1000);
+`);
+    const spawner = commandScript(`
+import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(descendant)}], { detached: true, stdio: "ignore" }).unref();
+`);
+    const script = commandScript(`
+import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(spawner)}], { stdio: "ignore" });
+setInterval(() => {}, 1000);
+`);
+    const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script], timeoutMs: 50 });
+
+    await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+      "HTTP request headers command timed out after 50ms",
+    );
+    await delay(200);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("validates configuration before issuing a request", () => {
     expect(() => createRequestHeadersCommandFetch({ command: "" })).toThrow(
       "requires a non-empty command",

@@ -58,7 +58,7 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-function killRequestHeadersCommand(child: ChildProcess): void {
+function killRequestHeadersCommand(child: ChildProcess, trackedPosixDescendantPids = new Set<number>()): void {
   if (process.platform === "win32" && child.pid !== undefined) {
     const result = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
       encoding: "utf8",
@@ -73,6 +73,10 @@ function killRequestHeadersCommand(child: ChildProcess): void {
     let cleanupError: Error | undefined;
     try {
       signalProcessGroup(child.pid, "SIGSTOP");
+      for (const pid of trackedPosixDescendantPids) {
+        signalPid(pid, "SIGSTOP");
+        frozenPids.add(pid);
+      }
       for (let pass = 0; pass < 8; pass++) {
         const newPids = collectPosixDescendantPids(child.pid).filter(pid => !frozenPids.has(pid));
         if (newPids.length === 0) return;
@@ -157,17 +161,28 @@ async function invokeRequestHeadersCommand(
       detached: USE_PROCESS_GROUP,
     });
 
+    const trackedPosixDescendantPids = new Set<number>();
+    const trackPosixDescendants = () => {
+      if (!USE_PROCESS_GROUP || child.pid === undefined || settled) return;
+      for (const pid of collectPosixDescendantPids(child.pid)) trackedPosixDescendantPids.add(pid);
+    };
+    trackPosixDescendants();
+    const descendantTracker = USE_PROCESS_GROUP ? setInterval(trackPosixDescendants, 10) : undefined;
+    descendantTracker?.unref();
+
     const finish = (error?: Error, headers?: Headers) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (descendantTracker) clearInterval(descendantTracker);
       signal.removeEventListener("abort", abort);
       if (error) reject(error);
       else resolve(headers!);
     };
     const failAfterKill = (message: string) => {
       try {
-        killRequestHeadersCommand(child);
+        trackPosixDescendants();
+        killRequestHeadersCommand(child, trackedPosixDescendantPids);
         finish(new Error(message));
       } catch (error) {
         finish(error instanceof Error ? error : new Error(String(error)));
