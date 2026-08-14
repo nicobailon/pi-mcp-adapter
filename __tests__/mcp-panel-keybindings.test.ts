@@ -1,4 +1,7 @@
 import { KeybindingsManager, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createMcpPanel } from "../mcp-panel.ts";
 import { createMcpSetupPanel, type SetupPanelCallbacks } from "../mcp-setup-panel.ts";
@@ -313,5 +316,38 @@ describe("mcp-setup-panel custom keybindings", () => {
     expect(output).toContain("3. ~/.agents/mcp/mcp.json");
     expect(output).toContain("6. .pi/mcp.json");
     panel.dispose();
+  });
+
+  it("shows the branded project Pi override path in config precedence", () => {
+    const originalPackageDir = process.env.PI_PACKAGE_DIR;
+    const packageDir = mkdtempSync(join(tmpdir(), "pi-mcp-panel-package-"));
+    writeFileSync(join(packageDir, "package.json"), JSON.stringify({ piConfig: { name: "arc", configDir: ".arc" } }));
+    process.env.PI_PACKAGE_DIR = packageDir;
+
+    try {
+      const panel = createMcpSetupPanel(
+        createEmptyDiscovery(),
+        createSetupCallbacks(),
+        {
+          mode: "setup",
+          onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
+        },
+        { requestRender: () => {} },
+        () => {},
+      );
+
+      panel.handleInput(DOWN);
+      panel.handleInput(DOWN);
+      const output = panel.render(100).join("\n");
+
+      expect(output).toContain("6. .arc/mcp.json");
+      panel.dispose();
+    } finally {
+      if (originalPackageDir === undefined) {
+        delete process.env.PI_PACKAGE_DIR;
+      } else {
+        process.env.PI_PACKAGE_DIR = originalPackageDir;
+      }
+    }
   });
 });

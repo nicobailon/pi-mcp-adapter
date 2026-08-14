@@ -1,6 +1,7 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import type { ImportKind } from "./types.ts";
+import { getConfigDirName } from "./agent-dir.ts";
 import { KNOWN_SERVER_PRESETS, type ConfigWritePreview, type KnownServerPreset, type McpDiscoverySummary } from "./config.ts";
 import type { McpOnboardingState } from "./onboarding-state.ts";
 
@@ -556,7 +557,7 @@ export class McpSetupPanel {
           "3. ~/.agents/mcp/mcp.json",
           "4. <Pi agent dir>/mcp.json",
           "5. .mcp.json",
-          "6. .pi/mcp.json",
+          `6. ${getConfigDirName()}/mcp.json`,
           `Host discovery: ${this.discovery.hostConfigDiscovery}. Conflicts reported: ${this.discovery.conflicts.length}.`,
           ...this.discovery.conflicts.slice(0, 8).map((conflict) =>
             `${conflict.serverName}: ${conflict.sources.map((source) => source.path).join(" -> ")} (winner: ${conflict.winner.path})`,

@@ -12,6 +12,8 @@ function writeJson(path: string, value: unknown): void {
 describe("cli init helper", () => {
   const originalHome = process.env.HOME;
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const originalPackageDir = process.env.PI_PACKAGE_DIR;
+  const originalArcAgentDir = process.env.ARC_CODING_AGENT_DIR;
   const originalCwd = process.cwd();
 
   beforeEach(() => {
@@ -24,6 +26,16 @@ describe("cli init helper", () => {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {
       process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    }
+    if (originalPackageDir === undefined) {
+      delete process.env.PI_PACKAGE_DIR;
+    } else {
+      process.env.PI_PACKAGE_DIR = originalPackageDir;
+    }
+    if (originalArcAgentDir === undefined) {
+      delete process.env.ARC_CODING_AGENT_DIR;
+    } else {
+      process.env.ARC_CODING_AGENT_DIR = originalArcAgentDir;
     }
     process.chdir(originalCwd);
   });
@@ -155,6 +167,32 @@ describe("cli init helper", () => {
     const config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
     expect(config.imports).toContain("claude-code");
     expect(logs.join("\n")).toContain(piConfigPath);
+  });
+
+
+  it("writes init output to the branded host agent directory", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-branded-home-"));
+    const packageDir = mkdtempSync(join(tmpdir(), "pi-mcp-cli-branded-package-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-cli-branded-agent-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-branded-project-"));
+    process.env.HOME = home;
+    process.env.PI_PACKAGE_DIR = packageDir;
+    process.env.ARC_CODING_AGENT_DIR = agentDir;
+    process.chdir(project);
+
+    writeJson(join(packageDir, "package.json"), { piConfig: { name: "arc", configDir: ".arc" } });
+
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const { main } = await import("../cli.js");
+    const exitCode = await main(["init", "--dry-run", "--discover-host-configs"], line => logs.push(line), line => errors.push(line));
+
+    expect(exitCode).toBe(0);
+    expect(errors).toEqual([]);
+    expect(logs.join("\n")).toContain(`Pi global override: ${join(agentDir, "mcp.json")}`);
+    expect(logs.join("\n")).toContain(`Project Pi override: ${join(process.cwd(), ".arc", "mcp.json")}`);
+    expect(logs.join("\n")).toContain(`Dry run: would update ${join(agentDir, "mcp.json")}`);
+    expect(existsSync(join(home, ".pi", "agent", "mcp.json"))).toBe(false);
   });
 
   it("runs when invoked through a symlinked bin path", () => {

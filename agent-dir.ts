@@ -2,10 +2,18 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+export function getConfigDirName(): string {
+  const configDir = readPiConfig()?.configDir;
+  return typeof configDir === "string" && configDir.trim() ? configDir.trim() : ".pi";
+}
+
 export function getAgentDir(): string {
-  const configured = process.env.PI_CODING_AGENT_DIR?.trim();
+  const piConfig = readPiConfig();
+  const name = piConfig?.name;
+  const appName = typeof name === "string" && name.trim() ? name.trim() : "pi";
+  const configured = process.env[`${appName.toUpperCase()}_CODING_AGENT_DIR`]?.trim();
   if (!configured) {
-    return join(homedir(), ".pi", "agent");
+    return join(homedir(), getConfigDirName(), "agent");
   }
   if (configured === "~") {
     return homedir();
@@ -31,12 +39,12 @@ export function getAgentPath(...segments: string[]): string {
  *
  * Falls back to "pi", which is what pi's own APP_NAME resolves to.
  */
-function readPiConfig(): { name?: unknown; clientUri?: unknown } | undefined {
+function readPiConfig(): { name?: unknown; configDir?: unknown; clientUri?: unknown } | undefined {
   const dir = process.env.PI_PACKAGE_DIR?.trim()
   if (!dir) return undefined
   try {
     const manifest = JSON.parse(readFileSync(join(resolve(dir), "package.json"), "utf8")) as {
-      piConfig?: { name?: unknown; clientUri?: unknown }
+      piConfig?: { name?: unknown; configDir?: unknown; clientUri?: unknown }
     }
     return manifest.piConfig
   } catch {

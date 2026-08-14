@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -7,9 +7,12 @@ describe("Pi agent dir paths", () => {
   const originalHome = process.env.HOME;
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalOAuthDir = process.env.MCP_OAUTH_DIR;
+  const originalPackageDir = process.env.PI_PACKAGE_DIR;
+  const originalArcAgentDir = process.env.ARC_CODING_AGENT_DIR;
 
   beforeEach(() => {
     vi.resetModules();
+    delete process.env.PI_PACKAGE_DIR;
   });
 
   afterEach(() => {
@@ -23,6 +26,16 @@ describe("Pi agent dir paths", () => {
       delete process.env.MCP_OAUTH_DIR;
     } else {
       process.env.MCP_OAUTH_DIR = originalOAuthDir;
+    }
+    if (originalPackageDir === undefined) {
+      delete process.env.PI_PACKAGE_DIR;
+    } else {
+      process.env.PI_PACKAGE_DIR = originalPackageDir;
+    }
+    if (originalArcAgentDir === undefined) {
+      delete process.env.ARC_CODING_AGENT_DIR;
+    } else {
+      process.env.ARC_CODING_AGENT_DIR = originalArcAgentDir;
     }
   });
 
@@ -59,6 +72,28 @@ describe("Pi agent dir paths", () => {
     const { getAgentDir } = await import("../agent-dir.ts");
 
     expect(getAgentDir()).toBe(join(home, "custom-pi-agent"));
+  });
+
+  it("uses the branded host environment key and config directory", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-home-"));
+    const packageDir = mkdtempSync(join(tmpdir(), "pi-mcp-package-dir-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-"));
+    process.env.HOME = home;
+    writeFileSync(join(packageDir, "package.json"), JSON.stringify({ piConfig: { name: "arc", configDir: ".arc" } }));
+    process.env.PI_PACKAGE_DIR = packageDir;
+
+    const { getAgentDir } = await import("../agent-dir.ts");
+
+    expect(getAgentDir()).toBe(join(home, ".arc", "agent"));
+
+    process.env.ARC_CODING_AGENT_DIR = agentDir;
+    expect(getAgentDir()).toBe(agentDir);
+
+    process.env.ARC_CODING_AGENT_DIR = "~/custom-agent";
+    expect(getAgentDir()).toBe(join(home, "custom-agent"));
+
+    process.env.ARC_CODING_AGENT_DIR = "relative-agent";
+    expect(getAgentDir()).toBe(join(process.cwd(), "relative-agent"));
   });
 
   it("keeps MCP_OAUTH_DIR as the explicit OAuth storage override", async () => {

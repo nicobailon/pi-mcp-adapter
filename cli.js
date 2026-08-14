@@ -14,15 +14,36 @@ function expandHome(input) {
   return path.resolve(input);
 }
 
-const AGENT_DIR = process.env.PI_CODING_AGENT_DIR?.trim()
-  ? expandHome(process.env.PI_CODING_AGENT_DIR.trim())
-  : path.join(HOME, ".pi", "agent");
+function readPiConfig() {
+  const dir = process.env.PI_PACKAGE_DIR?.trim();
+  if (!dir) return undefined;
+  try {
+    return JSON.parse(fs.readFileSync(path.join(path.resolve(dir), "package.json"), "utf8")).piConfig;
+  } catch {
+    return undefined;
+  }
+}
+
+function getConfigDirName() {
+  const configDir = readPiConfig()?.configDir;
+  return typeof configDir === "string" && configDir.trim() ? configDir.trim() : ".pi";
+}
+
+function getAgentDir() {
+  const piConfig = readPiConfig();
+  const appName = typeof piConfig?.name === "string" && piConfig.name.trim() ? piConfig.name.trim() : "pi";
+  const configured = process.env[`${appName.toUpperCase()}_CODING_AGENT_DIR`]?.trim();
+  if (configured) return expandHome(configured);
+  return path.join(HOME, getConfigDirName(), "agent");
+}
+
+const AGENT_DIR = getAgentDir();
 const PI_CONFIG_PATH = path.join(AGENT_DIR, "mcp.json");
 const GENERIC_GLOBAL_CONFIG_PATH = path.join(HOME, ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATH = path.join(HOME, ".agents", "mcp.json");
 const AGENTS_NESTED_GLOBAL_CONFIG_PATH = path.join(HOME, ".agents", "mcp", "mcp.json");
 const PROJECT_CONFIG_PATH = path.resolve(process.cwd(), ".mcp.json");
-const PROJECT_PI_CONFIG_PATH = path.resolve(process.cwd(), ".pi", "mcp.json");
+const PROJECT_PI_CONFIG_PATH = path.resolve(process.cwd(), getConfigDirName(), "mcp.json");
 
 const IMPORT_PATHS = {
   cursor: [path.join(HOME, ".cursor", "mcp.json")],

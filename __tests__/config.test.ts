@@ -10,6 +10,7 @@ function writeJson(path: string, value: unknown): void {
 
 describe("config discovery", () => {
   const originalHome = process.env.HOME;
+  const originalPackageDir = process.env.PI_PACKAGE_DIR;
   const originalCwd = process.cwd();
 
   beforeEach(() => {
@@ -18,6 +19,11 @@ describe("config discovery", () => {
 
   afterEach(() => {
     process.env.HOME = originalHome;
+    if (originalPackageDir === undefined) {
+      delete process.env.PI_PACKAGE_DIR;
+    } else {
+      process.env.PI_PACKAGE_DIR = originalPackageDir;
+    }
     process.chdir(originalCwd);
   });
 
@@ -232,6 +238,28 @@ describe("config discovery", () => {
       autoAuth: true,
       oauthDir: ".pi/oauth",
     });
+  });
+
+  it("loads the branded project Pi override path", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-branded-home-"));
+    const packageDir = mkdtempSync(join(tmpdir(), "pi-mcp-config-branded-package-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-branded-project-"));
+    process.env.HOME = home;
+    process.env.PI_PACKAGE_DIR = packageDir;
+    process.chdir(project);
+
+    writeJson(join(packageDir, "package.json"), { piConfig: { name: "arc", configDir: ".arc" } });
+    writeJson(join(project, ".arc", "mcp.json"), {
+      mcpServers: {
+        brandedProject: { command: "branded" },
+      },
+    });
+
+    const { getProjectPiConfigPath, loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    expect(getProjectPiConfigPath(project)).toBe(join(project, ".arc", "mcp.json"));
+    expect(config.mcpServers.brandedProject).toMatchObject({ command: "branded" });
   });
 
   it("replaces transport-specific fields when an override switches to or from a socket", async () => {
