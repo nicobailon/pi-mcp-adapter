@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Avoided an O(tools²) cross-server tool-name collision scan at startup by computing `otherCurrentCandidates` only when a server configures `includeTools`/`excludeTools`. This removes the multi-second CPU-bound startup pause reported for large `mcp-cache.json` tool counts (related: #354).
+- Avoided an O(tools²) cross-server tool-name collision scan at startup for unfiltered large `mcp-cache.json` tool sets by computing `otherCurrentCandidates` only when a server configures `includeTools` or `excludeTools`. This partially mitigates issue #354 while the filtered-server path remains open. Thanks @mjlbach for PR #357 and @cataldoc for issue #354.
 
 ## [2.25.0] - 2026-08-13
 
