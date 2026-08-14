@@ -250,7 +250,7 @@ async function invokeRequestHeadersCommand(
         return;
       }
       if (code !== 0) {
-        finish(new Error(`HTTP request headers command exited with code ${code ?? "unknown"}`));
+        failAfterKill(`HTTP request headers command exited with code ${code ?? "unknown"}`);
         return;
       }
       let parsed: unknown;

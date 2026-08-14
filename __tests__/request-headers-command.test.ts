@@ -79,6 +79,31 @@ describe("per-request HTTP header commands", () => {
     );
   });
 
+  it.skipIf(process.platform === "win32")("kills helpers when the command exits unsuccessfully", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
+    const helper = commandScript(`
+import { writeFileSync } from "node:fs";
+setTimeout(() => {
+  writeFileSync(${JSON.stringify(marker)}, "alive");
+}, 150);
+setInterval(() => {}, 1000);
+`);
+    const script = commandScript(`
+import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(helper)}], { stdio: "ignore" }).unref();
+setTimeout(() => {
+  process.exit(7);
+}, 75);
+`);
+    const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script] });
+
+    await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+      "HTTP request headers command exited with code 7",
+    );
+    await delay(220);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("fails closed on malformed command output", async () => {
     const script = commandScript('process.stdout.write("not-json");\n');
     const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script] });
