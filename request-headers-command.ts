@@ -46,7 +46,7 @@ function collectPosixDescendantPids(rootPid: number): number[] {
 }
 
 function collectPosixCleanupTokenPids(cleanupToken: string): number[] {
-  const result = runPosixPs(["eww", "-axo", "pid=,command="]);
+  const result = runPosixPs(["axeww", "-o", "pid=,command="]);
   if (result.status !== 0) {
     throw new Error(`HTTP request headers command cleanup failed: ps exited with code ${result.status ?? "unknown"}`);
   }
