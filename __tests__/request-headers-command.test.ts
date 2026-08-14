@@ -232,6 +232,36 @@ setTimeout(() => {
     }
   });
 
+  it.skipIf(process.platform === "win32")("fails closed and kills helpers when tracking fails before unsuccessful output", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
+    const helper = commandScript(`
+import { writeFileSync } from "node:fs";
+setTimeout(() => {
+  writeFileSync(${JSON.stringify(marker)}, "alive");
+}, 150);
+setInterval(() => {}, 1000);
+`);
+    const script = commandScript(`
+import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(helper)}], { stdio: "ignore" }).unref();
+setTimeout(() => {
+  process.exit(1);
+}, 75);
+`);
+    process.env.PI_MCP_ADAPTER_TEST_FAIL_PS = "1";
+    try {
+      const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script] });
+
+      await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+        "HTTP request headers command cleanup failed: ps exited with code 1",
+      );
+      await delay(220);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      delete process.env.PI_MCP_ADAPTER_TEST_FAIL_PS;
+    }
+  });
+
   it("validates configuration before issuing a request", () => {
     expect(() => createRequestHeadersCommandFetch({ command: "" })).toThrow(
       "requires a non-empty command",

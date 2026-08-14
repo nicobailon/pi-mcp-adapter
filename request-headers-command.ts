@@ -245,12 +245,12 @@ async function invokeRequestHeadersCommand(
     });
     child.on("close", code => {
       if (settled) return;
-      if (code !== 0) {
-        finish(new Error(`HTTP request headers command exited with code ${code ?? "unknown"}`));
-        return;
-      }
       if (trackingError) {
         failAfterKill(trackingError.message);
+        return;
+      }
+      if (code !== 0) {
+        finish(new Error(`HTTP request headers command exited with code ${code ?? "unknown"}`));
         return;
       }
       let parsed: unknown;
