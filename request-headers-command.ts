@@ -1,0 +1,168 @@
+import { spawn } from "node:child_process";
+import type { FetchLike } from "@modelcontextprotocol/client";
+import type { HttpRequestHeadersCommand } from "./types.ts";
+import { interpolateEnvVars } from "./utils.ts";
+
+const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_OUTPUT_BYTES = 64 * 1024;
+
+export interface HttpRequestCommandEnvelope {
+  version: 1;
+  method: string;
+  url: string;
+  bodyBase64: string;
+}
+
+function resolvedCommand(config: HttpRequestHeadersCommand): {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  timeoutMs: number;
+} {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw new Error("HTTP request headers command must be an object");
+  }
+  if (typeof config.command !== "string" || config.command.trim() === "") {
+    throw new Error("HTTP request headers command requires a non-empty command");
+  }
+  if (config.args !== undefined && (!Array.isArray(config.args) || config.args.some(arg => typeof arg !== "string"))) {
+    throw new Error("HTTP request headers command args must be strings");
+  }
+  if (config.env !== undefined && (
+    typeof config.env !== "object"
+    || Array.isArray(config.env)
+    || Object.values(config.env).some(value => typeof value !== "string")
+  )) {
+    throw new Error("HTTP request headers command env values must be strings");
+  }
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000) {
+    throw new Error("HTTP request headers command timeoutMs must be an integer between 1 and 60000");
+  }
+  return {
+    command: interpolateEnvVars(config.command),
+    args: (config.args ?? []).map(interpolateEnvVars),
+    env: {
+      ...process.env,
+      ...Object.fromEntries(
+        Object.entries(config.env ?? {}).map(([key, value]) => [key, interpolateEnvVars(value)]),
+      ),
+    },
+    timeoutMs,
+  };
+}
+
+async function invokeRequestHeadersCommand(
+  config: HttpRequestHeadersCommand,
+  envelope: HttpRequestCommandEnvelope,
+  signal: AbortSignal,
+): Promise<Headers> {
+  const resolved = resolvedCommand(config);
+  return new Promise<Headers>((resolve, reject) => {
+    let stdout = Buffer.alloc(0);
+    let settled = false;
+    const child = spawn(resolved.command, resolved.args, {
+      env: resolved.env,
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
+    });
+
+    const finish = (error?: Error, headers?: Headers) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else resolve(headers!);
+    };
+    const abort = () => {
+      child.kill();
+      finish(new Error("HTTP request headers command aborted"));
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(new Error(`HTTP request headers command timed out after ${resolved.timeoutMs}ms`));
+    }, resolved.timeoutMs);
+
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+
+    child.on("error", () => finish(new Error("HTTP request headers command failed to start")));
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout = Buffer.concat([stdout, Buffer.from(chunk)]);
+      if (stdout.byteLength > MAX_OUTPUT_BYTES) {
+        child.kill();
+        finish(new Error("HTTP request headers command output exceeded 64 KiB"));
+      }
+    });
+    child.on("close", code => {
+      if (settled) return;
+      if (code !== 0) {
+        finish(new Error(`HTTP request headers command exited with code ${code ?? "unknown"}`));
+        return;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(stdout.toString("utf8"));
+      } catch {
+        finish(new Error("HTTP request headers command returned invalid JSON"));
+        return;
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        finish(new Error("HTTP request headers command must return a JSON object"));
+        return;
+      }
+      const entries = Object.entries(parsed);
+      if (entries.some(([, value]) => typeof value !== "string")) {
+        finish(new Error("HTTP request headers command values must be strings"));
+        return;
+      }
+      try {
+        finish(undefined, new Headers(entries as Array<[string, string]>));
+      } catch {
+        finish(new Error("HTTP request headers command returned an invalid header"));
+      }
+    });
+
+    child.stdin.on("error", () => {});
+    child.stdin.end(JSON.stringify(envelope));
+  });
+}
+
+/** Wrap fetch so a trusted command can derive headers from the exact request. */
+export function createRequestHeadersCommandFetch(
+  config: HttpRequestHeadersCommand,
+  delegate: FetchLike = globalThis.fetch,
+): FetchLike {
+  // Validate static configuration before the first request.
+  resolvedCommand(config);
+  return async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+    const request = new Request(input, init);
+    const body = Buffer.from(await request.clone().arrayBuffer());
+    const derived = await invokeRequestHeadersCommand(config, {
+      version: 1,
+      method: request.method.toUpperCase(),
+      url: request.url,
+      bodyBase64: body.toString("base64"),
+    }, request.signal);
+    const headers = new Headers(request.headers);
+    derived.forEach((value, name) => headers.set(name, value));
+    return delegate(new URL(request.url), {
+      method: request.method,
+      headers,
+      ...(request.method === "GET" || request.method === "HEAD" ? {} : { body }),
+      signal: request.signal,
+      cache: request.cache,
+      credentials: request.credentials,
+      integrity: request.integrity,
+      keepalive: request.keepalive,
+      mode: request.mode,
+      redirect: request.redirect,
+      referrer: request.referrer,
+      referrerPolicy: request.referrerPolicy,
+    });
+  };
+}

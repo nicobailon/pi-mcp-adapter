@@ -24,6 +24,7 @@ import { resourceNameToToolName } from "./resource-tools.ts";
 import {
   extractToolUiStreamMode,
   interpolateEnvRecord,
+  interpolateEnvVars,
   resolveBearerToken,
   resolveConfigPath,
   resolveServerUrl,
@@ -90,6 +91,14 @@ export function computeServerHash(definition: ServerEntry): string {
     cwd: resolveConfigPath(definition.cwd),
     url: resolveServerUrl(definition),
     headers: interpolateEnvRecord(definition.headers),
+    requestHeadersCommand: definition.requestHeadersCommand
+      ? {
+          command: interpolateEnvVars(definition.requestHeadersCommand.command),
+          args: definition.requestHeadersCommand.args?.map(interpolateEnvVars),
+          env: interpolateEnvRecord(definition.requestHeadersCommand.env),
+          timeoutMs: definition.requestHeadersCommand.timeoutMs,
+        }
+      : undefined,
     auth: definition.auth,
     protocolVersion: definition.protocolVersion,
     bearerToken: resolveBearerToken(definition),

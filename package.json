@@ -89,6 +89,7 @@
     "ui-app-bridge-helpers.ts",
     "config.ts",
     "server-manager.ts",
+    "request-headers-command.ts",
     "unix-socket-transport.ts",
     "json-schema-validator.ts",
     "session-recovery.ts",

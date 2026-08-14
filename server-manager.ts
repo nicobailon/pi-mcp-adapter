@@ -56,6 +56,7 @@ import {
   traceTransportKind,
   wrapTransportWithMcpTrace,
 } from "./mcp-trace.ts";
+import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
@@ -746,6 +747,9 @@ export class McpServerManager {
     }
 
     const requestInit = Object.keys(headers).length > 0 ? { headers } : undefined;
+    const requestFetch = definition.requestHeadersCommand
+      ? createRequestHeadersCommandFetch(definition.requestHeadersCommand)
+      : undefined;
     const createAuthProvider = (): McpOAuthProvider => new McpOAuthProvider(
       serverName,
       serverUrl,
@@ -772,6 +776,7 @@ export class McpServerManager {
       const authProvider = "provider" in authState ? authState.provider : undefined;
       const transportOptions = {
         ...(requestInit !== undefined ? { requestInit } : {}),
+        ...(requestFetch !== undefined ? { fetch: requestFetch } : {}),
         ...(authProvider !== undefined ? { authProvider } : {}),
         ...(authProvider !== undefined
           && definition.oauth !== false

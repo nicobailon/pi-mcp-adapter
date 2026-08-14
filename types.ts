@@ -356,6 +356,19 @@ export interface OAuthConfig {
   skipIssuerMetadataValidation?: boolean;
 }
 
+/**
+ * Trusted executable invoked for every outbound HTTP request. The adapter
+ * writes a versioned JSON request envelope to stdin and expects a JSON object
+ * containing headers on stdout. This is intended for caller-bound signing
+ * schemes whose headers depend on the exact request body.
+ */
+export interface HttpRequestHeadersCommand {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  timeoutMs?: number;
+}
+
 // Server configuration
 export interface ServerEntry {
   command?: string;
@@ -367,6 +380,8 @@ export interface ServerEntry {
   // HTTP fields
   url?: string;
   headers?: Record<string, string>;
+  /** Add or replace HTTP headers by running a trusted command for each request. */
+  requestHeadersCommand?: HttpRequestHeadersCommand;
   /** 
    * Authentication type:
    * - 'oauth' - Use OAuth 2.1 (auto-discovers endpoints, supports dynamic client registration)

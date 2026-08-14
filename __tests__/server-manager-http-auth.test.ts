@@ -18,6 +18,7 @@ type TransportOptions = {
   };
   authProvider?: OAuthProviderLike;
   skipIssuerMetadataValidation?: boolean;
+  fetch?: (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
 };
 
 type HttpTransportMock = {
@@ -208,6 +209,26 @@ describe("McpServerManager HTTP bearer auth", () => {
 
     expect(mocks.httpTransports.at(-1)!.options.requestInit?.headers?.["X-Goog-Api-Key"]).toBe("api-key");
     expect(mocks.httpTransports.at(-1)!.options.authProvider).toBeUndefined();
+  });
+
+  it("passes the per-request header command fetch to Streamable HTTP and SSE", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    mocks.connectErrors.push(new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      "POST is not supported",
+      { status: 405 },
+    ));
+
+    const manager = new McpServerManager();
+    await manager.connect("signed", {
+      url: "https://example.test/mcp",
+      requestHeadersCommand: { command: process.execPath, args: ["--version"] },
+    });
+
+    expect(mocks.httpTransports).toHaveLength(1);
+    expect(mocks.sseTransports).toHaveLength(1);
+    expect(mocks.httpTransports[0].options.fetch).toBeTypeOf("function");
+    expect(mocks.sseTransports[0].options.fetch).toBe(mocks.httpTransports[0].options.fetch);
   });
 
   it("preserves OAuth redirect URI, client metadata, and issuer opt-out for HTTP transports", async () => {

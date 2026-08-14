@@ -354,6 +354,30 @@ describe("metadata cache hashing", () => {
     );
   });
 
+  it("hashes the effective per-request header command", () => {
+    process.env.MCP_SIGNER_ACTOR = "actor-one";
+    const first = computeServerHash({
+      url: "https://example.test/mcp",
+      requestHeadersCommand: {
+        command: "node",
+        args: ["sign.mjs", "${MCP_SIGNER_ACTOR}"],
+        env: { ACTOR: "$env:MCP_SIGNER_ACTOR" },
+      },
+    });
+
+    process.env.MCP_SIGNER_ACTOR = "actor-two";
+    const second = computeServerHash({
+      url: "https://example.test/mcp",
+      requestHeadersCommand: {
+        command: "node",
+        args: ["sign.mjs", "${MCP_SIGNER_ACTOR}"],
+        env: { ACTOR: "$env:MCP_SIGNER_ACTOR" },
+      },
+    });
+
+    expect(first).not.toBe(second);
+  });
+
   it("hashes tilde cwd as the home directory", () => {
     expect(computeServerHash({ command: "node", cwd: "~/server" })).toBe(
       computeServerHash({ command: "node", cwd: join(homedir(), "server") }),
