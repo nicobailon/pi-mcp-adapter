@@ -90,9 +90,10 @@ describe("per-request HTTP header commands", () => {
   it("kills a command that keeps running after timeout", async () => {
     const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
     const script = commandScript(`
+import { writeFileSync } from "node:fs";
 process.on("SIGTERM", () => {});
 setTimeout(() => {
-  require("node:fs").writeFileSync(${JSON.stringify(marker)}, "alive");
+  writeFileSync(${JSON.stringify(marker)}, "alive");
 }, 100);
 setInterval(() => {}, 1000);
 `);
@@ -157,7 +158,7 @@ setInterval(() => {}, 1000);
 import { writeFileSync } from "node:fs";
 setTimeout(() => {
   writeFileSync(${JSON.stringify(marker)}, "alive");
-}, 100);
+}, 150);
 setInterval(() => {}, 1000);
 `);
     const spawner = commandScript(`
@@ -169,13 +170,54 @@ import { spawn } from "node:child_process";
 spawn(process.execPath, [${JSON.stringify(spawner)}], { stdio: "ignore" });
 setInterval(() => {}, 1000);
 `);
-    const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script], timeoutMs: 50 });
+    const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script], timeoutMs: 75 });
 
     await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
-      "HTTP request headers command timed out after 50ms",
+      "HTTP request headers command timed out after 75ms",
     );
-    await delay(200);
+    await delay(220);
     expect(existsSync(marker)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("fails closed and kills the command when descendant tracking fails", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
+    const script = commandScript(`
+import { writeFileSync } from "node:fs";
+setTimeout(() => {
+  writeFileSync(${JSON.stringify(marker)}, "alive");
+}, 100);
+setInterval(() => {}, 1000);
+`);
+    process.env.PI_MCP_ADAPTER_TEST_FAIL_PS = "1";
+    try {
+      const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script], timeoutMs: 25 });
+
+      await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+        "HTTP request headers command cleanup failed: ps exited with code 1",
+      );
+      await delay(200);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      delete process.env.PI_MCP_ADAPTER_TEST_FAIL_PS;
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("fails closed when descendant tracking fails before successful output", async () => {
+    const script = commandScript(`
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({ "x-derived": "ok" }));
+}, 75);
+`);
+    process.env.PI_MCP_ADAPTER_TEST_FAIL_PS = "1";
+    try {
+      const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script] });
+
+      await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+        "HTTP request headers command cleanup failed: ps exited with code 1",
+      );
+    } finally {
+      delete process.env.PI_MCP_ADAPTER_TEST_FAIL_PS;
+    }
   });
 
   it("validates configuration before issuing a request", () => {

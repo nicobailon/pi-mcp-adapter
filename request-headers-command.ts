@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { FetchLike } from "@modelcontextprotocol/client";
 import type { HttpRequestHeadersCommand } from "./types.ts";
 import { interpolateEnvVars } from "./utils.ts";
@@ -6,13 +7,19 @@ import { interpolateEnvVars } from "./utils.ts";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const USE_PROCESS_GROUP = process.platform !== "win32";
+const CLEANUP_TOKEN_ENV = "PI_MCP_REQUEST_HEADERS_CLEANUP_TOKEN";
 
 function isNoSuchProcessError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH";
 }
 
+function runPosixPs(args: string[]): { status: number | null; stdout: string } {
+  if (process.env.PI_MCP_ADAPTER_TEST_FAIL_PS === "1") return { status: 1, stdout: "" };
+  return spawnSync("ps", args, { encoding: "utf8" });
+}
+
 function collectPosixDescendantPids(rootPid: number): number[] {
-  const result = spawnSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" });
+  const result = runPosixPs(["-axo", "pid=,ppid="]);
   if (result.status !== 0) {
     throw new Error(`HTTP request headers command cleanup failed: ps exited with code ${result.status ?? "unknown"}`);
   }
@@ -38,6 +45,24 @@ function collectPosixDescendantPids(rootPid: number): number[] {
   return descendants;
 }
 
+function collectPosixCleanupTokenPids(cleanupToken: string): number[] {
+  const result = runPosixPs(["eww", "-axo", "pid=,command="]);
+  if (result.status !== 0) {
+    throw new Error(`HTTP request headers command cleanup failed: ps exited with code ${result.status ?? "unknown"}`);
+  }
+
+  const needle = `${CLEANUP_TOKEN_ENV}=${cleanupToken}`;
+  const pids: number[] = [];
+  for (const line of result.stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.includes(needle)) continue;
+    const [pidText] = trimmed.split(/\s+/, 1);
+    const pid = Number(pidText);
+    if (Number.isInteger(pid) && pid !== process.pid) pids.push(pid);
+  }
+  return pids;
+}
+
 function isTaskkillNoSuchProcess(result: ReturnType<typeof spawnSync>): boolean {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`.toLowerCase().includes("not found");
 }
@@ -58,7 +83,7 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-function killRequestHeadersCommand(child: ChildProcess, trackedPosixDescendantPids = new Set<number>()): void {
+function killRequestHeadersCommand(child: ChildProcess, trackedPosixDescendantPids = new Set<number>(), cleanupToken?: string): void {
   if (process.platform === "win32" && child.pid !== undefined) {
     const result = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
       encoding: "utf8",
@@ -78,7 +103,11 @@ function killRequestHeadersCommand(child: ChildProcess, trackedPosixDescendantPi
         frozenPids.add(pid);
       }
       for (let pass = 0; pass < 8; pass++) {
-        const newPids = collectPosixDescendantPids(child.pid).filter(pid => !frozenPids.has(pid));
+        const candidates = [
+          ...collectPosixDescendantPids(child.pid),
+          ...(cleanupToken ? collectPosixCleanupTokenPids(cleanupToken) : []),
+        ];
+        const newPids = candidates.filter(pid => !frozenPids.has(pid));
         if (newPids.length === 0) return;
         for (const pid of newPids) {
           signalPid(pid, "SIGSTOP");
@@ -154,20 +183,26 @@ async function invokeRequestHeadersCommand(
   return new Promise<Headers>((resolve, reject) => {
     let stdout = Buffer.alloc(0);
     let settled = false;
+    const cleanupToken = randomUUID();
     const child = spawn(resolved.command, resolved.args, {
-      env: resolved.env,
+      env: { ...resolved.env, [CLEANUP_TOKEN_ENV]: cleanupToken },
       stdio: ["pipe", "pipe", "ignore"],
       windowsHide: true,
       detached: USE_PROCESS_GROUP,
     });
 
     const trackedPosixDescendantPids = new Set<number>();
+    let trackingError: Error | undefined;
     const trackPosixDescendants = () => {
-      if (!USE_PROCESS_GROUP || child.pid === undefined || settled) return;
-      for (const pid of collectPosixDescendantPids(child.pid)) trackedPosixDescendantPids.add(pid);
+      if (!USE_PROCESS_GROUP || child.pid === undefined || settled || trackingError) return;
+      try {
+        for (const pid of collectPosixDescendantPids(child.pid)) trackedPosixDescendantPids.add(pid);
+        for (const pid of collectPosixCleanupTokenPids(cleanupToken)) trackedPosixDescendantPids.add(pid);
+      } catch (error) {
+        trackingError = error instanceof Error ? error : new Error(String(error));
+      }
     };
-    trackPosixDescendants();
-    const descendantTracker = USE_PROCESS_GROUP ? setInterval(trackPosixDescendants, 10) : undefined;
+    const descendantTracker = USE_PROCESS_GROUP ? setInterval(trackPosixDescendants, 50) : undefined;
     descendantTracker?.unref();
 
     const finish = (error?: Error, headers?: Headers) => {
@@ -181,9 +216,8 @@ async function invokeRequestHeadersCommand(
     };
     const failAfterKill = (message: string) => {
       try {
-        trackPosixDescendants();
-        killRequestHeadersCommand(child, trackedPosixDescendantPids);
-        finish(new Error(message));
+        killRequestHeadersCommand(child, trackedPosixDescendantPids, cleanupToken);
+        finish(trackingError ?? new Error(message));
       } catch (error) {
         finish(error instanceof Error ? error : new Error(String(error)));
       }
@@ -213,6 +247,10 @@ async function invokeRequestHeadersCommand(
       if (settled) return;
       if (code !== 0) {
         finish(new Error(`HTTP request headers command exited with code ${code ?? "unknown"}`));
+        return;
+      }
+      if (trackingError) {
+        finish(trackingError);
         return;
       }
       let parsed: unknown;
