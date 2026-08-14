@@ -184,6 +184,11 @@ export function reconstructToolMetadata(
   const metadata: ToolMetadata[] = [];
   const seenNames = new Set<string>();
   const effectivePrefix = resolveToolPrefix(definition, prefix);
+  // `otherCurrentCandidates` is only consumed when include/exclude selectors
+  // are configured, so skip the O(tools²) cross-server scan otherwise.
+  const hasToolFilters =
+    (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
+    (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
   const getOtherCurrentCandidates = (toolName: string): Set<string> | undefined => {
     if (!configuredServers || !cache) return undefined;
     const candidates = new Set<string>();
@@ -211,7 +216,7 @@ export function reconstructToolMetadata(
     if (!isUiToolVisibleToModel(tool.uiVisibility)) {
       continue;
     }
-    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, getOtherCurrentCandidates(tool.name))) {
+    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(tool.name) : undefined)) {
       continue;
     }
 
@@ -236,7 +241,7 @@ export function reconstructToolMetadata(
     for (const resource of entry.resources ?? []) {
       if (!resource?.name || !resource?.uri) continue;
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
-      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, getOtherCurrentCandidates(baseName))) {
+      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(baseName) : undefined)) {
         continue;
       }
 

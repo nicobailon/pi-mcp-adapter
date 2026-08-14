@@ -20,6 +20,11 @@ export function buildToolMetadata(
   const failedTools: string[] = [];
   const seenNames = new Set<string>();
   const effectivePrefix = resolveToolPrefix(definition, prefix);
+  // `otherCurrentCandidates` is only consumed when include/exclude selectors
+  // are configured, so skip the O(tools²) cross-server scan otherwise.
+  const hasToolFilters =
+    (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
+    (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
   const getOtherCurrentCandidates = (toolName: string): Set<string> | undefined => {
     if (!configuredServers) return undefined;
     const candidates = new Set<string>();
@@ -61,7 +66,7 @@ export function buildToolMetadata(
       failedTools.push("(unnamed)");
       continue;
     }
-    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, getOtherCurrentCandidates(tool.name))) {
+    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(tool.name) : undefined)) {
       continue;
     }
 
@@ -97,7 +102,7 @@ export function buildToolMetadata(
   if (definition.exposeResources !== false) {
     for (const resource of resources) {
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
-      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, getOtherCurrentCandidates(baseName))) {
+      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(baseName) : undefined)) {
         continue;
       }
 

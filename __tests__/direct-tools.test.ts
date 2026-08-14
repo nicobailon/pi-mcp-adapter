@@ -97,6 +97,37 @@ describe("buildProxyDescription", () => {
     expect(description).not.toContain("MCP + pi");
   });
 
+  it("builds proxy descriptions over large unfiltered tool counts in linear time", () => {
+    // Regression guard: buildProxyDescription previously scanned every other
+    // server's tools for each tool (O(tools²)) even when the server defined no
+    // include/exclude selectors. With no selectors the scan is never consumed,
+    // so this must complete near-instantly regardless of tool count.
+    const config: McpConfig = { mcpServers: {} };
+    const cacheServers: MetadataCache["servers"] = {};
+    const serverCount = 600;
+    for (let i = 0; i < serverCount; i++) {
+      const name = `srv_${i}`;
+      const definition = { command: "demo" };
+      config.mcpServers[name] = definition;
+      cacheServers[name] = {
+        configHash: computeServerHash(definition),
+        cachedAt: Date.now(),
+        tools: [
+          { name: "alpha", description: "Alpha" },
+          { name: "beta", description: "Beta" },
+        ],
+        resources: [],
+      };
+    }
+    const cache: MetadataCache = { version: 1, servers: cacheServers };
+
+    const start = performance.now();
+    buildProxyDescription(config, cache, []);
+    const elapsedMs = performance.now() - start;
+
+    expect(elapsedMs).toBeLessThan(2000);
+  });
+
   it("excludes configured tools from proxy summaries", () => {
     const config: McpConfig = {
       settings: { toolPrefix: "server" },
