@@ -63,6 +63,11 @@ function collectPosixCleanupTokenPids(cleanupToken: string): number[] {
   return pids;
 }
 
+function assertPosixProcessDiscoveryAvailable(): void {
+  collectPosixDescendantPids(process.pid);
+  collectPosixCleanupTokenPids(`${process.pid}-preflight`);
+}
+
 function isTaskkillNoSuchProcess(result: ReturnType<typeof spawnSync>): boolean {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`.toLowerCase().includes("not found");
 }
@@ -102,13 +107,19 @@ function killRequestHeadersCommand(child: ChildProcess, trackedPosixDescendantPi
         signalPid(pid, "SIGSTOP");
         frozenPids.add(pid);
       }
-      for (let pass = 0; pass < 8; pass++) {
+      let stablePasses = 0;
+      for (let pass = 0; pass < 16; pass++) {
         const candidates = [
           ...collectPosixDescendantPids(child.pid),
           ...(cleanupToken ? collectPosixCleanupTokenPids(cleanupToken) : []),
         ];
         const newPids = candidates.filter(pid => !frozenPids.has(pid));
-        if (newPids.length === 0) return;
+        if (newPids.length === 0) {
+          stablePasses++;
+          if (stablePasses >= 2) return;
+          continue;
+        }
+        stablePasses = 0;
         for (const pid of newPids) {
           signalPid(pid, "SIGSTOP");
           frozenPids.add(pid);
@@ -180,6 +191,7 @@ async function invokeRequestHeadersCommand(
   signal: AbortSignal,
 ): Promise<Headers> {
   const resolved = resolvedCommand(config);
+  if (USE_PROCESS_GROUP) assertPosixProcessDiscoveryAvailable();
   return new Promise<Headers>((resolve, reject) => {
     let stdout = Buffer.alloc(0);
     let settled = false;

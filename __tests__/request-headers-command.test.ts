@@ -256,7 +256,7 @@ setInterval(() => {}, 1000);
     expect(existsSync(marker)).toBe(false);
   });
 
-  it.skipIf(process.platform === "win32")("fails closed and kills the command when descendant tracking fails", async () => {
+  it.skipIf(process.platform === "win32")("fails closed before running the command when process discovery fails", async () => {
     const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
     const script = commandScript(`
 import { writeFileSync } from "node:fs";
@@ -279,7 +279,7 @@ setInterval(() => {}, 1000);
     }
   });
 
-  it.skipIf(process.platform === "win32")("fails closed and kills helpers when tracking fails before successful output", async () => {
+  it.skipIf(process.platform === "win32")("fails closed before running helpers when process discovery fails before successful output", async () => {
     const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
     const helper = commandScript(`
 import { writeFileSync } from "node:fs";
@@ -309,7 +309,7 @@ setTimeout(() => {
     }
   });
 
-  it.skipIf(process.platform === "win32")("fails closed and kills helpers when tracking fails before unsuccessful output", async () => {
+  it.skipIf(process.platform === "win32")("fails closed before running helpers when process discovery fails before unsuccessful output", async () => {
     const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
     const helper = commandScript(`
 import { writeFileSync } from "node:fs";
