@@ -250,7 +250,7 @@ async function invokeRequestHeadersCommand(
         return;
       }
       if (trackingError) {
-        finish(trackingError);
+        failAfterKill(trackingError.message);
         return;
       }
       let parsed: unknown;
