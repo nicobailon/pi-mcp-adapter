@@ -13,7 +13,9 @@ function isNoSuchProcessError(error: unknown): boolean {
 
 function collectPosixDescendantPids(rootPid: number): number[] {
   const result = spawnSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" });
-  if (result.status !== 0) return [];
+  if (result.status !== 0) {
+    throw new Error(`HTTP request headers command cleanup failed: ps exited with code ${result.status ?? "unknown"}`);
+  }
 
   const childrenByParent = new Map<number, number[]>();
   for (const line of result.stdout.split("\n")) {
@@ -36,9 +38,21 @@ function collectPosixDescendantPids(rootPid: number): number[] {
   return descendants;
 }
 
-function killPid(pid: number): void {
+function isTaskkillNoSuchProcess(result: ReturnType<typeof spawnSync>): boolean {
+  return `${result.stdout ?? ""}\n${result.stderr ?? ""}`.toLowerCase().includes("not found");
+}
+
+function signalPid(pid: number, signal: NodeJS.Signals): void {
   try {
-    process.kill(pid, "SIGKILL");
+    process.kill(pid, signal);
+  } catch (error) {
+    if (!isNoSuchProcessError(error)) throw error;
+  }
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
   } catch (error) {
     if (!isNoSuchProcessError(error)) throw error;
   }
@@ -47,20 +61,18 @@ function killPid(pid: number): void {
 function killRequestHeadersCommand(child: ChildProcess): void {
   if (process.platform === "win32" && child.pid !== undefined) {
     const result = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-      stdio: "ignore",
+      encoding: "utf8",
       windowsHide: true,
     });
-    if (result.status === 0) return;
+    if (result.status === 0 || isTaskkillNoSuchProcess(result)) return;
+    throw new Error(`HTTP request headers command cleanup failed: taskkill exited with code ${result.status ?? "unknown"}`);
   }
 
-  const descendantPids = USE_PROCESS_GROUP && child.pid !== undefined ? collectPosixDescendantPids(child.pid) : [];
   if (USE_PROCESS_GROUP && child.pid !== undefined) {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch (error) {
-      if (!isNoSuchProcessError(error)) throw error;
-    }
-    for (const pid of descendantPids) killPid(pid);
+    signalProcessGroup(child.pid, "SIGSTOP");
+    const descendantPids = collectPosixDescendantPids(child.pid);
+    signalProcessGroup(child.pid, "SIGKILL");
+    for (const pid of descendantPids) signalPid(pid, "SIGKILL");
     return;
   }
 
@@ -137,13 +149,19 @@ async function invokeRequestHeadersCommand(
       if (error) reject(error);
       else resolve(headers!);
     };
+    const failAfterKill = (message: string) => {
+      try {
+        killRequestHeadersCommand(child);
+        finish(new Error(message));
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
     const abort = () => {
-      killRequestHeadersCommand(child);
-      finish(new Error("HTTP request headers command aborted"));
+      failAfterKill("HTTP request headers command aborted");
     };
     const timer = setTimeout(() => {
-      killRequestHeadersCommand(child);
-      finish(new Error(`HTTP request headers command timed out after ${resolved.timeoutMs}ms`));
+      failAfterKill(`HTTP request headers command timed out after ${resolved.timeoutMs}ms`);
     }, resolved.timeoutMs);
 
     signal.addEventListener("abort", abort, { once: true });
@@ -157,8 +175,7 @@ async function invokeRequestHeadersCommand(
       if (settled) return;
       stdout = Buffer.concat([stdout, Buffer.from(chunk)]);
       if (stdout.byteLength > MAX_OUTPUT_BYTES) {
-        killRequestHeadersCommand(child);
-        finish(new Error("HTTP request headers command output exceeded 64 KiB"));
+        failAfterKill("HTTP request headers command output exceeded 64 KiB");
       }
     });
     child.on("close", code => {
