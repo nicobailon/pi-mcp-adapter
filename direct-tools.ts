@@ -227,7 +227,7 @@ export function resolveDirectTools(
     }
   }
 
-  if (specs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD) {
+  if (config.settings?.warnOnLargeDirectTools !== false && specs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD) {
     console.warn(`MCP: ${specs.length} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered.`);
   }
 

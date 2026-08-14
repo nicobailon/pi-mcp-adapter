@@ -755,7 +755,7 @@ describe("excludeTools filtering", () => {
   it("keeps provider-valid server prefix characters and skips escaped-name collisions", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const config: McpConfig = {
-      settings: { toolPrefix: "server", directTools: true },
+      settings: { toolPrefix: "server", directTools: true, warnOnLargeDirectTools: false },
       mcpServers: {
         "my_server": { command: "underscore" },
         "my-server": { command: "hyphen" },
@@ -811,7 +811,7 @@ describe("excludeTools filtering", () => {
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["github_search"]);
   });
 
-  it("warns without capping when resolved direct tools exceed the README threshold", () => {
+  it("warns by default without capping when resolved direct tools exceed the README threshold", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const tools = Array.from({ length: DIRECT_TOOLS_ADVISORY_THRESHOLD }, (_, index) => ({
       name: `tool_${index}`,
@@ -842,6 +842,40 @@ describe("excludeTools filtering", () => {
 
     expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("75+ direct tools"));
+  });
+
+  it("suppresses the large direct-tools advisory when configured", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const tools = Array.from({ length: DIRECT_TOOLS_ADVISORY_THRESHOLD }, (_, index) => ({
+      name: `tool_${index}`,
+      description: `Tool ${index}`,
+    }));
+    const config: McpConfig = {
+      settings: { warnOnLargeDirectTools: false },
+      mcpServers: {
+        huge: {
+          command: "npx",
+          args: ["-y", "huge"],
+          directTools: true,
+        },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        huge: {
+          configHash: computeServerHash(config.mcpServers.huge),
+          cachedAt: Date.now(),
+          tools,
+          resources: [],
+        },
+      },
+    };
+
+    const specs = resolveDirectTools(config, cache, "server");
+
+    expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("filters included tools during direct tool registration from cache", () => {

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `settings.warnOnLargeDirectTools` to suppress the advisory for 75 or more resolved direct tools. Thanks @Roshvan for issue #358.
+
 ### Fixed
 - Avoided an O(tools²) cross-server tool-name collision scan at startup for unfiltered large `mcp-cache.json` tool sets by computing `otherCurrentCandidates` only when a server configures `includeTools` or `excludeTools`. This partially mitigates issue #354 while the filtered-server path remains open. Thanks @mjlbach for PR #357 and @cataldoc for issue #354.
 
