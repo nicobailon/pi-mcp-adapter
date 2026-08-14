@@ -112,6 +112,58 @@ setTimeout(() => {
     );
   });
 
+  it.skipIf(process.platform === "win32")("kills helpers when the command returns valid output", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
+    const helper = commandScript(`
+import { writeFileSync } from "node:fs";
+setTimeout(() => {
+  writeFileSync(${JSON.stringify(marker)}, "alive");
+}, 150);
+setInterval(() => {}, 1000);
+`);
+    const script = commandScript(`
+import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(helper)}], { stdio: "ignore" }).unref();
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({ "x-derived": "ok" }));
+}, 75);
+`);
+    const fetch = createRequestHeadersCommandFetch(
+      { command: process.execPath, args: [script] },
+      async () => new Response("ok"),
+    );
+
+    const response = await fetch("https://mcp.example.test/mcp");
+    expect(response.status).toBe(200);
+    await delay(220);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("kills helpers when the command returns malformed output", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
+    const helper = commandScript(`
+import { writeFileSync } from "node:fs";
+setTimeout(() => {
+  writeFileSync(${JSON.stringify(marker)}, "alive");
+}, 150);
+setInterval(() => {}, 1000);
+`);
+    const script = commandScript(`
+import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(helper)}], { stdio: "ignore" }).unref();
+setTimeout(() => {
+  process.stdout.write("not-json");
+}, 75);
+`);
+    const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script] });
+
+    await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+      "HTTP request headers command returned invalid JSON",
+    );
+    await delay(220);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("kills a command that keeps running after timeout", async () => {
     const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
     const script = commandScript(`

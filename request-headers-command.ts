@@ -214,13 +214,16 @@ async function invokeRequestHeadersCommand(
       if (error) reject(error);
       else resolve(headers!);
     };
-    const failAfterKill = (message: string) => {
+    const finishAfterKill = (error?: Error, headers?: Headers) => {
       try {
         killRequestHeadersCommand(child, trackedPosixDescendantPids, cleanupToken);
-        finish(trackingError ?? new Error(message));
-      } catch (error) {
-        finish(error instanceof Error ? error : new Error(String(error)));
+        finish(error, headers);
+      } catch (cleanupError) {
+        finish(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)));
       }
+    };
+    const failAfterKill = (message: string) => {
+      finishAfterKill(trackingError ?? new Error(message));
     };
     const abort = () => {
       failAfterKill("HTTP request headers command aborted");
@@ -257,22 +260,22 @@ async function invokeRequestHeadersCommand(
       try {
         parsed = JSON.parse(stdout.toString("utf8"));
       } catch {
-        finish(new Error("HTTP request headers command returned invalid JSON"));
+        finishAfterKill(new Error("HTTP request headers command returned invalid JSON"));
         return;
       }
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        finish(new Error("HTTP request headers command must return a JSON object"));
+        finishAfterKill(new Error("HTTP request headers command must return a JSON object"));
         return;
       }
       const entries = Object.entries(parsed);
       if (entries.some(([, value]) => typeof value !== "string")) {
-        finish(new Error("HTTP request headers command values must be strings"));
+        finishAfterKill(new Error("HTTP request headers command values must be strings"));
         return;
       }
       try {
-        finish(undefined, new Headers(entries as Array<[string, string]>));
+        finishAfterKill(undefined, new Headers(entries as Array<[string, string]>));
       } catch {
-        finish(new Error("HTTP request headers command returned an invalid header"));
+        finishAfterKill(new Error("HTTP request headers command returned an invalid header"));
       }
     });
 
