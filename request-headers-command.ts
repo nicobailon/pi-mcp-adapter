@@ -1,10 +1,27 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import type { FetchLike } from "@modelcontextprotocol/client";
 import type { HttpRequestHeadersCommand } from "./types.ts";
 import { interpolateEnvVars } from "./utils.ts";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
+const USE_PROCESS_GROUP = process.platform !== "win32";
+
+function isNoSuchProcessError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH";
+}
+
+function killRequestHeadersCommand(child: ChildProcess): void {
+  try {
+    if (USE_PROCESS_GROUP && child.pid !== undefined) {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    }
+    child.kill("SIGKILL");
+  } catch (error) {
+    if (!isNoSuchProcessError(error)) throw error;
+  }
+}
 
 export interface HttpRequestCommandEnvelope {
   version: 1;
@@ -65,6 +82,7 @@ async function invokeRequestHeadersCommand(
       env: resolved.env,
       stdio: ["pipe", "pipe", "ignore"],
       windowsHide: true,
+      detached: USE_PROCESS_GROUP,
     });
 
     const finish = (error?: Error, headers?: Headers) => {
@@ -76,11 +94,11 @@ async function invokeRequestHeadersCommand(
       else resolve(headers!);
     };
     const abort = () => {
-      child.kill();
+      killRequestHeadersCommand(child);
       finish(new Error("HTTP request headers command aborted"));
     };
     const timer = setTimeout(() => {
-      child.kill();
+      killRequestHeadersCommand(child);
       finish(new Error(`HTTP request headers command timed out after ${resolved.timeoutMs}ms`));
     }, resolved.timeoutMs);
 
@@ -92,9 +110,10 @@ async function invokeRequestHeadersCommand(
 
     child.on("error", () => finish(new Error("HTTP request headers command failed to start")));
     child.stdout.on("data", (chunk: Buffer | string) => {
+      if (settled) return;
       stdout = Buffer.concat([stdout, Buffer.from(chunk)]);
       if (stdout.byteLength > MAX_OUTPUT_BYTES) {
-        child.kill();
+        killRequestHeadersCommand(child);
         finish(new Error("HTTP request headers command output exceeded 64 KiB"));
       }
     });

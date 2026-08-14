@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -9,6 +9,10 @@ function commandScript(source: string): string {
   const path = join(dir, "command.mjs");
   writeFileSync(path, source);
   return path;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 const readEnvelope = `
@@ -81,6 +85,45 @@ describe("per-request HTTP header commands", () => {
     await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
       "HTTP request headers command returned invalid JSON",
     );
+  });
+
+  it("kills a command that keeps running after timeout", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
+    const script = commandScript(`
+process.on("SIGTERM", () => {});
+setTimeout(() => {
+  require("node:fs").writeFileSync(${JSON.stringify(marker)}, "alive");
+}, 100);
+setInterval(() => {}, 1000);
+`);
+    const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script], timeoutMs: 25 });
+
+    await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+      "HTTP request headers command timed out after 25ms",
+    );
+    await delay(200);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("kills descendant commands after timeout", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
+    const descendant = commandScript(`
+setTimeout(() => {
+  require("node:fs").writeFileSync(${JSON.stringify(marker)}, "alive");
+}, 100);
+setInterval(() => {}, 1000);
+`);
+    const script = commandScript(`
+require("node:child_process").spawn(process.execPath, [${JSON.stringify(descendant)}], { stdio: "ignore" });
+setInterval(() => {}, 1000);
+`);
+    const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script], timeoutMs: 25 });
+
+    await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+      "HTTP request headers command timed out after 25ms",
+    );
+    await delay(200);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("validates configuration before issuing a request", () => {
