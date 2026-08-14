@@ -11,6 +11,39 @@ function isNoSuchProcessError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH";
 }
 
+function collectPosixDescendantPids(rootPid: number): number[] {
+  const result = spawnSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" });
+  if (result.status !== 0) return [];
+
+  const childrenByParent = new Map<number, number[]>();
+  for (const line of result.stdout.split("\n")) {
+    const [pidText, ppidText] = line.trim().split(/\s+/, 2);
+    const pid = Number(pidText);
+    const ppid = Number(ppidText);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    const children = childrenByParent.get(ppid);
+    if (children) children.push(pid);
+    else childrenByParent.set(ppid, [pid]);
+  }
+
+  const descendants: number[] = [];
+  const stack = [...(childrenByParent.get(rootPid) ?? [])];
+  while (stack.length > 0) {
+    const pid = stack.pop()!;
+    descendants.push(pid);
+    stack.push(...(childrenByParent.get(pid) ?? []));
+  }
+  return descendants;
+}
+
+function killPid(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if (!isNoSuchProcessError(error)) throw error;
+  }
+}
+
 function killRequestHeadersCommand(child: ChildProcess): void {
   if (process.platform === "win32" && child.pid !== undefined) {
     const result = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
@@ -20,15 +53,18 @@ function killRequestHeadersCommand(child: ChildProcess): void {
     if (result.status === 0) return;
   }
 
-  try {
-    if (USE_PROCESS_GROUP && child.pid !== undefined) {
+  const descendantPids = USE_PROCESS_GROUP && child.pid !== undefined ? collectPosixDescendantPids(child.pid) : [];
+  if (USE_PROCESS_GROUP && child.pid !== undefined) {
+    try {
       process.kill(-child.pid, "SIGKILL");
-      return;
+    } catch (error) {
+      if (!isNoSuchProcessError(error)) throw error;
     }
-    child.kill("SIGKILL");
-  } catch (error) {
-    if (!isNoSuchProcessError(error)) throw error;
+    for (const pid of descendantPids) killPid(pid);
+    return;
   }
+
+  child.kill("SIGKILL");
 }
 
 export interface HttpRequestCommandEnvelope {

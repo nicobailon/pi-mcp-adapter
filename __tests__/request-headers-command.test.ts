@@ -108,13 +108,38 @@ setInterval(() => {}, 1000);
   it.skipIf(process.platform === "win32")("kills descendant commands after timeout", async () => {
     const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
     const descendant = commandScript(`
+import { writeFileSync } from "node:fs";
 setTimeout(() => {
-  require("node:fs").writeFileSync(${JSON.stringify(marker)}, "alive");
+  writeFileSync(${JSON.stringify(marker)}, "alive");
 }, 100);
 setInterval(() => {}, 1000);
 `);
     const script = commandScript(`
-require("node:child_process").spawn(process.execPath, [${JSON.stringify(descendant)}], { stdio: "ignore" });
+import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(descendant)}], { stdio: "ignore" });
+setInterval(() => {}, 1000);
+`);
+    const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script], timeoutMs: 25 });
+
+    await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+      "HTTP request headers command timed out after 25ms",
+    );
+    await delay(200);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("kills descendants that move into another process group", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-")), "marker");
+    const descendant = commandScript(`
+import { writeFileSync } from "node:fs";
+setTimeout(() => {
+  writeFileSync(${JSON.stringify(marker)}, "alive");
+}, 100);
+setInterval(() => {}, 1000);
+`);
+    const script = commandScript(`
+import { spawn } from "node:child_process";
+spawn(process.execPath, [${JSON.stringify(descendant)}], { detached: true, stdio: "ignore" });
 setInterval(() => {}, 1000);
 `);
     const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script], timeoutMs: 25 });
