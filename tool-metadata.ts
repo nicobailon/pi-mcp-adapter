@@ -1,7 +1,7 @@
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
-import { formatToolName, getToolNameCandidates, isToolAllowed, resolveToolPrefix } from "./types.ts";
+import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
@@ -20,53 +20,68 @@ export function buildToolMetadata(
   const failedTools: string[] = [];
   const seenNames = new Set<string>();
   const effectivePrefix = resolveToolPrefix(definition, prefix);
-  // `otherCurrentCandidates` is only consumed when include/exclude selectors
-  // are configured, so skip the O(tools²) cross-server scan otherwise.
   const hasToolFilters =
     (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
     (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
-  const getOtherCurrentCandidates = (toolName: string): Set<string> | undefined => {
-    if (!configuredServers) return undefined;
+  const selectorCandidateIndex = hasToolFilters && configuredServers ? (() => {
     const candidates = new Set<string>();
-    const addCandidates = (originalName: string, candidateServerName: string, candidatePrefix: ToolPrefix) => {
-      for (const candidate of getToolNameCandidates(originalName, candidateServerName, candidatePrefix, false)) candidates.add(candidate);
+    const additionalCandidatesByToolName = new Map<string, Set<string>>();
+    const evaluatedToolNames = new Set<string>();
+    const addCandidates = (
+      target: Set<string>,
+      originalName: string,
+      candidateServerName: string,
+      candidatePrefix: ToolPrefix,
+    ) => {
+      for (const candidate of getToolNameCandidates(originalName, candidateServerName, candidatePrefix, false)) target.add(candidate);
     };
 
     for (const tool of tools) {
-      if (tool?.name) addCandidates(tool.name, serverName, effectivePrefix);
+      if (!tool?.name) continue;
+      evaluatedToolNames.add(tool.name);
+      addCandidates(candidates, tool.name, serverName, effectivePrefix);
     }
     if (definition.exposeResources !== false) {
       for (const resource of resources) {
-        if (resource?.name && resource?.uri) addCandidates(`read_${resourceNameToToolName(resource.name)}`, serverName, effectivePrefix);
+        const baseName = `read_${resourceNameToToolName(resource.name)}`;
+        evaluatedToolNames.add(baseName);
+        if (resource?.name && resource?.uri) addCandidates(candidates, baseName, serverName, effectivePrefix);
       }
     }
     for (const [otherServerName, otherDefinition] of Object.entries(configuredServers)) {
       if (otherServerName === serverName) continue;
+      const otherPrefix = resolveToolPrefix(otherDefinition, prefix);
       const knownTools = knownMetadata?.get(otherServerName);
       if (knownTools) {
-        const otherPrefix = resolveToolPrefix(otherDefinition, prefix);
         for (const tool of knownTools) {
           candidates.add(tool.name);
-          addCandidates(tool.originalName, otherServerName, otherPrefix);
+          addCandidates(candidates, tool.originalName, otherServerName, otherPrefix);
         }
       } else if (!knownMetadata || includeMissingConfiguredCandidates) {
-        const otherPrefix = resolveToolPrefix(otherDefinition, prefix);
-        addCandidates(toolName, otherServerName, otherPrefix);
-        if (includeMissingConfiguredCandidates) {
-          for (const candidate of getToolNameCandidates(toolName, otherServerName, otherPrefix, false)) candidates.add(candidate.replace(/-/g, "_"));
+        for (const toolName of evaluatedToolNames) {
+          let additionalCandidates = additionalCandidatesByToolName.get(toolName);
+          if (!additionalCandidates) {
+            additionalCandidates = new Set<string>();
+            additionalCandidatesByToolName.set(toolName, additionalCandidates);
+          }
+          addCandidates(additionalCandidates, toolName, otherServerName, otherPrefix);
+          if (includeMissingConfiguredCandidates) {
+            for (const candidate of getToolNameCandidates(toolName, otherServerName, otherPrefix, false)) {
+              additionalCandidates.add(candidate.replace(/-/g, "_"));
+            }
+          }
         }
       }
     }
-    for (const candidate of getToolNameCandidates(toolName, serverName, effectivePrefix, false)) candidates.delete(candidate);
-    return candidates;
-  };
+    return createToolSelectorCandidateIndex(candidates, additionalCandidatesByToolName);
+  })() : undefined;
 
   for (const tool of tools) {
     if (!tool?.name) {
       failedTools.push("(unnamed)");
       continue;
     }
-    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(tool.name) : undefined)) {
+    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex)) {
       continue;
     }
 
@@ -102,7 +117,7 @@ export function buildToolMetadata(
   if (definition.exposeResources !== false) {
     for (const resource of resources) {
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
-      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(baseName) : undefined)) {
+      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex)) {
         continue;
       }
 

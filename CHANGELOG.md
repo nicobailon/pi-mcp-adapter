@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Matched adapter-owned config and state paths to the host agent directory when Pi is rebranded, including its environment override and config directory. Thanks @mindplay-dk for issue #356.
-- Avoided an O(tools²) cross-server tool-name collision scan at startup for unfiltered large `mcp-cache.json` tool sets by computing `otherCurrentCandidates` only when a server configures `includeTools` or `excludeTools`. This partially mitigates issue #354 while the filtered-server path remains open. Thanks @mjlbach for PR #357 and @cataldoc for issue #354.
+- Avoided O(tools²) cross-server tool-name collision scans at startup by skipping collision candidates when selectors are absent and sharing one indexed candidate set when `includeTools` or `excludeTools` is configured. Thanks @mjlbach for PR #357 and @cataldoc for issue #354.
 
 ## [2.25.0] - 2026-08-13
 

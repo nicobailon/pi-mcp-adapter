@@ -51,6 +51,22 @@ function makeTwoServerConfig(filters: Partial<ServerEntry> = {}): { config: McpC
   return { config, cache };
 }
 
+function makeLargeFilteredConfig(toolCount: number, extra: Partial<ServerEntry> = {}): { config: McpConfig; cache: MetadataCache } {
+  const definition = makeServer("a", { includeTools: ["*"], ...extra });
+  const config: McpConfig = { mcpServers: { a: definition } };
+  const tools = Array.from({ length: toolCount }, (_, index) => ({
+    name: `tool_${index}`,
+    description: `Tool ${index}`,
+  }));
+  return {
+    config,
+    cache: {
+      version: 1,
+      servers: { a: makeCacheEntry(definition, tools) },
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -62,10 +78,10 @@ describe("cross-server collision scan is skipped without tool filters", () => {
     expect(mockedGetToolNameCandidates).not.toHaveBeenCalled();
   });
 
-  it("buildProxyDescription generates candidates when excludeTools is configured", () => {
-    const { config, cache } = makeTwoServerConfig({ excludeTools: ["a_search"] });
+  it("buildProxyDescription builds filtered candidates once", () => {
+    const { config, cache } = makeLargeFilteredConfig(40);
     buildProxyDescription(config, cache, []);
-    expect(mockedGetToolNameCandidates).toHaveBeenCalled();
+    expect(mockedGetToolNameCandidates).toHaveBeenCalledTimes(40);
   });
 
   it("resolveDirectTools does not generate candidates without filters", () => {
@@ -81,19 +97,10 @@ describe("cross-server collision scan is skipped without tool filters", () => {
     expect(mockedGetToolNameCandidates).not.toHaveBeenCalled();
   });
 
-  it("resolveDirectTools generates candidates when includeTools is configured", () => {
-    const definition = makeServer("a", { directTools: true, includeTools: ["a_search"] });
-    const other = makeServer("b");
-    const config: McpConfig = { mcpServers: { a: definition, b: other } };
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        a: makeCacheEntry(definition, [{ name: "search", description: "Search" }]),
-        b: makeCacheEntry(other, [{ name: "search", description: "Search" }]),
-      },
-    };
+  it("resolveDirectTools builds filtered candidates once", () => {
+    const { config, cache } = makeLargeFilteredConfig(40, { directTools: true });
     resolveDirectTools(config, cache, "server");
-    expect(mockedGetToolNameCandidates).toHaveBeenCalled();
+    expect(mockedGetToolNameCandidates).toHaveBeenCalledTimes(40);
   });
 
   it("reconstructToolMetadata does not generate candidates without filters", () => {
@@ -102,10 +109,10 @@ describe("cross-server collision scan is skipped without tool filters", () => {
     expect(mockedGetToolNameCandidates).not.toHaveBeenCalled();
   });
 
-  it("reconstructToolMetadata generates candidates when excludeTools is configured", () => {
-    const { config, cache } = makeTwoServerConfig({ excludeTools: ["a_search"] });
+  it("reconstructToolMetadata builds filtered candidates once", () => {
+    const { config, cache } = makeLargeFilteredConfig(40);
     reconstructToolMetadata("a", cache.servers.a, "server", config.mcpServers.a, config.mcpServers, cache);
-    expect(mockedGetToolNameCandidates).toHaveBeenCalled();
+    expect(mockedGetToolNameCandidates).toHaveBeenCalledTimes(40);
   });
 
   it("buildToolMetadata does not generate candidates without filters", () => {
@@ -121,8 +128,8 @@ describe("cross-server collision scan is skipped without tool filters", () => {
     expect(mockedGetToolNameCandidates).not.toHaveBeenCalled();
   });
 
-  it("buildToolMetadata generates candidates when excludeTools is configured", () => {
-    const { config, cache } = makeTwoServerConfig({ excludeTools: ["a_search"] });
+  it("buildToolMetadata builds filtered candidates once", () => {
+    const { config, cache } = makeLargeFilteredConfig(40);
     buildToolMetadata(
       cache.servers.a.tools,
       [],
@@ -131,6 +138,6 @@ describe("cross-server collision scan is skipped without tool filters", () => {
       "server",
       config.mcpServers,
     );
-    expect(mockedGetToolNameCandidates).toHaveBeenCalled();
+    expect(mockedGetToolNameCandidates).toHaveBeenCalledTimes(40);
   });
 });

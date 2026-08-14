@@ -19,7 +19,7 @@ import type {
   ToolMetadata,
   PromptMetadata,
 } from "./types.ts";
-import { formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, type ToolPrefix } from "./types.ts";
+import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, type ToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
   extractToolUiStreamMode,
@@ -184,13 +184,10 @@ export function reconstructToolMetadata(
   const metadata: ToolMetadata[] = [];
   const seenNames = new Set<string>();
   const effectivePrefix = resolveToolPrefix(definition, prefix);
-  // `otherCurrentCandidates` is only consumed when include/exclude selectors
-  // are configured, so skip the O(tools²) cross-server scan otherwise.
   const hasToolFilters =
     (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
     (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
-  const getOtherCurrentCandidates = (toolName: string): Set<string> | undefined => {
-    if (!configuredServers || !cache) return undefined;
+  const selectorCandidateIndex = hasToolFilters && configuredServers && cache ? (() => {
     const candidates = new Set<string>();
     for (const [otherServerName, otherDefinition] of Object.entries(configuredServers)) {
       const otherEntry = cache.servers[otherServerName];
@@ -207,16 +204,15 @@ export function reconstructToolMetadata(
         }
       }
     }
-    for (const candidate of getToolNameCandidates(toolName, serverName, effectivePrefix, false)) candidates.delete(candidate);
-    return candidates;
-  };
+    return createToolSelectorCandidateIndex(candidates);
+  })() : undefined;
 
   for (const tool of entry.tools ?? []) {
     if (!tool?.name) continue;
     if (!isUiToolVisibleToModel(tool.uiVisibility)) {
       continue;
     }
-    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(tool.name) : undefined)) {
+    if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex)) {
       continue;
     }
 
@@ -241,7 +237,7 @@ export function reconstructToolMetadata(
     for (const resource of entry.resources ?? []) {
       if (!resource?.name || !resource?.uri) continue;
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
-      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(baseName) : undefined)) {
+      if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex)) {
         continue;
       }
 

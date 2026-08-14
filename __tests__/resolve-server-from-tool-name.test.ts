@@ -4,6 +4,7 @@ import {
 	getServerPrefix,
 	formatPromptCommandName,
 	formatToolName,
+	createToolSelectorCandidateIndex,
 	getToolNameCandidates,
 	isToolExcluded,
 	isToolAllowed,
@@ -194,8 +195,36 @@ describe("direct tool selector candidates", () => {
 		expect(isToolExcluded("do_thing", "my-server", "server", ["my-server_do_thing"], new Set())).toBe(true);
 	});
 
-	it("does not apply normalized legacy emitted selectors through current collisions", () => {
-		expect(isToolExcluded("do-thing", "my-server", "server", ["my_server_do_thing"], new Set(["my_server_do_thing"]))).toBe(false);
+	it("does not apply normalized legacy emitted selectors through indexed exact collisions", () => {
+		const emptyIndex = createToolSelectorCandidateIndex(new Set());
+		const collisionIndex = createToolSelectorCandidateIndex(new Set(["my_server_do_thing"]));
+
+		expect(isToolExcluded("do-thing", "my-server", "server", ["my_server_do_thing"], emptyIndex)).toBe(true);
+		expect(isToolExcluded("do-thing", "my-server", "server", ["my_server_do_thing"], collisionIndex)).toBe(false);
+	});
+
+	it("skips indexed collision work when excludes are empty", () => {
+		const index = createToolSelectorCandidateIndex(new Set(["my_server_do_other"]));
+
+		expect(isToolExcluded("do-thing", "my-server", "server", undefined, index)).toBe(false);
+		expect(isToolExcluded("do-thing", "my-server", "server", [], index)).toBe(false);
+		expect(index.matchingCountByPattern.size).toBe(0);
+		expect(index.matcherByPattern.size).toBe(0);
+	});
+
+	it("caches indexed glob collision counts and matchers", () => {
+		const index = createToolSelectorCandidateIndex(new Set(["my_server_do_other", "unrelated"]));
+
+		expect(isToolExcluded("do-thing", "my-server", "server", ["my_server_do_*"], index)).toBe(false);
+		expect(isToolExcluded("do-thing", "my-server", "server", ["my_server_do_*"], index)).toBe(false);
+		expect(index.matchingCountByPattern).toEqual(new Map([["my_server_do_*", 1]]));
+		expect(index.matcherByPattern.size).toBe(1);
+
+		const currentOnlyIndex = createToolSelectorCandidateIndex(
+			getToolNameCandidates("do-thing", "my-server", "server", false),
+		);
+		expect(isToolExcluded("do-thing", "my-server", "server", ["my_server_do_*"], currentOnlyIndex)).toBe(true);
+		expect(currentOnlyIndex.matcherByPattern.size).toBe(1);
 	});
 });
 

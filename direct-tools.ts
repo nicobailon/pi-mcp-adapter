@@ -11,7 +11,7 @@ import { formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
-import { formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
+import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
@@ -150,12 +150,10 @@ export function resolveDirectTools(
     if (!toolFilter) continue;
 
     const effectivePrefix = resolveToolPrefix(definition, prefix);
-    // `otherCurrentCandidates` is only consumed when include/exclude selectors
-    // are configured, so skip the O(tools²) cross-server scan otherwise.
     const hasToolFilters =
       (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
       (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
-    const getOtherCurrentCandidates = (toolName: string): Set<string> => {
+    const selectorCandidateIndex = hasToolFilters ? (() => {
       const candidates = new Set<string>();
       for (const [otherServerName, otherDefinition] of Object.entries(config.mcpServers)) {
         const otherCache = cache.servers[otherServerName];
@@ -172,14 +170,13 @@ export function resolveDirectTools(
           }
         }
       }
-      for (const candidate of getToolNameCandidates(toolName, serverName, effectivePrefix, false)) candidates.delete(candidate);
-      return candidates;
-    };
+      return createToolSelectorCandidateIndex(candidates);
+    })() : undefined;
 
     for (const tool of serverCache.tools ?? []) {
       if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
       if (toolFilter !== true && !toolFilter.includes(tool.name)) continue;
-      if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(tool.name) : undefined)) continue;
+      if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex)) continue;
       const prefixedName = formatToolName(tool.name, serverName, effectivePrefix);
       if (BUILTIN_NAMES.has(prefixedName)) {
         console.warn(`MCP: skipping direct tool "${prefixedName}" (collides with builtin)`);
@@ -205,7 +202,7 @@ export function resolveDirectTools(
       for (const resource of serverCache.resources ?? []) {
         const baseName = `read_${resourceNameToToolName(resource.name)}`;
         if (toolFilter !== true && !toolFilter.includes(baseName)) continue;
-        if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(baseName) : undefined)) continue;
+        if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex)) continue;
         const prefixedName = formatToolName(baseName, serverName, effectivePrefix);
         if (BUILTIN_NAMES.has(prefixedName)) {
           console.warn(`MCP: skipping direct resource tool "${prefixedName}" (collides with builtin)`);
@@ -260,13 +257,10 @@ export function buildProxyDescription(
     const cachedEntry = cache?.servers?.[serverName];
     const entry = cachedEntry && isServerCacheValid(cachedEntry, definition) ? cachedEntry : undefined;
     const effectivePrefix = resolveToolPrefix(definition, prefix);
-    // `otherCurrentCandidates` is only consumed when include/exclude selectors
-    // are configured, so skip the O(tools²) cross-server scan otherwise.
     const hasToolFilters =
       (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
       (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
-    const getOtherCurrentCandidates = (toolName: string): Set<string> | undefined => {
-      if (!cache) return undefined;
+    const selectorCandidateIndex = hasToolFilters && cache ? (() => {
       const candidates = new Set<string>();
       for (const [otherServerName, otherDefinition] of Object.entries(config.mcpServers)) {
         const otherEntry = cache.servers[otherServerName];
@@ -283,17 +277,16 @@ export function buildProxyDescription(
           }
         }
       }
-      for (const candidate of getToolNameCandidates(toolName, serverName, effectivePrefix, false)) candidates.delete(candidate);
-      return candidates;
-    };
+      return createToolSelectorCandidateIndex(candidates);
+    })() : undefined;
     const toolCount = (entry?.tools ?? []).filter(
       (tool) => isUiToolVisibleToModel(tool.uiVisibility)
-        && isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(tool.name) : undefined),
+        && isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex),
     ).length;
     const resourceCount = definition?.exposeResources !== false
       ? (entry?.resources ?? []).filter((resource) => {
           const baseName = `read_${resourceNameToToolName(resource.name)}`;
-          return isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, hasToolFilters ? getOtherCurrentCandidates(baseName) : undefined);
+          return isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex);
         }).length
       : 0;
     const totalItems = toolCount + resourceCount;

@@ -791,6 +791,25 @@ function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped}$`);
 }
 
+export interface ToolSelectorCandidateIndex {
+  readonly allCurrentCandidates: ReadonlySet<string>;
+  readonly matchingCountByPattern: Map<string, number>;
+  readonly matcherByPattern: Map<string, RegExp>;
+  readonly additionalCurrentCandidatesByToolName?: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+export function createToolSelectorCandidateIndex(
+  allCurrentCandidates: Set<string>,
+  additionalCurrentCandidatesByToolName?: ReadonlyMap<string, ReadonlySet<string>>,
+): ToolSelectorCandidateIndex {
+  return {
+    allCurrentCandidates,
+    matchingCountByPattern: new Map<string, number>(),
+    matcherByPattern: new Map<string, RegExp>(),
+    ...(additionalCurrentCandidatesByToolName ? { additionalCurrentCandidatesByToolName } : {}),
+  };
+}
+
 export function matchesToolPattern(candidates: Set<string>, patterns?: unknown): boolean {
   if (!Array.isArray(patterns) || patterns.length === 0) return false;
 
@@ -807,24 +826,71 @@ export function matchesToolPattern(candidates: Set<string>, patterns?: unknown):
   return false;
 }
 
+export type ToolSelectorCandidateContext = Set<string> | ToolSelectorCandidateIndex;
+
+function indexHasOtherCurrentMatch(
+  index: ToolSelectorCandidateIndex,
+  toolName: string,
+  currentCandidates: Set<string>,
+  pattern: string,
+): boolean {
+  const additionalCandidates = index.additionalCurrentCandidatesByToolName?.get(toolName);
+  const hasCandidate = (candidate: string): boolean =>
+    index.allCurrentCandidates.has(candidate) || additionalCandidates?.has(candidate) === true;
+  const isGlob = pattern.includes("*") || pattern.includes("?");
+  if (!isGlob) {
+    return hasCandidate(pattern) && !currentCandidates.has(pattern);
+  }
+
+  let matcher = index.matcherByPattern.get(pattern);
+  if (!matcher) {
+    matcher = globToRegExp(pattern);
+    index.matcherByPattern.set(pattern, matcher);
+  }
+  let matchingCount = index.matchingCountByPattern.get(pattern);
+  if (matchingCount === undefined) {
+    matchingCount = 0;
+    for (const candidate of index.allCurrentCandidates) {
+      if (matcher.test(candidate)) matchingCount++;
+    }
+    index.matchingCountByPattern.set(pattern, matchingCount);
+  }
+
+  let totalMatchingCount = matchingCount;
+  if (additionalCandidates) {
+    for (const candidate of additionalCandidates) {
+      if (!index.allCurrentCandidates.has(candidate) && matcher.test(candidate)) totalMatchingCount++;
+    }
+  }
+  if (totalMatchingCount === 0) return false;
+
+  let currentMatchingCount = 0;
+  for (const candidate of currentCandidates) {
+    if (hasCandidate(candidate) && matcher.test(candidate)) currentMatchingCount++;
+  }
+  return totalMatchingCount > currentMatchingCount;
+}
+
 function matchesToolSelector(
   toolName: string,
   serverName: string,
   prefix: ToolPrefix,
   patterns: unknown,
-  otherCurrentCandidates?: Set<string>,
+  otherCurrentCandidates?: ToolSelectorCandidateContext,
 ): boolean {
+  if (!Array.isArray(patterns) || patterns.length === 0) return false;
   const currentCandidates = getToolNameCandidates(toolName, serverName, prefix, false);
   if (matchesToolPattern(currentCandidates, patterns)) return true;
   if (!otherCurrentCandidates) return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), patterns);
   const legacyCandidates = getToolNameCandidates(toolName, serverName, prefix);
   for (const candidate of currentCandidates) legacyCandidates.delete(candidate);
-  if (!Array.isArray(patterns)) return false;
-  return patterns.some(pattern =>
-    typeof pattern === "string"
-    && !matchesToolPattern(otherCurrentCandidates, [pattern])
-    && matchesToolPattern(legacyCandidates, [pattern]),
-  );
+  return patterns.some(pattern => {
+    if (typeof pattern !== "string" || !matchesToolPattern(legacyCandidates, [pattern])) return false;
+    const hasCollision = otherCurrentCandidates instanceof Set
+      ? matchesToolPattern(otherCurrentCandidates, [pattern])
+      : indexHasOtherCurrentMatch(otherCurrentCandidates, toolName, currentCandidates, pattern);
+    return !hasCollision;
+  });
 }
 
 export function isToolIncluded(
@@ -832,7 +898,7 @@ export function isToolIncluded(
   serverName: string,
   prefix: ToolPrefix,
   includeTools?: unknown,
-  otherCurrentCandidates?: Set<string>,
+  otherCurrentCandidates?: ToolSelectorCandidateContext,
 ): boolean {
   if (!Array.isArray(includeTools) || includeTools.length === 0) return true;
   return matchesToolSelector(toolName, serverName, prefix, includeTools, otherCurrentCandidates);
@@ -843,7 +909,7 @@ export function isToolExcluded(
   serverName: string,
   prefix: ToolPrefix,
   excludeTools?: unknown,
-  otherCurrentCandidates?: Set<string>,
+  otherCurrentCandidates?: ToolSelectorCandidateContext,
 ): boolean {
   return matchesToolSelector(toolName, serverName, prefix, excludeTools, otherCurrentCandidates);
 }
@@ -854,7 +920,7 @@ export function isToolAllowed(
   prefix: ToolPrefix,
   includeTools?: unknown,
   excludeTools?: unknown,
-  otherCurrentCandidates?: Set<string>,
+  otherCurrentCandidates?: ToolSelectorCandidateContext,
 ): boolean {
   return isToolIncluded(toolName, serverName, prefix, includeTools, otherCurrentCandidates)
     && !isToolExcluded(toolName, serverName, prefix, excludeTools, otherCurrentCandidates);
