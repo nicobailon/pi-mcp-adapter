@@ -615,6 +615,57 @@ describe("mcpAdapter session lifecycle", () => {
     );
   });
 
+  it("dispatches gateway params nested inside proxy args", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+    mocks.executeSearch.mockResolvedValue({ content: [{ type: "text", text: "results" }] });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    await proxyTool.execute("call-1", { args: '{"search":"screenshot","limit":3}' });
+    await proxyTool.execute("call-2", { args: { tool: "demo_search", args: { q: "hello" }, server: "demo" } });
+
+    expect(mocks.executeSearch).toHaveBeenCalledWith(state, "screenshot", undefined, undefined, undefined, 3, undefined);
+    expect(mocks.executeCall).toHaveBeenCalledWith(
+      state,
+      "demo_search",
+      { q: "hello" },
+      "demo",
+      expect.any(Function),
+      undefined,
+    );
+    expect(mocks.executeStatus).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-gateway params nested inside proxy args", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    await expect(proxyTool.execute("call-1", { args: '{"query":"screenshot"}' })).rejects.toThrow(
+      "Gateway params were nested inside `args`; pass them top-level",
+    );
+    expect(mocks.executeStatus).not.toHaveBeenCalled();
+  });
+
   it("routes manual auth actions through the proxy tool", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
