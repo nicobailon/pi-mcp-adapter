@@ -28,6 +28,19 @@ function terminalHyperlink(label: string, url: string): string {
   return `\u001B]8;;${sanitizeTerminalText(url)}\u001B\\${sanitizeTerminalText(label)}\u001B]8;;\u001B\\`;
 }
 
+/**
+ * True when this run mode can display a `ctx.ui.custom()` overlay.
+ *
+ * `ctx.hasUI` only reports that *some* UI context is bound. In rpc/print mode
+ * that context is a headless stub whose `custom()` returns immediately without
+ * ever invoking the factory or the `done` callback, so a panel awaited through
+ * `new Promise(resolve => ctx.ui.custom(...))` never settles and the command
+ * hangs. Overlay panels therefore additionally require `ctx.mode === "tui"`.
+ */
+function canRenderPanel(ctx: ExtensionContext): boolean {
+  return ctx.hasUI && ctx.mode === "tui";
+}
+
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return;
 
@@ -399,6 +412,10 @@ export async function openMcpSetup(
   options: { includeHostConfigs?: boolean } = {},
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) return { configChanged: false };
+  if (!canRenderPanel(ctx)) {
+    ctx.ui.notify(`The interactive MCP setup panel is only available in the terminal UI (current mode: ${ctx.mode}). Edit .mcp.json directly, or run /mcp status to review servers.`, "info");
+    return { configChanged: false };
+  }
   if (state.programmaticConfig) {
     ctx.ui.notify("MCP setup is unavailable when config is supplied by createMcpAdapter().", "info");
     return { configChanged: false };
@@ -533,6 +550,11 @@ export async function openMcpPanel(
     }
     return { configChanged: false };
   }
+  if (!canRenderPanel(ctx)) {
+    // No overlay here, but the same information is available as text.
+    await showStatus(state, ctx);
+    return { configChanged: false };
+  }
   if (Object.keys(state.config.mcpServers).length === 0) {
     return openMcpSetup(state, pi, ctx, configOverridePath, "empty", { includeHostConfigs: false });
   }
@@ -587,6 +609,10 @@ export async function openMcpAuthPanel(
   configOverridePath?: string,
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) return { configChanged: false };
+  if (!canRenderPanel(ctx)) {
+    ctx.ui.notify(`The interactive MCP auth panel is only available in the terminal UI (current mode: ${ctx.mode}). Use /mcp-auth <server> to authenticate a specific server.`, "info");
+    return { configChanged: false };
+  }
   if (state.programmaticConfig) {
     ctx.ui.notify("Use /mcp-auth <server> to authenticate a server from the in-memory SDK config.", "info");
     return { configChanged: false };
