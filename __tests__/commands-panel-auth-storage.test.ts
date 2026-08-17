@@ -51,7 +51,7 @@ describe("MCP panels with unavailable OAuth credential storage", () => {
     await expect(openPanel(
       createState(),
       { getFlag: () => undefined } as any,
-      { hasUI: true, cwd: "/tmp", ui } as any,
+      { hasUI: true, mode: "tui", cwd: "/tmp", ui } as any,
     )).resolves.toEqual({ configChanged: false });
 
     expect(getRendered()).toContain("failed");

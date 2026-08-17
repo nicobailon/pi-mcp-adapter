@@ -27,7 +27,7 @@ describe("authenticateServer", () => {
     await openMcpAuthPanel({
       programmaticConfig: false,
       config: { mcpServers: { disabled: { url: "https://example.test/mcp", auth: "oauth", disabled: true } } },
-    } as any, { getFlag: vi.fn() } as any, { hasUI: true, ui } as any);
+    } as any, { getFlag: vi.fn() } as any, { hasUI: true, mode: "tui", ui } as any);
 
     expect(ui.notify).toHaveBeenCalledWith("No OAuth-capable MCP servers are configured.", "warning");
     expect(ui.custom).not.toHaveBeenCalled();
@@ -44,7 +44,7 @@ describe("authenticateServer", () => {
       const definition = { url: "${MCP_AUTH_URL}", auth: "oauth" as const };
       const result = await authenticateServer("sentry", {
         mcpServers: { sentry: definition },
-      }, { hasUI: true, ui } as any);
+      }, { hasUI: true, mode: "tui", ui } as any);
 
       expect(result.ok).toBe(true);
       expect(mocks.authenticate).toHaveBeenCalledWith(
@@ -72,7 +72,7 @@ describe("authenticateServer", () => {
     try {
       const result = await authenticateServer("sentry", {
         mcpServers: { sentry: { url: "https://${MCP_AUTH_URL}/mcp", auth: "oauth" } },
-      }, { hasUI: true, ui } as any);
+      }, { hasUI: true, mode: "tui", ui } as any);
 
       expect(result.ok).toBe(false);
       expect(result.message).toBe("Missing environment variable in MCP server URL: MCP_AUTH_URL");
@@ -97,7 +97,7 @@ describe("authenticateServer", () => {
       config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
       authStorageOptions: {},
       manager: { close },
-    } as any, { hasUI: true, ui } as any);
+    } as any, { hasUI: true, mode: "tui", ui } as any);
 
     expect(result).toEqual({ ok: false, message: "simulated secure credential store unavailable" });
     expect(close).not.toHaveBeenCalled();
@@ -116,7 +116,7 @@ describe("authenticateServer", () => {
       config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
       authStorageOptions: {},
       manager: { close: vi.fn(async () => { throw new Error("close failed"); }) },
-    } as any, { hasUI: true, ui } as any);
+    } as any, { hasUI: true, mode: "tui", ui } as any);
 
     expect(result).toEqual({ ok: false, message: "close failed" });
     expect(ui.notify).toHaveBeenCalledWith(
@@ -147,7 +147,7 @@ describe("authenticateServer", () => {
       mcpServers: {
         sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" },
       },
-    }, { hasUI: true, ui } as any);
+    }, { hasUI: true, mode: "tui", ui } as any);
 
     expect(result.ok).toBe(true);
     expect(mocks.authenticate).toHaveBeenCalledWith(
