@@ -160,7 +160,11 @@ export async function runMcpScript(
     calls[index] = { operation: "call", path, ok: true, durationMs: Date.now() - startedAt, startedAt };
     return {
       ok: true as const,
-      data: details.mcpResult !== undefined ? details.mcpResult : textFromContent(result.content),
+      data: details.scriptMcpResult !== undefined
+        ? details.scriptMcpResult
+        : details.mcpResult !== undefined
+          ? details.mcpResult
+          : textFromContent(result.content),
     };
   };
 

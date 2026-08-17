@@ -197,6 +197,26 @@ describe("runMcpScript", () => {
     expect(result.details).toMatchObject({ calls: [{ path: "fixture_echo", ok: true }] });
   });
 
+  it("keeps oversized raw tool results available to the script", async () => {
+    const value = "x".repeat(1_000);
+    const guardedState = {
+      ...state,
+      config: {
+        settings: { outputGuard: { detailsMaxBytes: 100 } },
+        mcpServers: { fixture: definition },
+      },
+    } as unknown as McpExtensionState;
+
+    const result = await runMcpScript(
+      guardedState,
+      `return (await tools.fixture_echo({ value: ${JSON.stringify(value)} })).data;`,
+    );
+
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+      structuredContent: { echoed: value },
+    });
+  });
+
   it("records approval-gate outcomes in the call trace", async () => {
     const gatedState = {
       ...state,

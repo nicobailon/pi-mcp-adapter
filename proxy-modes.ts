@@ -1263,7 +1263,7 @@ export async function executeCall(
         content: guarded.content,
         details: {
           mode: "call",
-          ...guardedMcpDetails(guarded),
+          ...(origin === "script" ? { scriptMcpResult: result } : guardedMcpDetails(guarded)),
           ...callIdentity,
           uiOpen: uiSummary.uiOpen,
           uiViewer: uiSummary.uiViewer,
@@ -1289,7 +1289,7 @@ export async function executeCall(
     const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: result });
     return {
       content: guarded.content,
-      details: { mode: "call", ...guardedMcpDetails(guarded), ...callIdentity },
+      details: { mode: "call", ...(origin === "script" ? { scriptMcpResult: result } : guardedMcpDetails(guarded)), ...callIdentity },
     };
   } catch (error) {
     if (error instanceof SessionRecoveryAuthRequiredError) {
