@@ -240,6 +240,149 @@ describe("McpServerManager sampling", () => {
     expect(metadataChanged).toHaveBeenCalledWith("demo", "resources-list-changed");
   });
 
+  it("forces an authoritative tool refresh and publishes catalog changes", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const metadataChanged = vi.fn();
+    manager.setMetadataListChangedListener(metadataChanged);
+
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const client = mocks.clients[0];
+    const freshTools = [{ name: "fresh_tool", description: "Fresh tool" }];
+    client.listTools.mockResolvedValueOnce({ tools: freshTools });
+
+    await expect(manager.refreshTools("demo", connection)).resolves.toBe("updated");
+
+    expect(client.listTools).toHaveBeenLastCalledWith(undefined, expect.objectContaining({
+      cacheMode: "refresh",
+      timeout: 5_000,
+    }));
+    expect(connection.tools).toEqual(freshTools);
+    expect(metadataChanged).toHaveBeenCalledWith("demo", "keep-alive-refresh");
+
+    metadataChanged.mockClear();
+    client.listTools.mockResolvedValueOnce({ tools: freshTools });
+    await expect(manager.refreshTools("demo", connection)).resolves.toBe("unchanged");
+    expect(metadataChanged).not.toHaveBeenCalled();
+  });
+
+  it("keeps every page of an authoritative tool refresh", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const client = mocks.clients[0];
+    const initialListCalls = client.listTools.mock.calls.length;
+    client.listTools
+      .mockResolvedValueOnce({
+        tools: [{ name: "first_page_tool" }],
+        nextCursor: "page-2",
+      })
+      .mockResolvedValueOnce({ tools: [{ name: "second_page_tool" }] });
+
+    await expect(manager.refreshTools("demo", connection)).resolves.toBe("updated");
+
+    expect(connection.tools.map(tool => tool.name)).toEqual([
+      "first_page_tool",
+      "second_page_tool",
+    ]);
+    expect(client.listTools).toHaveBeenNthCalledWith(
+      initialListCalls + 1,
+      undefined,
+      expect.objectContaining({ cacheMode: "refresh", timeout: 5_000 }),
+    );
+    expect(client.listTools).toHaveBeenLastCalledWith(
+      { cursor: "page-2" },
+      expect.objectContaining({ cacheMode: "refresh", timeout: 5_000 }),
+    );
+  });
+
+  it("retries publication when a refreshed catalog listener fails", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const publicationError = new Error("cache unavailable");
+    const metadataChanged = vi.fn().mockImplementationOnce(() => { throw publicationError; });
+    manager.setMetadataListChangedListener(metadataChanged);
+
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const freshTools = [{ name: "fresh_tool", description: "Fresh tool" }];
+    mocks.clients[0].listTools.mockResolvedValueOnce({ tools: freshTools });
+
+    await expect(manager.refreshTools("demo", connection)).rejects.toBe(publicationError);
+    expect(connection.tools).toEqual([]);
+
+    mocks.clients[0].listTools.mockResolvedValueOnce({ tools: freshTools });
+    await expect(manager.refreshTools("demo", connection)).resolves.toBe("updated");
+    expect(connection.tools).toEqual(freshTools);
+  });
+
+  it("queues a failed session-reconnect publication for the next refresh", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const publicationError = new Error("cache unavailable");
+    const metadataChanged = vi.fn()
+      .mockImplementationOnce(() => { throw publicationError; })
+      .mockImplementation(() => undefined);
+    manager.setMetadataListChangedListener(metadataChanged);
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+
+    expect(manager.publishMetadataChanged("demo", connection, "session-reconnect")).toBe(false);
+    await expect(manager.refreshTools("demo", connection)).resolves.toBe("unchanged");
+
+    expect(metadataChanged).toHaveBeenNthCalledWith(1, "demo", "session-reconnect");
+    expect(metadataChanged).toHaveBeenNthCalledWith(2, "demo", "session-reconnect");
+  });
+
+  it("pings keep-alive connections whose negotiated server has no tools capability", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const client = mocks.clients[0];
+    const initialListCalls = client.listTools.mock.calls.length;
+    client.getServerCapabilities.mockReturnValue({ resources: {} });
+    client.ping = vi.fn(async () => ({}));
+
+    await expect(manager.refreshTools("demo", connection)).resolves.toBe("unchanged");
+
+    expect(client.ping).toHaveBeenCalledWith(expect.objectContaining({ timeout: 5_000 }));
+    expect(client.listTools).toHaveBeenCalledTimes(initialListCalls);
+  });
+
+  it("retries queued metadata publication after a no-tools ping", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const client = mocks.clients[0];
+    client.getServerCapabilities.mockReturnValue({ resources: {} });
+    client.ping = vi.fn(async () => ({}));
+    const metadataChanged = vi.fn()
+      .mockImplementationOnce(() => { throw new Error("cache unavailable"); })
+      .mockImplementation(() => undefined);
+    manager.setMetadataListChangedListener(metadataChanged);
+
+    expect(manager.publishMetadataChanged("demo", connection, "session-reconnect")).toBe(false);
+    await expect(manager.refreshTools("demo", connection)).resolves.toBe("unchanged");
+
+    expect(metadataChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not overwrite a newer list-changed catalog with an older refresh response", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const client = mocks.clients[0];
+    let resolveRefresh!: (value: { tools: Array<{ name: string }> }) => void;
+    client.listTools.mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve; }));
+
+    const refresh = manager.refreshTools("demo", connection);
+    await Promise.resolve();
+    const notificationTools = [{ name: "notification_tool" }];
+    client.options.listChanged.tools.onChanged(null, notificationTools);
+    resolveRefresh({ tools: [{ name: "older_refresh_tool" }] });
+
+    await expect(refresh).resolves.toBe("superseded");
+    expect(connection.tools).toEqual(notificationTools);
+  });
+
   it("logs list-change callback errors without replacing cached metadata", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();

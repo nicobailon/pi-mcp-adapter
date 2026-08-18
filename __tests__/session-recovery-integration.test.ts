@@ -69,7 +69,12 @@ describe("session recovery — Streamable HTTP wire path", () => {
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
           jsonrpc: "2.0",
           id: message.id,
-          result: { tools: [{ name: "search", inputSchema: { type: "object", properties: {} } }] },
+          result: {
+            tools: [{
+              name: sessionCount === 1 ? "search" : "lookup",
+              inputSchema: { type: "object", properties: {} },
+            }],
+          },
         }));
         return;
       }
@@ -112,20 +117,161 @@ describe("session recovery — Streamable HTTP wire path", () => {
 
     const manager = new McpServerManager();
     const definition = { url: `http://127.0.0.1:${address.port}/mcp` };
+    const publishedCatalogs: string[][] = [];
+    manager.setMetadataListChangedListener((_serverName, reason) => {
+      if (reason === "session-reconnect") {
+        publishedCatalogs.push(manager.getConnection("demo")?.tools.map(tool => tool.name) ?? []);
+      }
+    });
+    let recoveryAttempts = 0;
+    let replaySawPublishedCatalog = false;
     try {
       await manager.connect("demo", definition);
       const result = await withSessionRecovery(
         { manager, config: { mcpServers: { demo: definition } } },
         "demo",
-        connection => connection.client.callTool({ name: "search", arguments: {} }),
+        connection => {
+          recoveryAttempts += 1;
+          if (recoveryAttempts === 2) {
+            replaySawPublishedCatalog = publishedCatalogs.some(tools => tools.includes("lookup"));
+          }
+          return connection.client.callTool({ name: "search", arguments: {} });
+        },
       );
 
       expect(result.content[0]).toMatchObject({ type: "text", text: "ok" });
       expect(toolCalls).toBe(2);
       expect(toolCallSessionIds).toHaveLength(2);
       expect(toolCallSessionIds[0]).not.toBe(toolCallSessionIds[1]);
+      expect(publishedCatalogs).toEqual([["lookup"]]);
+      expect(replaySawPublishedCatalog).toBe(true);
     } finally {
       await manager.close("demo").catch(() => {});
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("polls without a notification stream and reconnects when that session later expires", async () => {
+    const { createServer } = await import("node:http");
+    const { McpLifecycleManager } = await import("../lifecycle.ts");
+    const { McpServerManager } = await import("../server-manager.ts");
+
+    let generation = 1;
+    let rejectStaleSession = false;
+    const listedSessionIds: string[] = [];
+    const server = createServer(async (req, res) => {
+      if (req.method === "GET") {
+        res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
+        return;
+      }
+      if (req.method === "DELETE") {
+        res.writeHead(200).end();
+        return;
+      }
+      if (req.method !== "POST") {
+        res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
+        return;
+      }
+
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const message = JSON.parse(body) as { id?: string | number; method?: string };
+      const requestSessionId = Array.isArray(req.headers["mcp-session-id"])
+        ? req.headers["mcp-session-id"][0]
+        : req.headers["mcp-session-id"];
+
+      if (message.method === "initialize") {
+        res.writeHead(200, {
+          "content-type": "application/json",
+          "mcp-session-id": `session-${generation}`,
+        }).end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            protocolVersion: "2025-06-18",
+            capabilities: { tools: {}, resources: {} },
+            serverInfo: { name: "replaceable", version: `${generation}.0.0` },
+          },
+        }));
+        return;
+      }
+
+      if (message.method === "notifications/initialized") {
+        res.writeHead(202).end();
+        return;
+      }
+
+      if (message.method === "tools/list") {
+        listedSessionIds.push(requestSessionId ?? "");
+        if (rejectStaleSession && requestSessionId !== `session-${generation}`) {
+          res.writeHead(404).end("Session not found");
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            tools: [{
+              name: generation === 1
+                ? "old_tool"
+                : generation === 2
+                  ? "refreshed_tool"
+                  : "new_tool",
+              inputSchema: { type: "object", properties: {} },
+            }],
+          },
+        }));
+        return;
+      }
+
+      if (message.method === "resources/list") {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { resources: [] },
+        }));
+        return;
+      }
+
+      res.writeHead(500).end(`unexpected method: ${message.method}`);
+    });
+
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+
+    const manager = new McpServerManager();
+    const definition = {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+      lifecycle: "keep-alive" as const,
+    };
+    const lifecycle = new McpLifecycleManager(manager);
+    const reconnected = vi.fn();
+    lifecycle.setReconnectCallback(reconnected);
+    lifecycle.markKeepAlive("demo", definition);
+
+    try {
+      const staleConnection = await manager.connect("demo", definition);
+      expect(staleConnection.tools.map(tool => tool.name)).toEqual(["old_tool"]);
+
+      generation = 2;
+      await lifecycle.ensureConverged();
+      expect(manager.getConnection("demo")).toBe(staleConnection);
+      expect(staleConnection.tools.map(tool => tool.name)).toEqual(["refreshed_tool"]);
+      expect(reconnected).not.toHaveBeenCalled();
+
+      generation = 3;
+      rejectStaleSession = true;
+      await lifecycle.ensureConverged();
+
+      const freshConnection = manager.getConnection("demo");
+      expect(freshConnection).not.toBe(staleConnection);
+      expect(freshConnection?.tools.map(tool => tool.name)).toEqual(["new_tool"]);
+      expect(listedSessionIds).toContain("session-1");
+      expect(listedSessionIds).toContain("session-3");
+      expect(reconnected).toHaveBeenCalledWith("demo");
+    } finally {
+      await lifecycle.gracefulShutdown().catch(() => {});
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
   });

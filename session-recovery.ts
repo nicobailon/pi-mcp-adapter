@@ -146,6 +146,13 @@ export async function withSessionRecovery<T>(
       throw err;
     }
 
+    try {
+      deps.manager.publishMetadataChanged(serverName, freshConnection, "session-reconnect");
+    } catch (publicationError) {
+      const message = publicationError instanceof Error ? publicationError.message : String(publicationError);
+      logger.debug(`MCP metadata publication after reconnect failed for "${serverName}": ${message}`);
+    }
+    throwIfAborted(deps.signal);
     return fn(freshConnection);
   }
 }

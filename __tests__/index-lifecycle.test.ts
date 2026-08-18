@@ -116,7 +116,10 @@ function createDeferred<T>() {
 function createState() {
   return {
     manager: { getAllConnections: () => new Map() },
-    lifecycle: { gracefulShutdown: vi.fn().mockResolvedValue(undefined) },
+    lifecycle: {
+      gracefulShutdown: vi.fn().mockResolvedValue(undefined),
+      ensureConverged: vi.fn().mockResolvedValue(undefined),
+    },
     toolMetadata: new Map(),
     config: { mcpServers: {} },
     oauthRuntime: { signal: new AbortController().signal },
@@ -413,6 +416,150 @@ describe("mcpAdapter session lifecycle", () => {
     await sessionStart;
 
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
+  });
+
+  it("waits for keep-alive convergence before Pi processes the next input", async () => {
+    const config = {
+      mcpServers: {
+        demo: { url: "https://example.test/mcp", lifecycle: "keep-alive" },
+      },
+    };
+    const state = createState();
+    state.config = config;
+    const convergence = createDeferred<void>();
+    state.lifecycle.ensureConverged.mockReturnValue(convergence.promise);
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    let inputCompleted = false;
+    const input = Promise.resolve(handlers.get("input")?.({ type: "input", text: "hello" }, {}))
+      .then(() => { inputCompleted = true; });
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(inputCompleted).toBe(false);
+    convergence.resolve();
+    await input;
+    expect(state.lifecycle.ensureConverged).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for pending lazy-keep-alive initialization before the first input", async () => {
+    const config = {
+      mcpServers: {
+        demo: { url: "https://example.test/mcp", lifecycle: "lazy-keep-alive" },
+      },
+    };
+    const state = createState();
+    state.config = config;
+    const initialization = createDeferred<typeof state>();
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.loadMetadataCache.mockReturnValue(null);
+    mocks.initializeMcp.mockReturnValue(initialization.promise);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+
+    let inputCompleted = false;
+    const input = Promise.resolve(handlers.get("input")?.({ type: "input", text: "hello" }, {}))
+      .then(() => { inputCompleted = true; });
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(inputCompleted).toBe(false);
+    initialization.resolve(state);
+    await input;
+    expect(state.lifecycle.ensureConverged).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds the first-input wait when initialization stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      const config = {
+        mcpServers: {
+          demo: { url: "https://example.test/mcp", lifecycle: "keep-alive" },
+        },
+      };
+      const state = createState();
+      const initialization = createDeferred<typeof state>();
+      mocks.loadMcpConfig.mockReturnValue(config);
+      mocks.initializeMcp.mockReturnValue(initialization.promise);
+
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers } = createPi();
+      mcpAdapter(api);
+      await handlers.get("session_start")?.({}, {});
+
+      let inputCompleted = false;
+      const input = Promise.resolve(handlers.get("input")?.({ type: "input", text: "hello" }, {}))
+        .then(() => { inputCompleted = true; });
+      await Promise.resolve();
+      expect(inputCompleted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await input;
+      expect(inputCompleted).toBe(true);
+      expect(state.lifecycle.ensureConverged).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reconciles direct tools during the keep-alive input barrier", async () => {
+    const config = {
+      mcpServers: {
+        demo: {
+          url: "https://example.test/mcp",
+          lifecycle: "keep-alive",
+          directTools: true,
+        },
+      },
+    };
+    const oldTool = {
+      serverName: "demo",
+      originalName: "search",
+      prefixedName: "demo_search",
+      description: "Old search",
+    };
+    const newTool = {
+      serverName: "demo",
+      originalName: "lookup",
+      prefixedName: "demo_lookup",
+      description: "New lookup",
+    };
+    const state = createState();
+    state.config = config;
+    state.lifecycle.ensureConverged.mockImplementation(async () => {
+      await state.onToolMetadataUpdated?.("demo", "keep-alive-refresh");
+    });
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: {} });
+    mocks.resolveDirectTools
+      .mockReturnValueOnce([oldTool])
+      .mockReturnValueOnce([oldTool])
+      .mockReturnValue([newTool]);
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await handlers.get("input")?.({ type: "input", text: "hello" }, {});
+
+    expect(api.unregisterTool).toHaveBeenCalledWith("demo_search");
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
+      name: "demo_lookup",
+      description: "New lookup",
+    }));
   });
 
   it("hot-loads direct tools after session initialization refreshes metadata", async () => {

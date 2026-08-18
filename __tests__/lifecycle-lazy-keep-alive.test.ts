@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
 import { lazyConnect } from "../init.ts";
 import { McpLifecycleManager } from "../lifecycle.ts";
 import { executeCall } from "../proxy-modes.ts";
@@ -10,20 +11,29 @@ import type { ServerDefinition } from "../types.ts";
 
 interface FakeConnection {
   status: "connected" | "closed" | "needs-auth";
+  transport?: { sessionId?: string };
 }
 
 class FakeManager {
   connections = new Map<string, FakeConnection>();
   connectCalls: string[] = [];
+  refreshToolsCalls: string[] = [];
+  reconnectCalls: Array<{ name: string; staleConnection: FakeConnection }> = [];
   closeCalls: string[] = [];
   idleResponses = new Map<string, boolean>();
   connectError: Error | undefined;
+  refreshToolsError: Error | undefined;
+  reconnectError: Error | undefined;
+  reconnectStatus: FakeConnection["status"] = "connected";
 
-  setConnection(name: string, status: FakeConnection["status"] | null): void {
+  setConnection(name: string, status: FakeConnection["status"] | null, sessionId?: string): FakeConnection | undefined {
     if (status === null) {
       this.connections.delete(name);
+      return undefined;
     } else {
-      this.connections.set(name, { status });
+      const connection = { status, transport: { sessionId } };
+      this.connections.set(name, connection);
+      return connection;
     }
   }
 
@@ -35,6 +45,23 @@ class FakeManager {
     this.connectCalls.push(name);
     if (this.connectError) throw this.connectError;
     const connection: FakeConnection = { status: "connected" };
+    this.connections.set(name, connection);
+    return connection;
+  }
+
+  async refreshTools(name: string): Promise<"unchanged"> {
+    this.refreshToolsCalls.push(name);
+    if (this.refreshToolsError) throw this.refreshToolsError;
+    return "unchanged";
+  }
+
+  async reconnect(name: string, _definition: ServerDefinition, staleConnection: FakeConnection): Promise<FakeConnection> {
+    this.reconnectCalls.push({ name, staleConnection });
+    if (this.reconnectError) {
+      this.connections.delete(name);
+      throw this.reconnectError;
+    }
+    const connection: FakeConnection = { status: this.reconnectStatus, transport: { sessionId: "fresh-session" } };
     this.connections.set(name, connection);
     return connection;
   }
@@ -124,7 +151,236 @@ describe("lazy-keep-alive lifecycle", () => {
     expect(fake.connectCalls).toContain("srv");
   });
 
+  it("actively refreshes connected keep-alive servers instead of trusting local status", async () => {
+    const def = makeDefinition("keep-alive");
+    def.url = "https://example.test/mcp";
+    delete def.command;
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected");
+
+    await lifecycle.ensureConverged();
+
+    expect(fake.refreshToolsCalls).toEqual(["srv"]);
+  });
+
+  it("checks multiple connected keep-alive servers concurrently", async () => {
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("one", def);
+    lifecycle.markKeepAlive("two", def);
+    fake.setConnection("one", "connected");
+    fake.setConnection("two", "connected");
+    const resolvers = new Map<string, () => void>();
+    const refreshTools = vi.spyOn(fake, "refreshTools").mockImplementation((name) =>
+      new Promise<"unchanged">((resolve) => {
+        resolvers.set(name, () => resolve("unchanged"));
+      })
+    );
+
+    const convergence = lifecycle.ensureConverged();
+    await Promise.resolve();
+
+    expect(refreshTools).toHaveBeenCalledTimes(2);
+    resolvers.get("one")?.();
+    resolvers.get("two")?.();
+    await convergence;
+  });
+
+  it("does not couple the input convergence barrier to unrelated idle shutdowns", async () => {
+    const def = makeDefinition("lazy");
+    lifecycle.registerServer("idle", def, { idleTimeout: 1 });
+    fake.setConnection("idle", "connected");
+    fake.idleResponses.set("idle", true);
+
+    await lifecycle.ensureConverged();
+
+    expect(fake.closeCalls).toEqual([]);
+  });
+
+  it("reconnects an apparently connected server when refresh proves its HTTP session expired", async () => {
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    const staleConnection = fake.setConnection("srv", "connected", "stale-session")!;
+    fake.refreshToolsError = new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      "Session not found",
+      { status: 404 },
+    );
+
+    await lifecycle.ensureConverged();
+
+    expect(fake.reconnectCalls).toEqual([{ name: "srv", staleConnection }]);
+  });
+
+  it("publishes metadata when a concurrent recovery replaces the connection during refresh", async () => {
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "stale-session");
+    const freshConnection: FakeConnection = {
+      status: "connected",
+      transport: { sessionId: "fresh-session" },
+    };
+    vi.spyOn(fake, "refreshTools").mockImplementation(async () => {
+      fake.connections.set("srv", freshConnection);
+      return "superseded" as never;
+    });
+    const onReconnect = vi.fn();
+    lifecycle.setReconnectCallback(onReconnect);
+
+    await lifecycle.ensureConverged();
+
+    expect(onReconnect).toHaveBeenCalledWith("srv");
+  });
+
+  it("rechecks when a refresh is superseded by the same connection closing", async () => {
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    const connection = fake.setConnection("srv", "connected", "stale-session")!;
+    vi.spyOn(fake, "refreshTools").mockImplementation(async () => {
+      connection.status = "closed";
+      return "superseded" as never;
+    });
+
+    await lifecycle.ensureConverged();
+
+    expect(fake.connectCalls).toEqual(["srv"]);
+  });
+
+  it("publishes a concurrent replacement when the stale refresh rejects", async () => {
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "stale-session");
+    const freshConnection: FakeConnection = {
+      status: "connected",
+      transport: { sessionId: "fresh-session" },
+    };
+    vi.spyOn(fake, "refreshTools").mockImplementation(async () => {
+      fake.connections.set("srv", freshConnection);
+      throw new Error("stale request closed");
+    });
+    const onReconnect = vi.fn();
+    lifecycle.setReconnectCallback(onReconnect);
+
+    await lifecycle.ensureConverged();
+
+    expect(onReconnect).toHaveBeenCalledWith("srv");
+  });
+
+  it("retries metadata publication after a concurrent replacement hook fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "stale-session");
+    const freshConnection: FakeConnection = {
+      status: "connected",
+      transport: { sessionId: "fresh-session" },
+    };
+    vi.spyOn(fake, "refreshTools").mockImplementation(async () => {
+      fake.connections.set("srv", freshConnection);
+      return "superseded" as never;
+    });
+    const onReconnect = vi.fn()
+      .mockRejectedValueOnce(new Error("metadata cache unavailable"))
+      .mockResolvedValue(undefined);
+    lifecycle.setReconnectCallback(onReconnect);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await lifecycle.ensureConverged();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(30_000);
+    await lifecycle.ensureConverged();
+
+    expect(onReconnect).toHaveBeenCalledTimes(2);
+  });
+
+  it("backs off repeated refresh failures and retries after the bounded delay", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "session");
+    fake.refreshToolsError = new Error("temporarily unavailable");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const onHealthRestored = vi.fn();
+    lifecycle.setHealthRestoredCallback(onHealthRestored);
+
+    await lifecycle.ensureConverged();
+    await lifecycle.ensureConverged();
+    expect(fake.refreshToolsCalls).toEqual(["srv"]);
+
+    vi.advanceTimersByTime(30_000);
+    fake.refreshToolsError = undefined;
+    await lifecycle.ensureConverged();
+    expect(fake.refreshToolsCalls).toEqual(["srv", "srv"]);
+    expect(onHealthRestored).toHaveBeenCalledWith("srv");
+  });
+
+  it("reconnects immediately when a backed-off connection closes in place", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    const connection = fake.setConnection("srv", "connected", "session")!;
+    fake.refreshToolsError = new Error("temporarily unavailable");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await lifecycle.ensureConverged();
+    connection.status = "closed";
+    await lifecycle.ensureConverged();
+
+    expect(fake.connectCalls).toEqual(["srv"]);
+  });
+
+  it("keeps backoff after a stale-session reconnect closes the old connection and fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "stale-session");
+    fake.refreshToolsError = new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      "Session not found",
+      { status: 404 },
+    );
+    fake.reconnectError = new Error("replacement unavailable");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await lifecycle.ensureConverged();
+    await lifecycle.ensureConverged();
+
+    expect(fake.refreshToolsCalls).toEqual(["srv"]);
+    expect(fake.reconnectCalls).toHaveLength(1);
+    expect(fake.connectCalls).toEqual([]);
+  });
+
+  it("parks a reconnect that returns needs-auth instead of reporting success or retrying", async () => {
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "stale-session");
+    fake.refreshToolsError = new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      "Session not found",
+      { status: 404 },
+    );
+    fake.reconnectStatus = "needs-auth";
+    const onReconnect = vi.fn();
+    const onAuthRequired = vi.fn();
+    lifecycle.setReconnectCallback(onReconnect);
+    lifecycle.setAuthRequiredCallback(onAuthRequired);
+
+    await lifecycle.ensureConverged();
+    await lifecycle.ensureConverged();
+
+    expect(fake.reconnectCalls).toHaveLength(1);
+    expect(fake.connectCalls).toEqual([]);
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect(onAuthRequired).toHaveBeenCalledWith("srv");
+  });
+
   it("records reconnect failures and clears them after a later success", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const def = makeDefinition("keep-alive");
     lifecycle.markKeepAlive("srv", def);
     const onFailure = vi.fn();
@@ -142,6 +398,7 @@ describe("lazy-keep-alive lifecycle", () => {
     expect(consoleError.mock.calls[0][0]).not.toContain("clipboard-secret");
 
     fake.connectError = undefined;
+    vi.advanceTimersByTime(30_000);
     await (lifecycle as never as { checkConnections: () => Promise<void> }).checkConnections();
 
     expect(onSuccess).toHaveBeenCalledWith("srv");

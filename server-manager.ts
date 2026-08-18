@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import {
   Client,
   SdkHttpError,
@@ -7,6 +8,7 @@ import {
   UnauthorizedError,
   type GetPromptResult,
   type ReadResourceResult,
+  type CacheableRequestOptions,
   type RequestOptions,
   type UrlElicitationRequiredError,
   type VersionNegotiationOptions,
@@ -123,6 +125,8 @@ export interface ServerConnection {
   transport: Transport;
   definition: ServerDefinition;
   tools: McpTool[];
+  /** Monotonic guard against older refresh responses replacing newer notifications. */
+  toolsRevision?: number;
   resources: McpResource[];
   prompts: McpPrompt[];
   /** True when prompts were advertised but prompts/list failed. */
@@ -139,6 +143,10 @@ export interface ServerConnection {
 type UiStreamListener = (serverName: string, notification: ServerStreamResultPatchNotification["params"]) => void;
 type MetadataListChangedListener = (serverName: string, reason: string) => void;
 
+export type ToolRefreshResult = "updated" | "unchanged" | "superseded";
+
+const KEEP_ALIVE_REFRESH_TIMEOUT_MS = 5_000;
+
 export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
@@ -146,6 +154,10 @@ export class McpServerManager {
   private uiStreamListeners = new Map<string, UiStreamListener>();
   private samplingConfig: ServerSamplingConfig | undefined;
   private metadataListChangedListener: MetadataListChangedListener | undefined;
+  private pendingMetadataPublications = new Map<
+    string,
+    { connection: ServerConnection; reason: string }
+  >();
   private elicitationConfig: ServerElicitationConfig | undefined;
   private authStorageOptions: AuthStorageOptions = {};
   private oauthRuntime: McpOAuthRuntime | undefined;
@@ -168,6 +180,25 @@ export class McpServerManager {
 
   setMetadataListChangedListener(listener: MetadataListChangedListener | undefined): void {
     this.metadataListChangedListener = listener;
+  }
+
+  publishMetadataChanged(
+    name: string,
+    expectedConnection: ServerConnection,
+    reason: string,
+  ): boolean {
+    const current = this.connections.get(name);
+    if (current !== expectedConnection || current.status !== "connected") return false;
+    try {
+      this.metadataListChangedListener?.(name, reason);
+      this.pendingMetadataPublications.delete(name);
+      return true;
+    } catch (error) {
+      this.pendingMetadataPublications.set(name, { connection: expectedConnection, reason });
+      const message = error instanceof Error ? error.message : String(error);
+      logger.debug(`MCP: metadata publication failed for ${name}; queued for retry: ${message}`);
+      return false;
+    }
   }
 
   setElicitationConfig(config: ServerElicitationConfig | undefined): void {
@@ -301,6 +332,88 @@ export class McpServerManager {
     });
     this.reconnectPromises.set(name, promise);
     return abortable(promise, ownedSignal);
+  }
+
+  /**
+   * Fetch the authoritative tool catalog for a connection that still appears
+   * connected. The SDK response cache is explicitly bypassed so this request
+   * also proves the remote Streamable HTTP session is usable. Results are
+   * identity-guarded: a late response from a replaced connection is ignored.
+   */
+  async refreshTools(
+    name: string,
+    expectedConnection: ServerConnection,
+    signal?: AbortSignal,
+  ): Promise<ToolRefreshResult> {
+    if (this.stopped) throw new Error("MCP server manager is closed");
+    const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
+    throwIfAborted(ownedSignal);
+
+    const current = this.connections.get(name);
+    if (current !== expectedConnection || current.status !== "connected") {
+      return "superseded";
+    }
+
+    const requestOptions = this.buildRequestOptions(expectedConnection.definition, signal);
+    const timeout = Math.min(requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS, KEEP_ALIVE_REFRESH_TIMEOUT_MS);
+    const healthOptions = {
+      ...requestOptions,
+      timeout,
+    };
+    if (!expectedConnection.client.getServerCapabilities?.()?.tools) {
+      await expectedConnection.client.ping(healthOptions);
+      throwIfAborted(ownedSignal);
+      if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {
+        return "superseded";
+      }
+      this.retryPendingMetadataPublication(name, expectedConnection);
+      return "unchanged";
+    }
+
+    const toolsRevision = expectedConnection.toolsRevision ?? 0;
+    const refreshSignal = combineAbortSignals(healthOptions.signal, AbortSignal.timeout(timeout));
+    const tools = await this.fetchAllTools(expectedConnection.client, {
+      ...healthOptions,
+      ...(refreshSignal ? { signal: refreshSignal } : {}),
+      cacheMode: "refresh",
+    });
+    throwIfAborted(ownedSignal);
+
+    if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {
+      return "superseded";
+    }
+    if ((expectedConnection.toolsRevision ?? 0) !== toolsRevision) {
+      return "superseded";
+    }
+
+    if (isDeepStrictEqual(expectedConnection.tools, tools)) {
+      this.retryPendingMetadataPublication(name, expectedConnection);
+      return "unchanged";
+    }
+
+    const previousTools = expectedConnection.tools;
+    expectedConnection.tools = tools;
+    expectedConnection.toolsRevision = toolsRevision + 1;
+    try {
+      await this.metadataListChangedListener?.(name, "keep-alive-refresh");
+      this.pendingMetadataPublications.delete(name);
+    } catch (error) {
+      if (this.connections.get(name) === expectedConnection && expectedConnection.tools === tools) {
+        expectedConnection.tools = previousTools;
+        expectedConnection.toolsRevision = toolsRevision;
+      }
+      throw error;
+    }
+    return "updated";
+  }
+
+  private retryPendingMetadataPublication(name: string, connection: ServerConnection): void {
+    const pendingPublication = this.pendingMetadataPublications.get(name);
+    if (pendingPublication?.connection !== connection) return;
+    this.metadataListChangedListener?.(name, pendingPublication.reason);
+    if (this.pendingMetadataPublications.get(name) === pendingPublication) {
+      this.pendingMetadataPublications.delete(name);
+    }
   }
 
   private async doReconnect(
@@ -440,6 +553,7 @@ export class McpServerManager {
         transport,
         definition,
         tools: [],
+        toolsRevision: 0,
         resources: [],
         prompts: [],
         ...(instructions !== undefined ? { instructions } : {}),
@@ -641,7 +755,9 @@ export class McpServerManager {
     const connection = this.connections.get(serverName);
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.tools = tools;
+    connection.toolsRevision = (connection.toolsRevision ?? 0) + 1;
     this.metadataListChangedListener?.(serverName, "tools-list-changed");
+    this.pendingMetadataPublications.delete(serverName);
   }
 
   private handlePromptsListChanged(
@@ -660,6 +776,7 @@ export class McpServerManager {
     connection.prompts = prompts;
     connection.promptDiscoveryFailed = false;
     this.metadataListChangedListener?.(serverName, "prompts-list-changed");
+    this.pendingMetadataPublications.delete(serverName);
   }
 
   private handleResourcesListChanged(
@@ -677,6 +794,7 @@ export class McpServerManager {
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.resources = resources;
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
+    this.pendingMetadataPublications.delete(serverName);
   }
 
   async handleUrlElicitationRequired(
@@ -851,7 +969,7 @@ export class McpServerManager {
     }
   }
 
-  private async fetchAllTools(client: Client, requestOptions?: RequestOptions): Promise<McpTool[]> {
+  private async fetchAllTools(client: Client, requestOptions?: CacheableRequestOptions): Promise<McpTool[]> {
     const allTools: McpTool[] = [];
     let cursor: string | undefined;
 
@@ -979,6 +1097,7 @@ export class McpServerManager {
   async close(name: string): Promise<void> {
     this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
     this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
+    this.pendingMetadataPublications.delete(name);
 
     const connection = this.connections.get(name);
     if (!connection) {
@@ -1042,6 +1161,7 @@ export class McpServerManager {
       .filter(error => this.containsCleanupFailure(error));
     this.uiStreamListeners.clear();
     this.acceptedUrlElicitations.clear();
+    this.pendingMetadataPublications.clear();
     this.samplingConfig = undefined;
     this.elicitationConfig = undefined;
     await this.traceWriter?.flush();

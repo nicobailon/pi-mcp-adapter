@@ -439,4 +439,33 @@ describe("lazy-keep-alive initializeMcp integration", () => {
 
     expect(mocks.manager.connect).toHaveBeenCalledTimes(2);
   });
+
+  it("waits for keep-alive convergence before adapter-triggered model turns", async () => {
+    const { initializeMcp } = await import("../init.ts");
+    const sendMessage = vi.fn();
+    const state = await initializeMcp({
+      getFlag: vi.fn(() => undefined),
+      sendMessage,
+    } as any, {
+      cwd: tempDir,
+      hasUI: false,
+      mode: "headless",
+      signal: undefined,
+    } as any);
+    let finishConvergence!: () => void;
+    vi.spyOn(state.lifecycle, "ensureConverged").mockReturnValue(new Promise<void>((resolve) => {
+      finishConvergence = resolve;
+    }));
+    const message = {
+      customType: "mcp-ui-prompt",
+      content: [{ type: "text" as const, text: "continue" }],
+    };
+
+    state.sendMessage?.(message, { triggerTurn: true });
+    await Promise.resolve();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    finishConvergence();
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith(message, { triggerTurn: true }));
+  });
 });

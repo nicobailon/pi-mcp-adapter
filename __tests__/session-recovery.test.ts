@@ -112,6 +112,7 @@ describe("withSessionRecovery", () => {
     return {
       getConnection: vi.fn(overrides.getConnection),
       reconnect: vi.fn(overrides.reconnect),
+      publishMetadataChanged: vi.fn(),
     };
   }
 
@@ -142,6 +143,10 @@ describe("withSessionRecovery", () => {
     expect(fn).toHaveBeenNthCalledWith(2, fresh);
     expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale);
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
+    expect(manager.publishMetadataChanged).toHaveBeenCalledWith("demo", fresh, "session-reconnect");
+    expect(manager.publishMetadataChanged.mock.invocationCallOrder[0]).toBeLessThan(
+      fn.mock.invocationCallOrder[1]!,
+    );
   });
 
   it("transparently recovers server-not-initialized MCP errors", async () => {
@@ -167,6 +172,26 @@ describe("withSessionRecovery", () => {
     expect(fn).toHaveBeenNthCalledWith(2, fresh);
     expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale);
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("still replays the tool when replacement metadata publication reports a failure", async () => {
+    const stale = makeConnection("session-1");
+    const fresh = makeConnection("session-2");
+    const manager = makeManager({
+      getConnection: () => stale,
+      reconnect: async () => fresh,
+    });
+    manager.publishMetadataChanged.mockImplementationOnce(() => {
+      throw new Error("publication failed");
+    });
+    const fn = vi.fn(async (conn: ServerConnection) => {
+      if (conn === stale) throw httpError(404, "Session not found");
+      return "ok";
+    });
+
+    await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).resolves.toBe("ok");
+
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 
   it("invalidates OAuth credentials after a runtime 401 and preserves the error", async () => {
