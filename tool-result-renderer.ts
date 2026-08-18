@@ -25,6 +25,7 @@ export interface McpProxyToolCallInput {
 
 interface McpToolRenderState {
   compactTitle?: string;
+  compactInputPreview?: string;
 }
 
 interface McpToolRenderContext {
@@ -52,6 +53,7 @@ export interface McpToolResultDisplay {
 }
 
 const DEFAULT_MAX_CALL_INPUT_CHARS = 1500;
+const DEFAULT_MAX_COMPACT_INPUT_CHARS = 240;
 const DEFAULT_BOXED_COLLAPSED_LINES = 3;
 const DEFAULT_COMPACT_COLLAPSED_LINES = 1;
 const DEFAULT_MAX_COLLAPSED_CHARS = 8000;
@@ -70,6 +72,7 @@ class CompactMcpToolResult implements Component {
 
   constructor(
     private readonly title: string,
+    private readonly inputPreview: string,
     private readonly display: McpToolResultDisplay,
     private readonly theme: RenderTheme,
   ) {}
@@ -83,7 +86,7 @@ class CompactMcpToolResult implements Component {
     });
     const lines = resultLines.length > 0 ? resultLines : [""];
     const bodies = lines.map((line, index) => {
-      const prefix = index === 0 && this.title ? `${this.theme.fg("toolTitle", this.title)} → ` : "";
+      const prefix = index === 0 ? this.renderPrefix(safeWidth) : "";
       return `${prefix}${this.theme.fg("toolOutput", line)}`;
     });
     const hiddenText = this.display.truncated || bodies.some((body) => visibleWidth(body) > safeWidth);
@@ -105,6 +108,22 @@ class CompactMcpToolResult implements Component {
 
   invalidate(): void {
     this.rendered = null;
+  }
+
+  private renderPrefix(width: number): string {
+    if (!this.title) return "";
+    const arrow = " → ";
+    if (!this.inputPreview) return `${this.theme.fg("toolTitle", this.title)}${arrow}`;
+
+    const maxPrefixWidth = Math.max(12, Math.floor(width * 0.55));
+    const titleWidth = visibleWidth(this.title);
+    const inputWidth = Math.max(0, maxPrefixWidth - titleWidth - 1);
+    if (inputWidth <= 3) {
+      return `${this.theme.fg("toolTitle", truncateToWidth(this.title, maxPrefixWidth, "…"))}${arrow}`;
+    }
+
+    const input = truncateToWidth(this.inputPreview, inputWidth, "…");
+    return `${this.theme.fg("toolTitle", this.title)} ${this.theme.fg("muted", input)}${arrow}`;
   }
 }
 
@@ -239,6 +258,10 @@ function renderToolCallLines(lines: string[], theme?: RenderTheme) {
   return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
 }
 
+function formatCompactInputPreview(lines: string[], maxChars = DEFAULT_MAX_COMPACT_INPUT_CHARS): string {
+  return truncateText(lines.slice(1).join(" ").replace(/\s+/g, " ").trim(), maxChars);
+}
+
 export function resolveMcpToolRenderOptions(settings?: McpToolRenderSettings): McpToolRenderOptions {
   const resultRendering = settings?.toolResultRendering === "boxed" ? "boxed" : "compact";
   const collapsedLines = settings?.collapsedResultLines;
@@ -263,7 +286,10 @@ function renderToolCall(
   context: McpToolRenderContext | undefined,
   options: McpToolRenderOptions,
 ) {
-  if (context?.state) context.state.compactTitle = lines[0] ?? "mcp";
+  if (context?.state) {
+    context.state.compactTitle = lines[0] ?? "mcp";
+    context.state.compactInputPreview = formatCompactInputPreview(lines);
+  }
   if (shouldUseCompactFinalRender(options, context)) return new EmptyComponent();
   return renderToolCallLines(lines, theme);
 }
@@ -307,6 +333,19 @@ function collectCollapsedResultLines(
   let truncated = false;
 
   const appendLine = (line: string) => {
+    if (lines.length === 0) {
+      const previewWidth = Math.min(line.length, remainingChars);
+      if (line.slice(0, previewWidth).trim() === "") {
+        if (line.length >= remainingChars) {
+          truncated = true;
+          remainingChars = 0;
+          return false;
+        }
+        remainingChars -= line.length + 1;
+        return true;
+      }
+    }
+
     if (lines.length >= maxLines || remainingChars <= 0) {
       truncated = true;
       return false;
@@ -342,7 +381,7 @@ function collectCollapsedResultLines(
     if (truncated) break;
   }
 
-  if (lines.length === 0) lines.push("");
+  if (lines.length === 0) lines.push(truncated ? "(leading blank output omitted)" : "");
   if (truncated && lines.length >= maxLines) lines.push("…");
   return { lines, truncated };
 }
@@ -393,7 +432,8 @@ export function renderMcpToolResult(
   if (!expanded && renderOptions.resultRendering === "compact") {
     const display = formatMcpToolResultLines(result, false, renderOptions.collapsedResultLines);
     const title = context?.state?.compactTitle ?? formatMcpToolResultIdentity(result.details) ?? "";
-    return new CompactMcpToolResult(title, display, activeTheme);
+    const inputPreview = context?.state?.compactInputPreview ?? "";
+    return new CompactMcpToolResult(title, inputPreview, display, activeTheme);
   }
 
   const display = formatMcpToolResultLines(result, expanded, renderOptions.collapsedResultLines);

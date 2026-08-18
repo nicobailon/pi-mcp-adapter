@@ -160,6 +160,43 @@ describe("MCP tool result renderer", () => {
     expect(output).not.toContain("segment-8");
   });
 
+  it("keeps a bounded input preview in compact final rows", () => {
+    const state: { compactTitle?: string; compactInputPreview?: string } = {};
+    const call = createMcpDirectToolCallRenderer("demo_search")(
+      { query: "alpha", limit: 10 },
+      plainTheme,
+      { isError: false, isPartial: false, expanded: false, state },
+    );
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "found 10 results" }]),
+      collapsedOptions,
+      plainTheme,
+      { isError: false, state },
+    ).render(120).join("\n");
+
+    expect(call.render(120)).toEqual([]);
+    expect(output).toContain("demo_search");
+    expect(output).toContain("query");
+    expect(output).toContain("alpha");
+    expect(output).toContain("found 10 results");
+  });
+
+  it("skips leading blank lines in collapsed previews", () => {
+    const display = formatMcpToolResultLines(result([
+      { type: "text", text: "\n\nuseful\nextra" },
+    ]), false, 1);
+
+    expect(display).toEqual({ lines: ["useful", "…"], truncated: true });
+  });
+
+  it("bounds skipped leading blank lines", () => {
+    const display = formatMcpToolResultLines(result([
+      { type: "text", text: `${"\n".repeat(100)}useful` },
+    ]), false, 1, 50);
+
+    expect(display).toEqual({ lines: ["(leading blank output omitted)", "…"], truncated: true });
+  });
+
   it("bounds a huge single-line collapsed result and shows the expand hint", () => {
     const huge = `head ${"x".repeat(50_000)} tail-marker`;
     const output = renderMcpToolResult(
