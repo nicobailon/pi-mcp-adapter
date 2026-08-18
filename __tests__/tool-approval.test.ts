@@ -197,10 +197,11 @@ describe("tool approval", () => {
 
   it("caches only Allow for session decisions", async () => {
     const session = createState({ approveTools: true, decision: "Allow for session" });
-    await ensureToolCallApproved(session.state, "demo", tool, {}, undefined);
-    await ensureToolCallApproved(session.state, "demo", tool, {}, undefined);
-    expect(session.select).toHaveBeenCalledTimes(1);
-    expect(session.state.approvedToolCalls.has("demo\u0000search-records")).toBe(true);
+    await ensureToolCallApproved(session.state, "demo", tool, { record: { id: "safe", type: "demo" } }, undefined);
+    await ensureToolCallApproved(session.state, "demo", tool, { record: { type: "demo", id: "safe" } }, undefined);
+    await ensureToolCallApproved(session.state, "demo", tool, { record: { id: "other", type: "demo" } }, undefined);
+    expect(session.select).toHaveBeenCalledTimes(2);
+    expect(session.state.approvedToolCalls.size).toBe(2);
 
     const once = createState({ approveTools: true, decision: "Allow once" });
     await ensureToolCallApproved(once.state, "demo", tool, {}, undefined);
@@ -279,7 +280,7 @@ describe("tool approval", () => {
     expect(select).toHaveBeenCalledOnce();
   });
 
-  it("uses broker allow_for_session decisions for the existing session cache", async () => {
+  it("scopes broker allow_for_session decisions to their arguments", async () => {
     const broker = vi.fn((request: McpToolApprovalRequest) => {
       expect(request.claim(() => "allow_for_session")).toBe(true);
     });
@@ -287,9 +288,10 @@ describe("tool approval", () => {
 
     await ensureToolCallApproved(state, "demo", tool, {}, undefined);
     await ensureToolCallApproved(state, "demo", tool, {}, undefined);
+    await ensureToolCallApproved(state, "demo", tool, { query: "other" }, undefined);
 
-    expect(broker).toHaveBeenCalledOnce();
-    expect(state.approvedToolCalls.has("demo\u0000search-records")).toBe(true);
+    expect(broker).toHaveBeenCalledTimes(2);
+    expect(state.approvedToolCalls.size).toBe(2);
   });
 
   it("requires brokers to claim synchronously", async () => {

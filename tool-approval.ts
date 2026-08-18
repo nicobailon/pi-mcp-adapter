@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { abortable } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
@@ -19,6 +19,18 @@ import { sanitizeTerminalText } from "./utils.ts";
 export type ToolCallApprovalResult =
   | { ok: true }
   | { ok: false; reason: "denied" | "approval_required_headless" };
+
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined || typeof value !== "object") {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? "undefined" : serialized;
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableStringify(item)).join(",")}]`;
+  }
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object).sort().map(key => `${JSON.stringify(key)}:${stableStringify(object[key])}`).join(",")}}`;
+}
 
 export function isToolCallApprovalRequired(
   config: McpConfig,
@@ -136,7 +148,8 @@ export async function ensureToolCallApproved(
   origin: McpToolApprovalOrigin = toolMeta.resourceUri ? "resource" : "proxy",
   approvalMetadata?: ReadonlyMap<string, readonly ToolMetadata[]>,
 ): Promise<ToolCallApprovalResult> {
-  const cacheKey = `${serverName}\u0000${toolMeta.originalName}`;
+  const argsHash = createHash("sha256").update(stableStringify(args ?? {})).digest("hex");
+  const cacheKey = `${serverName}\u0000${toolMeta.originalName}\u0000${argsHash}`;
   const approvedToolCalls = state.approvedToolCalls ??= new Map<string, true>();
   if (approvedToolCalls.has(cacheKey)) {
     return { ok: true };
