@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Recovered MCP gateway requests nested inside proxy `args` instead of silently showing status, and now rejects invalid nested gateway requests with guidance. Thanks to [@ibrmora](https://github.com/ibrmora) for #363.
+- Refreshed remote keep-alive tool catalogs before user input, adapter-triggered turns, and during health checks, reconnecting expired Streamable HTTP sessions so long-lived Pi sessions can discover replacement catalogs without restarting. Fixes #369.
 
 ## [2.26.0] - 2026-08-14
 

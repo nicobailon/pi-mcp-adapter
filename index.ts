@@ -417,6 +417,29 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   });
 
+  pi.on("input", async () => {
+    const inputOwner = currentOwner;
+    if (!inputOwner?.isActive()) return;
+
+    if (!state && initPromise) {
+      try {
+        await awaitWithTimeout(initPromise, INIT_WAIT_TIMEOUT_MS);
+      } catch {
+        return;
+      }
+    }
+
+    const inputState = state;
+    if (!inputState || !inputOwner.isActive()) return;
+    try {
+      await inputState.lifecycle.ensureConverged(inputOwner.signal);
+    } catch (error) {
+      if (!isAbortError(error, inputOwner.signal)) {
+        logger.debug(`MCP: keep-alive convergence failed before input: ${formatTerminalError(error)}`);
+      }
+    }
+  });
+
   pi.on("session_shutdown", async () => {
     ++lifecycleGeneration;
     const currentState = state;

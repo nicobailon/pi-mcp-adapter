@@ -179,8 +179,20 @@ export async function initializeMcp(
     },
     ...(ui !== undefined ? { ui } : {}),
     sendMessage: (message, options) => {
-      if (!owner.isActive()) return;
-      pi.sendMessage(message as unknown as Parameters<typeof pi.sendMessage>[0], options);
+      const deliver = () => {
+        if (!owner.isActive()) return;
+        pi.sendMessage(message as unknown as Parameters<typeof pi.sendMessage>[0], options);
+      };
+      if (!options?.triggerTurn) {
+        deliver();
+        return;
+      }
+      void lifecycle.ensureConverged(owner.signal).then(deliver, error => {
+        if (!owner.isActive() || isAbortError(error, owner.signal)) return;
+        const detail = error instanceof Error ? error.message : String(error);
+        logger.debug(`MCP: pre-turn keep-alive convergence failed: ${sanitizeTerminalText(detail)}`);
+        deliver();
+      });
     },
     ...(options.statusEvents !== undefined ? { statusEvents: options.statusEvents } : {}),
   };
@@ -416,6 +428,18 @@ export async function initializeMcp(
     if (!owner.isActive()) return;
     const message = error instanceof Error ? error.message : String(error);
     recordFailure(state, serverName, message);
+    updateStatusBar(state);
+  });
+
+  lifecycle.setHealthRestoredCallback((serverName) => {
+    if (!owner.isActive()) return;
+    clearFailure(state, serverName);
+    updateStatusBar(state);
+  });
+
+  lifecycle.setAuthRequiredCallback((serverName) => {
+    if (!owner.isActive()) return;
+    clearFailure(state, serverName);
     updateStatusBar(state);
   });
 
