@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Scoped session tool approvals to the approved argument payload instead of every later call to the same tool. Thanks to [@spaceshipmike](https://github.com/spaceshipmike) for #367.
+- Stopped MCP panel commands from hanging in RPC, JSON, and print modes when terminal-only custom UI is unavailable. Thanks to [@shixin-guo](https://github.com/shixin-guo) for PR #365.
 - Recovered MCP gateway requests nested inside proxy `args` instead of silently showing status, and now rejects invalid nested gateway requests with guidance. Thanks to [@ibrmora](https://github.com/ibrmora) for #363.
 
 ## [2.26.0] - 2026-08-14
