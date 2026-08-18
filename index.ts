@@ -299,7 +299,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
         : {}),
       oauthRuntime,
-      statusEvents: pi.events,
     });
     initPromise = promise;
 
@@ -325,6 +324,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       };
       syncPromptCommands();
       syncToolSurface(ctx);
+      // A connected snapshot is readiness-like external state. Publish it only
+      // after Pi's model-facing direct-tool surface reflects live metadata.
+      nextState.statusEvents = pi.events;
       updateStatusBar(nextState);
       initPromise = null;
       if (earlyConfig.settings?.freezeDirectTools === true) {
