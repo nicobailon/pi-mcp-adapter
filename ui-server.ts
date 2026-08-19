@@ -10,7 +10,7 @@ import {
 import { ContentBlockSchema } from "@modelcontextprotocol/core";
 import type { ConsentManager } from "./consent-manager.ts";
 import { ServerError, wrapError } from "./errors.ts";
-import { formatAuthRequiredMessage } from "./utils.ts";
+import { formatAuthRequiredMessage, normalizeToolArguments } from "./utils.ts";
 import { buildHostHtmlTemplate, buildCspMetaContent } from "./host-html-template.ts";
 import { logger } from "./logger.ts";
 import type { McpServerManager } from "./server-manager.ts";
@@ -440,10 +440,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
 
         const callArgs = {
           name: callParams.name,
-          arguments:
-            callParams.arguments && typeof callParams.arguments === "object" && !Array.isArray(callParams.arguments)
-              ? callParams.arguments
-              : {},
+          arguments: normalizeToolArguments(callParams.arguments, `tool "${callParams.name}" arguments`),
         };
         const toolMeta = {
           name: callParams.name,

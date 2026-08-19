@@ -15,7 +15,7 @@ import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
-import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./utils.ts";
+import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
@@ -527,7 +527,7 @@ export function createDirectToolExecutor(
         spec.serverName,
         (conn) => abortable(conn.client.callTool({
           name: spec.originalName,
-          arguments: params ?? {},
+          arguments: normalizeToolArguments(params),
           _meta: uiSession?.requestMeta,
         }, requestOptions), ownedSignal),
       );

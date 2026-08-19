@@ -282,6 +282,51 @@ export function normalizeDirectToolInputSchema(schema: unknown): Record<string, 
   return normalized;
 }
 
+export function normalizeToolArguments(
+  value: unknown,
+  context = "tool arguments",
+): Record<string, unknown> {
+  if (value === undefined || value === null || value === "") return {};
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") return {};
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (error) {
+      throw new Error(
+        `${context}: invalid args JSON (${error instanceof SyntaxError ? error.message : String(error)}); ` +
+        `pass args as a JSON object, or as a valid JSON string encoding one`,
+        { cause: error },
+      );
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(
+        `${context}: expected a JSON object, got ${Array.isArray(parsed) ? "array" : typeof parsed}`,
+      );
+    }
+    return parsed as Record<string, unknown>;
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(
+      `${context}: expected a JSON object, got ${Array.isArray(value) ? "array" : typeof value}`,
+    );
+  }
+
+  // JSON round-trip: keep only JSON-serializable plain data so embedded quotes
+  // are escaped at transport by JSON.stringify, never string-interpolated.
+  try {
+    return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(
+      `${context}: value is not JSON-serializable: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 export function formatAuthRequiredMessage(
   config: Pick<McpConfig, "settings">,
   serverName: string,
