@@ -267,6 +267,38 @@ describe("tool approval", () => {
     expect(callTool).toHaveBeenCalledOnce();
   });
 
+  it("normalizes JSON-string arguments before proxy and direct approval", async () => {
+    const args = '{"body":"He said \\"hi\\""}';
+    const expected = { body: 'He said "hi"' };
+    for (const origin of ["proxy", "direct"] as const) {
+      const { state, callTool } = createState({
+        approveTools: true,
+        interactive: false,
+        broker: (request) => {
+          expect(request).toMatchObject({ args: expected, origin });
+          expect(request.claim(() => "allow_once")).toBe(true);
+        },
+      });
+
+      if (origin === "proxy") {
+        await executeCall(state, tool.name, args as never);
+      } else {
+        const execute = createDirectToolExecutor(() => state, () => null, {
+          serverName: "demo",
+          originalName: "search-records",
+          prefixedName: "demo_search-records",
+          description: "Search records",
+        });
+        await execute("call-1", args as never, undefined, undefined, {} as never);
+      }
+
+      expect(callTool).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "search-records", arguments: expected }),
+        undefined,
+      );
+    }
+  });
+
   it("falls back to the built-in prompt when a broker abstains", async () => {
     const { state, select } = createState({
       approveTools: true,

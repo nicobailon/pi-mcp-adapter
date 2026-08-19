@@ -429,6 +429,7 @@ export function createDirectToolExecutor(
       };
     }
 
+    const normalizedParams = spec.resourceUri ? params : normalizeToolArguments(params);
     const approval = await ensureToolCallApproved(state, spec.serverName, {
       name: spec.prefixedName,
       originalName: spec.originalName,
@@ -437,7 +438,7 @@ export function createDirectToolExecutor(
       ...(spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : {}),
       ...(spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : {}),
       ...(spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : {}),
-    }, params, ownedSignal, spec.resourceUri ? "resource" : "direct");
+    }, normalizedParams, ownedSignal, spec.resourceUri ? "resource" : "direct");
     if (approval.ok === false) {
       const denied = approval.reason === "denied";
       const message = denied
@@ -509,7 +510,7 @@ export function createDirectToolExecutor(
         ? await maybeStartUiSession(state, {
             serverName: spec.serverName,
             toolName: spec.originalName,
-            toolArgs: params ?? {},
+            toolArgs: normalizedParams,
             uiResourceUri: spec.uiResourceUri!,
             ...(spec.uiStreamMode !== undefined ? { streamMode: spec.uiStreamMode } : {}),
             ...(signal ? { signal } : {}),
@@ -527,7 +528,7 @@ export function createDirectToolExecutor(
         spec.serverName,
         (conn) => abortable(conn.client.callTool({
           name: spec.originalName,
-          arguments: normalizeToolArguments(params),
+          arguments: normalizedParams,
           _meta: uiSession?.requestMeta,
         }, requestOptions), ownedSignal),
       );

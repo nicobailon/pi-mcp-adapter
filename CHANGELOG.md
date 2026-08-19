@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Normalized MCP tool-call arguments before approval and transport so JSON-string arguments keep all fields and embedded quotes. Thanks to [@sebbean](https://github.com/sebbean) for PR #377.
 - Scoped session tool approvals to the approved argument payload instead of every later call to the same tool. Thanks to [@spaceshipmike](https://github.com/spaceshipmike) for #367.
 - Stopped MCP panel commands from hanging in RPC, JSON, and print modes when terminal-only custom UI is unavailable. Thanks to [@shixin-guo](https://github.com/shixin-guo) for PR #365.
 - Kept compact MCP rows useful by showing a bounded tool-input preview and skipping leading blank output lines in collapsed result previews.

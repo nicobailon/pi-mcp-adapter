@@ -631,6 +631,34 @@ describe("UiServer", () => {
       }, requestOptions);
     });
 
+    it("parses JSON-string arguments without dropping quoted fields", async () => {
+      const mockClient = {
+        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }),
+      };
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: mockClient,
+          tools: [{ name: "some_tool" }],
+        }),
+      });
+      handle = await startUiServer(createServerOptions({ manager }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: '{"body":"He said \\"hi\\""}' },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockClient.callTool).toHaveBeenCalledWith({
+        name: "some_tool",
+        arguments: { body: 'He said "hi"' },
+      }, undefined);
+    });
+
     it("executes app-only tools without recording their synthetic call intent", async () => {
       const callTool = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "app result" }] });
       const onMessage = vi.fn();

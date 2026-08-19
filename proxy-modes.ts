@@ -1136,11 +1136,12 @@ export async function executeCall(
     return disabledCallResult(serverName, toolMeta);
   }
 
+  const normalizedArgs = toolMeta.resourceUri ? args ?? {} : normalizeToolArguments(args);
   const approval = await ensureToolCallApproved(
     state,
     serverName,
     toolMeta,
-    args,
+    normalizedArgs,
     ownedSignal,
     origin ?? (toolMeta.resourceUri ? "resource" : "proxy"),
   );
@@ -1217,7 +1218,7 @@ export async function executeCall(
       ? await maybeStartUiSession(state, {
           serverName,
           toolName: toolMeta.originalName,
-          toolArgs: args ?? {},
+          toolArgs: normalizedArgs,
           uiResourceUri: toolMeta.uiResourceUri,
           ...(toolMeta.uiStreamMode !== undefined ? { streamMode: toolMeta.uiStreamMode } : {}),
           ...(signal ? { signal } : {}),
@@ -1235,7 +1236,7 @@ export async function executeCall(
       serverName,
       (conn) => abortable(conn.client.callTool({
         name: toolMeta.originalName,
-        arguments: normalizeToolArguments(args),
+        arguments: normalizedArgs,
         _meta: uiSession?.requestMeta,
       }, requestOptions), ownedSignal),
     );
