@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reduced cold HTTP connect overhead for per-request header commands by collecting process cleanup data in one snapshot per pass.
 - Reduced metadata cache save cost and file size by writing compact JSON while preserving atomic replacement and cross-process merges.
 - Reduced high-frequency UI stream event-log pruning cost by tracking the latest checkpoint event ID instead of rescanning retained patches.
+- Reused MCP panel direct-tool counts and token totals across renders while keeping toggle and reconnect updates immediate.
 
 ### Fixed
 - Reused one selector candidate index while reconstructing filtered cached metadata, avoiding repeated scans of large cached catalogs at startup.

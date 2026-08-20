@@ -137,6 +137,8 @@ interface ServerState {
   connectionStatus: ConnectionStatus;
   failureMessage?: string | null;
   tools: ToolState[];
+  directCount: number;
+  directTokens: number;
   hasCachedData: boolean;
 }
 
@@ -241,7 +243,13 @@ class McpPanel {
 
       const status = callbacks.getConnectionStatus(serverName);
       const failureMessage = callbacks.getFailureMessage?.(serverName) ?? null;
-
+      let directCount = 0;
+      let directTokens = 0;
+      for (const tool of tools) {
+        if (!tool.isDirect) continue;
+        directCount++;
+        directTokens += tool.estimatedTokens;
+      }
       this.servers.push({
         name: serverName,
         expanded: false,
@@ -253,6 +261,8 @@ class McpPanel {
         connectionStatus: status,
         failureMessage,
         tools,
+        directCount,
+        directTokens,
         hasCachedData: !!serverCache,
       });
     }
@@ -444,7 +454,7 @@ class McpPanel {
       } else if (item.toolIndex !== undefined) {
         const tool = server.tools[item.toolIndex];
         if (!tool) return;
-        tool.isDirect = !tool.isDirect;
+        this.toggleToolDirect(server, tool);
         if (tool.isDirect && server.source === "import") {
           this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
         }
@@ -595,16 +605,28 @@ class McpPanel {
       if (server.source === "import" && newState) {
         this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
       }
-      for (const t of server.tools) t.isDirect = newState;
+      let directTokens = 0;
+      for (const tool of server.tools) {
+        tool.isDirect = newState;
+        if (newState) directTokens += tool.estimatedTokens;
+      }
+      server.directCount = newState ? server.tools.length : 0;
+      server.directTokens = directTokens;
     } else if (item.toolIndex !== undefined) {
       const tool = server.tools[item.toolIndex];
       if (!tool) return;
-      tool.isDirect = !tool.isDirect;
+      this.toggleToolDirect(server, tool);
       if (tool.isDirect && server.source === "import") {
         this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
       }
     }
     this.updateDirty();
+  }
+
+  private toggleToolDirect(server: ServerState, tool: ToolState): void {
+    tool.isDirect = !tool.isDirect;
+    server.directCount += tool.isDirect ? 1 : -1;
+    server.directTokens += tool.isDirect ? tool.estimatedTokens : -tool.estimatedTokens;
   }
 
   private handleDiscardInput(data: string): void {
@@ -717,6 +739,13 @@ class McpPanel {
     }
 
     server.tools = newTools;
+    server.directCount = 0;
+    server.directTokens = 0;
+    for (const tool of newTools) {
+      if (!tool.isDirect) continue;
+      server.directCount++;
+      server.directTokens += tool.estimatedTokens;
+    }
     this.rebuildVisibleItems();
     this.updateDirty();
   }
@@ -826,13 +855,14 @@ class McpPanel {
       if (this.authOnly) {
         lines.push(row(fg(t.description, "select a server to authenticate")));
       } else {
-        const directCount = this.servers.reduce((sum, s) => sum + s.tools.filter((t) => t.isDirect).length, 0);
-        const totalTokens = this.servers.reduce(
-          (sum, s) => sum + s.tools.filter((t) => t.isDirect).reduce((ts, t) => ts + t.estimatedTokens, 0),
-          0,
-        );
+        let directCount = 0;
+        let directTokens = 0;
+        for (const server of this.servers) {
+          directCount += server.directCount;
+          directTokens += server.directTokens;
+        }
         const stats =
-          directCount > 0 ? `${directCount} direct  ~${totalTokens.toLocaleString()} tokens` : "no direct tools";
+          directCount > 0 ? `${directCount} direct  ~${directTokens.toLocaleString()} tokens` : "no direct tools";
         lines.push(row(fg(t.description, stats + (this.dirty ? fg(t.needsAuth, "  (unsaved)") : ""))));
       }
     }
@@ -900,7 +930,7 @@ class McpPanel {
       return `${prefix}   ${nameStr}${importLabel}  ${fg(t.description, "(not cached)")}${statusLabel}`;
     }
 
-    const directCount = server.tools.filter((t) => t.isDirect).length;
+    const directCount = server.directCount;
     const totalCount = server.tools.length;
     let toggleIcon = fg(t.description, "○");
     if (directCount === totalCount && totalCount > 0) {
@@ -913,8 +943,7 @@ class McpPanel {
     if (totalCount > 0) {
       toolInfo = `${directCount}/${totalCount}`;
       if (directCount > 0) {
-        const tokens = server.tools.filter((t) => t.isDirect).reduce((s, t) => s + t.estimatedTokens, 0);
-        toolInfo += `  ~${tokens.toLocaleString()}`;
+        toolInfo += `  ~${server.directTokens.toLocaleString()}`;
       }
       toolInfo = fg(t.description, toolInfo);
     }
