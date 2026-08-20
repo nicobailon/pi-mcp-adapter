@@ -456,6 +456,41 @@ describe("UI Streaming", () => {
       expect(envelopes.map((envelope) => envelope.frameType)).toEqual(["checkpoint", "patch"]);
     });
 
+    it("keeps latest checkpoint replay after pruning the event log", async () => {
+      handle = await startUiServer(createServerOptions());
+
+      for (let sequence = 0; sequence < 140; sequence += 1) {
+        handle.sendResultPatch({
+          content: [],
+          structuredContent: {
+            [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
+              streamId: "pruned-stream",
+              sequence,
+              frameType: sequence === 130 ? "checkpoint" : "patch",
+              phase: "detail",
+              status: "ok",
+            },
+          },
+        });
+      }
+
+      const replayedSequences: number[] = [];
+      const sse = await connectSSE(
+        `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
+        (_name, data) => {
+          const envelope = getVisualizationStreamEnvelope(
+            (data as { structuredContent?: unknown })?.structuredContent,
+          );
+          if (envelope) replayedSequences.push(envelope.sequence);
+        },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      sse.close();
+
+      expect(replayedSequences).toEqual([130, 131, 132, 133, 134, 135, 136, 137, 138, 139]);
+    });
+
     it("tracks stream summary", async () => {
       handle = await startUiServer(createServerOptions({
         hostContext: {

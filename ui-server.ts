@@ -113,6 +113,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   let currentDisplayMode: UiDisplayMode = options.hostContext?.displayMode ?? "inline";
   let nextEventId = 1;
   const eventLog: Array<{ id: number; name: string; payload: unknown }> = [];
+  let latestCheckpointEventId: number | undefined;
   let streamSummary: UiStreamSummary | undefined;
 
   // Track messages from UI for retrieval
@@ -185,9 +186,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     lastHeartbeatAt = Date.now();
   };
 
-  const updateStreamSummary = (payload: unknown) => {
+  const updateStreamSummary = (eventId: number, payload: unknown) => {
     const envelope = getVisualizationStreamEnvelope((payload as { structuredContent?: unknown } | null)?.structuredContent);
     if (!envelope) return;
+    if (envelope.frameType === "checkpoint" || envelope.frameType === "final") {
+      latestCheckpointEventId = eventId;
+    }
     if (!streamSummary) {
       streamSummary = {
         streamId: envelope.streamId,
@@ -210,15 +214,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   };
 
   const getLatestCheckpointIndex = () => {
-    for (let index = eventLog.length - 1; index >= 0; index -= 1) {
-      const entry = eventLog[index];
-      if (!entry) continue;
-      const envelope = getVisualizationStreamEnvelope((entry.payload as { structuredContent?: unknown } | null)?.structuredContent);
-      if (envelope?.frameType === "checkpoint" || envelope?.frameType === "final") {
-        return index;
-      }
-    }
-    return -1;
+    const firstEventId = eventLog[0]?.id;
+    if (latestCheckpointEventId === undefined || firstEventId === undefined || latestCheckpointEventId < firstEventId) return -1;
+    return latestCheckpointEventId - firstEventId;
   };
 
   const pruneEventLog = () => {
@@ -238,7 +236,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     if (completed) return;
     const eventId = nextEventId++;
     eventLog.push({ id: eventId, name, payload });
-    updateStreamSummary(payload);
+    updateStreamSummary(eventId, payload);
     pruneEventLog();
     const chunk = serializeEvent(eventId, name, payload);
     for (const client of sseClients) {
