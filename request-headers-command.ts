@@ -8,20 +8,29 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const USE_PROCESS_GROUP = process.platform !== "win32";
 const CLEANUP_TOKEN_ENV = "PI_MCP_REQUEST_HEADERS_CLEANUP_TOKEN";
+// `ps axeww` dumps the full environment of every process on the host. On busy
+// machines that output exceeds spawnSync's default 1 MiB maxBuffer, which causes
+// Node to SIGTERM `ps` and report status === null. Raise the cap so process
+// discovery keeps working without spurious cleanup failures.
+const PS_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 function isNoSuchProcessError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH";
 }
 
-function runPosixPs(args: string[]): { status: number | null; stdout: string } {
-  if (process.env.PI_MCP_ADAPTER_TEST_FAIL_PS === "1") return { status: 1, stdout: "" };
-  return spawnSync("ps", args, { encoding: "utf8" });
+function runPosixPs(args: string[]): { status: number | null; signal: NodeJS.Signals | null; stdout: string } {
+  if (process.env.PI_MCP_ADAPTER_TEST_FAIL_PS === "1") return { status: 1, signal: null, stdout: "" };
+  const result = spawnSync("ps", args, { encoding: "utf8", maxBuffer: PS_MAX_BUFFER_BYTES });
+  return { status: result.status, signal: result.signal, stdout: result.stdout };
 }
 
 function collectPosixProcessPids(rootPid: number, cleanupToken?: string): number[] {
   const result = runPosixPs(["axeww", "-o", "pid=,ppid=,command="]);
   if (result.status !== 0) {
-    throw new Error(`HTTP request headers command cleanup failed: ps exited with code ${result.status ?? "unknown"}`);
+    const reason = result.status === null
+      ? `ps was killed by signal ${result.signal ?? "unknown"}`
+      : `ps exited with code ${result.status}`;
+    throw new Error(`HTTP request headers command cleanup failed: ${reason}`);
   }
 
   const childrenByParent = new Map<number, number[]>();
