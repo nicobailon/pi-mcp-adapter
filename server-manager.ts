@@ -2,6 +2,8 @@ import { mkdirSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import {
   Client,
+  SdkError,
+  SdkErrorCode,
   SdkHttpError,
   SSEClientTransport,
   StreamableHTTPClientTransport,
@@ -144,7 +146,7 @@ export interface ServerConnection {
 type UiStreamListener = (serverName: string, notification: ServerStreamResultPatchNotification["params"]) => void;
 type MetadataListChangedListener = (serverName: string, reason: string) => void;
 
-export type ToolRefreshResult = "updated" | "unchanged" | "superseded";
+export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refresh-timeout";
 
 const KEEP_ALIVE_REFRESH_TIMEOUT_MS = 5_000;
 
@@ -373,11 +375,23 @@ export class McpServerManager {
 
     const toolsRevision = expectedConnection.toolsRevision ?? 0;
     const refreshSignal = combineAbortSignals(healthOptions.signal, AbortSignal.timeout(timeout));
-    const tools = await this.fetchAllTools(expectedConnection.client, {
-      ...healthOptions,
-      ...(refreshSignal ? { signal: refreshSignal } : {}),
-      cacheMode: "refresh",
-    });
+    let tools: McpTool[];
+    try {
+      tools = await this.fetchAllTools(expectedConnection.client, {
+        ...healthOptions,
+        ...(refreshSignal ? { signal: refreshSignal } : {}),
+        cacheMode: "refresh",
+      });
+    } catch (error) {
+      throwIfAborted(ownedSignal);
+      if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {
+        return "superseded";
+      }
+      if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) {
+        return "refresh-timeout";
+      }
+      throw error;
+    }
     throwIfAborted(ownedSignal);
 
     if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {

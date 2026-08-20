@@ -262,6 +262,10 @@ export class McpLifecycleManager {
       await this.handleSupersededConnection(name, definition, connection, signal, retrySuperseded);
       return;
     }
+    if (refreshResult === "refresh-timeout") {
+      this.deferRefreshTimeout(name, definition, connection);
+      return;
+    }
     if (this.keepAliveServers.get(name) !== definition) return;
     if (this.retryStates.delete(name)) {
       await this.onHealthRestored?.(name);
@@ -350,9 +354,34 @@ export class McpLifecycleManager {
     action: "refresh" | "reconnect" | "publish",
     connection: ServerConnection | undefined,
   ): void {
+    if (!this.recordRetry(name, definition, connection)) return;
+    this.onReconnectFailure?.(name, error);
+    const message = error instanceof Error ? error.message : String(error);
+    const target = action === "reconnect"
+      ? `reconnect to ${name}`
+      : action === "publish"
+        ? `publish metadata for ${name}`
+        : `refresh ${name}`;
+    console.error(`MCP: Failed to ${target}: ${sanitizeTerminalText(message)}`);
+  }
+
+  private deferRefreshTimeout(
+    name: string,
+    definition: ServerDefinition,
+    connection: ServerConnection | undefined,
+  ): void {
+    if (!this.recordRetry(name, definition, connection)) return;
+    logger.debug(`MCP: keep-alive tools/list refresh timed out for ${name}; retrying after backoff`);
+  }
+
+  private recordRetry(
+    name: string,
+    definition: ServerDefinition,
+    connection: ServerConnection | undefined,
+  ): boolean {
     // Do not recreate retry/failure state from a stale convergence pass after
     // disposal or a same-name replacement registration.
-    if (this.keepAliveServers.get(name) !== definition) return;
+    if (this.keepAliveServers.get(name) !== definition) return false;
     const attempts = (this.retryStates.get(name)?.attempts ?? 0) + 1;
     const delay = Math.min(
       KEEP_ALIVE_RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 10),
@@ -364,14 +393,7 @@ export class McpLifecycleManager {
       connection,
       status: connection?.status,
     });
-    this.onReconnectFailure?.(name, error);
-    const message = error instanceof Error ? error.message : String(error);
-    const target = action === "reconnect"
-      ? `reconnect to ${name}`
-      : action === "publish"
-        ? `publish metadata for ${name}`
-        : `refresh ${name}`;
-    console.error(`MCP: Failed to ${target}: ${sanitizeTerminalText(message)}`);
+    return true;
   }
 
   private getIdleTimeout(name: string): number {

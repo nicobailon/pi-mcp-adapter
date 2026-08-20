@@ -347,6 +347,22 @@ describe("McpServerManager sampling", () => {
     expect(client.listTools).toHaveBeenCalledTimes(initialListCalls);
   });
 
+  it("marks only tools/list keep-alive timeout errors as refresh timeouts", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const { SdkError, SdkErrorCode } = await import("@modelcontextprotocol/client");
+    const manager = new McpServerManager();
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const client = mocks.clients[0];
+    const timeout = new SdkError(SdkErrorCode.RequestTimeout, "Request timed out");
+    client.listTools.mockRejectedValueOnce(timeout);
+
+    await expect(manager.refreshTools("demo", connection)).resolves.toBe("refresh-timeout");
+
+    client.getServerCapabilities.mockReturnValue({ resources: {} });
+    client.ping = vi.fn(async () => { throw timeout; });
+    await expect(manager.refreshTools("demo", connection)).rejects.toBe(timeout);
+  });
+
   it("retries queued metadata publication after a no-tools ping", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();

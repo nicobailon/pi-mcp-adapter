@@ -316,6 +316,29 @@ describe("lazy-keep-alive lifecycle", () => {
     expect(onHealthRestored).toHaveBeenCalledWith("srv");
   });
 
+  it("backs off tools/list refresh timeouts without marking the connection failed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "session");
+    vi.spyOn(fake, "refreshTools").mockImplementation(async (name) => {
+      fake.refreshToolsCalls.push(name);
+      return "refresh-timeout" as never;
+    });
+    const onFailure = vi.fn();
+    lifecycle.setReconnectFailureCallback(onFailure);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await lifecycle.ensureConverged();
+    await lifecycle.ensureConverged();
+
+    expect(fake.refreshToolsCalls).toEqual(["srv"]);
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(fake.getConnection("srv")?.status).toBe("connected");
+  });
+
   it("reconnects immediately when a backed-off connection closes in place", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
