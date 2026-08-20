@@ -24,13 +24,16 @@ function runPosixPs(args: string[]): { status: number | null; signal: NodeJS.Sig
   return { status: result.status, signal: result.signal, stdout: result.stdout };
 }
 
+function psFailureReason(result: { status: number | null; signal: NodeJS.Signals | null }): string {
+  return result.status === null
+    ? `ps was killed by signal ${result.signal ?? "unknown"}`
+    : `ps exited with code ${result.status}`;
+}
+
 function collectPosixProcessPids(rootPid: number, cleanupToken?: string): number[] {
   const result = runPosixPs(["axeww", "-o", "pid=,ppid=,command="]);
   if (result.status !== 0) {
-    const reason = result.status === null
-      ? `ps was killed by signal ${result.signal ?? "unknown"}`
-      : `ps exited with code ${result.status}`;
-    throw new Error(`HTTP request headers command cleanup failed: ${reason}`);
+    throw new Error(`HTTP request headers command cleanup failed: ${psFailureReason(result)}`);
   }
 
   const childrenByParent = new Map<number, number[]>();
@@ -58,7 +61,15 @@ function collectPosixProcessPids(rootPid: number, cleanupToken?: string): number
 }
 
 function assertPosixProcessDiscoveryAvailable(): void {
-  collectPosixProcessPids(process.pid, `${process.pid}-preflight`);
+  // Use the lightweight column form (`ps -axo pid=,ppid=`) instead of the
+  // environment dump (`axeww`) so this per-request preflight stays small
+  // (~KiB, not MiB) and cannot overflow the spawnSync buffer on busy hosts.
+  // The full environment scan used for descendant cleanup is exercised lazily
+  // by the descendant tracker and the cleanup path.
+  const result = runPosixPs(["-axo", "pid=,ppid="]);
+  if (result.status !== 0) {
+    throw new Error(`HTTP request headers command cleanup failed: ${psFailureReason(result)}`);
+  }
 }
 
 function isTaskkillNoSuchProcess(result: ReturnType<typeof spawnSync>): boolean {

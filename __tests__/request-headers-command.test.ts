@@ -394,4 +394,33 @@ setTimeout(() => {
       process.env.PATH = priorPath;
     }
   });
+
+  it.skipIf(process.platform === "win32")("preflight uses a lightweight ps snapshot without the environment dump", async () => {
+    // The per-request preflight must not invoke the environment-dumping
+    // `axeww` form; it should use the small `ps -axo pid=,ppid=` snapshot so
+    // it stays small and cannot overflow the spawnSync buffer on busy hosts.
+    const dir = mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-ps-"));
+    const ps = join(dir, "ps");
+    const argsLog = join(dir, "args");
+    // Record the args of every ps invocation, one per line, then exit 0.
+    writeFileSync(ps, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(argsLog)}\nexit 0\n`);
+    chmodSync(ps, 0o755);
+    const priorPath = process.env.PATH;
+    process.env.PATH = dir;
+    try {
+      const fetch = createRequestHeadersCommandFetch(
+        { command: "/usr/bin/printf", args: ["{}"] },
+        async () => new Response("ok"),
+      );
+      await expect(fetch("https://mcp.example.test/mcp")).resolves.toBeInstanceOf(Response);
+      const calls = readFileSync(argsLog, "utf8").trim().split("\n");
+      expect(calls.length).toBeGreaterThan(0);
+      // The preflight is the first ps call (synchronous, before spawn). It
+      // must not use the environment-dumping `axeww` form.
+      expect(calls[0]).not.toContain("axeww");
+      expect(calls[0]).toContain("pid=,ppid=");
+    } finally {
+      process.env.PATH = priorPath;
+    }
+  });
 });
