@@ -81,6 +81,25 @@ describe("MCP endpoint shape probe", () => {
     });
   });
 
+  it.each([
+    ["application/json", JSON.stringify({ error: "invalid_token" })],
+    ["text/plain", "Unauthorized"],
+  ])("treats a Bearer-challenged 401 %s response as auth-required", async (contentType, body) => {
+    mockFetch(new Response(body, {
+      status: 401,
+      headers: {
+        "content-type": contentType,
+        "www-authenticate": 'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource"',
+      },
+    }));
+
+    await expect(probeMcpEndpoint("https://example.test/mcp")).resolves.toEqual({
+      isMcp: true,
+      classification: "endpoint requires Bearer authentication (401); MCP protocol shape cannot be verified without credentials",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("falls back to legacy when server/discover returns method not found", async () => {
     mockFetch(
       new Response(JSON.stringify({

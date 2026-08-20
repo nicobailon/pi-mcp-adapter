@@ -1115,6 +1115,28 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.open).not.toHaveBeenCalled();
   });
 
+  it("preserves an unavailable credential-store error during startup cleanup", async () => {
+    const previousStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { OAuthCredentialStoreError } = await import("../mcp-auth.ts");
+
+    try {
+      await startAuth("fresh-user", "https://api.example.com/mcp", { auth: "oauth" });
+      throw new Error("expected startAuth to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(OAuthCredentialStoreError);
+      expect(error).not.toBeInstanceOf(AggregateError);
+      expect((error as Error).message).toContain("Failed to read OAuth credentials for fresh-user");
+    } finally {
+      if (previousStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+      else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = previousStore;
+    }
+
+    expect(mocks.cancelPendingCallback).toHaveBeenCalledTimes(1);
+    expect(mocks.sdkAuth).not.toHaveBeenCalled();
+  });
+
   it("releases the callback server after a completed auth when no other auths are pending", async () => {
     // Simulate: server is currently bound, and once the completed auth's
     // pending record clears, isCallbackServerIdle flips to true.

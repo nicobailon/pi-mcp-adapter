@@ -389,7 +389,7 @@ export async function startAuth(
   } catch (error) {
     releaseCallbackServer(oauthState)
     try {
-      await clearOAuthState(serverName, authStorageOptions)
+      await releaseCallbackServerIfIdle()
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed")
     }
@@ -441,7 +441,7 @@ export async function startAuth(
   } catch (error) {
     authProvider.deactivate()
     try {
-      await clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, authStorageOptions)
+      await clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, authStorageOptions, false)
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed")
     }
@@ -473,7 +473,7 @@ async function setPendingAuth(
   state.pendingAuthCleanupTimers.set(key, cleanupTimer)
 }
 
-async function clearPendingAuth(runtime: McpOAuthRuntime, serverName: string, oauthState?: string, fallbackStorageOptions: AuthStorageOptions = {}): Promise<void> {
+async function clearPendingAuth(runtime: McpOAuthRuntime, serverName: string, oauthState?: string, fallbackStorageOptions: AuthStorageOptions = {}, clearStoredState = true): Promise<void> {
   const state = getRuntimeState(runtime)
   const key = getPendingAuthKey(serverName, fallbackStorageOptions)
   const pendingAuth = state.pendingAuths.get(key)
@@ -493,9 +493,11 @@ async function clearPendingAuth(runtime: McpOAuthRuntime, serverName: string, oa
   const stateToRelease = pendingState ?? oauthState
   if (stateToRelease) {
     cancelPendingCallback(stateToRelease)
-    const storedState = await getOAuthState(serverName, authStorageOptions)
-    if (storedState === stateToRelease) {
-      await clearOAuthState(serverName, authStorageOptions)
+    if (clearStoredState) {
+      const storedState = await getOAuthState(serverName, authStorageOptions)
+      if (storedState === stateToRelease) {
+        await clearOAuthState(serverName, authStorageOptions)
+      }
     }
   }
 }
@@ -528,8 +530,9 @@ async function clearPendingAuthAndReleaseIfIdle(
   serverName: string,
   oauthState: string | undefined,
   fallbackStorageOptions: AuthStorageOptions = {},
+  clearStoredState = true,
 ): Promise<void> {
-  await clearPendingAuth(runtime, serverName, oauthState, fallbackStorageOptions)
+  await clearPendingAuth(runtime, serverName, oauthState, fallbackStorageOptions, clearStoredState)
   await releaseCallbackServerIfIdle()
 }
 

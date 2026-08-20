@@ -240,7 +240,7 @@ describe("mcp-auth storage paths", () => {
     expect(entries[0][0]).not.toContain(".chunk.");
   });
 
-  it("routes revoked Linux keyring operations through the recovery helper", () => {
+  it.each(["keyrevoked", "keyringmissing"])("routes recoverable Linux %s operations through the recovery helper", (storeFailure) => {
     const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-keyring-recovery-"));
     const keyctlPath = join(harnessDir, "keyctl");
     const helperPath = join(harnessDir, "helper.cjs");
@@ -273,7 +273,7 @@ if (input.operation === 'read') {
 }
 `);
 
-    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "keyrevoked";
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = storeFailure;
     process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY = "1";
     process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL = keyctlPath;
     process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE = process.execPath;

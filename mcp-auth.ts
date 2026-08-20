@@ -215,20 +215,33 @@ const unavailableAuthSecretStore: AuthSecretStore = {
   },
 };
 
-function createKeyRevokedTestError(): Error {
-  return new Error("Couldn't access platform storage: KeyRevoked", { cause: new Error('KeyRevoked') });
+function createKeyringTestError(code: 'KeyRevoked' | 'KeyringDoesNotExist'): Error {
+  return new Error(`Couldn't access platform storage: ${code}`, { cause: new Error(code) });
 }
 
 const keyRevokedAuthSecretStore: AuthSecretStore = {
   read() {
     testAuthSecretStoreReadCount++;
-    throw createKeyRevokedTestError();
+    throw createKeyringTestError('KeyRevoked');
   },
   write() {
-    throw createKeyRevokedTestError();
+    throw createKeyringTestError('KeyRevoked');
   },
   remove() {
-    throw createKeyRevokedTestError();
+    throw createKeyringTestError('KeyRevoked');
+  },
+};
+
+const missingKeyringAuthSecretStore: AuthSecretStore = {
+  read() {
+    testAuthSecretStoreReadCount++;
+    throw createKeyringTestError('KeyringDoesNotExist');
+  },
+  write() {
+    throw createKeyringTestError('KeyringDoesNotExist');
+  },
+  remove() {
+    throw createKeyringTestError('KeyringDoesNotExist');
   },
 };
 
@@ -259,6 +272,7 @@ function getAuthSecretStore(): AuthSecretStore {
   if (process.env[TEST_AUTH_STORE_ENV] === 'sizelimited') return sizeLimitedAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'unavailable') return unavailableAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'keyrevoked') return keyRevokedAuthSecretStore;
+  if (process.env[TEST_AUTH_STORE_ENV] === 'keyringmissing') return missingKeyringAuthSecretStore;
   return keyringAuthSecretStore;
 }
 
@@ -348,7 +362,7 @@ function isLinuxKeyringRecoveryEnabled(): boolean {
 
 function shouldAttemptLinuxKeyringRecovery(error: unknown): boolean {
   return isLinuxKeyringRecoveryEnabled()
-    && causeChainContains(error, /key\s*(?:has been\s*)?revoked|keyrevoked/i);
+    && causeChainContains(error, /key\s*(?:has been\s*)?(?:expired|rejected|revoked)|key(?:ring)?\s*(?:does\s*not\s*exist|expired|rejected|revoked)/i);
 }
 
 function runLinuxKeyringRecoveryOperation(operation: KeyringRecoveryOperation, account: string, payload?: string): KeyringRecoveryResponse {

@@ -139,14 +139,16 @@ async function classifyResponse(response: Response, strategy: ProbeStrategy): Pr
       },
     };
   }
-  if (response.status === 401 && isBearerChallenge(response) && envelope) {
+  if (response.status === 401 && isBearerChallenge(response)) {
     return {
       kind: "mcp",
       result: {
         isMcp: true,
-        classification: strategy.kind === "modern"
-          ? `endpoint requires Bearer authentication during MCP ${MODERN_PROTOCOL_VERSION} server/discover probing`
-          : "endpoint requires Bearer authentication and responded with a JSON-RPC 2.0 error",
+        classification: envelope
+          ? strategy.kind === "modern"
+            ? `endpoint requires Bearer authentication during MCP ${MODERN_PROTOCOL_VERSION} server/discover probing`
+            : "endpoint requires Bearer authentication and responded with a JSON-RPC 2.0 error"
+          : "endpoint requires Bearer authentication (401); MCP protocol shape cannot be verified without credentials",
       },
     };
   }
