@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
+  createMcpPanel: vi.fn(),
   removeAuth: vi.fn(),
 }));
 
@@ -9,6 +10,10 @@ vi.mock("../mcp-auth-flow.ts", () => ({
   authenticate: mocks.authenticate,
   removeAuth: mocks.removeAuth,
   supportsOAuth: (definition: { url?: string; auth?: string }) => Boolean(definition.url) && definition.auth !== "bearer",
+}));
+
+vi.mock("../mcp-panel.ts", () => ({
+  createMcpPanel: mocks.createMcpPanel,
 }));
 
 vi.mock("../init.ts", () => ({
@@ -38,6 +43,58 @@ describe("authenticateServer", () => {
 
     expect(ui.notify).toHaveBeenCalledWith("No OAuth-capable MCP servers are configured.", "warning");
     expect(ui.custom).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["openMcpPanel", "success"],
+    ["openMcpAuthPanel", "success"],
+    ["openMcpAuthPanel", "failure"],
+  ] as const)("%s restores the hidden picker after OAuth %s", async (command, outcome) => {
+    let finishAuthentication!: () => void;
+    let markAuthenticationStarted!: () => void;
+    const authenticationStarted = new Promise<void>((resolve) => { markAuthenticationStarted = resolve; });
+    const hidden = vi.fn();
+    const focus = vi.fn();
+    mocks.authenticate.mockImplementationOnce(async () => {
+      expect(hidden).toHaveBeenCalledWith(true);
+      markAuthenticationStarted();
+      await new Promise<void>((resolve) => { finishAuthentication = resolve; });
+      if (outcome === "failure") throw new Error("authentication failed");
+      return "authenticated";
+    });
+    mocks.createMcpPanel.mockImplementationOnce((_config, _cache, _provenance, callbacks, _tui, done) => ({
+      render: () => [],
+      invalidate: () => {},
+      handleInput: () => {
+        void callbacks.authenticate("sentry").then(() => done({ cancelled: true, changes: new Map() }));
+      },
+    }));
+    const ui = {
+      notify: vi.fn(),
+      setStatus: vi.fn(),
+      custom: vi.fn((factory, options) => {
+        const panel = factory({ requestRender: vi.fn() }, undefined, undefined, vi.fn());
+        options.onHandle({ setHidden: hidden, focus });
+        panel.handleInput("\r");
+      }),
+    };
+    const commands = await import("../commands.ts");
+
+    const panel = commands[command]({
+      programmaticConfig: false,
+      config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
+      authStorageOptions: {},
+      manager: { getConnection: () => undefined },
+      failureTracker: new Map(),
+      failureMessages: new Map(),
+    } as any, { getFlag: vi.fn() } as any, { hasUI: true, mode: "tui", cwd: "/tmp", ui } as any);
+
+    await authenticationStarted;
+    finishAuthentication();
+    await panel;
+
+    expect(hidden.mock.calls).toEqual([[true], [false]]);
+    expect(focus).toHaveBeenCalledOnce();
   });
 
   it("interpolates the server URL before OAuth authentication", async () => {
@@ -132,7 +189,7 @@ describe("authenticateServer", () => {
     );
   });
 
-  it("surfaces the OAuth URL as one terminal hyperlink and accepts a pasted remote callback", async () => {
+  it("puts the OAuth link in the paste prompt without a confirmation", async () => {
     const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
     const callbackUrl = "http://localhost:3118/callback?code=code&state=state";
     const inputController = new AbortController();
@@ -166,21 +223,33 @@ describe("authenticateServer", () => {
         onAuthorizationInput: expect.any(Function),
       },
     );
-    expect(ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining(`\u001B]8;;${authorizationUrl}\u001B\\${authorizationUrl}\u001B]8;;\u001B\\`),
-      "info",
-    );
-    expect(ui.confirm).toHaveBeenCalledWith(
-      "Authorize sentry",
-      expect.stringContaining(authorizationUrl),
-      { signal: inputController.signal },
-    );
+    expect(ui.notify).not.toHaveBeenCalledWith(expect.stringContaining(authorizationUrl), "info");
+    expect(ui.confirm).not.toHaveBeenCalled();
     expect(ui.input).toHaveBeenCalledWith(
-      "Complete sentry OAuth",
-      "Paste the full callback URL",
+      expect.stringContaining(
+        `\u001B]8;;${authorizationUrl}\u001B\\OPEN AUTHORIZATION PAGE ↗\u001B]8;;\u001B\\\n${authorizationUrl}`,
+      ),
+      undefined,
       { signal: inputController.signal },
     );
-    expect(ui.confirm.mock.invocationCallOrder[0]).toBeLessThan(ui.input.mock.invocationCallOrder[0]);
+  });
+
+  it("does not open paste input when authorization was already cancelled", async () => {
+    const inputController = new AbortController();
+    inputController.abort();
+    mocks.authenticate.mockImplementationOnce(async (_name, _url, _definition, options) => {
+      expect(await options.onAuthorizationInput("https://auth.example.com/authorize", inputController.signal)).toBeUndefined();
+      return "cancelled";
+    });
+    const ui = { notify: vi.fn(), setStatus: vi.fn(), confirm: vi.fn(), input: vi.fn() };
+    const { authenticateServer } = await import("../commands.ts");
+
+    await authenticateServer("sentry", {
+      mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } },
+    }, { hasUI: true, mode: "tui", ui } as any);
+
+    expect(ui.input).not.toHaveBeenCalled();
+    expect(ui.confirm).not.toHaveBeenCalled();
   });
 
   it("blocks bearer token set because the extension UI has no masked secret input", async () => {

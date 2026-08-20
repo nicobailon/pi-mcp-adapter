@@ -230,6 +230,86 @@ describe("mcp-callback-server", () => {
     expect(mocks.runtime.servers).toHaveLength(2);
   });
 
+  it("waits for idle shutdown before starting a new callback server", async () => {
+    const {
+      ensureCallbackServer,
+      isCallbackServerRunning,
+      stopCallbackServerIfIdle,
+    } = await import("../mcp-callback-server.ts");
+    await ensureCallbackServer();
+    let finishClose: (() => void) | undefined;
+    mocks.runtime.servers[0].close.mockImplementation((callback?: () => void) => {
+      finishClose = callback;
+    });
+
+    const stopping = stopCallbackServerIfIdle();
+    const restarting = ensureCallbackServer({ reserveState: true, oauthState: "new-flow" });
+    expect(mocks.runtime.servers).toHaveLength(1);
+
+    finishClose?.();
+    await stopping;
+    await restarting;
+
+    expect(isCallbackServerRunning()).toBe(true);
+    expect(mocks.runtime.servers).toHaveLength(2);
+    await expect(ensureCallbackServer({ callbackPath: "/other/callback" }))
+      .rejects.toThrow(/cannot be switched while authorizations are pending/);
+  });
+
+  it("forced shutdown revokes a restart waiting on idle shutdown", async () => {
+    const {
+      ensureCallbackServer,
+      isCallbackServerRunning,
+      stopCallbackServer,
+      stopCallbackServerIfIdle,
+    } = await import("../mcp-callback-server.ts");
+    await ensureCallbackServer();
+    let finishClose: (() => void) | undefined;
+    mocks.runtime.servers[0].close.mockImplementation((callback?: () => void) => {
+      finishClose = callback;
+    });
+
+    const idleStopping = stopCallbackServerIfIdle();
+    const restarting = ensureCallbackServer({ reserveState: true, oauthState: "stopped-flow" });
+    const restartResult = expect(restarting).rejects.toThrow("OAuth callback server stopped");
+    const forcedStopping = stopCallbackServer();
+
+    finishClose?.();
+    await Promise.all([idleStopping, forcedStopping]);
+    await restartResult;
+
+    expect(isCallbackServerRunning()).toBe(false);
+    expect(mocks.runtime.servers).toHaveLength(1);
+  });
+
+  it("does not stop while a concurrent bind is reserving callback state", async () => {
+    const {
+      ensureCallbackServer,
+      isCallbackServerRunning,
+      stopCallbackServerIfIdle,
+    } = await import("../mcp-callback-server.ts");
+    await ensureCallbackServer();
+
+    let finishRebind: (() => void) | undefined;
+    mocks.runtime.listenImpl = (_server, _port, _host, onListen) => {
+      finishRebind = onListen;
+    };
+    const rebinding = ensureCallbackServer({
+      strictPort: true,
+      reserveState: true,
+      oauthState: "concurrent-state",
+    });
+
+    await stopCallbackServerIfIdle();
+    finishRebind?.();
+    await rebinding;
+
+    expect(isCallbackServerRunning()).toBe(true);
+    expect(mocks.runtime.servers[1]?.close).not.toHaveBeenCalled();
+    await expect(ensureCallbackServer({ callbackPath: "/other/callback" }))
+      .rejects.toThrow(/cannot be switched while authorizations are pending/);
+  });
+
   it("rebinds to the configured port when strict mode is requested", async () => {
     const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
 
@@ -328,5 +408,31 @@ describe("mcp-callback-server", () => {
 
     cancelPendingCallback("pending-state");
     await expect(pending).rejects.toThrow(/Authorization cancelled/);
+  });
+
+  it("stops only when no pending or reserved auth state remains", async () => {
+    const {
+      ensureCallbackServer,
+      reserveCallbackServer,
+      releaseCallbackServer,
+      waitForCallback,
+      cancelPendingCallback,
+      isCallbackServerRunning,
+      stopCallbackServerIfIdle,
+    } = await import("../mcp-callback-server.ts");
+
+    await ensureCallbackServer();
+    reserveCallbackServer("reserved-state");
+    await stopCallbackServerIfIdle();
+    expect(isCallbackServerRunning()).toBe(true);
+
+    releaseCallbackServer("reserved-state");
+    const pending = waitForCallback("pending-state");
+    await stopCallbackServerIfIdle();
+    expect(isCallbackServerRunning()).toBe(true);
+    cancelPendingCallback("pending-state");
+    await expect(pending).rejects.toThrow(/Authorization cancelled/);
+    await stopCallbackServerIfIdle();
+    expect(isCallbackServerRunning()).toBe(false);
   });
 });

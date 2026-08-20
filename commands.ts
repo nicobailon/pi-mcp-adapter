@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { OverlayHandle } from "@earendil-works/pi-tui";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type McpAuthResult, type McpConfig, type McpPanelCallbacks, type McpPanelResult, type ImportKind } from "./types.ts";
 import {
@@ -288,25 +289,14 @@ export async function authenticateServer(
     const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
     const status = await authenticate(serverName, serverUrl, definition, {
       ...(authStorageOptions.baseDir ? { authStorageOptions } : {}),
-      onAuthorizationUrl: (authorizationUrl) => {
-        ui.notify(
-          `Open this URL to authenticate ${serverName}:\n\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
-          "After approving, Pi will complete automatically if the browser can reach its localhost callback. " +
-          "On a remote machine, copy the full localhost URL from the browser address bar and paste it into Pi.",
-          "info"
-        );
-      },
+      onAuthorizationUrl: () => {},
       onAuthorizationInput: async (authorizationUrl, inputSignal) => {
-        const readyToPaste = await ui.confirm(
-          `Authorize ${serverName}`,
-          `Open this link in your browser:\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
-          "After approving access, select Yes to paste the callback URL.",
-          { signal: inputSignal },
-        );
-        if (!readyToPaste || inputSignal.aborted) return undefined;
+        if (inputSignal.aborted) return undefined;
         return ui.input(
-          `Complete ${serverName} OAuth`,
-          "Paste the full callback URL",
+          `Complete ${serverName} OAuth\n\n` +
+            `${terminalHyperlink("OPEN AUTHORIZATION PAGE ↗", authorizationUrl)}\n${authorizationUrl}\n\n` +
+            "Approve access, then paste the full localhost callback URL below.",
+          undefined,
           { signal: inputSignal },
         );
       },
@@ -554,6 +544,7 @@ function buildMcpPanelCallbacks(
   state: McpExtensionState,
   config: McpConfig,
   ctx: ExtensionContext,
+  getOverlayHandle?: () => OverlayHandle | undefined,
 ): McpPanelCallbacks {
   // Panel-only diagnostics keep status inspection from mutating connection
   // failure state while allowing the existing panel failure UI to show why the
@@ -566,7 +557,16 @@ function buildMcpPanelCallbacks(
       const definition = config.mcpServers[serverName];
       return definition ? !isServerDisabled(definition) && supportsOAuth(definition) : false;
     },
-    authenticate: (serverName: string) => authenticateServer(serverName, config, ctx, state.owner?.signal, state.oauthRuntime),
+    authenticate: async (serverName: string) => {
+      const overlay = getOverlayHandle?.();
+      overlay?.setHidden(true);
+      try {
+        return await authenticateServer(serverName, config, ctx, state.owner?.signal, state.oauthRuntime);
+      } finally {
+        overlay?.setHidden(false);
+        overlay?.focus();
+      }
+    },
     getConnectionStatus: (serverName: string) => {
       authStatusFailures.delete(serverName);
       const definition = config.mcpServers[serverName];
@@ -635,7 +635,8 @@ export async function openMcpPanel(
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
   const { lines: noticeLines, fingerprint } = buildSharedConfigNoticeLines(configPath, ctx.cwd);
 
-  const callbacks = buildMcpPanelCallbacks(state, config, ctx);
+  let overlayHandle: OverlayHandle | undefined;
+  const callbacks = buildMcpPanelCallbacks(state, config, ctx, () => overlayHandle);
 
   const { createMcpPanel } = await import("./mcp-panel.ts");
   let configChanged = false;
@@ -661,7 +662,11 @@ export async function openMcpPanel(
           });
         }, { noticeLines, keybindings });
       },
-      { overlay: true, overlayOptions: { anchor: "center", width: 82 } },
+      {
+        overlay: true,
+        overlayOptions: { anchor: "center", width: 82 },
+        onHandle: (handle) => { overlayHandle = handle; },
+      },
     );
   });
 
@@ -700,7 +705,8 @@ export async function openMcpAuthPanel(
   const cache = loadMetadataCache();
   const configPath = pi.getFlag("mcp-config") as string | undefined ?? configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
-  const callbacks = buildMcpPanelCallbacks(state, config, ctx);
+  let overlayHandle: OverlayHandle | undefined;
+  const callbacks = buildMcpPanelCallbacks(state, config, ctx, () => overlayHandle);
   const { createMcpPanel } = await import("./mcp-panel.ts");
 
   await new Promise<void>((resolve) => {
@@ -715,7 +721,11 @@ export async function openMcpAuthPanel(
           noticeLines: ["Select an OAuth MCP server and press Enter or ctrl+a to authenticate."],
         });
       },
-      { overlay: true, overlayOptions: { anchor: "center", width: 82 } },
+      {
+        overlay: true,
+        overlayOptions: { anchor: "center", width: 82 },
+        onHandle: (handle) => { overlayHandle = handle; },
+      },
     );
   });
 

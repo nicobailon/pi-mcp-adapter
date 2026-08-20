@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   waitForCallback: vi.fn(),
   cancelPendingCallback: vi.fn(),
   stopCallbackServer: vi.fn(),
+  stopCallbackServerIfIdle: vi.fn(),
   reserveCallbackServer: vi.fn(),
   releaseCallbackServer: vi.fn(),
   open: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock("../mcp-callback-server.ts", () => ({
   waitForCallback: mocks.waitForCallback,
   cancelPendingCallback: mocks.cancelPendingCallback,
   stopCallbackServer: mocks.stopCallbackServer,
+  stopCallbackServerIfIdle: mocks.stopCallbackServerIfIdle,
   reserveCallbackServer: mocks.reserveCallbackServer,
   releaseCallbackServer: mocks.releaseCallbackServer,
 }));
@@ -57,6 +59,7 @@ describe("mcp-auth-flow explicit auth", () => {
     mocks.waitForCallback.mockReset();
     mocks.cancelPendingCallback.mockReset();
     mocks.stopCallbackServer.mockReset();
+    mocks.stopCallbackServerIfIdle.mockReset().mockResolvedValue(false);
     mocks.reserveCallbackServer.mockReset();
     mocks.releaseCallbackServer.mockReset();
     mocks.open.mockReset();
@@ -73,6 +76,28 @@ describe("mcp-auth-flow explicit auth", () => {
     } else {
       process.env.MCP_OAUTH_DIR = originalOAuthDir;
     }
+  });
+
+  it("releases the idle callback server when startAuth is immediately authorized", async () => {
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    await expect(startAuth("cached", "https://api.example.com/mcp", { auth: "oauth" }))
+      .resolves.toEqual({ authorizationUrl: "" });
+
+    expect(mocks.releaseCallbackServer).toHaveBeenCalledOnce();
+    expect(mocks.stopCallbackServerIfIdle).toHaveBeenCalledOnce();
+  });
+
+  it("releases the idle callback server when callback startup fails", async () => {
+    mocks.ensureCallbackServer.mockRejectedValueOnce(new Error("callback bind failed"));
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    await expect(startAuth("bind-failure", "https://api.example.com/mcp", { auth: "oauth" }))
+      .rejects.toThrow("callback bind failed");
+
+    expect(mocks.releaseCallbackServer).toHaveBeenCalledOnce();
+    expect(mocks.stopCallbackServerIfIdle).toHaveBeenCalledOnce();
+    expect(mocks.sdkAuth).not.toHaveBeenCalled();
   });
 
   it("parses manual OAuth redirect URL and code input", async () => {
@@ -218,6 +243,32 @@ describe("mcp-auth-flow explicit auth", () => {
     )).rejects.toThrow("does not match the discovered issuer");
 
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the idle callback server when stored-state cleanup fails", async () => {
+    let oauthState = "";
+    mocks.sdkAuth.mockImplementation(async (provider, options) => {
+      if (options.authorizationCode) throw new Error("token exchange failed");
+      oauthState = await provider.state();
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+      return "REDIRECT";
+    });
+    const { completeAuthFromInput, startAuth } = await import("../mcp-auth-flow.ts");
+    await startAuth("cleanup-storage-failure", "https://api.example.com/mcp", { auth: "oauth" });
+    mocks.stopCallbackServerIfIdle.mockClear();
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+
+    try {
+      await expect(completeAuthFromInput(
+        "cleanup-storage-failure",
+        `code=auth-code&state=${oauthState}`,
+      )).rejects.toThrow("OAuth completion cleanup failed");
+    } finally {
+      process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    }
+
+    expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(oauthState);
+    expect(mocks.stopCallbackServerIfIdle).toHaveBeenCalledOnce();
   });
 
   it("does not start the callback server during OAuth initialization", async () => {

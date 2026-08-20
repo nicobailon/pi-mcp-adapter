@@ -180,6 +180,7 @@ interface PendingAuth {
 let server: Server | undefined
 let bindingPromise: Promise<void> | undefined
 let stoppingPromise: Promise<void> | undefined
+let restartableStoppingPromise: Promise<void> | undefined
 let callbackGeneration = 0
 const pendingAuths = new Map<string, PendingAuth>()
 const reservedAuthStates = new Set<string>()
@@ -288,10 +289,16 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
  * If strictPort is false, asks the OS for an available local port.
  */
 export async function ensureCallbackServer(options: EnsureCallbackServerOptions = {}): Promise<void> {
-  if (stoppingPromise) {
-    throw new Error("OAuth callback server stopped")
-  }
   const generation = callbackGeneration
+  if (stoppingPromise) {
+    if (!restartableStoppingPromise) {
+      throw new Error("OAuth callback server stopped")
+    }
+    await restartableStoppingPromise
+    if (generation !== callbackGeneration) {
+      throw new Error("OAuth callback server stopped")
+    }
+  }
   while (bindingPromise) {
     await bindingPromise
     if (generation !== callbackGeneration) {
@@ -455,7 +462,11 @@ export function cancelPendingCallback(oauthState: string): void {
  * Stop the callback server and reject all pending authorizations.
  */
 export function stopCallbackServer(): Promise<void> {
-  if (stoppingPromise) return stoppingPromise
+  if (stoppingPromise) {
+    restartableStoppingPromise = undefined
+    callbackGeneration += 1
+    return stoppingPromise
+  }
 
   callbackGeneration += 1
   const cleanup = (async () => {
@@ -492,6 +503,19 @@ export function stopCallbackServer(): Promise<void> {
     if (stoppingPromise === operation) stoppingPromise = undefined
   })
   stoppingPromise = operation
+  return operation
+}
+
+/** Stop the callback server only when no bind or authorization owns it. */
+export function stopCallbackServerIfIdle(): Promise<void> {
+  if (stoppingPromise) return stoppingPromise
+  if (bindingPromise || !server || pendingAuths.size > 0 || reservedAuthStates.size > 0) {
+    return Promise.resolve()
+  }
+  const operation = stopCallbackServer().finally(() => {
+    if (restartableStoppingPromise === operation) restartableStoppingPromise = undefined
+  })
+  restartableStoppingPromise = operation
   return operation
 }
 

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reused MCP panel direct-tool counts and token totals across renders while keeping toggle and reconnect updates immediate.
 
 ### Fixed
+- Released the OAuth callback listener after idle auth flows and kept MCP pickers hidden while nested OAuth input is active. Thanks to [@trevorleibert-mixpanel](https://github.com/trevorleibert-mixpanel) for PRs #403 and #404.
 - Raised the `ps` `maxBuffer` for request-header command cleanup so the full `ps axeww` process-discovery scan no longer overflows spawnSync's 1 MiB default on busy hosts, which had SIGTERM'd `ps` and surfaced as spurious `HTTP request headers command cleanup failed: ps exited with code unknown` refresh failures. Thanks to [@rtfpessoa](https://github.com/rtfpessoa) for PR #399.
 - Kept slow but healthy remote keep-alive servers from being marked failed when a bounded tools/list refresh times out. Thanks to [@brightmeowso](https://github.com/brightmeowso) for #400.
 - Reused one selector candidate index while reconstructing filtered cached metadata, avoiding repeated scans of large cached catalogs at startup.
