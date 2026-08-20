@@ -31,3 +31,17 @@ jobs:
       - run: npm run test:oauth
       - run: npm run test:conformance
       - run: npm pack --dry-run
+
+  node24-worker-fds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm test -- --run __tests__/mcp-code.test.ts

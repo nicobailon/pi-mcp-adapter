@@ -249,6 +249,10 @@ export async function runMcpScript(
     worker = new Worker(new URL("./mcp-script-worker.mjs", import.meta.url), {
       workerData: { code },
       env: {},
+      // The sandbox cannot open files, and the host always terminates this worker.
+      // Disable Node's unmanaged FD bookkeeping, which emits false warnings when
+      // short-lived workers are terminated on Node 24.
+      trackUnmanagedFds: false,
     });
     const activeWorker = worker;
     const execution = new Promise<void>((resolve, reject) => {
