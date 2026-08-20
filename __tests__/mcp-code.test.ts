@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { createMcpAdapter } from "../index.ts";
@@ -6,7 +8,9 @@ import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 import { MCP_TOOL_APPROVAL_REQUEST_EVENT, type McpToolApprovalRequest } from "../types.ts";
 
+const execFileAsync = promisify(execFile);
 const fixture = fileURLToPath(new URL("./fixtures/mcp-code-server.mjs", import.meta.url));
+const fdRunner = fileURLToPath(new URL("./fixtures/mcp-code-fd-runner.ts", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
 let manager: McpServerManager;
 let state: McpExtensionState;
@@ -49,6 +53,24 @@ describe("runMcpScript", () => {
     expect(registerTool).toHaveBeenCalled();
     expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcpScript" }));
   });
+
+  it.runIf(Number.parseInt(process.versions.node, 10) >= 24)(
+    "does not emit unmanaged file descriptor warnings",
+    async () => {
+      const { stdout, stderr } = await execFileAsync(
+        process.execPath,
+        ["--import", "tsx", fdRunner],
+        {
+          env: { ...process.env, NODE_OPTIONS: "--trace-warnings" },
+          maxBuffer: 1024 * 1024,
+        },
+      );
+
+      expect(stdout).toContain("completed 32 mcpScript workers");
+      expect(stderr).not.toMatch(/File descriptor \d+ (?:closed but not opened in unmanaged mode|opened in unmanaged mode twice)/);
+    },
+    30_000,
+  );
 
   beforeAll(async () => {
     manager = new McpServerManager();
