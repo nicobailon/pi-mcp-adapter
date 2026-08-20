@@ -75,7 +75,7 @@ export function saveMetadataCache(cache: MetadataCache): void {
   merged.servers = { ...merged.servers, ...cache.servers };
 
   const tmpPath = `${cachePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
+  writeFileSync(tmpPath, JSON.stringify(merged), "utf-8");
   renameSync(tmpPath, cachePath);
 }
 
