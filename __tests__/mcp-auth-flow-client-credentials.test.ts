@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   stopCallbackServer: vi.fn(),
   reserveCallbackServer: vi.fn(),
   releaseCallbackServer: vi.fn(),
+  isCallbackServerRunning: vi.fn(() => false),
+  isCallbackServerIdle: vi.fn(() => true),
   open: vi.fn(),
   sdkAuth: vi.fn(),
   fetch: vi.fn(),
@@ -39,6 +41,8 @@ vi.mock("../mcp-callback-server.ts", () => ({
   stopCallbackServer: mocks.stopCallbackServer,
   reserveCallbackServer: mocks.reserveCallbackServer,
   releaseCallbackServer: mocks.releaseCallbackServer,
+  isCallbackServerRunning: mocks.isCallbackServerRunning,
+  isCallbackServerIdle: mocks.isCallbackServerIdle,
 }));
 
 vi.mock("open", () => ({
@@ -59,6 +63,11 @@ describe("mcp-auth-flow explicit auth", () => {
     mocks.stopCallbackServer.mockReset();
     mocks.reserveCallbackServer.mockReset();
     mocks.releaseCallbackServer.mockReset();
+    // Default the callback server to "not bound" so the release-on-idle path
+    // is a no-op in tests that predate that path. Tests that want to exercise
+    // release-on-idle set these to true explicitly.
+    mocks.isCallbackServerRunning.mockReset().mockReturnValue(false);
+    mocks.isCallbackServerIdle.mockReset().mockReturnValue(false);
     mocks.open.mockReset();
     mocks.sdkAuth.mockReset().mockResolvedValue("AUTHORIZED");
     mocks.fetch.mockReset().mockResolvedValue(new Response(null));
@@ -1104,5 +1113,49 @@ describe("mcp-auth-flow explicit auth", () => {
     }));
     expect(mocks.reserveCallbackServer).not.toHaveBeenCalled();
     expect(mocks.open).not.toHaveBeenCalled();
+  });
+
+  it("releases the callback server after a completed auth when no other auths are pending", async () => {
+    // Simulate: server is currently bound, and once the completed auth's
+    // pending record clears, isCallbackServerIdle flips to true.
+    mocks.isCallbackServerRunning.mockReturnValue(true);
+    mocks.isCallbackServerIdle.mockReturnValue(true);
+    let oauthState: string | undefined;
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      oauthState = await provider.state();
+      await provider.redirectToAuthorization(new URL(`https://auth.example.com/authorize?state=${oauthState}`));
+      return "REDIRECT";
+    });
+    const { startAuth, completeAuthFromInput } = await import("../mcp-auth-flow.ts");
+
+    await startAuth("solo", "https://api.example.com/mcp", { auth: "oauth" });
+    expect(mocks.stopCallbackServer).not.toHaveBeenCalled();
+
+    await expect(completeAuthFromInput("solo", `code=deadbeef&state=${oauthState}`)).resolves.toBe("authenticated");
+
+    // The pilot behavior: callback port released so other Pi processes can
+    // reclaim it for their own /mcp-auth flows.
+    expect(mocks.stopCallbackServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not release the callback server after an auth completes while other auths are still pending", async () => {
+    // isCallbackServerRunning is true (bound), but isCallbackServerIdle is
+    // false because a second pending auth exists.
+    mocks.isCallbackServerRunning.mockReturnValue(true);
+    mocks.isCallbackServerIdle.mockReturnValue(false);
+    let oauthState: string | undefined;
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      oauthState = await provider.state();
+      await provider.redirectToAuthorization(new URL(`https://auth.example.com/authorize?state=${oauthState}`));
+      return "REDIRECT";
+    });
+    const { startAuth, completeAuthFromInput } = await import("../mcp-auth-flow.ts");
+
+    await startAuth("first", "https://api.example.com/mcp", { auth: "oauth" });
+    await expect(completeAuthFromInput("first", `code=deadbeef&state=${oauthState}`)).resolves.toBe("authenticated");
+
+    // Not idle -> release-on-idle skipped so the still-pending second auth's
+    // callback listener stays alive.
+    expect(mocks.stopCallbackServer).not.toHaveBeenCalled();
   });
 });

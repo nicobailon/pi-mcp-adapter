@@ -19,6 +19,8 @@ import {
   cancelPendingCallback,
   stopCallbackServer,
   releaseCallbackServer,
+  isCallbackServerRunning,
+  isCallbackServerIdle,
 } from "./mcp-callback-server.ts"
 import {
   getAuthForUrl,
@@ -439,7 +441,7 @@ export async function startAuth(
   } catch (error) {
     authProvider.deactivate()
     try {
-      await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions)
+      await clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, authStorageOptions)
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed")
     }
@@ -463,7 +465,7 @@ async function setPendingAuth(
   state.pendingAuths.set(key, pendingAuth)
   state.pendingAuthStates.set(key, oauthState)
   const cleanupTimer = setTimeout(() => {
-    void clearPendingAuth(runtime, serverName, oauthState, pendingAuth.authStorageOptions).catch(error => {
+    void clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, pendingAuth.authStorageOptions).catch(error => {
       console.error(`MCP Auth: Timed-out flow cleanup failed: ${formatTerminalError(error)}`)
     })
   }, MANUAL_AUTH_TIMEOUT_MS)
@@ -496,6 +498,39 @@ async function clearPendingAuth(runtime: McpOAuthRuntime, serverName: string, oa
       await clearOAuthState(serverName, authStorageOptions)
     }
   }
+}
+
+/**
+ * Release the OAuth callback listener when nothing else needs it, so other
+ * processes can reclaim the (potentially pre-registered) port. Called from
+ * auth completion / cancellation sites; NOT from the sweep-before-set path
+ * in setPendingAuth (that path is about to add a fresh record) or from
+ * shutdownOAuth (which handles server teardown itself).
+ *
+ * The next auth flow in this process rebinds on demand via
+ * ensureCallbackServer, so releasing eagerly is safe.
+ */
+async function releaseCallbackServerIfIdle(): Promise<void> {
+  if (isCallbackServerRunning() && isCallbackServerIdle()) {
+    await stopCallbackServer()
+  }
+}
+
+/**
+ * Clear the per-server pending-auth record and, when no other auths remain
+ * anywhere, release the OAuth callback port so peer processes can bind it
+ * for their own /mcp-auth flows. Use this at true completion sites
+ * (successful auth, cancellation, removeAuth); use clearPendingAuth alone
+ * from setPendingAuth's sweep-before-set and from shutdown paths.
+ */
+async function clearPendingAuthAndReleaseIfIdle(
+  runtime: McpOAuthRuntime,
+  serverName: string,
+  oauthState: string | undefined,
+  fallbackStorageOptions: AuthStorageOptions = {},
+): Promise<void> {
+  await clearPendingAuth(runtime, serverName, oauthState, fallbackStorageOptions)
+  await releaseCallbackServerIfIdle()
 }
 
 function getSearchParamsFromInput(input: string): URLSearchParams | undefined {
@@ -701,7 +736,7 @@ export async function completeAuth(
   } finally {
     if (!keepPendingForRetry) {
       try {
-        await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions)
+        await clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, authStorageOptions)
       } catch (cleanupError) {
         if (caughtError !== undefined) {
           throw new AggregateError([caughtError, cleanupError], "OAuth completion cleanup failed")
@@ -801,7 +836,7 @@ export async function authenticate(
     } catch (error) {
       if (oauthState) cancelPendingCallback(oauthState)
       try {
-        await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions)
+        await clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, authStorageOptions)
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], "OAuth cancellation cleanup failed")
       }
@@ -922,7 +957,7 @@ export async function removeAuth(serverName: string, options: AuthenticateOption
   if (oauthState) {
     cancelPendingCallback(oauthState)
   }
-  await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions)
+  await clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, authStorageOptions)
   throwIfAborted(signal)
   clearAllCredentials(serverName, authStorageOptions)
   await clearOAuthState(serverName, authStorageOptions)
