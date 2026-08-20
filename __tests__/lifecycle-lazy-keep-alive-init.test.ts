@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   cache: null as { version: 1; servers: Record<string, unknown> } | null,
   config: { settings: {}, mcpServers: {} } as any,
   manager: undefined as any,
+  createCachedToolSelectorCandidateIndex: vi.fn(() => undefined),
   getMissingConfiguredDirectToolServers: vi.fn(() => [] as string[]),
   isServerCacheValid: vi.fn(() => false),
   buildToolMetadata: vi.fn(() => ({ metadata: [], failedTools: [] })),
@@ -25,6 +26,7 @@ vi.mock("../config.ts", () => ({
 
 vi.mock("../metadata-cache.ts", () => ({
   computeServerHash: vi.fn(() => "hash"),
+  createCachedToolSelectorCandidateIndex: mocks.createCachedToolSelectorCandidateIndex,
   getMetadataCachePath: vi.fn(() => mocks.cachePath),
   getMissingConfiguredDirectToolServers: mocks.getMissingConfiguredDirectToolServers,
   isServerCacheValid: mocks.isServerCacheValid,
@@ -103,6 +105,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     };
     mocks.manager = createManager();
     mocks.getMissingConfiguredDirectToolServers.mockReset().mockReturnValue([]);
+    mocks.createCachedToolSelectorCandidateIndex.mockClear();
     mocks.isServerCacheValid.mockReset().mockReturnValue(false);
     mocks.buildToolMetadata.mockClear();
   });
@@ -191,6 +194,29 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     expect(knownMetadata.get("my-server")?.map(tool => tool.originalName)).toEqual(["do_thing"]);
     expect(knownMetadata.has("my_server")).toBe(false);
     expect(mocks.buildToolMetadata.mock.calls[0]?.[7]).toBe(true);
+  });
+
+  it("does not index cached candidates when filtered metadata is invalid", async () => {
+    writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
+    mocks.cache = {
+      version: 1,
+      servers: {
+        srv: { configHash: "stale", cachedAt: Date.now(), tools: [], resources: [] },
+      },
+    };
+    mocks.config = {
+      settings: { toolPrefix: "server" },
+      mcpServers: { srv: { command: "demo", includeTools: ["*"] } },
+    };
+    const { initializeMcp } = await import("../init.ts");
+
+    await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
+      cwd: tempDir,
+      hasUI: false,
+      mode: "headless",
+    } as any);
+
+    expect(mocks.createCachedToolSelectorCandidateIndex).not.toHaveBeenCalled();
   });
 
   it("marks no-cache bootstrap spawns for health-check reconnects", async () => {

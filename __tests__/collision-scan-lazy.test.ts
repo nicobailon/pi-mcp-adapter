@@ -7,7 +7,7 @@ import {
   type ServerEntry,
 } from "../types.ts";
 import { buildProxyDescription, resolveDirectTools } from "../direct-tools.ts";
-import { computeServerHash, reconstructToolMetadata } from "../metadata-cache.ts";
+import { computeServerHash, createCachedToolSelectorCandidateIndex, reconstructToolMetadata } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 
 // Intercept the only function the cross-server collision scan calls. Because
@@ -112,6 +112,23 @@ describe("cross-server collision scan is skipped without tool filters", () => {
   it("reconstructToolMetadata builds filtered candidates once", () => {
     const { config, cache } = makeLargeFilteredConfig(40);
     reconstructToolMetadata("a", cache.servers.a, "server", config.mcpServers.a, config.mcpServers, cache);
+    expect(mockedGetToolNameCandidates).toHaveBeenCalledTimes(40);
+  });
+
+  it("reuses cached candidates across filtered server reconstruction", () => {
+    const a = makeServer("a", { includeTools: ["*"] });
+    const b = makeServer("b", { includeTools: ["*"] });
+    const tools = Array.from({ length: 20 }, (_, index) => ({ name: `tool_${index}`, description: `Tool ${index}` }));
+    const config: McpConfig = { mcpServers: { a, b } };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: { a: makeCacheEntry(a, tools), b: makeCacheEntry(b, tools) },
+    };
+    const selectorCandidateIndex = createCachedToolSelectorCandidateIndex(config.mcpServers, cache, "server");
+
+    reconstructToolMetadata("a", cache.servers.a, "server", a, config.mcpServers, cache, selectorCandidateIndex);
+    reconstructToolMetadata("b", cache.servers.b, "server", b, config.mcpServers, cache, selectorCandidateIndex);
+
     expect(mockedGetToolNameCandidates).toHaveBeenCalledTimes(40);
   });
 

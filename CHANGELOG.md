@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Precomputed normalized MCP tool fields and keyword tokens per catalog to reduce repeated search ranking work.
 
 ### Fixed
+- Reused one selector candidate index while reconstructing filtered cached metadata, avoiding repeated scans of large cached catalogs at startup.
 - Published the first connected MCP status snapshot only after direct-tool synchronization so status consumers do not see a connected catalog before Pi's model-facing tool surface is current. Thanks to [@dmorn](https://github.com/dmorn) for PR #380.
 - Normalized MCP tool-call arguments before approval and transport so JSON-string arguments keep all fields and embedded quotes. Thanks to [@sebbean](https://github.com/sebbean) for PR #377.
 - Scoped session tool approvals to the approved argument payload instead of every later call to the same tool. Thanks to [@spaceshipmike](https://github.com/spaceshipmike) for #367.

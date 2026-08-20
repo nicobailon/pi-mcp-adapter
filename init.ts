@@ -1,12 +1,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata } from "./types.ts";
+import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata, type ToolSelectorCandidateIndex } from "./types.ts";
 import { existsSync } from "node:fs";
 import { cloneMcpConfig, loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
 import { McpLifecycleManager } from "./lifecycle.ts";
 import {
   computeServerHash,
+  createCachedToolSelectorCandidateIndex,
   getMetadataCachePath,
   getMissingConfiguredDirectToolServers,
   isServerCacheValid,
@@ -239,6 +240,7 @@ export async function initializeMcp(
   }
 
   const prefix = config.settings?.toolPrefix ?? "server";
+  let cachedSelectorCandidateIndex: ToolSelectorCandidateIndex | undefined;
 
   for (const [name, definition] of serverEntries) {
     const lifecycleMode = definition.lifecycle ?? "lazy";
@@ -255,7 +257,13 @@ export async function initializeMcp(
 
     const cachedEntry = cache?.servers?.[name];
     if (cachedEntry && isServerCacheValid(cachedEntry, definition)) {
-      const metadata = reconstructToolMetadata(name, cachedEntry, prefix, definition, config.mcpServers, cache ?? undefined);
+      const hasToolFilters =
+        (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
+        (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
+      if (hasToolFilters && !cachedSelectorCandidateIndex && cache) {
+        cachedSelectorCandidateIndex = createCachedToolSelectorCandidateIndex(config.mcpServers, cache, prefix);
+      }
+      const metadata = reconstructToolMetadata(name, cachedEntry, prefix, definition, config.mcpServers, cache ?? undefined, cachedSelectorCandidateIndex);
       toolMetadata.set(name, metadata);
       if (Array.isArray(cachedEntry.resources)) {
         resourceCounts.set(name, cachedEntry.resources.length);

@@ -19,7 +19,7 @@ import type {
   ToolMetadata,
   PromptMetadata,
 } from "./types.ts";
-import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, type ToolPrefix } from "./types.ts";
+import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, type ToolPrefix, type ToolSelectorCandidateIndex } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
   extractToolUiStreamMode,
@@ -189,6 +189,7 @@ export function reconstructToolMetadata(
   definition: Pick<ServerEntry, "exposeResources" | "includeTools" | "excludeTools" | "toolPrefix">,
   configuredServers?: Record<string, ServerEntry>,
   cache?: MetadataCache,
+  sharedSelectorCandidateIndex?: ToolSelectorCandidateIndex,
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
   const seenNames = new Set<string>();
@@ -196,25 +197,11 @@ export function reconstructToolMetadata(
   const hasToolFilters =
     (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
     (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
-  const selectorCandidateIndex = hasToolFilters && configuredServers && cache ? (() => {
-    const candidates = new Set<string>();
-    for (const [otherServerName, otherDefinition] of Object.entries(configuredServers)) {
-      const otherEntry = cache.servers[otherServerName];
-      if (!otherEntry || !isServerCacheValid(otherEntry, otherDefinition) || isServerDisabled(otherDefinition)) continue;
-      const otherPrefix = resolveToolPrefix(otherDefinition, prefix);
-      for (const otherTool of otherEntry.tools ?? []) {
-        if (!isUiToolVisibleToModel(otherTool.uiVisibility)) continue;
-        for (const candidate of getToolNameCandidates(otherTool.name, otherServerName, otherPrefix, false)) candidates.add(candidate);
-      }
-      if (otherDefinition.exposeResources !== false) {
-        for (const resource of otherEntry.resources ?? []) {
-          const baseName = `read_${resourceNameToToolName(resource.name)}`;
-          for (const candidate of getToolNameCandidates(baseName, otherServerName, otherPrefix, false)) candidates.add(candidate);
-        }
-      }
-    }
-    return createToolSelectorCandidateIndex(candidates);
-  })() : undefined;
+  const selectorCandidateIndex = hasToolFilters
+    ? sharedSelectorCandidateIndex ?? (configuredServers && cache
+      ? createCachedToolSelectorCandidateIndex(configuredServers, cache, prefix)
+      : undefined)
+    : undefined;
 
   for (const tool of entry.tools ?? []) {
     if (!tool?.name) continue;
@@ -266,6 +253,30 @@ export function reconstructToolMetadata(
   }
 
   return metadata;
+}
+
+export function createCachedToolSelectorCandidateIndex(
+  configuredServers: Record<string, ServerEntry>,
+  cache: MetadataCache,
+  prefix: ToolPrefix,
+): ToolSelectorCandidateIndex {
+  const candidates = new Set<string>();
+  for (const [serverName, definition] of Object.entries(configuredServers)) {
+    const entry = cache.servers[serverName];
+    if (!entry || !isServerCacheValid(entry, definition) || isServerDisabled(definition)) continue;
+    const effectivePrefix = resolveToolPrefix(definition, prefix);
+    for (const tool of entry.tools ?? []) {
+      if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
+      for (const candidate of getToolNameCandidates(tool.name, serverName, effectivePrefix, false)) candidates.add(candidate);
+    }
+    if (definition.exposeResources !== false) {
+      for (const resource of entry.resources ?? []) {
+        const baseName = `read_${resourceNameToToolName(resource.name)}`;
+        for (const candidate of getToolNameCandidates(baseName, serverName, effectivePrefix, false)) candidates.add(candidate);
+      }
+    }
+  }
+  return createToolSelectorCandidateIndex(candidates);
 }
 
 export function serializeTools(tools: McpTool[]): CachedTool[] {
