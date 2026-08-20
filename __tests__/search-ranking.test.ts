@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { paginate, resolveSearchKeywords, scoreToolMatch } from "../search-ranking.ts";
-import type { ServerEntry } from "../types.ts";
+import { paginate, rankToolMatches, resolveSearchKeywords, scoreToolMatch } from "../search-ranking.ts";
+import type { McpExtensionState } from "../state.ts";
+import type { ServerEntry, ToolMetadata } from "../types.ts";
 
 const tool = (name: string, description: string) => ({
   name,
@@ -64,6 +65,22 @@ describe("search ranking", () => {
     const advanced = tool("search_records_advanced", "Advanced record search");
 
     expect(scoreToolMatch(advanced, "demo", "advanced", [])).toEqual(scoreToolMatch(advanced, "demo", "advanced"));
+  });
+
+  it("refreshes prepared fields when catalog or keyword references change", () => {
+    const state = {
+      toolMetadata: new Map([["demo", [tool("search_records", "Find records")]]]),
+      config: { mcpServers: { demo: { command: "demo", searchKeywords: { search_records: ["fuzzy"] } } } },
+    } as unknown as McpExtensionState;
+
+    expect(rankToolMatches(state, "fuzzy")).toHaveLength(1);
+    state.config.mcpServers.demo!.searchKeywords = { search_records: ["semantic"] };
+    expect(rankToolMatches(state, "fuzzy")).toHaveLength(0);
+    expect(rankToolMatches(state, "semantic")).toHaveLength(1);
+
+    state.toolMetadata.set("demo", [tool("create_record", "Create a record")] as ToolMetadata[]);
+    expect(rankToolMatches(state, "search")).toHaveLength(0);
+    expect(rankToolMatches(state, "create")).toHaveLength(1);
   });
 
   it("paginates including offsets beyond the result set", () => {
