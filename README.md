@@ -735,6 +735,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 | Command | What it does |
 |---------|--------------|
 | `/mcp` | Interactive panel and first-run onboarding surface |
+| `/pi-mcp` | Alias for `/mcp` when the host reserves `/mcp` |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
 | `/mcp tools` | List all tools |
 | `/mcp prompts` | List all MCP prompts registered as slash commands |

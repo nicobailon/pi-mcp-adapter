@@ -538,7 +538,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // Re-flag returned MCP tool failures so pi registers them as errors (see toolErrorOverride).
   pi.on("tool_result", (event) => toolErrorOverride(event.details));
 
-  pi.registerCommand("mcp", {
+  const registerMcpCommand = (commandName: string) => pi.registerCommand(commandName, {
     description: "Show MCP server status",
     getArgumentCompletions: (prefix: string) => {
       const normalized = prefix.trimStart();
@@ -721,6 +721,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
     },
   });
+  registerMcpCommand("mcp");
+  registerMcpCommand("pi-mcp");
 
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",

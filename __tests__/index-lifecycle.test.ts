@@ -243,6 +243,17 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
+  it("registers mcp and pi-mcp commands while keeping mcp-auth separate", async () => {
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    mcpAdapter(api);
+
+    const commandNames = api.registerCommand.mock.calls.map((call: any[]) => call[0]);
+    expect(commandNames.filter((name: string) => name === "mcp")).toHaveLength(1);
+    expect(commandNames.filter((name: string) => name === "pi-mcp")).toHaveLength(1);
+    expect(commandNames.filter((name: string) => name === "mcp-auth")).toHaveLength(1);
+  });
+
   it("keeps the proxy tool when direct tools are still missing from cache", async () => {
     mocks.loadMcpConfig.mockReturnValue({
       mcpServers: {
