@@ -508,3 +508,20 @@ export function isCallbackServerRunning(): boolean {
 export function getPendingAuthCount(): number {
   return pendingAuths.size
 }
+
+/**
+ * Get the number of reserved authorization states (bookings for auth flows
+ * that have not yet reached the waitForCallback phase).
+ */
+export function getReservedAuthStateCount(): number {
+  return reservedAuthStates.size
+}
+
+/**
+ * True if the callback server currently has no reason to remain bound.
+ * A caller that just finished cleaning up its own auth state can consult
+ * this to decide whether to release the port for other processes.
+ */
+export function isCallbackServerIdle(): boolean {
+  return pendingAuths.size === 0 && reservedAuthStates.size === 0
+}

@@ -329,4 +329,42 @@ describe("mcp-callback-server", () => {
     cancelPendingCallback("pending-state");
     await expect(pending).rejects.toThrow(/Authorization cancelled/);
   });
+
+  it("reports idle only when no pending or reserved auth state remains", async () => {
+    const {
+      ensureCallbackServer,
+      reserveCallbackServer,
+      releaseCallbackServer,
+      waitForCallback,
+      cancelPendingCallback,
+      getPendingAuthCount,
+      getReservedAuthStateCount,
+      isCallbackServerIdle,
+    } = await import("../mcp-callback-server.ts");
+
+    // Freshly-bound server with nothing in flight is idle so callers can
+    // release the port immediately after their auth flow tears down.
+    await ensureCallbackServer();
+    expect(getPendingAuthCount()).toBe(0);
+    expect(getReservedAuthStateCount()).toBe(0);
+    expect(isCallbackServerIdle()).toBe(true);
+
+    // Reserved states (booked before the pending map fills) block idle.
+    reserveCallbackServer("reserved-a");
+    expect(getReservedAuthStateCount()).toBe(1);
+    expect(isCallbackServerIdle()).toBe(false);
+
+    // Pending callbacks also block idle even when nothing is reserved.
+    releaseCallbackServer("reserved-a");
+    const pending = waitForCallback("pending-a");
+    expect(getPendingAuthCount()).toBe(1);
+    expect(getReservedAuthStateCount()).toBe(0);
+    expect(isCallbackServerIdle()).toBe(false);
+
+    // Both cleared -> idle again.
+    cancelPendingCallback("pending-a");
+    await expect(pending).rejects.toThrow(/Authorization cancelled/);
+    expect(getPendingAuthCount()).toBe(0);
+    expect(isCallbackServerIdle()).toBe(true);
+  });
 });

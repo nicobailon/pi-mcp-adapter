@@ -189,7 +189,7 @@ describe("authenticateServer", () => {
     );
   });
 
-  it("surfaces the OAuth URL as one terminal hyperlink and accepts a pasted remote callback", async () => {
+  it("surfaces the OAuth URL as a terminal hyperlink in the notify, then opens the paste input directly (no redundant confirm)", async () => {
     const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
     const callbackUrl = "http://localhost:3118/callback?code=code&state=state";
     const inputController = new AbortController();
@@ -227,17 +227,42 @@ describe("authenticateServer", () => {
       expect.stringContaining(`\u001B]8;;${authorizationUrl}\u001B\\${authorizationUrl}\u001B]8;;\u001B\\`),
       "info",
     );
-    expect(ui.confirm).toHaveBeenCalledWith(
-      "Authorize sentry",
-      expect.stringContaining(authorizationUrl),
-      { signal: inputController.signal },
-    );
+    // The pre-existing Yes/No confirm was redundant: onAuthorizationUrl
+    // already surfaced the clickable link. Skipping it lets the user paste
+    // and press Enter in one step.
+    expect(ui.confirm).not.toHaveBeenCalled();
     expect(ui.input).toHaveBeenCalledWith(
       "Complete sentry OAuth",
-      "Paste the full callback URL",
+      "Paste the full callback URL from your browser",
       { signal: inputController.signal },
     );
-    expect(ui.confirm.mock.invocationCallOrder[0]).toBeLessThan(ui.input.mock.invocationCallOrder[0]);
+  });
+
+  it("skips the paste input entirely when the auth flow was aborted before onAuthorizationInput fired", async () => {
+    const authorizationUrl = "https://auth.example.com/authorize";
+    const inputController = new AbortController();
+    inputController.abort();
+    mocks.authenticate.mockImplementationOnce(async (_name, _url, _definition, options) => {
+      const input = await options.onAuthorizationInput(authorizationUrl, inputController.signal);
+      expect(input).toBeUndefined();
+      return "cancelled";
+    });
+    const ui = {
+      notify: vi.fn(),
+      setStatus: vi.fn(),
+      confirm: vi.fn(),
+      input: vi.fn(),
+    };
+    const { authenticateServer } = await import("../commands.ts");
+
+    await authenticateServer("sentry", {
+      mcpServers: {
+        sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" },
+      },
+    }, { hasUI: true, mode: "tui", ui } as any);
+
+    expect(ui.input).not.toHaveBeenCalled();
+    expect(ui.confirm).not.toHaveBeenCalled();
   });
 
   it("blocks bearer token set because the extension UI has no masked secret input", async () => {

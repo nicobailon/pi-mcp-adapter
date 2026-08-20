@@ -297,17 +297,15 @@ export async function authenticateServer(
           "info"
         );
       },
-      onAuthorizationInput: async (authorizationUrl, inputSignal) => {
-        const readyToPaste = await ui.confirm(
-          `Authorize ${serverName}`,
-          `Open this link in your browser:\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
-          "After approving access, select Yes to paste the callback URL.",
-          { signal: inputSignal },
-        );
-        if (!readyToPaste || inputSignal.aborted) return undefined;
+      onAuthorizationInput: async (_authorizationUrl, inputSignal) => {
+        // The authorization URL was already announced via the notify above
+        // (a clickable terminal hyperlink users can open before pasting).
+        // Skip a redundant Yes/No confirm and open the paste input directly,
+        // so hitting Enter after pasting the callback URL just works.
+        if (inputSignal.aborted) return undefined;
         return ui.input(
           `Complete ${serverName} OAuth`,
-          "Paste the full callback URL",
+          "Paste the full callback URL from your browser",
           { signal: inputSignal },
         );
       },
