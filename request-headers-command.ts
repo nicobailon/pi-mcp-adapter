@@ -11,8 +11,13 @@ const CLEANUP_TOKEN_ENV = "PI_MCP_REQUEST_HEADERS_CLEANUP_TOKEN";
 // `ps axeww` dumps the full environment of every process on the host. On busy
 // machines that output exceeds spawnSync's default 1 MiB maxBuffer, which causes
 // Node to SIGTERM `ps` and report status === null. Raise the cap so process
-// discovery keeps working without spurious cleanup failures.
-const PS_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+// discovery keeps working without spurious cleanup failures. Observed output
+// is ~1 MiB on a loaded dev machine (1000+ procs at ~1 KiB each); 8 MiB gives
+// ~8x headroom and covers a machine ~8x busier (or ~4x with heavy envs), which
+// is a realistic worst-case dev box. maxBuffer is a cap, not a pre-allocation:
+// Node grows the buffer to the actual output, so this costs ~0 unless `ps`
+// really emits that much.
+const PS_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 
 function isNoSuchProcessError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH";
