@@ -18,54 +18,38 @@ function runPosixPs(args: string[]): { status: number | null; stdout: string } {
   return spawnSync("ps", args, { encoding: "utf8" });
 }
 
-function collectPosixDescendantPids(rootPid: number): number[] {
-  const result = runPosixPs(["-axo", "pid=,ppid="]);
+function collectPosixProcessPids(rootPid: number, cleanupToken?: string): number[] {
+  const result = runPosixPs(["axeww", "-o", "pid=,ppid=,command="]);
   if (result.status !== 0) {
     throw new Error(`HTTP request headers command cleanup failed: ps exited with code ${result.status ?? "unknown"}`);
   }
 
   const childrenByParent = new Map<number, number[]>();
+  const processPids = new Set<number>();
+  const needle = cleanupToken ? `${CLEANUP_TOKEN_ENV}=${cleanupToken}` : undefined;
   for (const line of result.stdout.split("\n")) {
-    const [pidText, ppidText] = line.trim().split(/\s+/, 2);
-    const pid = Number(pidText);
-    const ppid = Number(ppidText);
+    const match = /^\s*(\d+)\s+(\d+)(?:\s+(.*))?$/.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
     if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
     const children = childrenByParent.get(ppid);
     if (children) children.push(pid);
     else childrenByParent.set(ppid, [pid]);
+    if (needle && pid !== process.pid && match[3]?.includes(needle)) processPids.add(pid);
   }
 
-  const descendants: number[] = [];
   const stack = [...(childrenByParent.get(rootPid) ?? [])];
   while (stack.length > 0) {
     const pid = stack.pop()!;
-    descendants.push(pid);
+    processPids.add(pid);
     stack.push(...(childrenByParent.get(pid) ?? []));
   }
-  return descendants;
-}
-
-function collectPosixCleanupTokenPids(cleanupToken: string): number[] {
-  const result = runPosixPs(["axeww", "-o", "pid=,command="]);
-  if (result.status !== 0) {
-    throw new Error(`HTTP request headers command cleanup failed: ps exited with code ${result.status ?? "unknown"}`);
-  }
-
-  const needle = `${CLEANUP_TOKEN_ENV}=${cleanupToken}`;
-  const pids: number[] = [];
-  for (const line of result.stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed.includes(needle)) continue;
-    const [pidText] = trimmed.split(/\s+/, 1);
-    const pid = Number(pidText);
-    if (Number.isInteger(pid) && pid !== process.pid) pids.push(pid);
-  }
-  return pids;
+  return [...processPids];
 }
 
 function assertPosixProcessDiscoveryAvailable(): void {
-  collectPosixDescendantPids(process.pid);
-  collectPosixCleanupTokenPids(`${process.pid}-preflight`);
+  collectPosixProcessPids(process.pid, `${process.pid}-preflight`);
 }
 
 function isTaskkillNoSuchProcess(result: ReturnType<typeof spawnSync>): boolean {
@@ -109,10 +93,7 @@ function killRequestHeadersCommand(child: ChildProcess, trackedPosixDescendantPi
       }
       let stablePasses = 0;
       for (let pass = 0; pass < 16; pass++) {
-        const candidates = [
-          ...collectPosixDescendantPids(child.pid),
-          ...(cleanupToken ? collectPosixCleanupTokenPids(cleanupToken) : []),
-        ];
+        const candidates = collectPosixProcessPids(child.pid, cleanupToken);
         const newPids = candidates.filter(pid => !frozenPids.has(pid));
         if (newPids.length === 0) {
           stablePasses++;
@@ -212,8 +193,7 @@ async function invokeRequestHeadersCommand(
     const trackPosixDescendants = () => {
       if (!USE_PROCESS_GROUP || child.pid === undefined || settled || trackingError) return;
       try {
-        for (const pid of collectPosixDescendantPids(child.pid)) trackedPosixDescendantPids.add(pid);
-        for (const pid of collectPosixCleanupTokenPids(cleanupToken)) trackedPosixDescendantPids.add(pid);
+        for (const pid of collectPosixProcessPids(child.pid, cleanupToken)) trackedPosixDescendantPids.add(pid);
       } catch (error) {
         trackingError = error instanceof Error ? error : new Error(String(error));
       }

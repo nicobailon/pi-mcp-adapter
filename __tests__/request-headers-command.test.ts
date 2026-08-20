@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -69,6 +69,27 @@ describe("per-request HTTP header commands", () => {
     await fetch("https://mcp.example.test/mcp", { method: "POST", body: "one" });
     await fetch("https://mcp.example.test/mcp", { method: "POST", body: "two" });
     expect(bodies).toEqual(["one", "two"]);
+  });
+
+  it.skipIf(process.platform === "win32")("uses one cleanup process snapshot per stabilization pass", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-ps-"));
+    const calls = join(dir, "calls");
+    const ps = join(dir, "ps");
+    writeFileSync(ps, `#!/bin/sh\nprintf 'scan\\n' >> ${JSON.stringify(calls)}\n`);
+    chmodSync(ps, 0o755);
+    const priorPath = process.env.PATH;
+    process.env.PATH = dir;
+    try {
+      const fetch = createRequestHeadersCommandFetch(
+        { command: "/usr/bin/printf", args: ["{}"] },
+        async () => new Response("ok"),
+      );
+      await expect(fetch("https://mcp.example.test/mcp")).resolves.toBeInstanceOf(Response);
+      const snapshots = readFileSync(calls, "utf8").trim().split("\n");
+      expect(snapshots.length).toBeGreaterThanOrEqual(3);
+    } finally {
+      process.env.PATH = priorPath;
+    }
   });
 
   it("fails closed when the command exits unsuccessfully", async () => {
