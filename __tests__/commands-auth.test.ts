@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
+  createMcpPanel: vi.fn(),
   removeAuth: vi.fn(),
 }));
 
@@ -9,6 +10,10 @@ vi.mock("../mcp-auth-flow.ts", () => ({
   authenticate: mocks.authenticate,
   removeAuth: mocks.removeAuth,
   supportsOAuth: (definition: { url?: string; auth?: string }) => Boolean(definition.url) && definition.auth !== "bearer",
+}));
+
+vi.mock("../mcp-panel.ts", () => ({
+  createMcpPanel: mocks.createMcpPanel,
 }));
 
 vi.mock("../init.ts", () => ({
@@ -39,6 +44,58 @@ describe("authenticateServer", () => {
     expect(ui.notify).toHaveBeenCalledWith("No OAuth-capable MCP servers are configured.", "warning");
     expect(ui.custom).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["openMcpPanel", "success"],
+    ["openMcpAuthPanel", "success"],
+    ["openMcpAuthPanel", "failure"],
+  ] as const)(
+    "%s restores the hidden picker after OAuth %s",
+    async (command, outcome) => {
+      let finishAuthentication!: () => void;
+      const hidden = vi.fn();
+      const focus = vi.fn();
+      mocks.authenticate.mockImplementationOnce(async () => {
+        expect(hidden).toHaveBeenCalledWith(true);
+        await new Promise<void>((resolve) => { finishAuthentication = resolve; });
+        if (outcome === "failure") throw new Error("authentication failed");
+        return "authenticated";
+      });
+      mocks.createMcpPanel.mockImplementationOnce((_config, _cache, _provenance, callbacks, _tui, done) => ({
+        render: () => [],
+        invalidate: () => {},
+        handleInput: () => {
+          void callbacks.authenticate("sentry").then(() => done({ cancelled: true, changes: new Map() }));
+        },
+      }));
+      const ui = {
+        notify: vi.fn(),
+        setStatus: vi.fn(),
+        custom: vi.fn((factory, options) => {
+          const panel = factory({ requestRender: vi.fn() }, undefined, undefined, vi.fn());
+          options.onHandle({ setHidden: hidden, focus });
+          panel.handleInput("\r");
+        }),
+      };
+      const commands = await import("../commands.ts");
+
+      const panel = commands[command]({
+        programmaticConfig: false,
+        config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
+        authStorageOptions: {},
+        manager: { getConnection: () => undefined },
+        failureTracker: new Map(),
+        failureMessages: new Map(),
+      } as any, { getFlag: vi.fn() } as any, { hasUI: true, mode: "tui", cwd: "/tmp", ui } as any);
+
+      await vi.waitFor(() => expect(hidden).toHaveBeenCalledWith(true));
+      finishAuthentication();
+      await panel;
+
+      expect(hidden.mock.calls).toEqual([[true], [false]]);
+      expect(focus).toHaveBeenCalledOnce();
+    },
+  );
 
   it("interpolates the server URL before OAuth authentication", async () => {
     const originalUrl = process.env.MCP_AUTH_URL;
