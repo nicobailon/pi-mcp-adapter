@@ -659,6 +659,30 @@ describe("UiServer", () => {
       }, undefined);
     });
 
+    it("rejects invalid app tool arguments as a boundary error", async () => {
+      const mockClient = { callTool: vi.fn() };
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: mockClient,
+          tools: [{ name: "some_tool" }],
+        }),
+      });
+      handle = await startUiServer(createServerOptions({ manager }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: [] },
+        },
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ ok: false, error: 'tool "some_tool" arguments: expected a JSON object, got array' });
+      expect(mockClient.callTool).not.toHaveBeenCalled();
+    });
+
     it("executes app-only tools without recording their synthetic call intent", async () => {
       const callTool = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "app result" }] });
       const onMessage = vi.fn();

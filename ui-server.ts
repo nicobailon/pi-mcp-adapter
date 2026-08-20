@@ -436,9 +436,16 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           return;
         }
 
+        let normalizedArguments: Record<string, unknown>;
+        try {
+          normalizedArguments = normalizeToolArguments(callParams.arguments, `tool "${callParams.name}" arguments`);
+        } catch (error) {
+          sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+          return;
+        }
         const callArgs = {
           name: callParams.name,
-          arguments: normalizeToolArguments(callParams.arguments, `tool "${callParams.name}" arguments`),
+          arguments: normalizedArguments,
         };
         const toolMeta = {
           name: callParams.name,

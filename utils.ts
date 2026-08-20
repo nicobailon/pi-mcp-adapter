@@ -315,8 +315,7 @@ export function normalizeToolArguments(
     );
   }
 
-  // JSON round-trip: keep only JSON-serializable plain data so embedded quotes
-  // are escaped at transport by JSON.stringify, never string-interpolated.
+  assertJsonSerializable(value, context);
   try {
     return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
   } catch (error) {
@@ -325,6 +324,32 @@ export function normalizeToolArguments(
       { cause: error },
     );
   }
+}
+
+function assertJsonSerializable(value: unknown, context: string, path = ""): void {
+  if (value === null) return;
+  if (typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(`${context}: value at ${path || "root"} is not a finite number`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) assertJsonSerializable(item, context, `${path}[${index}]`);
+    return;
+  }
+  if (typeof value === "object") {
+    if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+      throw new Error(`${context}: value at ${path || "root"} is not a plain JSON object`);
+    }
+    if (Object.getOwnPropertySymbols(value).length > 0) {
+      throw new Error(`${context}: value at ${path || "root"} has symbol keys`);
+    }
+    for (const [key, item] of Object.entries(value)) {
+      assertJsonSerializable(item, context, path ? `${path}.${key}` : key);
+    }
+    return;
+  }
+  throw new Error(`${context}: value at ${path || "root"} is not JSON-serializable`);
 }
 
 export function formatAuthRequiredMessage(

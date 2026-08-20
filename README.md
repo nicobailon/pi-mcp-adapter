@@ -148,8 +148,12 @@ An extension can register MCP servers with the installed adapter at runtime, for
 import { registerMcpServer } from "pi-mcp-adapter";
 
 export default function pluginHost(pi) {
-  const registration = registerMcpServer(pi, "acme__docs", {
-    url: "https://mcp.example.com/mcp",
+  const registration = registerMcpServer({
+    pi,
+    name: "acme__docs",
+    definition: {
+      url: "https://mcp.example.com/mcp",
+    },
   });
   // Later, when the plugin is uninstalled:
   await registration.dispose();

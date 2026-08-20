@@ -8,6 +8,11 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
 }
 
+function writeText(path: string, value: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, value, "utf-8");
+}
+
 describe("config discovery", () => {
   const originalHome = process.env.HOME;
   const originalPackageDir = process.env.PI_PACKAGE_DIR;
@@ -75,6 +80,31 @@ describe("config discovery", () => {
     expect(config.mcpServers.acme_tools__tools_db).toEqual({ command: "first" });
     expect(warning).toHaveBeenCalledWith(expect.stringContaining("duplicate normalized MCP server acme_tools__tools_db"));
     warning.mockRestore();
+  });
+
+  it("fails loudly on malformed package settings JSON", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-package-settings-invalid-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-package-settings-invalid-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeText(join(home, ".pi", "agent", "settings.json"), "{ not json");
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(() => loadMcpConfig()).toThrow("user Pi settings");
+  });
+
+  it("fails loudly on malformed package MCP JSON", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-package-mcp-invalid-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-package-mcp-invalid-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    const packageRoot = join(home, ".pi", "agent", "npm", "node_modules", "acme-tools");
+    writeJson(join(home, ".pi", "agent", "settings.json"), { packages: ["npm:acme-tools"] });
+    writeJson(join(packageRoot, "package.json"), { name: "acme-tools", pi: { mcp: "./mcp.json" } });
+    writeText(join(packageRoot, "mcp.json"), "{ not json");
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(() => loadMcpConfig()).toThrow("Pi package acme-tools MCP config");
   });
 
   it("drops incompatible package transport fields when a normal override changes transport", async () => {

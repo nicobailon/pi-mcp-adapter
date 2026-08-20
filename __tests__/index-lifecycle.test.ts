@@ -952,6 +952,26 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.executeStatus).not.toHaveBeenCalled();
   });
 
+  it("rejects invalid nested gateway param types before dispatch", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    await expect(proxyTool.execute("call-1", { args: { search: 5 } })).rejects.toThrow(
+      "Invalid nested gateway param `search`: expected string, got number",
+    );
+    expect(mocks.executeSearch).not.toHaveBeenCalled();
+  });
+
   it("routes manual auth actions through the proxy tool", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);

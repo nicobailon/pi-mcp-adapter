@@ -887,6 +887,28 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
           return args as Record<string, unknown>;
         };
+        const validateNestedGatewayParams = (value: Record<string, unknown>): typeof params => {
+          for (const key of ["tool", "connect", "describe", "instructions", "search", "server", "action"] as const) {
+            if (value[key] !== undefined && typeof value[key] !== "string") {
+              throw new Error(`Invalid nested gateway param \`${key}\`: expected string, got ${Array.isArray(value[key]) ? "array" : typeof value[key]}`);
+            }
+          }
+          for (const key of ["regex", "includeSchemas"] as const) {
+            if (value[key] !== undefined && typeof value[key] !== "boolean") {
+              throw new Error(`Invalid nested gateway param \`${key}\`: expected boolean, got ${Array.isArray(value[key]) ? "array" : typeof value[key]}`);
+            }
+          }
+          for (const key of ["limit", "offset"] as const) {
+            if (value[key] !== undefined && typeof value[key] !== "number") {
+              throw new Error(`Invalid nested gateway param \`${key}\`: expected number, got ${Array.isArray(value[key]) ? "array" : typeof value[key]}`);
+            }
+          }
+          const args = value.args;
+          if (args !== undefined && typeof args !== "string" && (typeof args !== "object" || args === null || Array.isArray(args))) {
+            throw new Error(`Invalid nested gateway param \`args\`: expected JSON object or JSON string, got ${Array.isArray(args) ? "array" : args === null ? "null" : typeof args}`);
+          }
+          return value as typeof params;
+        };
         let parsedArgs = parseArgs(params.args);
         let dispatchParams = params;
         const hasGatewayMode = (value: typeof params): boolean =>
@@ -898,7 +920,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           || value.server !== undefined
           || value.action !== undefined;
         if (!hasGatewayMode(params) && parsedArgs) {
-          const nestedParams = parsedArgs as typeof params;
+          const nestedParams = validateNestedGatewayParams(parsedArgs);
           if (hasGatewayMode(nestedParams)) {
             dispatchParams = nestedParams;
             parsedArgs = parseArgs(nestedParams.args);
@@ -1051,7 +1073,8 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
  * become visible at the next tool sync. To change a definition, dispose the
  * registration and register again.
  */
-export function registerMcpServer(pi: ExtensionAPI, name: string, definition: ServerEntry): McpServerRegistration {
+export function registerMcpServer(options: { pi: ExtensionAPI; name: string; definition: ServerEntry }): McpServerRegistration {
+  const { pi, name, definition } = options;
   const register = runtimeRegistrars.get(pi);
   if (!register) {
     throw new Error("pi-mcp-adapter is not installed for this Pi instance");

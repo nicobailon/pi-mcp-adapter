@@ -1123,6 +1123,10 @@ describe("excludeTools filtering", () => {
     const { executeCall } = await import("../proxy-modes.ts");
     await expect(executeCall(state, "my-server_search-records", {})).resolves.toMatchObject({ details: { server: "my-server", tool: "search-records" } });
     expect(callTool).toHaveBeenCalledOnce();
+    await expect(executeCall(state, "my-server_search-records", { token: undefined })).rejects.toThrow(
+      "tool arguments: value at token is not JSON-serializable",
+    );
+    expect(callTool).toHaveBeenCalledOnce();
   });
 
   it("does not apply live legacy exclusions to another server's current tool name", () => {

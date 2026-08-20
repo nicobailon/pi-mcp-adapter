@@ -56,15 +56,21 @@ function getConfiguredPackageRoots(cwd: string): string[] {
     [join(cwd, getConfigDirName(), "settings.json"), "project"],
     [join(getAgentDir(), "settings.json"), "user"],
   ] as const) {
-    const settings = readJson(settingsPath) as { packages?: unknown } | null;
-    if (!Array.isArray(settings?.packages)) continue;
-    for (const entry of settings.packages) {
+    const settings = readOptionalJson(settingsPath, `${scope} Pi settings`);
+    if (settings === undefined) continue;
+    if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
+      throw new Error(`${scope} Pi settings ${settingsPath} must be a JSON object`);
+    }
+    const packages = (settings as { packages?: unknown }).packages;
+    if (packages === undefined) continue;
+    if (!Array.isArray(packages)) throw new Error(`${scope} Pi settings ${settingsPath} packages must be an array`);
+    for (const entry of packages) {
       const source = typeof entry === "string"
         ? entry
         : entry && typeof entry === "object" && !Array.isArray(entry) && typeof (entry as PackageSetting).source === "string"
           ? (entry as PackageSetting).source
           : undefined;
-      if (!source) continue;
+      if (!source) throw new Error(`${scope} Pi settings ${settingsPath} package entries must be strings or objects with a string source`);
       const root = resolvePackageRoot(source, scope, cwd);
       if (root && !roots.includes(root)) roots.push(root);
     }
@@ -93,7 +99,7 @@ function resolvePackageRoot(source: string, scope: "user" | "project", cwd: stri
 }
 
 function readPackageManifest(packageRoot: string): PackageManifest | null {
-  const manifest = readJson(join(packageRoot, "package.json"));
+  const manifest = readOptionalJson(join(packageRoot, "package.json"), `Pi package manifest ${packageRoot}`);
   return manifest && typeof manifest === "object" && !Array.isArray(manifest) ? manifest as PackageManifest : null;
 }
 
@@ -104,28 +110,35 @@ function getManifestMcpPaths(value: unknown, packageName: string): string[] | nu
 }
 
 function readMcpConfig(path: string, packageName: string): McpConfig | null {
-  const config = readJson(path);
+  const config = readRequiredJson(path, `Pi package ${packageName} MCP config`);
   if (!config || typeof config !== "object" || Array.isArray(config)) {
-    console.warn(`Pi package ${packageName} skips invalid MCP config ${path}`);
-    return null;
+    throw new Error(`Pi package ${packageName} MCP config ${path} must be a JSON object`);
   }
   const servers = (config as { mcpServers?: unknown }).mcpServers;
-  if (!servers || typeof servers !== "object" || Array.isArray(servers)) return { mcpServers: {} };
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
+    throw new Error(`Pi package ${packageName} MCP config ${path} must contain a JSON object mcpServers field`);
+  }
   const mcpServers: Record<string, ServerEntry> = {};
   for (const [name, server] of Object.entries(servers)) {
-    if (server && typeof server === "object" && !Array.isArray(server)) {
-      mcpServers[name] = server as ServerEntry;
+    if (!server || typeof server !== "object" || Array.isArray(server)) {
+      throw new Error(`Pi package ${packageName} MCP config ${path} server ${name} must be a JSON object`);
     }
+    mcpServers[name] = server as ServerEntry;
   }
   return { mcpServers };
 }
 
-function readJson(path: string): unknown | null {
+function readRequiredJson(path: string, description: string): unknown {
   try {
     return JSON.parse(stripJsonComments(readFileSync(path, "utf8"), { trailingCommas: true }));
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`${description} ${path} contains invalid JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
+}
+
+function readOptionalJson(path: string, description: string): unknown | undefined {
+  if (!existsSync(path)) return undefined;
+  return readRequiredJson(path, description);
 }
 
 function resolveContainedPath(root: string, path: string): string | null {

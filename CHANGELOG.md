@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added `/pi-mcp` as an alias for `/mcp` when a host reserves `/mcp`. Thanks to [@inxeoz](https://github.com/inxeoz) for #391.
-- Added `registerMcpServer(pi, name, definition)` so other extensions can register and dispose session-scoped MCP servers at runtime. Registrations are proxy-tool-only, never persisted, and duplicate names fail closed. Thanks to [@bendavis78](https://github.com/bendavis78) and [@fmoda3](https://github.com/fmoda3) for the runtime API request in #376/#382.
+- Added `registerMcpServer({ pi, name, definition })` so other extensions can register and dispose session-scoped MCP servers at runtime. Registrations are proxy-tool-only, never persisted, and duplicate names fail closed. Thanks to [@bendavis78](https://github.com/bendavis78) and [@fmoda3](https://github.com/fmoda3) for the runtime API request in #376/#382.
 - Added `pi.mcp` package manifest entries so Pi packages can ship prefixed MCP server definitions without user MCP config edits. Thanks to [@bendavis78](https://github.com/bendavis78) for #376 and [@fmoda3](https://github.com/fmoda3) for the manifest design.
 - Added opt-in OS credential-store lookup for static bearer tokens with URL-bound records, using `bearerTokenStore: true`, plus a stdin-only `pi-mcp-adapter token set|status|remove <server>` CLI that never accepts the token as an argument. Thanks to [@AlexanderBartash](https://github.com/AlexanderBartash) for issue #366.
 

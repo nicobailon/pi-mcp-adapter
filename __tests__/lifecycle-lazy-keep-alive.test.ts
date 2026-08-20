@@ -7,6 +7,7 @@ import { lazyConnect } from "../init.ts";
 import { McpLifecycleManager } from "../lifecycle.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { reconnectServers } from "../commands.ts";
+import type { ToolRefreshResult } from "../server-manager.ts";
 import type { ServerDefinition } from "../types.ts";
 
 interface FakeConnection {
@@ -23,6 +24,7 @@ class FakeManager {
   idleResponses = new Map<string, boolean>();
   connectError: Error | undefined;
   refreshToolsError: Error | undefined;
+  refreshToolsResult: ToolRefreshResult = "unchanged";
   reconnectError: Error | undefined;
   reconnectStatus: FakeConnection["status"] = "connected";
 
@@ -49,10 +51,10 @@ class FakeManager {
     return connection;
   }
 
-  async refreshTools(name: string): Promise<"unchanged"> {
+  async refreshTools(name: string): Promise<ToolRefreshResult> {
     this.refreshToolsCalls.push(name);
     if (this.refreshToolsError) throw this.refreshToolsError;
-    return "unchanged";
+    return this.refreshToolsResult;
   }
 
   async reconnect(name: string, _definition: ServerDefinition, staleConnection: FakeConnection): Promise<FakeConnection> {
@@ -221,7 +223,7 @@ describe("lazy-keep-alive lifecycle", () => {
     };
     vi.spyOn(fake, "refreshTools").mockImplementation(async () => {
       fake.connections.set("srv", freshConnection);
-      return "superseded" as never;
+      return "superseded";
     });
     const onReconnect = vi.fn();
     lifecycle.setReconnectCallback(onReconnect);
@@ -237,7 +239,7 @@ describe("lazy-keep-alive lifecycle", () => {
     const connection = fake.setConnection("srv", "connected", "stale-session")!;
     vi.spyOn(fake, "refreshTools").mockImplementation(async () => {
       connection.status = "closed";
-      return "superseded" as never;
+      return "superseded";
     });
 
     await lifecycle.ensureConverged();
@@ -277,7 +279,7 @@ describe("lazy-keep-alive lifecycle", () => {
     };
     vi.spyOn(fake, "refreshTools").mockImplementation(async () => {
       fake.connections.set("srv", freshConnection);
-      return "superseded" as never;
+      return "superseded";
     });
     const onReconnect = vi.fn()
       .mockRejectedValueOnce(new Error("metadata cache unavailable"))
@@ -322,10 +324,7 @@ describe("lazy-keep-alive lifecycle", () => {
     const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
     lifecycle.markKeepAlive("srv", def);
     fake.setConnection("srv", "connected", "session");
-    vi.spyOn(fake, "refreshTools").mockImplementation(async (name) => {
-      fake.refreshToolsCalls.push(name);
-      return "refresh-timeout" as never;
-    });
+    fake.refreshToolsResult = "refresh-timeout";
     const onFailure = vi.fn();
     lifecycle.setReconnectFailureCallback(onFailure);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});

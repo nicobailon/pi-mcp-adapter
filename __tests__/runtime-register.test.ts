@@ -181,7 +181,7 @@ describe("runtime MCP server registration", () => {
 
   it("throws when no adapter is installed for the Pi instance", async () => {
     const { registerMcpServer } = await import("../index.ts");
-    expect(() => registerMcpServer({} as any, "plugin", { url: "https://example.test/mcp" }))
+    expect(() => registerMcpServer({ pi: {} as any, name: "plugin", definition: { url: "https://example.test/mcp" } }))
       .toThrow("pi-mcp-adapter is not installed for this Pi instance");
   });
 
@@ -194,7 +194,7 @@ describe("runtime MCP server registration", () => {
     await handlers.get("session_start")?.({}, {});
     await settle();
 
-    const registration = registerMcpServer(api, "plugin-a", { url: "https://example.test/mcp" });
+    const registration = registerMcpServer({ pi: api, name: "plugin-a", definition: { url: "https://example.test/mcp" } });
     expect(state.config.mcpServers["plugin-a"]).toMatchObject({
       url: "https://example.test/mcp",
       directTools: false,
@@ -228,10 +228,10 @@ describe("runtime MCP server registration", () => {
     await handlers.get("session_start")?.({}, {});
     await settle();
 
-    expect(() => registerMcpServer(api, "configured", { url: "https://other.test/mcp" }))
+    expect(() => registerMcpServer({ pi: api, name: "configured", definition: { url: "https://other.test/mcp" } }))
       .toThrow('MCP server "configured" is already registered');
-    registerMcpServer(api, "plugin-a", { url: "https://a.test/mcp" });
-    expect(() => registerMcpServer(api, "plugin-a", { url: "https://b.test/mcp" }))
+    registerMcpServer({ pi: api, name: "plugin-a", definition: { url: "https://a.test/mcp" } });
+    expect(() => registerMcpServer({ pi: api, name: "plugin-a", definition: { url: "https://b.test/mcp" } }))
       .toThrow('MCP server "plugin-a" is already registered');
   });
 
@@ -242,7 +242,7 @@ describe("runtime MCP server registration", () => {
     const { api, handlers } = createPi();
     mcpAdapter(api);
 
-    registerMcpServer(api, "early-plugin", { url: "https://early.test/mcp" });
+    registerMcpServer({ pi: api, name: "early-plugin", definition: { url: "https://early.test/mcp" } });
     await handlers.get("session_start")?.({}, {});
     await settle();
 
@@ -263,8 +263,8 @@ describe("runtime MCP server registration", () => {
     await handlers.get("session_start")?.({}, {});
     await settle();
 
-    registerMcpServer(api, "plugin-a", { url: "https://plugin.test/mcp" });
-    registerMcpServer(api, "plugin-b", { url: "https://plugin-b.test/mcp" });
+    registerMcpServer({ pi: api, name: "plugin-a", definition: { url: "https://plugin.test/mcp" } });
+    registerMcpServer({ pi: api, name: "plugin-b", definition: { url: "https://plugin-b.test/mcp" } });
 
     await handlers.get("session_start")?.({}, {});
     await settle();
