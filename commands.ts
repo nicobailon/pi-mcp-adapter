@@ -294,7 +294,7 @@ export async function authenticateServer(
         if (inputSignal.aborted) return undefined;
         return ui.input(
           `Complete ${serverName} OAuth\n\n` +
-            `${terminalHyperlink("OPEN AUTHORIZATION PAGE ↗", authorizationUrl)}\n${authorizationUrl}\n\n` +
+            `${terminalHyperlink("Open authorization page", authorizationUrl)}\n${authorizationUrl}\n\n` +
             "Approve access, then paste the full localhost callback URL below.",
           undefined,
           { signal: inputSignal },

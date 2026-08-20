@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { OverlayHandle } from "@earendil-works/pi-tui";
+import type { openMcpAuthPanel, openMcpPanel } from "../commands.ts";
+import type { createMcpPanel } from "../mcp-panel.ts";
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
   createMcpPanel: vi.fn(),
   removeAuth: vi.fn(),
 }));
+
+type PanelState = Parameters<typeof openMcpPanel>[0];
+type PanelApi = Parameters<typeof openMcpPanel>[1];
+type PanelContext = Parameters<typeof openMcpPanel>[2];
+type CustomArgs = Parameters<ExtensionContext["ui"]["custom"]>;
 
 vi.mock("../mcp-auth-flow.ts", () => ({
   authenticate: mocks.authenticate,
@@ -62,32 +71,41 @@ describe("authenticateServer", () => {
       if (outcome === "failure") throw new Error("authentication failed");
       return "authenticated";
     });
-    mocks.createMcpPanel.mockImplementationOnce((_config, _cache, _provenance, callbacks, _tui, done) => ({
-      render: () => [],
-      invalidate: () => {},
-      handleInput: () => {
-        void callbacks.authenticate("sentry").then(() => done({ cancelled: true, changes: new Map() }));
-      },
-    }));
+    mocks.createMcpPanel.mockImplementationOnce((...args: Parameters<typeof createMcpPanel>) => {
+      const callbacks = args[3];
+      const done = args[5];
+      return {
+        render: () => [],
+        invalidate: () => {},
+        handleInput: () => {
+          void callbacks.authenticate("sentry").then(() => done({ cancelled: true, changes: new Map() }));
+        },
+      };
+    });
     const ui = {
       notify: vi.fn(),
       setStatus: vi.fn(),
-      custom: vi.fn((factory, options) => {
+      custom: vi.fn((factory: CustomArgs[0], options: NonNullable<CustomArgs[1]>) => {
         const panel = factory({ requestRender: vi.fn() }, undefined, undefined, vi.fn());
-        options.onHandle({ setHidden: hidden, focus });
+        options.onHandle?.({ setHidden: hidden, focus } as OverlayHandle);
         panel.handleInput("\r");
       }),
     };
     const commands = await import("../commands.ts");
-
-    const panel = commands[command]({
+    const state = {
       programmaticConfig: false,
       config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
       authStorageOptions: {},
       manager: { getConnection: () => undefined },
       failureTracker: new Map(),
       failureMessages: new Map(),
-    } as any, { getFlag: vi.fn() } as any, { hasUI: true, mode: "tui", cwd: "/tmp", ui } as any);
+    } as PanelState;
+    const pi = { getFlag: vi.fn() } as PanelApi;
+    const ctx = { hasUI: true, mode: "tui", cwd: "/tmp", ui } as PanelContext;
+
+    const panel = command === "openMcpPanel"
+      ? commands.openMcpPanel(state, pi, ctx)
+      : commands.openMcpAuthPanel(state, pi, ctx);
 
     await authenticationStarted;
     finishAuthentication();
@@ -227,7 +245,7 @@ describe("authenticateServer", () => {
     expect(ui.confirm).not.toHaveBeenCalled();
     expect(ui.input).toHaveBeenCalledWith(
       expect.stringContaining(
-        `\u001B]8;;${authorizationUrl}\u001B\\OPEN AUTHORIZATION PAGE ↗\u001B]8;;\u001B\\\n${authorizationUrl}`,
+        `\u001B]8;;${authorizationUrl}\u001B\\Open authorization page\u001B]8;;\u001B\\\n${authorizationUrl}`,
       ),
       undefined,
       { signal: inputController.signal },
