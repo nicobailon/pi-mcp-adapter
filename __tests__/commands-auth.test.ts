@@ -189,7 +189,7 @@ describe("authenticateServer", () => {
     );
   });
 
-  it("surfaces the OAuth URL as a terminal hyperlink in the notify, then opens the paste input directly (no redundant confirm)", async () => {
+  it("puts the OAuth link at the top of the paste prompt instead of the chat transcript", async () => {
     const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
     const callbackUrl = "http://localhost:3118/callback?code=code&state=state";
     const inputController = new AbortController();
@@ -223,17 +223,13 @@ describe("authenticateServer", () => {
         onAuthorizationInput: expect.any(Function),
       },
     );
-    expect(ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining(`\u001B]8;;${authorizationUrl}\u001B\\${authorizationUrl}\u001B]8;;\u001B\\`),
-      "info",
-    );
-    // The pre-existing Yes/No confirm was redundant: onAuthorizationUrl
-    // already surfaced the clickable link. Skipping it lets the user paste
-    // and press Enter in one step.
+    expect(ui.notify).not.toHaveBeenCalledWith(expect.stringContaining(authorizationUrl), "info");
     expect(ui.confirm).not.toHaveBeenCalled();
     expect(ui.input).toHaveBeenCalledWith(
-      "Complete sentry OAuth",
-      "Paste the full callback URL from your browser",
+      expect.stringContaining(
+        `\u001B]8;;${authorizationUrl}\u001B\\OPEN AUTHORIZATION PAGE ↗\u001B]8;;\u001B\\\n${authorizationUrl}`,
+      ),
+      undefined,
       { signal: inputController.signal },
     );
   });

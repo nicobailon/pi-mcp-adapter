@@ -289,23 +289,16 @@ export async function authenticateServer(
     const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
     const status = await authenticate(serverName, serverUrl, definition, {
       ...(authStorageOptions.baseDir ? { authStorageOptions } : {}),
-      onAuthorizationUrl: (authorizationUrl) => {
-        ui.notify(
-          `Open this URL to authenticate ${serverName}:\n\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
-          "After approving, Pi will complete automatically if the browser can reach its localhost callback. " +
-          "On a remote machine, copy the full localhost URL from the browser address bar and paste it into Pi.",
-          "info"
-        );
-      },
-      onAuthorizationInput: async (_authorizationUrl, inputSignal) => {
-        // The authorization URL was already announced via the notify above
-        // (a clickable terminal hyperlink users can open before pasting).
-        // Skip a redundant Yes/No confirm and open the paste input directly,
-        // so hitting Enter after pasting the callback URL just works.
+      // Keep the authorization URL with the paste prompt instead of adding it
+      // to the chat transcript.
+      onAuthorizationUrl: () => {},
+      onAuthorizationInput: async (authorizationUrl, inputSignal) => {
         if (inputSignal.aborted) return undefined;
         return ui.input(
-          `Complete ${serverName} OAuth`,
-          "Paste the full callback URL from your browser",
+          `Complete ${serverName} OAuth\n\n` +
+            `${terminalHyperlink("OPEN AUTHORIZATION PAGE ↗", authorizationUrl)}\n${authorizationUrl}\n\n` +
+            "Approve access, then paste the full localhost callback URL below.",
+          undefined,
           { signal: inputSignal },
         );
       },
