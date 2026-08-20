@@ -66,12 +66,7 @@ function collectPosixProcessPids(rootPid: number, cleanupToken?: string): number
 }
 
 function assertPosixProcessDiscoveryAvailable(): void {
-  // Use the lightweight column form (`ps -axo pid=,ppid=`) instead of the
-  // environment dump (`axeww`) so this per-request preflight stays small
-  // (~KiB, not MiB) and cannot overflow the spawnSync buffer on busy hosts.
-  // The full environment scan used for descendant cleanup is exercised lazily
-  // by the descendant tracker and the cleanup path.
-  const result = runPosixPs(["-axo", "pid=,ppid="]);
+  const result = runPosixPs(["axeww", "-o", "pid=,ppid=,command="]);
   if (result.status !== 0) {
     throw new Error(`HTTP request headers command cleanup failed: ${psFailureReason(result)}`);
   }

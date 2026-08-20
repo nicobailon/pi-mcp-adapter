@@ -395,30 +395,26 @@ setTimeout(() => {
     }
   });
 
-  it.skipIf(process.platform === "win32")("preflight uses a lightweight ps snapshot without the environment dump", async () => {
-    // The per-request preflight must not invoke the environment-dumping
-    // `axeww` form; it should use the small `ps -axo pid=,ppid=` snapshot so
-    // it stays small and cannot overflow the spawnSync buffer on busy hosts.
+  it.skipIf(process.platform === "win32")("fails closed before spawning when the full cleanup scan fails after a lightweight scan would pass", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-ps-"));
     const ps = join(dir, "ps");
-    const argsLog = join(dir, "args");
-    // Record the args of every ps invocation, one per line, then exit 0.
-    writeFileSync(ps, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(argsLog)}\nexit 0\n`);
+    const marker = join(dir, "marker");
+    writeFileSync(ps, `#!/bin/sh\ncase "$*" in\n  *axeww*) exit 1 ;;\n  *) exit 0 ;;\nesac\n`);
     chmodSync(ps, 0o755);
+    const script = commandScript(`
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, "spawned");
+process.stdout.write(JSON.stringify({ "x-derived": "ok" }));
+`);
     const priorPath = process.env.PATH;
     process.env.PATH = dir;
     try {
-      const fetch = createRequestHeadersCommandFetch(
-        { command: "/usr/bin/printf", args: ["{}"] },
-        async () => new Response("ok"),
+      const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script] });
+
+      await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+        "HTTP request headers command cleanup failed: ps exited with code 1",
       );
-      await expect(fetch("https://mcp.example.test/mcp")).resolves.toBeInstanceOf(Response);
-      const calls = readFileSync(argsLog, "utf8").trim().split("\n");
-      expect(calls.length).toBeGreaterThan(0);
-      // The preflight is the first ps call (synchronous, before spawn). It
-      // must not use the environment-dumping `axeww` form.
-      expect(calls[0]).not.toContain("axeww");
-      expect(calls[0]).toContain("pid=,ppid=");
+      expect(existsSync(marker)).toBe(false);
     } finally {
       process.env.PATH = priorPath;
     }
