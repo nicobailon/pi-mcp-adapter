@@ -1091,7 +1091,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       || missingConfiguredDirectToolServers.length > 0;
 
     if (shouldRegisterProxyTool) {
-      const description = buildProxyDescription(config, cache, directSpecs);
+      const description = buildProxyDescription(config);
       if (!proxyToolRegistered || proxyToolDescription !== description) {
         registerProxyTool(description);
         return;

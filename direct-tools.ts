@@ -15,7 +15,7 @@ import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
-import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl, truncateAtWord } from "./utils.ts";
+import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl } from "./utils.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
@@ -24,7 +24,6 @@ type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
-const INSTRUCTIONS_SNIPPET_LENGTH = 150;
 export const DIRECT_TOOLS_ADVISORY_THRESHOLD = 75;
 
 type DirectAutoAuthResult =
@@ -231,75 +230,20 @@ export function resolveDirectTools(
   return specs;
 }
 
-export function buildProxyDescription(
-  config: McpConfig,
-  cache: MetadataCache | null,
-  directSpecs: DirectToolSpec[],
-): string {
-  const prefix = config.settings?.toolPrefix ?? "server";
+/**
+ * Pure function of config: the description must stay byte-stable across
+ * runtime metadata changes (tool counts, instructions, connection state) so
+ * re-registering the proxy tool never rewrites the cached prompt prefix.
+ * Live counts/status belong to `mcp({ })`, full instructions to
+ * `mcp({ instructions })`.
+ */
+export function buildProxyDescription(config: McpConfig): string {
   let desc = `MCP gateway — server status, tool search/describe, auth, and single MCP tool calls. When one request needs several MCP calls with logic between them, use mcpScript. Non-MCP Pi tools should be called directly, not through mcp.\n`;
 
-  const directByServer = new Map<string, number>();
-  for (const spec of directSpecs) {
-    directByServer.set(spec.serverName, (directByServer.get(spec.serverName) ?? 0) + 1);
-  }
-  if (directByServer.size > 0) {
-    const parts = [...directByServer.entries()].map(
-      ([server, count]) => `${server} (${count})`,
-    );
-    desc += `\nDirect tools available (call as normal tools): ${parts.join(", ")}\n`;
-  }
-
-  const serverSummaries: string[] = [];
-  for (const serverName of Object.keys(config.mcpServers)) {
-    const definition = config.mcpServers[serverName];
-    if (!definition || isServerDisabled(definition)) continue;
-    const cachedEntry = cache?.servers?.[serverName];
-    const entry = cachedEntry && isServerCacheValid(cachedEntry, definition) ? cachedEntry : undefined;
-    const effectivePrefix = resolveToolPrefix(definition, prefix);
-    const hasToolFilters =
-      (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
-      (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
-    const selectorCandidateIndex = hasToolFilters && cache ? (() => {
-      const candidates = new Set<string>();
-      for (const [otherServerName, otherDefinition] of Object.entries(config.mcpServers)) {
-        const otherEntry = cache.servers[otherServerName];
-        if (!otherEntry || !isServerCacheValid(otherEntry, otherDefinition) || isServerDisabled(otherDefinition)) continue;
-        const otherPrefix = resolveToolPrefix(otherDefinition, prefix);
-        for (const otherTool of otherEntry.tools ?? []) {
-          if (!isUiToolVisibleToModel(otherTool.uiVisibility)) continue;
-          for (const candidate of getToolNameCandidates(otherTool.name, otherServerName, otherPrefix, false)) candidates.add(candidate);
-        }
-        if (otherDefinition.exposeResources !== false) {
-          for (const resource of otherEntry.resources ?? []) {
-            const baseName = `read_${resourceNameToToolName(resource.name)}`;
-            for (const candidate of getToolNameCandidates(baseName, otherServerName, otherPrefix, false)) candidates.add(candidate);
-          }
-        }
-      }
-      return createToolSelectorCandidateIndex(candidates);
-    })() : undefined;
-    const toolCount = (entry?.tools ?? []).filter(
-      (tool) => isUiToolVisibleToModel(tool.uiVisibility)
-        && isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex),
-    ).length;
-    const resourceCount = definition?.exposeResources !== false
-      ? (entry?.resources ?? []).filter((resource) => {
-          const baseName = `read_${resourceNameToToolName(resource.name)}`;
-          return isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex);
-        }).length
-      : 0;
-    const totalItems = toolCount + resourceCount;
-    if (totalItems === 0) continue;
-    const directCount = directByServer.get(serverName) ?? 0;
-    const proxyCount = totalItems - directCount;
-    if (proxyCount > 0) {
-      serverSummaries.push(`${serverName} (${proxyCount} tools)`);
-    }
-  }
-
-  if (serverSummaries.length > 0) {
-    desc += `\nServers: ${serverSummaries.join(", ")}\n`;
+  const serverNames = Object.keys(config.mcpServers)
+    .filter((serverName) => !isServerDisabled(config.mcpServers[serverName]));
+  if (serverNames.length > 0) {
+    desc += `\nServers: ${serverNames.join(", ")}\n`;
   }
 
   const disabledServers = Object.entries(config.mcpServers)
@@ -309,22 +253,8 @@ export function buildProxyDescription(
     desc += `\nDisabled servers (enable with /mcp enable <server> and /reload): ${disabledServers.join(", ")}\n`;
   }
 
-  const instructionSummaries: string[] = [];
-  for (const serverName of Object.keys(config.mcpServers)) {
-    if (isServerDisabled(config.mcpServers[serverName])) continue;
-    const definition = config.mcpServers[serverName];
-    const entry = definition && cache?.servers?.[serverName];
-    const instructions = entry && definition && isServerCacheValid(entry, definition) ? entry.instructions : undefined;
-    if (!instructions) continue;
-    const snippet = truncateAtWord(instructions.replace(/\s+/g, " ").trim(), INSTRUCTIONS_SNIPPET_LENGTH);
-    instructionSummaries.push(`  ${serverName}: ${snippet}`);
-  }
-  if (instructionSummaries.length > 0) {
-    desc += `\nServer instructions (truncated - full text via mcp({ instructions: "name" })):\n${instructionSummaries.join("\n")}\n`;
-  }
-
   desc += `\nUsage:\n`;
-  desc += `  mcp({ })                              → Show server status\n`;
+  desc += `  mcp({ })                              → Show server status and tool counts\n`;
   desc += `  mcp({ server: "name" })               → List tools from server\n`;
   desc += `  mcp({ search: "query" })              → Search MCP tools by name/description\n`;
   desc += `  mcp({ describe: "tool_name" })        → Show tool details and parameters\n`;
