@@ -41,9 +41,13 @@ vi.mock("../metadata-cache.ts", () => ({
   serializePrompts: vi.fn(() => []),
 }));
 
-vi.mock("../server-manager.ts", () => ({
-  McpServerManager: vi.fn(() => mocks.manager),
-}));
+vi.mock("../server-manager.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../server-manager.ts")>();
+  return {
+    ...actual,
+    McpServerManager: vi.fn(() => mocks.manager),
+  };
+});
 
 vi.mock("../tool-metadata.ts", () => ({
   buildToolMetadata: mocks.buildToolMetadata,
