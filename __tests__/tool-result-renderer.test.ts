@@ -2,8 +2,10 @@ import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/p
 import { describe, expect, it } from "vitest";
 import {
   createMcpDirectToolCallRenderer,
+  createMcpScriptToolCallRenderer,
   resolveMcpToolRenderOptions,
   formatMcpDirectToolCallLines,
+  formatMcpScriptToolCallLines,
   formatMcpProxyToolCallLines,
   formatMcpToolResultIdentity,
   formatMcpToolResultLines,
@@ -74,6 +76,16 @@ describe("MCP tool call renderer", () => {
 
   it("omits empty direct tool arguments", () => {
     expect(formatMcpDirectToolCallLines("cf-portal_status", {})).toEqual(["cf-portal_status"]);
+  });
+
+  it("shows bounded mcpScript code", () => {
+    const display = formatMcpScriptToolCallLines({
+      code: `await tools.search({ query: "${"x".repeat(1_600)}" });`,
+    });
+
+    expect(display[0]).toBe("mcpScript");
+    expect(display[1]).toHaveLength(1_500);
+    expect(display[1]?.endsWith("…")).toBe(true);
   });
 });
 
@@ -179,6 +191,26 @@ describe("MCP tool result renderer", () => {
     expect(output).toContain("query");
     expect(output).toContain("alpha");
     expect(output).toContain("found 10 results");
+  });
+
+  it("does not copy mcpScript code into compact final rows", () => {
+    const state: { compactTitle?: string; compactInputPreview?: string } = {};
+    const code = 'emit("secret-script-code");';
+    const call = createMcpScriptToolCallRenderer()(
+      { code },
+      plainTheme,
+      { isError: false, isPartial: false, expanded: false, state },
+    );
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "done" }]),
+      collapsedOptions,
+      plainTheme,
+      { isError: false, state },
+    ).render(120).join("\n");
+
+    expect(call.render(120)).toEqual([]);
+    expect(state.compactInputPreview).toBeUndefined();
+    expect(output).not.toContain(code);
   });
 
   it("skips leading blank lines in collapsed previews", () => {
@@ -358,5 +390,15 @@ describe("MCP tool call renderers without a theme", () => {
   it("renders direct calls without a theme", () => {
     const output = createMcpDirectToolCallRenderer("test_tool")({ key: "value" }).render(80).join("\n");
     expect(output).toContain("test_tool");
+  });
+
+  it("renders mcpScript calls without a theme", () => {
+    const output = createMcpScriptToolCallRenderer()(
+      { code: 'emit("visible");' },
+      undefined,
+      { isError: false, expanded: true },
+    ).render(80).join("\n");
+    expect(output).toContain("mcpScript");
+    expect(output).toContain('emit("visible");');
   });
 });

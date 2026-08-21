@@ -250,6 +250,13 @@ export function formatMcpDirectToolCallLines(
   return [displayName, formatJsonish(args, maxInputChars)];
 }
 
+export function formatMcpScriptToolCallLines(
+  args: { code: string },
+  maxInputChars = DEFAULT_MAX_CALL_INPUT_CHARS,
+): string[] {
+  return ["mcpScript", truncateText(args.code, maxInputChars)];
+}
+
 function renderToolCallLines(lines: string[], theme?: RenderTheme) {
   const activeTheme = theme ?? plainTheme;
   const [title = "mcp", ...rest] = lines;
@@ -311,6 +318,13 @@ export function createMcpProxyToolCallRenderer(options: McpToolRenderOptions) {
 export function createMcpDirectToolCallRenderer(displayName: string, options = resolveMcpToolRenderOptions()) {
   return (args: Record<string, unknown>, theme?: RenderTheme, context?: McpToolRenderContext) => {
     return renderToolCall(formatMcpDirectToolCallLines(displayName, args), theme, context, options);
+  };
+}
+
+export function createMcpScriptToolCallRenderer(options = resolveMcpToolRenderOptions()) {
+  return (args: { code: string }, theme?: RenderTheme, context?: McpToolRenderContext) => {
+    if (shouldUseCompactFinalRender(options, context)) return new EmptyComponent();
+    return renderToolCallLines(formatMcpScriptToolCallLines(args), theme);
   };
 }
 
