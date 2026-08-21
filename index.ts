@@ -25,6 +25,13 @@ import { syncNamespaceProxyTools } from "./namespace-tools.ts";
 export type { McpAdapterOptions } from "./types.ts";
 export type { ServerEntry } from "./types.ts";
 export {
+  namespaceProxyName,
+  parseMcpReference,
+  resolveMcpToolReferences,
+  type McpReferenceResolution,
+  type ParsedMcpReference,
+} from "./mcp-references.ts";
+export {
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
   MCP_TOOL_APPROVAL_REQUEST_EVENT,

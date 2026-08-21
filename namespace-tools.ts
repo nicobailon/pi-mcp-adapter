@@ -5,6 +5,8 @@ import { isServerDisabled, type McpConfig } from "./types.ts";
 import { isServerCacheValid, type MetadataCache } from "./metadata-cache.ts";
 import { executeCall } from "./proxy-modes.ts";
 import { createMcpProxyToolCallRenderer, createMcpToolResultRenderer, resolveMcpToolRenderOptions, type McpToolRenderOptions, type RenderTheme, type McpToolRenderContext } from "./tool-result-renderer.ts";
+export { namespaceProxyName } from "./mcp-references.ts";
+import { namespaceProxyName } from "./mcp-references.ts";
 
 /**
  * Namespace-proxy tool registration for proxy-only MCP servers.
@@ -29,18 +31,6 @@ export interface NamespaceProxySpec {
 }
 
 type DirectToolSelectorOverride = { servers: Set<string>; tools: Map<string, Set<string>> };
-
-/**
- * Mirror of the harness `_shared/mcp-tools` resolver's
- * `namespaceProxyName`. Kept deliberately identical to the harness so
- * tool-groups/slow-mode validation lines up without a config migration.
- * Differs from `formatToolName(..., "mcp")` which uses
- * `sanitizeServerPrefix` and produces names like `mcp__context_2d_mode`.
- * Keep this convention aligned with the host resolver.
- */
-export function namespaceProxyName(serverName: string): string {
-  return `mcp__${serverName.replace(/-/g, "_")}`;
-}
 
 function isDirectlyRegistered(
   definition: { directTools?: boolean | string[] } | undefined,
