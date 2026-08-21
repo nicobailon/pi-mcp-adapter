@@ -357,7 +357,10 @@ export class McpLifecycleManager {
   ): void {
     if (!this.recordRetry(name, definition, connection)) return;
     this.onReconnectFailure?.(name, error);
-    if (error instanceof SdkHttpError && error.status === 503) return;
+    if (
+      (error instanceof SdkHttpError && error.status === 503)
+      || (error instanceof Error && error.cause instanceof SdkHttpError && error.cause.status === 503)
+    ) return;
     const retry = this.retryStates.get(name);
     if (retry?.warningReported) return;
     if (retry) retry.warningReported = true;

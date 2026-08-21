@@ -401,6 +401,33 @@ describe("lazy-keep-alive lifecycle", () => {
     expect(consoleError).toHaveBeenCalledWith("MCP: Failed to refresh srv: permanent failure");
   });
 
+  it("silences transient HTTP 503 reconnect failures wrapped by the server manager", async () => {
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "stale-session");
+    fake.refreshToolsError = new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      "Session not found",
+      { status: 404 },
+    );
+    const unavailable = new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      "temporarily unavailable",
+      { status: 503 },
+    );
+    fake.reconnectError = new Error("endpoint is temporarily unavailable (HTTP 503)", {
+      cause: unavailable,
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onFailure = vi.fn();
+    lifecycle.setReconnectFailureCallback(onFailure);
+
+    await lifecycle.ensureConverged();
+
+    expect(onFailure).toHaveBeenCalledWith("srv", fake.reconnectError);
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
   it("reconnects immediately when a backed-off connection closes in place", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));

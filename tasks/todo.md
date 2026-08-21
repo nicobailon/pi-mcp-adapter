@@ -33,6 +33,8 @@ Verification:
   pre-existing request-header helper timing failures remain outside this task.
 - Live: `pi list` resolves this checkout; headless Pi exited 0 with `OK` and
   refreshed the MCP cache through successful Context7, Firecrawl, and Tavily handshakes.
+- PR review follow-up: wrapped HTTP 503 reconnect errors now stay silent. The
+  regression failed before the fix, then passed; focused suite 43/43 and typecheck passed.
 
 ## Plan
 
