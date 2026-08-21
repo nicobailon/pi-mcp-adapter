@@ -1069,6 +1069,23 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   const initialDirectTools = syncDirectTools(earlyConfig, earlyCache).specs;
   syncProxyTool(earlyConfig, earlyCache, initialDirectTools);
+  // Register namespace-proxy tools eagerly so tool-groups/slow-mode can validate
+  // `mcp:<server>` references on the first session_start turn. Without this
+  // eager call, the tool-groups expansion runs before MCP initialization
+  // completes and emits false `[unknown-tool] mcp__<server>` diagnostics.
+  // Mirrors the upstream direct-tool install-time registration pattern.
+  syncNamespaceProxyTools({
+    config: earlyConfig,
+    cache: earlyCache,
+    envOverride: envDirectToolOverride
+      ? parseDirectToolSelectors(envDirectToolOverride)
+      : null,
+    existingDirectNames: new Set(registeredDirectTools.keys()),
+    pi,
+    getState: () => state,
+    getInitPromise: () => initPromise,
+    getPiTools: () => pi.getAllTools(),
+  });
   startLoadTimeInitialization();
 }
 
