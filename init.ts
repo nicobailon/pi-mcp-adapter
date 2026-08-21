@@ -20,7 +20,7 @@ import {
   serializeTools,
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
-import { McpServerManager } from "./server-manager.ts";
+import { McpServerManager, isTransientHttpConnectError } from "./server-manager.ts";
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
@@ -293,16 +293,17 @@ export async function initializeMcp(
     try {
       const connection = await manager.connect(name, definition, runtimeSignal);
       if (connection.status === "needs-auth") {
-        return { name, definition, connection: null, error: `OAuth authentication required. Run /mcp-auth ${name}.` };
+        return { name, definition, connection: null, error: `OAuth authentication required. Run /mcp-auth ${name}.`, transient: false };
       }
-      return { name, definition, connection, error: null };
+      return { name, definition, connection, error: null, transient: false };
     } catch (error) {
       if (isAbortError(error, runtimeSignal)) {
         if (owner.signal.aborted) throw error;
-        return { name, definition, connection: null, error: null };
+        return { name, definition, connection: null, error: null, transient: false };
       }
+      const transient = isTransientHttpConnectError(error);
       const message = error instanceof Error ? error.message : String(error);
-      return { name, definition, connection: null, error: message };
+      return { name, definition, connection: null, error: message, transient };
     }
   });
 
@@ -332,11 +333,18 @@ export async function initializeMcp(
     startupKnownMetadata.set(name, metadata);
   }
 
-  for (const { name, definition, connection, error } of results) {
+  for (const { name, definition, connection, error, transient } of results) {
     owner.throwIfInactive();
     if (error || !connection) {
       if (initialSignal?.aborted) continue;
       if (error) recordFailure(state, name, error);
+      if (transient) {
+        const notice = `MCP: ${name} temporarily unavailable (HTTP 503); retry later`;
+        logger.debug(`MCP: startup connect hit transient upstream outage for ${name}; will retry`);
+        if (ui) ui.notify(notice, "warning");
+        else console.error(notice);
+        continue;
+      }
       const displayError = sanitizeTerminalText(error ?? "Unknown connection failure");
       if (ui) {
         ui.notify(`MCP: Failed to connect to ${name}: ${displayError}`, "error");

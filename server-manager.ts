@@ -150,8 +150,13 @@ export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refres
 
 const KEEP_ALIVE_REFRESH_TIMEOUT_MS = 5_000;
 
-function isTransientHttpConnectError(error: unknown): error is SdkHttpError {
-  return error instanceof SdkHttpError && error.status === 503;
+export function isTransientHttpConnectError(error: unknown): boolean {
+  let current: unknown = error;
+  while (current instanceof Error) {
+    if (current instanceof SdkHttpError && current.status === 503) return true;
+    current = current.cause;
+  }
+  return false;
 }
 
 export class McpServerManager {

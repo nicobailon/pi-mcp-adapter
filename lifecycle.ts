@@ -1,6 +1,6 @@
-import { SdkError, SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
+import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { isServerDisabled, type ServerDefinition } from "./types.ts";
-import type { McpServerManager, ServerConnection } from "./server-manager.ts";
+import { isTransientHttpConnectError, type McpServerManager, type ServerConnection } from "./server-manager.ts";
 import { hasPendingAuth } from "./mcp-auth-flow.ts";
 import { logger } from "./logger.ts";
 import { formatTerminalError, parallelLimit, sanitizeTerminalText } from "./utils.ts";
@@ -348,11 +348,6 @@ export class McpLifecycleManager {
     return Date.now() >= retry.nextAttemptAt;
   }
 
-  private isTransientAvailabilityError(error: unknown): boolean {
-    return (error instanceof SdkHttpError && error.status === 503)
-      || (error instanceof Error && error.cause instanceof SdkHttpError && error.cause.status === 503);
-  }
-
   private connectionFailureTarget(action: "refresh" | "reconnect" | "publish", name: string): string {
     if (action === "reconnect") return `reconnect to ${name}`;
     if (action === "publish") return `publish metadata for ${name}`;
@@ -368,7 +363,7 @@ export class McpLifecycleManager {
   ): void {
     if (!this.recordRetry(name, definition, connection)) return;
     this.onReconnectFailure?.(name, error);
-    if (this.isTransientAvailabilityError(error)) return;
+    if (isTransientHttpConnectError(error)) return;
     const retry = this.retryStates.get(name);
     if (retry?.warningReported) return;
     if (retry) retry.warningReported = true;

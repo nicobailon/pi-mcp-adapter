@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Namespace proxy tools now use valid cached metadata, clean up only prior namespace registrations, follow `MCP_DIRECT_TOOLS` selection, and skip ambiguous normalized server names. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for PR #414.
 - Kept transient HTTP 503 connection failures as availability errors without multiplying gateway retries or misdiagnosing the endpoint as non-MCP. Thanks to [@elkaix](https://github.com/elkaix) for PR #411.
 - Preserved cached keep-alive catalogs during transient 503 refresh outages while deferred recovery continues with bounded backoff.
+- Startup connections that fail with a transient HTTP 503 now surface one quiet "temporarily unavailable; retry later" warning instead of the full hard failure; documented lifecycle behavior is unchanged, and keep-alive health checks continue their existing self-healing path. Thanks to [@elkaix](https://github.com/elkaix) for PR #424.
 
 ## [2.27.0] - 2026-08-20
 
