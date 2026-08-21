@@ -3,12 +3,10 @@ import type { ConsentManager } from "./consent-manager.ts";
 import type { McpLifecycleManager } from "./lifecycle.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { AuthStorageOptions } from "./mcp-auth.ts";
-import type { ToolMetadata, PromptMetadata, McpConfig, UiSessionMessages, UiStreamSummary } from "./types.ts";
+import type { ToolMetadata, PromptMetadata, McpConfig, UiSessionMessages, UiStreamSummary, McpStatusEventBus, UiServerHandle } from "./types.ts";
 import type { UiResourceHandler } from "./ui-resource-handler.ts";
-import type { UiServerHandle } from "./ui-server.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
-import type { McpStatusEventBus } from "./mcp-status.ts";
 
 export interface CompletedUiSession {
   serverName: string;

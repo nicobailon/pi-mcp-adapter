@@ -15,7 +15,8 @@ import {
   type UiStreamMode,
 } from "./types.ts";
 import { logger } from "./logger.ts";
-import { startUiServer, type UiServerHandle } from "./ui-server.ts";
+import { startUiServer } from "./ui-server.ts";
+import type { UiServerHandle } from "./types.ts";
 import { isGlimpseAvailable, openGlimpseWindow } from "./glimpse-ui.ts";
 import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
