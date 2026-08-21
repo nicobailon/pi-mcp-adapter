@@ -4,6 +4,9 @@ import type { McpExtensionState } from "./state.ts";
 import type { McpConfig } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { executeCall } from "./proxy-modes.ts";
+import { namespaceProxyName } from "./mcp-references.ts";
+
+export { namespaceProxyName } from "./mcp-references.ts";
 
 /**
  * Namespace-proxy tool registration for proxy-only MCP servers.
@@ -26,18 +29,6 @@ export interface NamespaceProxySpec {
   toolName: string;
   description: string;
   prefix: string;
-}
-
-/**
- * Mirror of the harness `_shared/mcp-tools` resolver's
- * `namespaceProxyName`. Kept deliberately identical to the harness so
- * tool-groups/slow-mode validation lines up without a config migration.
- * Differs from upstream `formatToolName(..., "mcp")` which uses
- * `sanitizeServerPrefix` and produces names like `mcp__context_2d_mode`.
- * When upstream adds its own namespace-proxy, we align conventions.
- */
-export function namespaceProxyName(serverName: string): string {
-  return `mcp__${serverName.replace(/-/g, "_")}`;
 }
 
 function isServerDisabled(definition: { disabled?: boolean } | undefined): boolean {

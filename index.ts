@@ -37,6 +37,23 @@ export {
   type McpToolApprovalRequest,
 } from "./types.ts";
 
+// Native `mcp:` reference resolution API (see mcp-references.ts). Consumers
+// like tool-groups / slow-mode import these from the package instead of
+// duplicating the resolver in their own tree.
+export {
+  parseMcpReference,
+  isProxyOnlyServer,
+  namespaceProxyName,
+  resolveMcpToolReferences,
+  createMcpRefResolver,
+  type McpToolReference,
+  type McpToolResolution,
+  type McpRefResolver,
+  type McpDirectOverride,
+} from "./mcp-references.ts";
+export { loadMcpConfig } from "./config.ts";
+export { loadMetadataCache, parseDirectToolSelectors } from "./metadata-cache.ts";
+
 const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
 
