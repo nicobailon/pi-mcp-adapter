@@ -75,6 +75,18 @@ function optionalNumber(options: { minimum?: number; description: string }): TSc
     : ({ type: "number", ...options } as unknown as TSchema);
 }
 
+function parseEnvDirectToolOverride(raw: string | undefined): string[] | undefined {
+  return raw?.split(",").map(s => s.trim()).filter(Boolean);
+}
+
+function resolveNamespaceEnvOverride(
+  raw: string | undefined,
+  selectors: string[] | undefined,
+): ReturnType<typeof parseDirectToolSelectors> | null {
+  if (raw === "__none__") return { servers: new Set<string>(), tools: new Map<string, Set<string>>() };
+  return selectors ? parseDirectToolSelectors(selectors) : null;
+}
+
 function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const sessionConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
   const programmaticConfig = sessionConfig !== undefined;
@@ -131,12 +143,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     : loadMcpConfig(earlyConfigPath);
   const earlyCache = loadMetadataCache();
   const envRaw = process.env.MCP_DIRECT_TOOLS;
-  const envDirectToolOverride = envRaw?.split(",").map(s => s.trim()).filter(Boolean);
-  const namespaceEnvOverride = envRaw === "__none__"
-    ? { servers: new Set<string>(), tools: new Map<string, Set<string>>() }
-    : envDirectToolOverride
-      ? parseDirectToolSelectors(envDirectToolOverride)
-      : null;
+  const envDirectToolOverride = parseEnvDirectToolOverride(envRaw);
+  const namespaceEnvOverride = resolveNamespaceEnvOverride(envRaw, envDirectToolOverride);
   const registeredDirectTools = new Map<string, string>();
   const registeredNamespaceProxyTools = new Set<string>();
   const fallbackDeactivatedTools = new Set<string>();
@@ -293,6 +301,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       getState: () => state,
       getInitPromise: () => initPromise,
       getPiTools: () => pi.getAllTools(),
+      renderOptions: toolRenderOptions,
+      renderShell: toolRenderShell,
+      renderResult: renderMcpToolResult,
     });
     for (const name of nsResult.added) registeredNamespaceProxyTools.add(name);
     for (const name of nsResult.deactivated) registeredNamespaceProxyTools.delete(name);
@@ -1047,7 +1058,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // `mcp:<server>` references on the first session_start turn. Without this
   // eager call, the tool-groups expansion runs before MCP initialization
   // completes and emits false `[unknown-tool] mcp__<server>` diagnostics.
-  // Mirrors the upstream direct-tool install-time registration pattern.
   const initialNamespaceResult = syncNamespaceProxyTools({
     config: earlyConfig,
     cache: earlyCache,
@@ -1058,6 +1068,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     getState: () => state,
     getInitPromise: () => initPromise,
     getPiTools: () => pi.getAllTools(),
+    renderOptions: toolRenderOptions,
+    renderShell: toolRenderShell,
+    renderResult: renderMcpToolResult,
   });
   for (const name of initialNamespaceResult.added) registeredNamespaceProxyTools.add(name);
   startLoadTimeInitialization();

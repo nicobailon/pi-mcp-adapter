@@ -1,24 +1,23 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { computeServerHash } from "../metadata-cache.ts";
+import type { ServerEntry } from "../types.ts";
 
-/**
- * Unit tests for the namespace-proxy tool registration logic.
- *
- * `syncNamespaceProxyTools` is the focused, side-effect-free function
- * (aside from the injected `pi.registerTool`) that the adapter calls from
- * `syncToolSurface`. We test it directly to keep the surface tight; the
- * existing `index-lifecycle.test.ts` covers the full adapter boot.
- */
-
-const CACHE_SHAPE = (entries: Array<[string, { tools: Array<{ name: string }> }]>) => ({
+const CACHE_SHAPE = (entries: Array<[string, { tools: Array<{ name: string }>; definition?: ServerEntry; configHash?: string; cachedAt?: number }]>) => ({
   version: 1,
-  servers: Object.fromEntries(entries.map(([server, v]) => [server, { tools: v.tools, configHash: "h", cachedAt: Date.now() }])),
+  servers: Object.fromEntries(entries.map(([server, v]) => [server, {
+    tools: v.tools,
+    configHash: v.configHash ?? computeServerHash(v.definition ?? { command: server }),
+    cachedAt: v.cachedAt ?? Date.now(),
+  }])),
 });
 
 function makePi() {
-  const registered = new Map<string, { name: string; execute: (...args: any[]) => unknown; parameters?: unknown }>();
+  type RegisteredTool = { name: string; label?: string; execute: (...args: unknown[]) => unknown; parameters?: unknown };
+  const registered = new Map<string, RegisteredTool>();
   const unregistered: string[] = [];
   const api = {
-    registerTool: vi.fn((tool: { name: string; execute: (...args: any[]) => unknown; parameters?: unknown }) => {
+    registerTool: vi.fn((tool: RegisteredTool) => {
       registered.set(tool.name, tool);
     }),
     unregisterTool: vi.fn((name: string) => {
@@ -28,7 +27,7 @@ function makePi() {
       return had;
     }),
   };
-  return { pi: api as any, registered, unregistered };
+  return { pi: api as unknown as ExtensionAPI, registered, unregistered };
 }
 
 async function importSync() {
@@ -48,8 +47,6 @@ describe("namespaceProxyName", () => {
   });
 
   it("matches the harness _shared/mcp-tools resolver contract", async () => {
-    // The harness resolver produces `mcp__<server-with-dashes-as-underscores>`
-    // and validates against it. The fork must produce the same string.
     const { namespaceProxyName } = await importSync();
     expect(namespaceProxyName("context-mode")).toBe("mcp__context_mode");
     expect(namespaceProxyName("my-server-1")).toBe("mcp__my_server_1");
@@ -91,7 +88,7 @@ describe("syncNamespaceProxyTools", () => {
 
     syncNamespaceProxyTools({
       config: { mcpServers: { context7: { url: "https://mcp.context7.com/mcp", directTools: true } } },
-      cache: CACHE_SHAPE([["context7", { tools: [{ name: "query_docs" }] }]]),
+      cache: CACHE_SHAPE([["context7", { tools: [{ name: "query_docs" }], definition: { url: "https://mcp.context7.com/mcp", directTools: true } }]]),
       envOverride: null,
       existingDirectNames: new Set(["context7_query_docs"]),
       existingNamespaceNames: new Set(),
@@ -130,6 +127,25 @@ describe("syncNamespaceProxyTools", () => {
     syncNamespaceProxyTools({
       config: { mcpServers: { "context-mode": { command: "context-mode" } } },
       cache: { version: 1, servers: {} },
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__context_mode")).toBe(false);
+  });
+
+  it("skips servers with stale cache metadata", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { "context-mode": { command: "context-mode" } } },
+      cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }], configHash: "stale" }]]),
       envOverride: null,
       existingDirectNames: new Set(),
       existingNamespaceNames: new Set(),
@@ -240,18 +256,18 @@ describe("syncNamespaceProxyTools", () => {
 
     const tool = registered.get("mcp__context_mode")!;
     expect(tool.parameters).toBeDefined();
-    const props = (tool.parameters as any).properties;
-    expect(props.tool).toBeDefined();
-    expect(props.args).toBeDefined();
+    expect(tool.parameters).toMatchObject({
+      properties: {
+        tool: expect.anything(),
+        args: expect.anything(),
+      },
+    });
   });
 
   it("skips registration when an existing direct tool already uses mcp__<server>", async () => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered } = makePi();
 
-    // Edge case: a directTool is named "mcp__context_mode" (very unlikely but possible
-    // if the user defined directTools: ["mcp__context_mode"] on a server). We must
-    // not double-register the same name.
     syncNamespaceProxyTools({
       config: { mcpServers: { "context-mode": { command: "context-mode" } } },
       cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
@@ -271,7 +287,6 @@ describe("syncNamespaceProxyTools", () => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered, unregistered } = makePi();
 
-    // First sync: register context-mode.
     syncNamespaceProxyTools({
       config: { mcpServers: { "context-mode": { command: "context-mode" } } },
       cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
@@ -285,9 +300,6 @@ describe("syncNamespaceProxyTools", () => {
     });
     expect(registered.has("mcp__context_mode")).toBe(true);
 
-    // Second sync: context-mode is gone, but the previous names list still
-    // includes the now-stale mcp__context_mode. Caller passes the union of
-    // previously-registered names so we can deactivate.
     syncNamespaceProxyTools({
       config: { mcpServers: {} },
       cache: { version: 1, servers: {} },
@@ -358,8 +370,8 @@ describe("syncNamespaceProxyTools", () => {
     syncNamespaceProxyTools({
       config: { mcpServers: { "my-server": { command: "one" }, my_server: { command: "two" } } },
       cache: CACHE_SHAPE([
-        ["my-server", { tools: [{ name: "one" }] }],
-        ["my_server", { tools: [{ name: "two" }] }],
+        ["my-server", { tools: [{ name: "one" }], definition: { command: "one" } }],
+        ["my_server", { tools: [{ name: "two" }], definition: { command: "two" } }],
       ]),
       envOverride: null,
       existingDirectNames: new Set(),
@@ -382,12 +394,12 @@ describe("syncNamespaceProxyTools", () => {
       config: {
         mcpServers: {
           "context-mode": { command: "context-mode" },
-          "context7": { url: "https://mcp.context7.com/mcp" }, // proxy-only (no directTools)
+          "context7": { url: "https://mcp.context7.com/mcp" },
         },
       },
       cache: CACHE_SHAPE([
         ["context-mode", { tools: [{ name: "ctx_execute" }] }],
-        ["context7", { tools: [{ name: "query_docs" }] }],
+        ["context7", { tools: [{ name: "query_docs" }], definition: { url: "https://mcp.context7.com/mcp" } }],
       ]),
       envOverride: null,
       existingDirectNames: new Set(),
@@ -400,5 +412,81 @@ describe("syncNamespaceProxyTools", () => {
 
     expect(registered.has("mcp__context_mode")).toBe(true);
     expect(registered.has("mcp__context7")).toBe(true);
+  });
+
+  it("reports existing namespace proxies as updated", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi } = makePi();
+
+    const result = syncNamespaceProxyTools({
+      config: { mcpServers: { "context-mode": { command: "context-mode" } } },
+      cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(["mcp__context_mode"]),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(result.added).toEqual([]);
+    expect(result.updated).toEqual(["mcp__context_mode"]);
+    expect(pi.registerTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes same-name namespace proxies after server replacement", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { "my-server": { command: "one" } } },
+      cache: CACHE_SHAPE([["my-server", { tools: [{ name: "one" }], definition: { command: "one" } }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+    const result = syncNamespaceProxyTools({
+      config: { mcpServers: { my_server: { command: "two" } } },
+      cache: CACHE_SHAPE([["my_server", { tools: [{ name: "two" }], definition: { command: "two" } }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(["mcp__my_server"]),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(result.updated).toEqual(["mcp__my_server"]);
+    expect(pi.registerTool).toHaveBeenCalledTimes(2);
+    expect(registered.get("mcp__my_server")?.label).toBe("MCP: my_server");
+  });
+
+  it("preserves initialization error context", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { "context-mode": { command: "context-mode" } } },
+      cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => Promise.reject(new Error("bad config")),
+      getPiTools: () => [],
+    });
+
+    const result = await registered.get("mcp__context_mode")!.execute("call-1", { tool: "ctx_execute" }, undefined);
+    expect(result).toMatchObject({
+      content: [{ text: "MCP initialization failed for context-mode: bad config" }],
+      details: { error: "init_failed", server: "context-mode", message: "bad config" },
+    });
   });
 });

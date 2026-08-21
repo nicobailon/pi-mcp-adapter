@@ -348,6 +348,17 @@ export class McpLifecycleManager {
     return Date.now() >= retry.nextAttemptAt;
   }
 
+  private isTransientAvailabilityError(error: unknown): boolean {
+    return (error instanceof SdkHttpError && error.status === 503)
+      || (error instanceof Error && error.cause instanceof SdkHttpError && error.cause.status === 503);
+  }
+
+  private connectionFailureTarget(action: "refresh" | "reconnect" | "publish", name: string): string {
+    if (action === "reconnect") return `reconnect to ${name}`;
+    if (action === "publish") return `publish metadata for ${name}`;
+    return `refresh ${name}`;
+  }
+
   private reportConnectionFailure(
     name: string,
     definition: ServerDefinition,
@@ -357,20 +368,12 @@ export class McpLifecycleManager {
   ): void {
     if (!this.recordRetry(name, definition, connection)) return;
     this.onReconnectFailure?.(name, error);
-    if (
-      (error instanceof SdkHttpError && error.status === 503)
-      || (error instanceof Error && error.cause instanceof SdkHttpError && error.cause.status === 503)
-    ) return;
+    if (this.isTransientAvailabilityError(error)) return;
     const retry = this.retryStates.get(name);
     if (retry?.warningReported) return;
     if (retry) retry.warningReported = true;
     const message = error instanceof Error ? error.message : String(error);
-    const target = action === "reconnect"
-      ? `reconnect to ${name}`
-      : action === "publish"
-        ? `publish metadata for ${name}`
-        : `refresh ${name}`;
-    console.error(`MCP: Failed to ${target}: ${sanitizeTerminalText(message)}`);
+    console.error(`MCP: Failed to ${this.connectionFailureTarget(action, name)}: ${sanitizeTerminalText(message)}`);
   }
 
   private deferRefreshTimeout(

@@ -62,28 +62,9 @@ vi.mock("../config.ts", () => ({
   writeProjectServerDisabledOverride: mocks.writeProjectServerDisabledOverride,
 }));
 
-vi.mock("../metadata-cache.ts", () => ({
+vi.mock("../metadata-cache.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../metadata-cache.ts")>()),
   loadMetadataCache: mocks.loadMetadataCache,
-  parseDirectToolSelectors: (selectors: string[]) => {
-    const servers = new Set<string>();
-    const tools = new Map<string, Set<string>>();
-    for (const raw of selectors) {
-      const sel = raw.replace(/\/+$/, "");
-      if (sel.includes("/")) {
-        const [server, tool] = sel.split("/", 2);
-        if (server && tool) {
-          const set = tools.get(server) ?? new Set<string>();
-          set.add(tool);
-          tools.set(server, set);
-        } else if (server) {
-          servers.add(server);
-        }
-      } else if (sel) {
-        servers.add(sel);
-      }
-    }
-    return { servers, tools };
-  },
 }));
 
 vi.mock("../direct-tools.ts", () => ({

@@ -1,9 +1,10 @@
-import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { McpExtensionState } from "./state.ts";
-import type { McpConfig } from "./types.ts";
-import type { MetadataCache } from "./metadata-cache.ts";
+import { isServerDisabled, type McpConfig } from "./types.ts";
+import { isServerCacheValid, type MetadataCache } from "./metadata-cache.ts";
 import { executeCall } from "./proxy-modes.ts";
+import { createMcpProxyToolCallRenderer, createMcpToolResultRenderer, resolveMcpToolRenderOptions, type McpToolRenderOptions, type RenderTheme, type McpToolRenderContext } from "./tool-result-renderer.ts";
 
 /**
  * Namespace-proxy tool registration for proxy-only MCP servers.
@@ -25,30 +26,27 @@ export interface NamespaceProxySpec {
   serverName: string;
   toolName: string;
   description: string;
-  prefix: string;
 }
+
+type DirectToolSelectorOverride = { servers: Set<string>; tools: Map<string, Set<string>> };
 
 /**
  * Mirror of the harness `_shared/mcp-tools` resolver's
  * `namespaceProxyName`. Kept deliberately identical to the harness so
  * tool-groups/slow-mode validation lines up without a config migration.
- * Differs from upstream `formatToolName(..., "mcp")` which uses
+ * Differs from `formatToolName(..., "mcp")` which uses
  * `sanitizeServerPrefix` and produces names like `mcp__context_2d_mode`.
- * When upstream adds its own namespace-proxy, we align conventions.
+ * Keep this convention aligned with the host resolver.
  */
 export function namespaceProxyName(serverName: string): string {
   return `mcp__${serverName.replace(/-/g, "_")}`;
-}
-
-function isServerDisabled(definition: { disabled?: boolean } | undefined): boolean {
-  return definition?.disabled === true;
 }
 
 function isDirectlyRegistered(
   definition: { directTools?: boolean | string[] } | undefined,
   settings: McpConfig["settings"],
   serverName: string,
-  envOverride: { servers: Set<string>; tools: Map<string, Set<string>> } | null,
+  envOverride: DirectToolSelectorOverride | null,
 ): boolean {
   if (envOverride) {
     return envOverride.servers.has(serverName);
@@ -59,49 +57,31 @@ function isDirectlyRegistered(
   return settings?.directTools === true;
 }
 
-/**
- * Resolve namespace-proxy tool specs for all proxy-only servers in `config`.
- * A server qualifies when it is enabled, has cache metadata available, and is
- * not directly registered. Collisions with direct tools and normalized server
- * names are skipped.
- */
-export function resolveNamespaceProxyTools(
-  config: McpConfig | null,
-  cache: MetadataCache | null,
-  envOverride: { servers: Set<string>; tools: Map<string, Set<string>> } | null,
+function namespaceProxyCandidate(
+  config: McpConfig,
+  cache: MetadataCache,
+  envOverride: DirectToolSelectorOverride | null,
   existingDirectNames: Set<string>,
-): NamespaceProxySpec[] {
-  if (!config || !cache) return [];
-  const candidates: NamespaceProxySpec[] = [];
+  serverName: string,
+): NamespaceProxySpec | null {
+  const definition = config.mcpServers[serverName];
+  if (!definition || isServerDisabled(definition)) return null;
+  if (isDirectlyRegistered(definition, config.settings, serverName, envOverride)) return null;
+  const entry = cache.servers?.[serverName];
+  if (!entry || !isServerCacheValid(entry, definition) || entry.tools.length === 0) return null;
+  const toolName = namespaceProxyName(serverName);
+  if (existingDirectNames.has(toolName)) return null;
+  return {
+    serverName,
+    toolName,
+    description:
+      `Namespace-proxy for MCP server "${serverName}". ` +
+      `Forwards \`{tool, args}\` through the adapter's executeCall, so it inherits ` +
+      `the same auth / lifecycle / output-guard rules as the \`mcp\` proxy.`,
+  };
+}
 
-  for (const [serverName, definition] of Object.entries(config.mcpServers)) {
-    if (!definition || isServerDisabled(definition)) continue;
-
-    if (isDirectlyRegistered(definition, config.settings, serverName, envOverride)) {
-      continue;
-    }
-
-    const entry = cache.servers?.[serverName];
-    if (!entry || !Array.isArray(entry.tools) || entry.tools.length === 0) {
-      continue;
-    }
-
-    const toolName = namespaceProxyName(serverName);
-    if (existingDirectNames.has(toolName)) {
-      continue;
-    }
-
-    candidates.push({
-      serverName,
-      toolName,
-      description:
-        `Namespace-proxy for MCP server "${serverName}". ` +
-        `Forwards \`{tool, args}\` through the adapter's executeCall, so it inherits ` +
-        `the same auth / lifecycle / output-guard rules as the \`mcp\` proxy.`,
-      prefix: toolName,
-    });
-  }
-
+function filterCollidingNamespaceProxyTools(candidates: NamespaceProxySpec[]): NamespaceProxySpec[] {
   const names = new Map<string, NamespaceProxySpec[]>();
   for (const spec of candidates) {
     const colliding = names.get(spec.toolName) ?? [];
@@ -118,6 +98,20 @@ export function resolveNamespaceProxyTools(
   });
 }
 
+function resolveNamespaceProxyTools(
+  config: McpConfig | null,
+  cache: MetadataCache | null,
+  envOverride: DirectToolSelectorOverride | null,
+  existingDirectNames: Set<string>,
+): NamespaceProxySpec[] {
+  if (!config || !cache) return [];
+  return filterCollidingNamespaceProxyTools(
+    Object.keys(config.mcpServers)
+      .map((serverName) => namespaceProxyCandidate(config, cache, envOverride, existingDirectNames, serverName))
+      .filter((spec): spec is NamespaceProxySpec => spec !== null),
+  );
+}
+
 /**
  * Lazily-required reference to the agent state — passed as a closure so the
  * namespace proxy tool's execute can call `executeCall` once `state` exists.
@@ -126,7 +120,7 @@ export function resolveNamespaceProxyTools(
  */
 export type GetState = () => McpExtensionState | null;
 export type GetInitPromise = () => Promise<McpExtensionState> | null;
-export type GetPiTools = () => Array<{ name: string }>;
+export type GetPiTools = () => ToolInfo[];
 
 function namespaceExecute(
   getState: GetState,
@@ -151,10 +145,11 @@ function namespaceExecute(
       if (initPromise) {
         try {
           state = await initPromise;
-        } catch {
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
           return {
-            content: [{ type: "text" as const, text: `MCP initialization failed for ${serverName}.` }],
-            details: { error: "init_failed", server: serverName },
+            content: [{ type: "text" as const, text: `MCP initialization failed for ${serverName}: ${message}` }],
+            details: { error: "init_failed", server: serverName, message },
           };
         }
       }
@@ -170,7 +165,7 @@ function namespaceExecute(
       params.tool,
       params.args ?? {},
       serverName,
-      getPiTools as never,
+      getPiTools,
       signal,
       "proxy",
     );
@@ -188,13 +183,16 @@ const parameters = Type.Object({
 export interface SyncNamespaceProxyToolsInput {
   config: McpConfig | null;
   cache: MetadataCache | null;
-  envOverride: { servers: Set<string>; tools: Map<string, Set<string>> } | null;
+  envOverride: DirectToolSelectorOverride | null;
   existingDirectNames: Set<string>;
   existingNamespaceNames: Set<string>;
   pi: ExtensionAPI;
   getState: GetState;
   getInitPromise: GetInitPromise;
   getPiTools: GetPiTools;
+  renderOptions?: McpToolRenderOptions;
+  renderShell?: "self" | "default";
+  renderResult?: unknown;
 }
 
 export interface SyncNamespaceProxyToolsResult {
@@ -204,11 +202,77 @@ export interface SyncNamespaceProxyToolsResult {
   deactivated: string[];
 }
 
+function createNamespaceRenderCall(renderOptions: McpToolRenderOptions, serverName: string) {
+  const renderCall = createMcpProxyToolCallRenderer(renderOptions);
+  return (args: { tool?: string; args?: Record<string, unknown> }, theme?: RenderTheme, context?: McpToolRenderContext) => renderCall({
+    ...(args.tool !== undefined ? { tool: args.tool } : {}),
+    ...(args.args !== undefined ? { args: args.args } : {}),
+    server: serverName,
+  }, theme, context);
+}
+
+function registerNamespaceProxyTool(
+  input: SyncNamespaceProxyToolsInput,
+  spec: NamespaceProxySpec,
+  renderOptions: McpToolRenderOptions,
+  renderShell: "self" | "default",
+  renderResult: unknown,
+): void {
+  input.pi.registerTool({
+    name: spec.toolName,
+    label: `MCP: ${spec.serverName}`,
+    description: spec.description,
+    promptSnippet: `MCP namespace proxy for ${spec.serverName}`,
+    parameters,
+    renderShell,
+    renderCall: createNamespaceRenderCall(renderOptions, spec.serverName),
+    renderResult,
+    execute: namespaceExecute(
+      input.getState,
+      input.getInitPromise,
+      spec.serverName,
+      input.getPiTools,
+    ),
+  } as never);
+}
+
+function getActiveToolsForStaleCleanup(pi: ExtensionAPI, staleNames: string[]): string[] | undefined {
+  if (staleNames.length === 0) return undefined;
+  try {
+    return pi.getActiveTools?.();
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Action methods cannot be called during extension loading")) return undefined;
+    throw error;
+  }
+}
+
+function deactivateStaleNamespaceTools(input: SyncNamespaceProxyToolsInput, nextNames: Set<string>): string[] {
+  const staleNames = [...input.existingNamespaceNames].filter(
+    (name) => !nextNames.has(name) && !input.existingDirectNames.has(name),
+  );
+  const deactivated: string[] = [];
+  const unregisterTool = (input.pi as unknown as {
+    unregisterTool?: (name: string) => boolean;
+  }).unregisterTool;
+  for (const stale of staleNames) {
+    if (unregisterTool?.(stale)) deactivated.push(stale);
+  }
+  const activeTools = getActiveToolsForStaleCleanup(input.pi, staleNames);
+  if (!activeTools) return deactivated;
+
+  const stale = new Set(staleNames);
+  const nextActiveTools = activeTools.filter((name) => !stale.has(name));
+  if (nextActiveTools.length === activeTools.length) return deactivated;
+
+  input.pi.setActiveTools(nextActiveTools);
+  for (const name of staleNames) {
+    if (!deactivated.includes(name)) deactivated.push(name);
+  }
+  return deactivated;
+}
+
 /**
- * Idempotent sync of namespace-proxy tool registrations:
- * - Registers a new tool for each spec whose name is not yet registered.
- * - Updates (re-registers with a fresh fingerprint) when the spec changes.
- * - Unregisters tools for servers that are no longer proxy-only.
+ * Idempotent sync of namespace-proxy tool registrations.
  */
 export function syncNamespaceProxyTools(input: SyncNamespaceProxyToolsInput): SyncNamespaceProxyToolsResult {
   const specs = resolveNamespaceProxyTools(
@@ -219,52 +283,16 @@ export function syncNamespaceProxyTools(input: SyncNamespaceProxyToolsInput): Sy
   );
   const nextNames = new Set(specs.map((s) => s.toolName));
   const result: SyncNamespaceProxyToolsResult = { specs, added: [], updated: [], deactivated: [] };
+  const renderOptions = input.renderOptions ?? resolveMcpToolRenderOptions();
+  const renderShell = input.renderShell ?? (renderOptions.resultRendering === "compact" ? "self" : "default");
+  const renderResult = input.renderResult ?? createMcpToolResultRenderer(renderOptions);
 
   for (const spec of specs) {
-    input.pi.registerTool({
-      name: spec.toolName,
-      label: `MCP: ${spec.serverName}`,
-      description: spec.description,
-      parameters,
-      execute: namespaceExecute(
-        input.getState,
-        input.getInitPromise,
-        spec.serverName,
-        input.getPiTools,
-      ),
-    } as never);
-    result.added.push(spec.toolName);
+    registerNamespaceProxyTool(input, spec, renderOptions, renderShell, renderResult);
+    (input.existingNamespaceNames.has(spec.toolName) ? result.updated : result.added).push(spec.toolName);
   }
 
-  // Deactivate stale entries.
-  const registered = (input.pi as unknown as {
-    unregisterTool?: (name: string) => boolean;
-  }).unregisterTool;
-  // The caller owns namespace lifecycle by tracking prior namespace names.
-  const staleNames = [...input.existingNamespaceNames].filter(
-    (name) => !nextNames.has(name) && !input.existingDirectNames.has(name),
-  );
-  for (const stale of staleNames) {
-    if (registered?.(stale)) result.deactivated.push(stale);
-  }
-  let activeTools: string[] | undefined;
-  if (staleNames.length > 0) {
-    try {
-      activeTools = input.pi.getActiveTools?.();
-    } catch (error) {
-      if (!(error instanceof Error && error.message.includes("Action methods cannot be called during extension loading"))) throw error;
-    }
-  }
-  if (activeTools) {
-    const stale = new Set(staleNames);
-    const nextActiveTools = activeTools.filter((name) => !stale.has(name));
-    if (nextActiveTools.length !== activeTools.length) {
-      input.pi.setActiveTools(nextActiveTools);
-      for (const name of staleNames) {
-        if (!result.deactivated.includes(name)) result.deactivated.push(name);
-      }
-    }
-  }
+  result.deactivated.push(...deactivateStaleNamespaceTools(input, nextNames));
 
   return result;
 }

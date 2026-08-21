@@ -4,7 +4,7 @@ import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-w
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
 
-interface RenderTheme {
+export interface RenderTheme {
   fg: (name: string, text: string) => string;
   bold?: (text: string) => string;
 }
@@ -28,7 +28,7 @@ interface McpToolRenderState {
   compactInputPreview?: string;
 }
 
-interface McpToolRenderContext {
+export interface McpToolRenderContext {
   isError: boolean;
   isPartial?: boolean;
   expanded?: boolean;
