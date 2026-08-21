@@ -1,6 +1,6 @@
 import type { McpExtensionState } from "./state.ts";
 import type { ServerEntry, ToolMetadata, ToolPrefix } from "./types.ts";
-import { getServerPrefix, getToolNameCandidates, isServerDisabled, matchesToolPattern, resolveToolPrefix } from "./types.ts";
+import { getServerPrefix, getToolNameCandidates, hasRecentFailure, isServerDisabled, matchesToolPattern, resolveToolPrefix } from "./types.ts";
 
 /**
  * Shortest field token allowed to stem-match a longer query token.
@@ -242,6 +242,10 @@ export function rankToolMatches(
     if (server && serverName !== server) continue;
     const definition = state.config.mcpServers[serverName];
     if (isServerDisabled(definition)) continue;
+    // Recently-failed servers are skipped: lazyConnect refuses to reconnect
+    // during the failure backoff window, so their cached tools are not
+    // callable and ranking them would advertise dead entries.
+    if (hasRecentFailure(state.failureTracker, serverName)) continue;
     for (const prepared of getPreparedTools(state, serverName, metadata, definition, globalPrefix, includeKeywords)) {
       const score = scorePreparedToolMatch(prepared, normalizedQuery, queryTokens);
       if (score !== null) matches.push({ server: serverName, tool: prepared.tool, score });

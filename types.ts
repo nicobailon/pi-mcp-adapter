@@ -17,6 +17,19 @@ export const MCP_STATUS_EVENT = "pi-mcp-adapter/status/v1";
 
 export const MCP_STATUS_SNAPSHOT_VERSION = 1 as const;
 
+/**
+ * How long a recorded server failure keeps that server's cached catalog out
+ * of search, list, and tool counts: during this window lazyConnect refuses
+ * to reconnect, so advertising the cached tools would misreport what is
+ * callable. A successful reconnect clears the failure immediately.
+ */
+export const MCP_FAILURE_BACKOFF_MS = 60 * 1000;
+
+export function hasRecentFailure(failureTracker: Map<string, number>, serverName: string): boolean {
+  const failedAt = failureTracker.get(serverName);
+  return failedAt !== undefined && Date.now() - failedAt <= MCP_FAILURE_BACKOFF_MS;
+}
+
 export type McpServerRuntimeStatus =
   | "connected"
   | "cached"

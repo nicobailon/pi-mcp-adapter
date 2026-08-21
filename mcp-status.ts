@@ -1,12 +1,11 @@
 import type { McpExtensionState } from "./state.ts";
 import {
+  MCP_FAILURE_BACKOFF_MS,
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
   type McpServerStatusSnapshot,
   type McpStatusSnapshot,
 } from "./types.ts";
-
-const FAILURE_BACKOFF_MS = 60 * 1000;
 
 export interface McpStatusEventBus {
   emit(channel: string, data: unknown): void;
@@ -16,7 +15,7 @@ function getActiveFailureAgeSeconds(state: McpExtensionState, serverName: string
   const failedAt = state.failureTracker.get(serverName);
   if (!failedAt) return undefined;
   const ageMs = Date.now() - failedAt;
-  if (ageMs > FAILURE_BACKOFF_MS) return undefined;
+  if (ageMs > MCP_FAILURE_BACKOFF_MS) return undefined;
   return Math.round(ageMs / 1000);
 }
 
@@ -54,8 +53,13 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
       status = "cached";
     }
 
-    totalTools += disabled ? 0 : toolCount;
-    if (!disabled && resourceCount !== undefined) totalResources += resourceCount;
+    // Failed servers keep their cached catalog out of the totals: during the
+    // failure backoff window their tools are not callable, so counting them
+    // would misreport what is actually available.
+    if (!disabled && status !== "failed") {
+      totalTools += toolCount;
+      if (resourceCount !== undefined) totalResources += resourceCount;
+    }
     servers.push({
       name,
       status,

@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata, type ToolSelectorCandidateIndex } from "./types.ts";
+import { formatToolName, isServerDisabled, MCP_FAILURE_BACKOFF_MS, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata, type ToolSelectorCandidateIndex } from "./types.ts";
 import { existsSync } from "node:fs";
 import { cloneMcpConfig, loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
@@ -38,7 +38,6 @@ import {
 } from "./runtime-owner.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 
-const FAILURE_BACKOFF_MS = 60 * 1000;
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
 const failureExpiryTimers = new WeakMap<McpExtensionState, Map<string, ReturnType<typeof setTimeout>>>();
 
@@ -76,7 +75,7 @@ export function recordFailure(state: McpExtensionState, serverName: string, mess
       publishMcpStatusSnapshot(state);
     }
     getFailureExpiryTimers(state).delete(serverName);
-  }, FAILURE_BACKOFF_MS);
+  }, MCP_FAILURE_BACKOFF_MS);
   timer.unref?.();
   getFailureExpiryTimers(state).set(serverName, timer);
 }
@@ -621,7 +620,7 @@ export function getFailureAgeSeconds(state: McpExtensionState, serverName: strin
   const failedAt = state.failureTracker.get(serverName);
   if (!failedAt) return null;
   const ageMs = Date.now() - failedAt;
-  if (ageMs > FAILURE_BACKOFF_MS) return null;
+  if (ageMs > MCP_FAILURE_BACKOFF_MS) return null;
   return Math.round(ageMs / 1000);
 }
 

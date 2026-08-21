@@ -70,6 +70,7 @@ describe("search ranking", () => {
   it("refreshes prepared fields when catalog or keyword references change", () => {
     const state = {
       toolMetadata: new Map([["demo", [tool("search_records", "Find records")]]]),
+      failureTracker: new Map<string, number>(),
       config: { mcpServers: { demo: { command: "demo", searchKeywords: { search_records: ["fuzzy"] } } } },
     } as unknown as McpExtensionState;
 
