@@ -51,7 +51,7 @@ function isDirectlyRegistered(
   envOverride: { servers: Set<string>; tools: Map<string, Set<string>> } | null,
 ): boolean {
   if (envOverride) {
-    return envOverride.servers.has(serverName) || envOverride.tools.has(serverName);
+    return envOverride.servers.has(serverName);
   }
   if (definition?.directTools !== undefined) {
     return definition.directTools === true || (Array.isArray(definition.directTools) && definition.directTools.length > 0);

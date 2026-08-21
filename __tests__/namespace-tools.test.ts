@@ -161,6 +161,25 @@ describe("syncNamespaceProxyTools", () => {
     expect(registered.has("mcp__context_mode")).toBe(false);
   });
 
+  it("keeps the namespace proxy when a per-tool env selector does not resolve a direct tool", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { "context-mode": { command: "context-mode", directTools: true } } },
+      cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
+      envOverride: { servers: new Set(), tools: new Map([["context-mode", new Set(["missing_tool"]) ]]) },
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__context_mode")).toBe(true);
+  });
+
   it("registers configured direct servers as namespaces when an empty env override disables direct tools", async () => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered } = makePi();
