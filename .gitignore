@@ -4,6 +4,10 @@ conformance/results/
 *.log
 .DS_Store
 
+# bun lockfile (this fork uses npm/package-lock.json)
+bun.lock
+bun.lockb
+
 progress.md
 worker-summary.md
 worker-*.md
