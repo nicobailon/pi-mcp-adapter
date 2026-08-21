@@ -907,30 +907,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
           return args as Record<string, unknown>;
         };
-        const validateNestedGatewayParams = (value: Record<string, unknown>): typeof params => {
-          for (const key of ["tool", "connect", "describe", "instructions", "search", "server", "action"] as const) {
-            if (value[key] !== undefined && typeof value[key] !== "string") {
-              throw new Error(`Invalid nested gateway param \`${key}\`: expected string, got ${Array.isArray(value[key]) ? "array" : typeof value[key]}`);
-            }
-          }
-          for (const key of ["regex", "includeSchemas"] as const) {
-            if (value[key] !== undefined && typeof value[key] !== "boolean") {
-              throw new Error(`Invalid nested gateway param \`${key}\`: expected boolean, got ${Array.isArray(value[key]) ? "array" : typeof value[key]}`);
-            }
-          }
-          for (const key of ["limit", "offset"] as const) {
-            if (value[key] !== undefined && typeof value[key] !== "number") {
-              throw new Error(`Invalid nested gateway param \`${key}\`: expected number, got ${Array.isArray(value[key]) ? "array" : typeof value[key]}`);
-            }
-          }
-          const args = value.args;
-          if (args !== undefined && typeof args !== "string" && (typeof args !== "object" || args === null || Array.isArray(args))) {
-            throw new Error(`Invalid nested gateway param \`args\`: expected JSON object or JSON string, got ${Array.isArray(args) ? "array" : args === null ? "null" : typeof args}`);
-          }
-          return value as typeof params;
-        };
-        let parsedArgs = parseArgs(params.args);
-        let dispatchParams = params;
+        const parsedArgs = parseArgs(params.args);
         const hasGatewayMode = (value: typeof params): boolean =>
           value.tool !== undefined
           || value.connect !== undefined
@@ -939,15 +916,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           || value.search !== undefined
           || value.server !== undefined
           || value.action !== undefined;
-        if (!hasGatewayMode(params) && parsedArgs) {
-          const nestedParams = validateNestedGatewayParams(parsedArgs);
-          if (hasGatewayMode(nestedParams)) {
-            dispatchParams = nestedParams;
-            parsedArgs = parseArgs(nestedParams.args);
-          } else {
-            throw new Error("Gateway params were nested inside `args`; pass them top-level (for example, mcp({ search: \"...\" }) or mcp({ tool: \"...\", args: {} })).");
-          }
-        } else if (!hasGatewayMode(params) && params.args !== undefined) {
+        if (!hasGatewayMode(params) && params.args !== undefined) {
           throw new Error("Gateway params were nested inside `args`; pass them top-level (for example, mcp({ search: \"...\" }) or mcp({ tool: \"...\", args: {} })).");
         }
 
@@ -979,22 +948,22 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         executeOwner?.throwIfInactive();
 
-        if (dispatchParams.action === "ui-messages") {
+        if (params.action === "ui-messages") {
           return executeUiMessages(state);
         }
-        if (dispatchParams.action === "auth-start") {
-          if (!dispatchParams.server) {
+        if (params.action === "auth-start") {
+          if (!params.server) {
             return {
               content: [{ type: "text" as const, text: "auth-start requires `server`. Example: mcp({ action: \"auth-start\", server: \"linear-server\" })" }],
               details: { mode: "auth-start", error: "missing_server" },
             };
           }
           return signal
-            ? executeAuthStart(state, dispatchParams.server, signal)
-            : executeAuthStart(state, dispatchParams.server);
+            ? executeAuthStart(state, params.server, signal)
+            : executeAuthStart(state, params.server);
         }
-        if (dispatchParams.action === "auth-complete") {
-          if (!dispatchParams.server) {
+        if (params.action === "auth-complete") {
+          if (!params.server) {
             return {
               content: [{ type: "text" as const, text: "auth-complete requires `server`." }],
               details: { mode: "auth-complete", error: "missing_server" },
@@ -1008,28 +977,28 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             };
           }
           return signal
-            ? executeAuthComplete(state, dispatchParams.server, input, signal)
-            : executeAuthComplete(state, dispatchParams.server, input);
+            ? executeAuthComplete(state, params.server, input, signal)
+            : executeAuthComplete(state, params.server, input);
         }
-        if (dispatchParams.tool) {
-          return executeCall(state, dispatchParams.tool, parsedArgs, dispatchParams.server, getPiTools, signal);
+        if (params.tool) {
+          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal);
         }
-        if (dispatchParams.connect) {
-          const result = await executeConnect(state, dispatchParams.connect, signal);
+        if (params.connect) {
+          const result = await executeConnect(state, params.connect, signal);
           syncToolSurface(_ctx as ExtensionContext);
           return result;
         }
-        if (dispatchParams.describe) {
-          return executeDescribe(state, dispatchParams.describe);
+        if (params.describe) {
+          return executeDescribe(state, params.describe);
         }
-        if (dispatchParams.instructions) {
-          return executeInstructions(state, dispatchParams.instructions);
+        if (params.instructions) {
+          return executeInstructions(state, params.instructions);
         }
-        if (dispatchParams.search !== undefined) {
-          return executeSearch(state, dispatchParams.search, dispatchParams.regex, dispatchParams.server, dispatchParams.includeSchemas, dispatchParams.limit, dispatchParams.offset);
+        if (params.search !== undefined) {
+          return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset);
         }
-        if (dispatchParams.server) {
-          return executeList(state, dispatchParams.server);
+        if (params.server) {
+          return executeList(state, params.server);
         }
         return executeStatus(state);
       },

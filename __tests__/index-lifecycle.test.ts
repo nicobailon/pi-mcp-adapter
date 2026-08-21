@@ -921,7 +921,7 @@ describe("mcpAdapter session lifecycle", () => {
     );
   });
 
-  it("dispatches gateway params nested inside proxy args", async () => {
+  it("rejects gateway params nested inside proxy args", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
     mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
@@ -937,18 +937,15 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.resolve();
 
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
-    await proxyTool.execute("call-1", { args: '{"search":"screenshot","limit":3}' });
-    await proxyTool.execute("call-2", { args: { tool: "demo_search", args: { q: "hello" }, server: "demo" } });
-
-    expect(mocks.executeSearch).toHaveBeenCalledWith(state, "screenshot", undefined, undefined, undefined, 3, undefined);
-    expect(mocks.executeCall).toHaveBeenCalledWith(
-      state,
-      "demo_search",
-      { q: "hello" },
-      "demo",
-      expect.any(Function),
-      undefined,
+    await expect(proxyTool.execute("call-1", { args: '{"search":"screenshot","limit":3}' })).rejects.toThrow(
+      "Gateway params were nested inside `args`; pass them top-level",
     );
+    await expect(proxyTool.execute("call-2", { args: { tool: "demo_search", args: { q: "hello" }, server: "demo" } })).rejects.toThrow(
+      "Gateway params were nested inside `args`; pass them top-level",
+    );
+
+    expect(mocks.executeSearch).not.toHaveBeenCalled();
+    expect(mocks.executeCall).not.toHaveBeenCalled();
     expect(mocks.executeStatus).not.toHaveBeenCalled();
   });
 
@@ -969,27 +966,10 @@ describe("mcpAdapter session lifecycle", () => {
     await expect(proxyTool.execute("call-1", { args: '{"query":"screenshot"}' })).rejects.toThrow(
       "Gateway params were nested inside `args`; pass them top-level",
     );
-    expect(mocks.executeStatus).not.toHaveBeenCalled();
-  });
-
-  it("rejects invalid nested gateway param types before dispatch", async () => {
-    const state = createState();
-    mocks.initializeMcp.mockResolvedValue(state);
-
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
-
-    const sessionStart = handlers.get("session_start");
-    await sessionStart?.({}, {});
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
-    await expect(proxyTool.execute("call-1", { args: { search: 5 } })).rejects.toThrow(
-      "Invalid nested gateway param `search`: expected string, got number",
+    await expect(proxyTool.execute("call-2", { args: "" })).rejects.toThrow(
+      "Gateway params were nested inside `args`; pass them top-level",
     );
-    expect(mocks.executeSearch).not.toHaveBeenCalled();
+    expect(mocks.executeStatus).not.toHaveBeenCalled();
   });
 
   it("routes manual auth actions through the proxy tool", async () => {
