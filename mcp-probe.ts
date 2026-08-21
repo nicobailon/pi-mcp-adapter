@@ -168,7 +168,11 @@ function notMcp(response: Response): McpProbeResult {
     isMcp: false,
     classification: response.status === 503
       ? `${responseDescription} — server is temporarily unavailable; MCP endpoint shape could not be determined`
-      : `${responseDescription} — this URL does not appear to speak MCP`,
+      : response.status === 202
+        ? `${responseDescription} — MCP endpoint shape could not be determined`
+      : response.status === 401
+        ? `${responseDescription} — authentication may be required; MCP endpoint shape could not be determined`
+        : `${responseDescription} — this URL does not appear to speak MCP`,
   };
 }
 

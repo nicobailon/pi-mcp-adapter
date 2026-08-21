@@ -64,6 +64,38 @@ describe("MCP endpoint shape probe", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("reports an accepted response without claiming the URL is not MCP", async () => {
+    mockFetch(new Response("Accepted", {
+      status: 202,
+      headers: { "content-type": "application/json" },
+    }));
+
+    const result = await probeMcpEndpoint("https://example.test/mcp");
+
+    expect(result).toMatchObject({
+      isMcp: false,
+      classification: "endpoint returned application/json (202) — MCP endpoint shape could not be determined",
+    });
+    expect(result.classification).not.toContain("does not appear to speak MCP");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an unauthenticated response without claiming the URL is not MCP", async () => {
+    mockFetch(
+      new Response("Unauthorized", { status: 401, headers: { "content-type": "application/json" } }),
+      new Response("Unauthorized", { status: 401, headers: { "content-type": "application/json" } }),
+    );
+
+    const result = await probeMcpEndpoint("https://example.test/mcp");
+
+    expect(result).toMatchObject({
+      isMcp: false,
+      classification: "endpoint returned application/json (401) — authentication may be required; MCP endpoint shape could not be determined",
+    });
+    expect(result.classification).not.toContain("does not appear to speak MCP");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("recognizes a modern stateless server/discover response", async () => {
     mockFetch(new Response(JSON.stringify({
       jsonrpc: "2.0", id: 1, result: { protocolVersion: "2026-07-28" },
