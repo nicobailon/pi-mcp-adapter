@@ -132,6 +132,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const earlyCache = loadMetadataCache();
   const envRaw = process.env.MCP_DIRECT_TOOLS;
   const envDirectToolOverride = envRaw?.split(",").map(s => s.trim()).filter(Boolean);
+  const namespaceEnvOverride = envRaw === "__none__"
+    ? { servers: new Set<string>(), tools: new Map<string, Set<string>>() }
+    : envDirectToolOverride
+      ? parseDirectToolSelectors(envDirectToolOverride)
+      : null;
   const registeredDirectTools = new Map<string, string>();
   const registeredNamespaceProxyTools = new Set<string>();
   const fallbackDeactivatedTools = new Set<string>();
@@ -281,10 +286,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const nsResult = syncNamespaceProxyTools({
       config,
       cache,
-      envOverride: envDirectToolOverride
-        ? parseDirectToolSelectors(envDirectToolOverride)
-        : null,
+      envOverride: namespaceEnvOverride,
       existingDirectNames: new Set(registeredDirectTools.keys()),
+      existingNamespaceNames: registeredNamespaceProxyTools,
       pi,
       getState: () => state,
       getInitPromise: () => initPromise,
@@ -1074,18 +1078,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // eager call, the tool-groups expansion runs before MCP initialization
   // completes and emits false `[unknown-tool] mcp__<server>` diagnostics.
   // Mirrors the upstream direct-tool install-time registration pattern.
-  syncNamespaceProxyTools({
+  const initialNamespaceResult = syncNamespaceProxyTools({
     config: earlyConfig,
     cache: earlyCache,
-    envOverride: envDirectToolOverride
-      ? parseDirectToolSelectors(envDirectToolOverride)
-      : null,
+    envOverride: namespaceEnvOverride,
     existingDirectNames: new Set(registeredDirectTools.keys()),
+    existingNamespaceNames: registeredNamespaceProxyTools,
     pi,
     getState: () => state,
     getInitPromise: () => initPromise,
     getPiTools: () => pi.getAllTools(),
   });
+  for (const name of initialNamespaceResult.added) registeredNamespaceProxyTools.add(name);
   startLoadTimeInitialization();
 }
 

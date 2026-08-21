@@ -73,6 +73,7 @@ describe("syncNamespaceProxyTools", () => {
       cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
       envOverride: null,
       existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
       pi,
       getState: () => null,
       getInitPromise: () => null,
@@ -93,6 +94,7 @@ describe("syncNamespaceProxyTools", () => {
       cache: CACHE_SHAPE([["context7", { tools: [{ name: "query_docs" }] }]]),
       envOverride: null,
       existingDirectNames: new Set(["context7_query_docs"]),
+      existingNamespaceNames: new Set(),
       pi,
       getState: () => null,
       getInitPromise: () => null,
@@ -111,6 +113,7 @@ describe("syncNamespaceProxyTools", () => {
       cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
       envOverride: null,
       existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
       pi,
       getState: () => null,
       getInitPromise: () => null,
@@ -129,6 +132,7 @@ describe("syncNamespaceProxyTools", () => {
       cache: { version: 1, servers: {} },
       envOverride: null,
       existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
       pi,
       getState: () => null,
       getInitPromise: () => null,
@@ -147,6 +151,7 @@ describe("syncNamespaceProxyTools", () => {
       cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
       envOverride: { servers: new Set(["context-mode"]), tools: new Map() },
       existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
       pi,
       getState: () => null,
       getInitPromise: () => null,
@@ -154,6 +159,48 @@ describe("syncNamespaceProxyTools", () => {
     });
 
     expect(registered.has("mcp__context_mode")).toBe(false);
+  });
+
+  it("registers configured direct servers as namespaces when an empty env override disables direct tools", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { context7: { command: "context7", directTools: true } } },
+      cache: CACHE_SHAPE([["context7", { tools: [{ name: "query_docs" }] }]]),
+      envOverride: { servers: new Set(), tools: new Map() },
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__context7")).toBe(true);
+  });
+
+  it("registers omitted configured direct servers when env selects another server", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { context7: { command: "context7", directTools: true }, other: { command: "other" } } },
+      cache: CACHE_SHAPE([
+        ["context7", { tools: [{ name: "query_docs" }] }],
+        ["other", { tools: [{ name: "search" }] }],
+      ]),
+      envOverride: { servers: new Set(["other"]), tools: new Map() },
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__context7")).toBe(true);
+    expect(registered.has("mcp__other")).toBe(false);
   });
 
   it("exposes a `tool` and optional `args` parameter schema for dispatch", async () => {
@@ -165,6 +212,7 @@ describe("syncNamespaceProxyTools", () => {
       cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
       envOverride: null,
       existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
       pi,
       getState: () => null,
       getInitPromise: () => null,
@@ -190,6 +238,7 @@ describe("syncNamespaceProxyTools", () => {
       cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
       envOverride: null,
       existingDirectNames: new Set(["mcp__context_mode"]),
+      existingNamespaceNames: new Set(),
       pi,
       getState: () => null,
       getInitPromise: () => null,
@@ -209,6 +258,7 @@ describe("syncNamespaceProxyTools", () => {
       cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
       envOverride: null,
       existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
       pi,
       getState: () => null,
       getInitPromise: () => null,
@@ -223,7 +273,8 @@ describe("syncNamespaceProxyTools", () => {
       config: { mcpServers: {} },
       cache: { version: 1, servers: {} },
       envOverride: null,
-      existingDirectNames: new Set(["mcp__context_mode"]),
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(["mcp__context_mode"]),
       pi,
       getState: () => null,
       getInitPromise: () => null,
@@ -231,6 +282,51 @@ describe("syncNamespaceProxyTools", () => {
     });
 
     expect(unregistered).toContain("mcp__context_mode");
+  });
+
+  it("does not deactivate direct tools while cleaning stale namespace proxies", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered, unregistered } = makePi();
+    pi.registerTool({ name: "mcp__demo_search", execute: vi.fn() });
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: {} },
+      cache: { version: 1, servers: {} },
+      envOverride: null,
+      existingDirectNames: new Set(["mcp__demo_search"]),
+      existingNamespaceNames: new Set(["mcp__demo_search"]),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__demo_search")).toBe(true);
+    expect(unregistered).not.toContain("mcp__demo_search");
+  });
+
+  it("skips colliding normalized server names without choosing by config order", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { "my-server": { command: "one" }, my_server: { command: "two" } } },
+      cache: CACHE_SHAPE([
+        ["my-server", { tools: [{ name: "one" }] }],
+        ["my_server", { tools: [{ name: "two" }] }],
+      ]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__my_server")).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('servers "my-server", "my_server" normalize to the same name'));
   });
 
   it("registers a new server and keeps existing ones in a single sync", async () => {
@@ -250,6 +346,7 @@ describe("syncNamespaceProxyTools", () => {
       ]),
       envOverride: null,
       existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
       pi,
       getState: () => null,
       getInitPromise: () => null,

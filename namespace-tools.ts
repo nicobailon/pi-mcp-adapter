@@ -51,8 +51,7 @@ function isDirectlyRegistered(
   envOverride: { servers: Set<string>; tools: Map<string, Set<string>> } | null,
 ): boolean {
   if (envOverride) {
-    if (envOverride.servers.has(serverName)) return true;
-    if (envOverride.tools.has(serverName)) return true;
+    return envOverride.servers.has(serverName) || envOverride.tools.has(serverName);
   }
   if (definition?.directTools !== undefined) {
     return definition.directTools === true || (Array.isArray(definition.directTools) && definition.directTools.length > 0);
@@ -63,8 +62,8 @@ function isDirectlyRegistered(
 /**
  * Resolve namespace-proxy tool specs for all proxy-only servers in `config`.
  * A server qualifies when it is enabled, has cache metadata available, and is
- * not directly registered. Server-name collisions with already-known direct
- * tool prefixes (`mcp__<server>` reserved) are skipped.
+ * not directly registered. Collisions with direct tools and normalized server
+ * names are skipped.
  */
 export function resolveNamespaceProxyTools(
   config: McpConfig | null,
@@ -73,8 +72,7 @@ export function resolveNamespaceProxyTools(
   existingDirectNames: Set<string>,
 ): NamespaceProxySpec[] {
   if (!config || !cache) return [];
-  const specs: NamespaceProxySpec[] = [];
-  const seen = new Set<string>();
+  const candidates: NamespaceProxySpec[] = [];
 
   for (const [serverName, definition] of Object.entries(config.mcpServers)) {
     if (!definition || isServerDisabled(definition)) continue;
@@ -89,12 +87,11 @@ export function resolveNamespaceProxyTools(
     }
 
     const toolName = namespaceProxyName(serverName);
-    if (existingDirectNames.has(toolName) || seen.has(toolName)) {
+    if (existingDirectNames.has(toolName)) {
       continue;
     }
-    seen.add(toolName);
 
-    specs.push({
+    candidates.push({
       serverName,
       toolName,
       description:
@@ -105,7 +102,20 @@ export function resolveNamespaceProxyTools(
     });
   }
 
-  return specs;
+  const names = new Map<string, NamespaceProxySpec[]>();
+  for (const spec of candidates) {
+    const colliding = names.get(spec.toolName) ?? [];
+    colliding.push(spec);
+    names.set(spec.toolName, colliding);
+  }
+  return candidates.filter((spec) => {
+    const colliding = names.get(spec.toolName)!;
+    if (colliding.length === 1) return true;
+    if (colliding[0] === spec) {
+      console.warn(`MCP: skipping namespace proxy "${spec.toolName}" because servers ${colliding.map(({ serverName }) => `"${serverName}"`).sort().join(", ")} normalize to the same name`);
+    }
+    return false;
+  });
 }
 
 /**
@@ -180,6 +190,7 @@ export interface SyncNamespaceProxyToolsInput {
   cache: MetadataCache | null;
   envOverride: { servers: Set<string>; tools: Map<string, Set<string>> } | null;
   existingDirectNames: Set<string>;
+  existingNamespaceNames: Set<string>;
   pi: ExtensionAPI;
   getState: GetState;
   getInitPromise: GetInitPromise;
@@ -229,13 +240,10 @@ export function syncNamespaceProxyTools(input: SyncNamespaceProxyToolsInput): Sy
   const registered = (input.pi as unknown as {
     unregisterTool?: (name: string) => boolean;
   }).unregisterTool;
-  // We can't enumerate the registered map from outside the closure, so the
-  // caller owns lifecycle for stale entries by tracking previous names.
+  // The caller owns namespace lifecycle by tracking prior namespace names.
   if (registered) {
-    for (const stale of input.existingDirectNames) {
-      if (stale.startsWith("mcp__") && !nextNames.has(stale)) {
-        if (registered(stale)) result.deactivated.push(stale);
-      }
+    for (const stale of input.existingNamespaceNames) {
+      if (!nextNames.has(stale) && !input.existingDirectNames.has(stale) && registered(stale)) result.deactivated.push(stale);
     }
   }
 
