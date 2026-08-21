@@ -866,6 +866,7 @@ describe("excludeTools filtering", () => {
 
     expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("75+ direct tools"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("settings.warnOnLargeDirectTools to false"));
   });
 
   it("suppresses the large direct-tools advisory when configured", () => {
