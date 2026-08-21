@@ -589,7 +589,7 @@ describe("McpOAuthProvider", () => {
       assert.strictEqual(await provider.clientInformation(), undefined)
     })
 
-    it("should only remove tokens when type is 'tokens'", async () => {
+    it("should invalidate tokens only for the current provider", async () => {
       const provider = createProvider()
       const futureTime = Math.floor(Date.now() / 1000) + 3600
 
@@ -610,9 +610,49 @@ describe("McpOAuthProvider", () => {
       assert.strictEqual(await provider.tokens(), undefined)
       const clientInfo = await provider.clientInformation()
       assert.strictEqual(clientInfo?.client_id, "client")
+
+      const otherProvider = createProvider()
+      assert.strictEqual((await otherProvider.tokens())?.access_token, "token")
     })
 
-    it("should only remove client info when type is 'client'", async () => {
+    it("should adopt tokens replaced by another process", async () => {
+      const staleProvider = createProvider()
+      await staleProvider.saveTokens({
+        access_token: "stale-token",
+        token_type: "Bearer",
+      })
+      assert.strictEqual((await staleProvider.tokens())?.access_token, "stale-token")
+
+      // A separate process completes re-authentication after this provider has
+      // already observed and cached the old token.
+      saveAuthEntry(serverName, {
+        tokens: { accessToken: "replacement-token" },
+        serverUrl,
+      }, serverUrl)
+
+      await staleProvider.invalidateCredentials("tokens")
+
+      assert.strictEqual((await staleProvider.tokens())?.access_token, "replacement-token")
+    })
+
+    it("should not invalidate a token saved after the failing token was observed", async () => {
+      const provider = createProvider()
+      await provider.saveTokens({
+        access_token: "old-token",
+        token_type: "Bearer",
+      })
+      assert.strictEqual((await provider.tokens({ issuer: "https://issuer.example" }))?.access_token, "old-token")
+
+      await provider.saveTokens({
+        access_token: "new-token",
+        token_type: "Bearer",
+      })
+      await provider.invalidateCredentials("tokens")
+
+      assert.strictEqual((await provider.tokens())?.access_token, "new-token")
+    })
+
+    it("should invalidate client info only for the current provider", async () => {
       const provider = createProvider()
       const futureTime = Math.floor(Date.now() / 1000) + 3600
 
@@ -633,6 +673,38 @@ describe("McpOAuthProvider", () => {
       const tokens = await provider.tokens()
       assert.strictEqual(tokens?.access_token, "token")
       assert.strictEqual(await provider.clientInformation(), undefined)
+
+      const otherProvider = createProvider()
+      assert.strictEqual((await otherProvider.clientInformation())?.client_id, "client")
+    })
+
+    it("should adopt client information replaced by another process", async () => {
+      const staleProvider = createProvider()
+      await staleProvider.saveTokens({
+        access_token: "replacement-token",
+        token_type: "Bearer",
+      })
+      await staleProvider.saveClientInformation({
+        client_id: "stale-client",
+        client_secret: "stale-secret",
+        redirect_uris: ["http://localhost/callback"],
+      })
+      assert.strictEqual((await staleProvider.clientInformation())?.client_id, "stale-client")
+
+      saveAuthEntry(serverName, {
+        tokens: { accessToken: "replacement-token" },
+        clientInfo: {
+          clientId: "replacement-client",
+          clientSecret: "replacement-secret",
+          redirectUris: ["http://localhost/callback"],
+        },
+        serverUrl,
+      }, serverUrl)
+
+      await staleProvider.invalidateCredentials("client")
+
+      assert.strictEqual((await staleProvider.clientInformation())?.client_id, "replacement-client")
+      assert.strictEqual((await staleProvider.tokens())?.access_token, "replacement-token")
     })
   })
 })
