@@ -422,7 +422,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       entry.tokens.issuer = issuer
       updateTokens(this.serverName, entry.tokens, this.serverUrl, this.storageOptions)
     }
-    if (ctx !== undefined && this.pendingAuthAccessToken === undefined) {
+    if (ctx !== undefined) {
       this.pendingAuthAccessToken = entry.tokens.accessToken
     }
 

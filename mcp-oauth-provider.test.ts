@@ -652,6 +652,27 @@ describe("McpOAuthProvider", () => {
       assert.strictEqual((await provider.tokens())?.access_token, "new-token")
     })
 
+    it("should invalidate the token observed by the latest auth read", async () => {
+      const provider = createProvider()
+      await provider.saveTokens({
+        access_token: "first-token",
+        token_type: "Bearer",
+      })
+      assert.strictEqual((await provider.tokens({ issuer: "https://issuer.example" }))?.access_token, "first-token")
+
+      await provider.saveTokens({
+        access_token: "second-token",
+        token_type: "Bearer",
+      })
+      assert.strictEqual((await provider.tokens({ issuer: "https://issuer.example" }))?.access_token, "second-token")
+
+      await provider.invalidateCredentials("tokens")
+
+      assert.strictEqual(await provider.tokens(), undefined)
+      const otherProvider = createProvider()
+      assert.strictEqual((await otherProvider.tokens())?.access_token, "second-token")
+    })
+
     it("should invalidate client info only for the current provider", async () => {
       const provider = createProvider()
       const futureTime = Math.floor(Date.now() / 1000) + 3600

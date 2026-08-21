@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- OAuth token invalidation now preserves credentials replaced by another Pi process instead of letting a stale refresh delete newly authorized shared credentials.
+- OAuth token invalidation now preserves credentials replaced by another Pi process instead of letting a stale refresh delete newly authorized shared credentials. Thanks to [@mjlbach](https://github.com/mjlbach) for PR #422.
 - HTTP 202 and unauthenticated HTTP 401 endpoint probes now report ambiguous endpoint shape instead of claiming the URL is not MCP. Thanks to [@jayshah5696](https://github.com/jayshah5696) for #415.
 - Expanded `mcpScript` calls now show bounded submitted code. Thanks to [@DenisBalan](https://github.com/DenisBalan) for #413.
 - Gateway parameters nested inside `args` now fail with top-level guidance instead of dispatching inconsistently. Thanks to [@voidfreud](https://github.com/voidfreud) for PR #417.
