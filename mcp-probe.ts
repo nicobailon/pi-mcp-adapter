@@ -163,9 +163,12 @@ async function probe(url: string | URL, strategy: ProbeStrategy): Promise<ProbeR
 }
 
 function notMcp(response: Response): McpProbeResult {
+  const responseDescription = `endpoint returned ${responseKind(response)} (${response.status})`;
   return {
     isMcp: false,
-    classification: `endpoint returned ${responseKind(response)} (${response.status}) — this URL does not appear to speak MCP`,
+    classification: response.status === 503
+      ? `${responseDescription} — server is temporarily unavailable; MCP endpoint shape could not be determined`
+      : `${responseDescription} — this URL does not appear to speak MCP`,
   };
 }
 

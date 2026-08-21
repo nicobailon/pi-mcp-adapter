@@ -338,6 +338,69 @@ describe("lazy-keep-alive lifecycle", () => {
     expect(fake.getConnection("srv")?.status).toBe("connected");
   });
 
+  it("reports one terminal warning per outage while preserving health callbacks", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "session");
+    fake.refreshToolsError = new Error("temporarily unavailable");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onFailure = vi.fn();
+    const onHealthRestored = vi.fn();
+    lifecycle.setReconnectFailureCallback(onFailure);
+    lifecycle.setHealthRestoredCallback(onHealthRestored);
+
+    await lifecycle.ensureConverged();
+    vi.advanceTimersByTime(30_000);
+    await lifecycle.ensureConverged();
+
+    expect(fake.refreshToolsCalls).toEqual(["srv", "srv"]);
+    expect(onFailure).toHaveBeenCalledTimes(2);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+
+    fake.refreshToolsError = undefined;
+    vi.advanceTimersByTime(60_000);
+    await lifecycle.ensureConverged();
+    expect(onHealthRestored).toHaveBeenCalledWith("srv");
+
+    fake.refreshToolsError = new Error("temporarily unavailable again");
+    await lifecycle.ensureConverged();
+    expect(consoleError).toHaveBeenCalledTimes(2);
+  });
+
+  it("silences transient HTTP 503 refresh failures but reports later permanent failure", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "session");
+    fake.refreshToolsError = new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented,
+      "Error POSTing to endpoint: temporarily unavailable",
+      { status: 503 },
+    );
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onFailure = vi.fn();
+    lifecycle.setReconnectFailureCallback(onFailure);
+
+    await lifecycle.ensureConverged();
+    vi.advanceTimersByTime(30_000);
+    await lifecycle.ensureConverged();
+
+    expect(onFailure).toHaveBeenCalledTimes(2);
+    expect(consoleError).not.toHaveBeenCalled();
+
+    fake.refreshToolsError = new Error("permanent failure");
+    vi.advanceTimersByTime(60_000);
+    await lifecycle.ensureConverged();
+    vi.advanceTimersByTime(120_000);
+    await lifecycle.ensureConverged();
+
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith("MCP: Failed to refresh srv: permanent failure");
+  });
+
   it("reconnects immediately when a backed-off connection closes in place", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));

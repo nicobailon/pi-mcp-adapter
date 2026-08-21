@@ -89,6 +89,113 @@ describe("McpServerManager StreamableHTTP transport", () => {
     });
   });
 
+  it("does not multiply a transient initialize 503 inside Pi", async () => {
+    const methods: string[] = [];
+    let initializeAttempts = 0;
+    const server = http.createServer(async (req, res) => {
+      if (req.method === "GET") {
+        res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
+        return;
+      }
+      if (req.method !== "POST") {
+        res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
+        return;
+      }
+
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const message = JSON.parse(body) as { id?: string | number; method?: string };
+      methods.push(message.method ?? "");
+
+      if (message.method === "initialize") {
+        initializeAttempts += 1;
+        if (initializeAttempts === 1) {
+          res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({
+            error: "temporarily_unavailable",
+            error_description: "Credential validation is temporarily unavailable",
+          }));
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            protocolVersion: "2025-06-18",
+            capabilities: { tools: {}, resources: {} },
+            serverInfo: { name: "transient", version: "1.0.0" },
+          },
+        }));
+        return;
+      }
+      if (message.method === "notifications/initialized") {
+        res.writeHead(202).end();
+        return;
+      }
+      if (message.method === "tools/list") {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0", id: message.id, result: { tools: [] },
+        }));
+        return;
+      }
+      if (message.method === "resources/list") {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0", id: message.id, result: { resources: [] },
+        }));
+        return;
+      }
+      res.writeHead(500).end(`unexpected method: ${message.method}`);
+    });
+    servers.push(server);
+
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+
+    const manager = new McpServerManager();
+    await expect(manager.connect("transient", {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+    })).rejects.toThrow("endpoint is temporarily unavailable (HTTP 503)");
+
+    expect(initializeAttempts).toBe(1);
+    expect(methods).not.toContain("server/discover");
+  });
+
+  it("preserves the transient availability diagnosis without retry", async () => {
+    const methods: string[] = [];
+    const server = http.createServer(async (req, res) => {
+      if (req.method !== "POST") {
+        res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
+        return;
+      }
+
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const message = JSON.parse(body) as { method?: string };
+      methods.push(message.method ?? "");
+      res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({
+        error: "temporarily_unavailable",
+        error_description: "Credential validation is temporarily unavailable",
+      }));
+    });
+    servers.push(server);
+
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+
+    const manager = new McpServerManager();
+    const error = await manager.connect("unavailable", {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+    }).then(
+      () => new Error("expected connection failure"),
+      reason => reason instanceof Error ? reason : new Error(String(reason)),
+    );
+
+    expect(error.message).toContain("endpoint is temporarily unavailable (HTTP 503)");
+    expect(error.message).not.toContain("does not appear to speak MCP");
+    expect(methods).toEqual(["initialize"]);
+  });
+
   it("fails closed for explicit OAuth when secure storage is unavailable", async () => {
     await withAuthStore("unavailable", async () => {
       const server = http.createServer((_req, res) => {

@@ -45,6 +45,25 @@ describe("MCP endpoint shape probe", () => {
     });
   });
 
+  it("reports a transient server error without claiming the URL is not MCP", async () => {
+    mockFetch(new Response(JSON.stringify({
+      error: "temporarily_unavailable",
+      error_description: "Credential validation is temporarily unavailable",
+    }), {
+      status: 503,
+      headers: { "content-type": "application/json" },
+    }));
+
+    const result = await probeMcpEndpoint("https://example.test/mcp");
+
+    expect(result).toMatchObject({
+      isMcp: false,
+      classification: expect.stringContaining("temporarily unavailable"),
+    });
+    expect(result.classification).not.toContain("does not appear to speak MCP");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("recognizes a modern stateless server/discover response", async () => {
     mockFetch(new Response(JSON.stringify({
       jsonrpc: "2.0", id: 1, result: { protocolVersion: "2026-07-28" },

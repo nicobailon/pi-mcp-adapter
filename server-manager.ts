@@ -150,6 +150,10 @@ export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refres
 
 const KEEP_ALIVE_REFRESH_TIMEOUT_MS = 5_000;
 
+function isTransientHttpConnectError(error: unknown): error is SdkHttpError {
+  return error instanceof SdkHttpError && error.status === 503;
+}
+
 export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
@@ -651,6 +655,9 @@ export class McpServerManager {
 
   private async enrichHttpConnectionError(definition: ServerDefinition, error: unknown): Promise<Error> {
     const originalMessage = error instanceof Error ? error.message : String(error);
+    if (isTransientHttpConnectError(error)) {
+      return new Error(`${originalMessage} — endpoint is temporarily unavailable (HTTP 503)`, { cause: error });
+    }
     try {
       const probe = await probeMcpEndpoint(resolveServerUrl(definition)!);
       return new Error(`${originalMessage} — probe: ${probe.classification}`, { cause: error });
