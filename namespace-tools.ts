@@ -241,9 +241,28 @@ export function syncNamespaceProxyTools(input: SyncNamespaceProxyToolsInput): Sy
     unregisterTool?: (name: string) => boolean;
   }).unregisterTool;
   // The caller owns namespace lifecycle by tracking prior namespace names.
-  if (registered) {
-    for (const stale of input.existingNamespaceNames) {
-      if (!nextNames.has(stale) && !input.existingDirectNames.has(stale) && registered(stale)) result.deactivated.push(stale);
+  const staleNames = [...input.existingNamespaceNames].filter(
+    (name) => !nextNames.has(name) && !input.existingDirectNames.has(name),
+  );
+  for (const stale of staleNames) {
+    if (registered?.(stale)) result.deactivated.push(stale);
+  }
+  let activeTools: string[] | undefined;
+  if (staleNames.length > 0) {
+    try {
+      activeTools = input.pi.getActiveTools?.();
+    } catch (error) {
+      if (!(error instanceof Error && error.message.includes("Action methods cannot be called during extension loading"))) throw error;
+    }
+  }
+  if (activeTools) {
+    const stale = new Set(staleNames);
+    const nextActiveTools = activeTools.filter((name) => !stale.has(name));
+    if (nextActiveTools.length !== activeTools.length) {
+      input.pi.setActiveTools(nextActiveTools);
+      for (const name of staleNames) {
+        if (!result.deactivated.includes(name)) result.deactivated.push(name);
+      }
     }
   }
 

@@ -305,6 +305,32 @@ describe("syncNamespaceProxyTools", () => {
     expect(unregistered).not.toContain("mcp__demo_search");
   });
 
+  it("removes stale namespace proxies from active tools without unregisterTool", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+    delete pi.unregisterTool;
+    let activeTools = ["bash", "mcp__context_mode"];
+    pi.getActiveTools = vi.fn(() => activeTools);
+    pi.setActiveTools = vi.fn((nextActiveTools: string[]) => { activeTools = nextActiveTools; });
+    registered.set("mcp__context_mode", { name: "mcp__context_mode", execute: vi.fn() });
+
+    const result = syncNamespaceProxyTools({
+      config: { mcpServers: {} },
+      cache: { version: 1, servers: {} },
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(["mcp__context_mode"]),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(result.deactivated).toEqual(["mcp__context_mode"]);
+    expect(pi.setActiveTools).toHaveBeenCalledWith(["bash"]);
+    expect(activeTools).toEqual(["bash"]);
+  });
+
   it("skips colliding normalized server names without choosing by config order", async () => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered } = makePi();
