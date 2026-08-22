@@ -374,19 +374,17 @@ function summarizeStructuredContent(value: unknown): Record<string, unknown> {
   if (!record || Array.isArray(value)) return summarizeValue(value);
   const keys = Object.keys(record);
   const entries = Object.entries(record).slice(0, KEY_PREVIEW_LIMIT);
-  const boundedKeys = uniqueBoundedKeys(entries.map(([key]) => key));
+  const previewKeys = uniqueBoundedKeys(entries.map(([key]) => key));
   const fields: Record<string, unknown> = {};
   let preservedBytes = byteLength("{}");
-  for (let index = 0; index < entries.length; index++) {
-    const [, field] = entries[index]!;
-    const boundedKey = boundedKeys[index]!;
+  for (const [key, field] of entries) {
     const fieldBytes = byteLength(safeStringify(field));
     const candidate = fieldBytes <= STRUCTURED_CONTENT_FIELD_PRESERVE_MAX_BYTES
       ? field
       : summarizeValue(field);
-    const entryBytes = serializedObjectEntryBytes(boundedKey, candidate, Object.keys(fields).length > 0);
+    const entryBytes = serializedObjectEntryBytes(key, candidate, Object.keys(fields).length > 0);
     if (preservedBytes + entryBytes > STRUCTURED_CONTENT_PRESERVE_MAX_BYTES) continue;
-    fields[boundedKey] = candidate;
+    fields[key] = candidate;
     preservedBytes += entryBytes;
   }
   return {
@@ -395,7 +393,7 @@ function summarizeStructuredContent(value: unknown): Record<string, unknown> {
       type: "object",
       estimatedBytes: estimateValueBytes(value),
       keyCount: keys.length,
-      keysPreview: boundedKeys,
+      keysPreview: previewKeys,
       omitted: true,
     },
   };

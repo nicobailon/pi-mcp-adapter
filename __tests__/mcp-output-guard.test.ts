@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { guardMcpOutput, resolveMcpOutputGuardOptions, type McpResultSummary } from "../mcp-output-guard.ts";
 
@@ -81,8 +83,9 @@ describe("guardMcpOutput", () => {
     expect(kept.mcpResult).toBe(rawMcpResult);
 
     const summarized = await guardMcpOutput([{ type: "text", text: "ok" }], { detailsMaxBytes: 100, rawMcpResult });
-    expect((summarized.mcpResult as McpResultSummary).omitted).toBe(true);
-    expect((summarized.mcpResult as McpResultSummary).fullResultPath).toBeTruthy();
+    const summary = summarized.mcpResult as Record<string, unknown>;
+    expect(summary.omitted).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(summary), "utf8")).toBeLessThanOrEqual(100);
   });
 
   it("preserves bounded leading structured fields when the raw result is summarized", async () => {
@@ -186,6 +189,36 @@ describe("guardMcpOutput", () => {
     expect(Buffer.byteLength(JSON.stringify(tightlyGuarded.mcpResult), "utf8")).toBeLessThanOrEqual(512);
   });
 
+  it("preserves original long structured field keys instead of preview aliases", async () => {
+    const firstKey = `field-${"k".repeat(180)}-one`;
+    const secondKey = `field-${"k".repeat(180)}-two`;
+    const rawMcpResult = {
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: {
+        [firstKey]: "first",
+        [secondKey]: "second",
+        body: "x".repeat(8_000),
+      },
+    };
+
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 4096, rawMcpResult },
+    );
+
+    const structuredSummary = (guarded.mcpResult as McpResultSummary).structuredContent;
+    const preservedFields = structuredSummary?.preservedFields as Record<string, unknown>;
+    const preview = structuredSummary?.summary as { keysPreview: string[] };
+
+    expect(preservedFields[firstKey]).toBe("first");
+    expect(preservedFields[secondKey]).toBe("second");
+    expect(Object.keys(preservedFields)).toContain(firstKey);
+    expect(Object.keys(preservedFields)).toContain(secondKey);
+    expect(preview.keysPreview.every((key) => Buffer.byteLength(key, "utf8") <= 120)).toBe(true);
+    expect(preview.keysPreview).not.toContain(firstKey);
+    expect(preview.keysPreview).not.toContain(secondKey);
+  });
+
   it("spills the oversized raw result as compact JSON and reports its compact byte size", async () => {
     const rawMcpResult = { content: [{ type: "text", text: "ok" }], isError: false, structuredContent: { rows: "z".repeat(5000) } };
     const guarded = await guardMcpOutput([{ type: "text", text: "ok" }], { detailsMaxBytes: 1024, rawMcpResult });
@@ -199,6 +232,33 @@ describe("guardMcpOutput", () => {
     expect(saved).toBe(compact);
     expect(saved).not.toContain("\n");
     expect(summary.rawResultBytes).toBe(Buffer.byteLength(compact, "utf8"));
+  });
+
+  it("deletes the raw result spill artifact when tight bounds omit the path", async () => {
+    const artifactPrefix = "pi-mcp-output-";
+    const previousTmpdir = process.env.TMPDIR;
+    const sandbox = await mkdtemp(join(tmpdir(), "pi-mcp-output-test-"));
+    const rawMcpResult = { structuredContent: { body: "x".repeat(5_000) } };
+
+    try {
+      process.env.TMPDIR = sandbox;
+      const guarded = await guardMcpOutput(
+        [{ type: "text", text: "ok" }],
+        { detailsMaxBytes: 32, rawMcpResult },
+      );
+
+      expect(guarded.mcpResult).toEqual({ omitted: true });
+
+      const createdDirs = (await readdir(sandbox))
+        .filter((entry) => entry.startsWith(artifactPrefix))
+        .map((entry) => join(sandbox, entry));
+
+      expect(createdDirs).toEqual([]);
+    } finally {
+      if (previousTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpdir;
+      await rm(sandbox, { recursive: true, force: true });
+    }
   });
 
   it("omits MCP details when the configured bound cannot hold an omission marker", async () => {
