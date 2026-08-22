@@ -181,6 +181,22 @@ describe("runMcpScript", () => {
     });
   });
 
+  it("withholds describe of a recently-failed server's cached tool", async () => {
+    state.failureTracker.set("fixture", Date.now() - 5_000);
+    try {
+      const result = await runMcpScript(
+        state,
+        'return await tools.describe({ path: "fixture_echo" });',
+      );
+      expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+        path: "fixture_echo",
+        error: { code: "recent_failure", message: expect.stringContaining("fixture") },
+      });
+    } finally {
+      state.failureTracker.delete("fixture");
+    }
+  });
+
   it("records operation metadata and timing for search, describe, and calls", async () => {
     const result = await runMcpScript(
       state,

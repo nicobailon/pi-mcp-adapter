@@ -444,16 +444,42 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
   }
 }
 
+function liveToolMatches(
+  state: McpExtensionState,
+  toolName: string,
+  exact: boolean,
+): { server: string; tool: ToolMetadata }[] {
+  return getEnabledToolMatches(state, toolName, exact)
+    .filter(({ server }) => !hasRecentFailure(state.failureTracker, server));
+}
+
+function withheldForRecentFailure(
+  mode: "describe" | "list",
+  serverName: string,
+  failedAgo: number,
+  extra: Record<string, unknown> = {},
+): ProxyToolResult {
+  return {
+    content: [{
+      type: "text" as const,
+      text: `Server "${serverName}" failed ${failedAgo}s ago — cached tools withheld until it reconnects. Use mcp({ connect: "${serverName}" }) to retry.`,
+    }],
+    details: { mode, server: serverName, error: "recent_failure", failedAgoSeconds: failedAgo, ...extra },
+  };
+}
+
 export function executeDescribe(state: McpExtensionState, toolName: string): ProxyToolResult {
-  const exactMatches = getEnabledToolMatches(state, toolName, true);
+  const exactAll = getEnabledToolMatches(state, toolName, true);
+  const exactMatches = liveToolMatches(state, toolName, true);
   if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
-  if (exactMatches.length === 0 && getEnabledToolMatches(state, toolName, false).length > 1) {
+  if (exactMatches.length === 0 && liveToolMatches(state, toolName, false).length > 1) {
     return ambiguousToolResult("describe", toolName);
   }
 
   let serverName = exactMatches[0]?.server;
   let toolMeta = exactMatches[0]?.tool;
   let disabledMatch: string | undefined;
+  let failedMatch = exactAll.find(({ server }) => hasRecentFailure(state.failureTracker, server))?.server;
 
   if (!toolMeta) {
     for (const [server, metadata] of state.toolMetadata.entries()) {
@@ -463,6 +489,10 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
         disabledMatch ??= server;
         continue;
       }
+      if (hasRecentFailure(state.failureTracker, server)) {
+        failedMatch ??= server;
+        continue;
+      }
       serverName = server;
       toolMeta = found;
       break;
@@ -470,6 +500,10 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
   }
 
   if (!serverName || !toolMeta) {
+    if (failedMatch) {
+      const failedAgo = getFailureAgeSeconds(state, failedMatch) ?? 0;
+      return withheldForRecentFailure("describe", failedMatch, failedAgo, { requestedTool: toolName });
+    }
     if (disabledMatch) return disabledResult("describe", disabledMatch);
     const suggestions = rankSuggestions(state, toolName, 5);
     const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
@@ -669,10 +703,7 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
 
   const failedAgo = getFailureAgeSeconds(state, server);
   if (failedAgo !== null) {
-    return {
-      content: [{ type: "text" as const, text: `Server "${server}" failed ${failedAgo}s ago — cached tools withheld until it reconnects. Use mcp({ connect: "${server}" }) to retry.` }],
-      details: { mode: "list", server, tools: [], count: 0, error: "recent_failure", failedAgoSeconds: failedAgo },
-    };
+    return withheldForRecentFailure("list", server, failedAgo, { tools: [], count: 0 });
   }
 
   const metadata = state.toolMetadata.get(server);

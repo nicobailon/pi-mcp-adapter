@@ -8,7 +8,7 @@ import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts"
 import type { McpExtensionState } from "./state.ts";
 import { findToolByName, formatSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
-import type { ContentBlock } from "./types.ts";
+import { hasRecentFailure, type ContentBlock } from "./types.ts";
 
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 
@@ -201,9 +201,14 @@ export async function runMcpScript(
     const path = typeof input?.path === "string" ? input.path : "";
     let error: unknown;
     try {
+      let withheldServer: string | undefined;
       for (const [server, metadata] of state.toolMetadata) {
         const tool = findToolByName(metadata, path);
         if (!tool) continue;
+        if (hasRecentFailure(state.failureTracker, server)) {
+          withheldServer ??= server;
+          continue;
+        }
         const inputTypeScript = tool.inputSchema
           ? renderTsShape(tool.inputSchema) ?? formatSchema(tool.inputSchema)
           : null;
@@ -213,6 +218,16 @@ export async function runMcpScript(
           server,
           ...(tool.description ? { description: tool.description } : {}),
           ...(inputTypeScript ? { inputTypeScript } : {}),
+        };
+      }
+      if (withheldServer) {
+        error = "recent_failure";
+        return {
+          path,
+          error: {
+            code: "recent_failure",
+            message: `Server "${withheldServer}" failed recently — cached tools withheld until it reconnects.`,
+          },
         };
       }
       const suggestions = path ? rankSuggestions(state, path, 5) : [];

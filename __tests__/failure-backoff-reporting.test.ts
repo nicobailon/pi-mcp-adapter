@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { executeList, executeSearch, executeStatus } from "../proxy-modes.ts";
+import { executeDescribe, executeList, executeSearch, executeStatus } from "../proxy-modes.ts";
 import { createMcpStatusSnapshot } from "../mcp-status.ts";
 import type { McpExtensionState } from "../state.ts";
 
@@ -88,6 +88,34 @@ describe("failure backoff keeps failed servers out of discovery surfaces (F20)",
     expect(result.details).toMatchObject({ mode: "list", server: "ghost", count: 0, error: "recent_failure" });
     expect(result.content[0].text).toContain("failed");
     expect(result.content[0].text).toContain('mcp({ connect: "ghost" })');
+  });
+
+  it("withholds describe of a failed server's cached tool and points at reconnect", () => {
+    const state = createState();
+    state.failureTracker.set("ghost", Date.now() - 5_000);
+
+    const result = executeDescribe(state, "ghost_search");
+
+    expect(result.details).toMatchObject({
+      mode: "describe",
+      server: "ghost",
+      error: "recent_failure",
+      requestedTool: "ghost_search",
+    });
+    expect(result.content[0].text).toContain("failed");
+    expect(result.content[0].text).toContain('mcp({ connect: "ghost" })');
+    expect(result.content[0].text).not.toContain("Search ghost records");
+  });
+
+  it("still describes a live server's tool while another server is in backoff", () => {
+    const state = createState();
+    state.failureTracker.set("ghost", Date.now() - 5_000);
+
+    const result = executeDescribe(state, "demo_search");
+
+    expect(result.details).toMatchObject({ mode: "describe", server: "demo" });
+    expect(result.details).not.toHaveProperty("error");
+    expect(result.content[0].text).toContain("Search demo records");
   });
 });
 
