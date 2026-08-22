@@ -35,9 +35,9 @@ describe("package.json files", () => {
         default: "./dist/types.js",
       },
       "./config": {
-        types: "./config.ts",
-        import: "./config.ts",
-        default: "./config.ts",
+        types: "./dist/config.d.ts",
+        import: "./dist/config.js",
+        default: "./dist/config.js",
       },
       "./metadata-cache": {
         types: "./dist/metadata-cache.d.ts",

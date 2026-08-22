@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { tmpdir } from "node:os";
 
-test("public metadata and type helpers load in plain Node from node_modules", async () => {
+test("public metadata, config, and type helpers load in plain Node from node_modules", async () => {
   const fixtureRoot = await mkdtemp(path.join(tmpdir(), "pi-mcp-public-exports-"));
   try {
     const packageRoot = path.join(fixtureRoot, "node_modules", "pi-mcp-adapter");
@@ -24,9 +24,11 @@ test("public metadata and type helpers load in plain Node from node_modules", as
       "--eval",
       [
         'const metadata = await import("pi-mcp-adapter/metadata-cache");',
+        'const config = await import("pi-mcp-adapter/config");',
         'const types = await import("pi-mcp-adapter/types");',
         'if (typeof metadata.isServerCacheValid !== "function") process.exit(2);',
-        'if (typeof types.formatToolName !== "function") process.exit(3);'
+        'if (typeof types.formatToolName !== "function") process.exit(3);',
+        'if (typeof config.loadMcpConfig !== "function") process.exit(4);'
       ].join("\n")
     ], {
       cwd: fixtureRoot,

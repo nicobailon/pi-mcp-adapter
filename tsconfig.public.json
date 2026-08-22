@@ -11,6 +11,7 @@
     "sourceMap": true
   },
   "include": [
+    "config.ts",
     "metadata-cache.ts",
     "types.ts"
   ]
