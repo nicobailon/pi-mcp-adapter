@@ -92,6 +92,43 @@ describe("direct tool host contracts", () => {
     });
   });
 
+  it("invalidates a connected transport after a direct tool call fails", async () => {
+    const connection = {
+      status: "connected",
+      client: { callTool: vi.fn().mockRejectedValue(new Error("transport closed")) },
+    };
+    const close = vi.fn(async () => {});
+    const state = {
+      config: {
+        settings: {},
+        mcpServers: { demo: { command: "demo" } },
+      },
+      manager: {
+        close,
+        getConnection: vi.fn(() => connection),
+        getRequestOptions: vi.fn(() => undefined),
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+    const { createDirectToolExecutor } = await import("../direct-tools.ts");
+    const execute = createDirectToolExecutor(() => state, () => null, {
+      serverName: "demo",
+      originalName: "commit",
+      prefixedName: "demo_commit",
+      description: "Commit one operation",
+    });
+
+    const result = await execute("call-transport", {}, undefined, undefined, undefined as any);
+
+    expect(result.details).toMatchObject({ error: "call_failed", server: "demo" });
+    expect(close).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledWith("demo");
+  });
+
   it("returns a bounded raw MCP result for direct resources when configured", async () => {
     const rawResult = {
       contents: [{ uri: "docs://handbook", mimeType: "text/plain", text: "accepted" }],

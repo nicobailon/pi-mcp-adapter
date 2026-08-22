@@ -659,12 +659,16 @@ export function createDirectToolExecutor(
         };
       }
       const message = error instanceof Error ? error.message : String(error);
+      const aborted = isAbortError(error, ownedSignal);
+      if (!aborted) {
+        await state.manager.close(spec.serverName).catch(() => {});
+      }
       uiSession?.sendToolCancelled(message);
       const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
       const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaText });
       return {
         content: guarded.content,
-        details: { error: isAbortError(error, ownedSignal) ? "aborted" : "call_failed", server: spec.serverName, ...guardedMcpDetails(guarded) },
+        details: { error: aborted ? "aborted" : "call_failed", server: spec.serverName, ...guardedMcpDetails(guarded) },
       };
     } finally {
       if (uiSession?.reused) {

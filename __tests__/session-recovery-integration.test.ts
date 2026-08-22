@@ -583,6 +583,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
+      close: vi.fn(async () => {}),
       getRequestOptions: vi.fn(() => undefined),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
@@ -608,6 +609,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     expect(stale.client.callTool).toHaveBeenCalledTimes(1);
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
+    expect(manager.close).toHaveBeenCalledWith("demo");
     expect(result.details).toMatchObject({ error: "call_failed", server: "demo" });
   });
 });
