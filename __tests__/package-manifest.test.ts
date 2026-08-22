@@ -34,6 +34,16 @@ describe("package.json files", () => {
         import: "./types.ts",
         default: "./types.ts",
       },
+      "./config": {
+        types: "./config.ts",
+        import: "./config.ts",
+        default: "./config.ts",
+      },
+      "./metadata-cache": {
+        types: "./metadata-cache.ts",
+        import: "./metadata-cache.ts",
+        default: "./metadata-cache.ts",
+      },
     });
   });
 

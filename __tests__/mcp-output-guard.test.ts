@@ -71,7 +71,7 @@ describe("guardMcpOutput", () => {
     const summary = guarded.mcpResult as McpResultSummary;
     expect(summary).toMatchObject({ omitted: true, isError: false, contentBlocks: 1 });
     expect(summary.fullResultPath).toBeTruthy();
-    expect(summary.structuredContent).toMatchObject({ omitted: true });
+    expect(summary.structuredContent).toMatchObject({ summary: { omitted: true } });
     expect(JSON.stringify(summary)).not.toContain("line-19");
   });
 
@@ -83,6 +83,64 @@ describe("guardMcpOutput", () => {
     const summarized = await guardMcpOutput([{ type: "text", text: "ok" }], { detailsMaxBytes: 100, rawMcpResult });
     expect((summarized.mcpResult as McpResultSummary).omitted).toBe(true);
     expect((summarized.mcpResult as McpResultSummary).fullResultPath).toBeTruthy();
+  });
+
+  it("preserves bounded leading structured fields when the raw result is summarized", async () => {
+    const receipt = {
+      contract: "agent_tool_operation_receipt_v1",
+      tool_call_id: "call-17",
+    };
+    const rawMcpResult = {
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: {
+        contract: "reserve_governed_tool_result_v1",
+        operation_receipt: receipt,
+        output_refs: [{ id: "x".repeat(8_000) }],
+      },
+    };
+
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 100, rawMcpResult },
+    );
+
+    expect((guarded.mcpResult as McpResultSummary).structuredContent).toMatchObject({
+      preservedFields: {
+        contract: "reserve_governed_tool_result_v1",
+        operation_receipt: receipt,
+      },
+    });
+    expect((guarded.mcpResult as McpResultSummary).structuredContent).toMatchObject({
+      preservedFields: { output_refs: { omitted: true } },
+      summary: { type: "object", omitted: true },
+    });
+  });
+
+  it("keeps structured payload fields separate from summary metadata", async () => {
+    const structuredContent = {
+      type: "reserve_result",
+      omitted: false,
+      keyCount: 17,
+      keysPreview: ["domain-key"],
+      estimatedBytes: 23,
+      body: "x".repeat(8_000),
+    };
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 100, rawMcpResult: { structuredContent } },
+    );
+
+    expect((guarded.mcpResult as McpResultSummary).structuredContent).toMatchObject({
+      preservedFields: {
+        type: "reserve_result",
+        omitted: false,
+        keyCount: 17,
+        keysPreview: ["domain-key"],
+        estimatedBytes: 23,
+        body: { omitted: true },
+      },
+      summary: { type: "object", omitted: true },
+    });
   });
 
   it("spills the oversized raw result as compact JSON and reports its compact byte size", async () => {

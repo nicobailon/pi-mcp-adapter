@@ -6,7 +6,7 @@ import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, authenticateServer, logoutServer, manageBearerToken, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
 import { cloneMcpConfig, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
-import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.ts";
+import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tools.ts";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
 import { loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
@@ -233,13 +233,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     });
   }
 
-  function registerDirectTool(spec: DirectToolSpec): void {
+  function registerDirectTool(spec: DirectToolSpec, config: McpConfig): void {
     (pi.registerTool as (tool: unknown) => unknown)({
       name: spec.prefixedName,
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: toToolParameters(normalizeDirectToolInputSchema(spec.inputSchema)),
+      ...(config.settings?.strictDirectToolArguments === true
+        ? { prepareArguments: (args: unknown) => prepareDirectToolArguments(spec.inputSchema, args) }
+        : {}),
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
       renderShell: toolRenderShell,
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName, toolRenderOptions),
@@ -298,7 +301,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const fingerprint = directToolFingerprint(spec);
       const previous = registeredDirectTools.get(spec.prefixedName);
       if (previous !== fingerprint) {
-        registerDirectTool(spec);
+        registerDirectTool(spec, config);
         registeredDirectTools.set(spec.prefixedName, fingerprint);
         if (fallbackDeactivatedTools.delete(spec.prefixedName)) {
           const activeTools = getActiveToolsIfReady();

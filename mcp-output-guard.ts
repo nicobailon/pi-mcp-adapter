@@ -11,6 +11,8 @@ export const DEFAULT_MCP_DETAILS_MAX_BYTES = 16 * 1024;
 const CONTENT_SUMMARY_LIMIT = 20;
 const KEY_PREVIEW_LIMIT = 20;
 const KEY_MAX_CHARS = 120;
+const STRUCTURED_CONTENT_PRESERVE_MAX_BYTES = 4 * 1024;
+const STRUCTURED_CONTENT_FIELD_PRESERVE_MAX_BYTES = 512;
 
 type Recordish = Record<string, unknown>;
 
@@ -289,7 +291,7 @@ async function summarizeMcpResult(result: unknown, raw: string, rawBytes: number
   };
 
   if (record && "structuredContent" in record) {
-    summary.structuredContent = summarizeValue(record.structuredContent);
+    summary.structuredContent = summarizeStructuredContent(record.structuredContent);
   }
   if (record && "_meta" in record) {
     summary.meta = summarizeValue(record._meta);
@@ -338,6 +340,32 @@ function summarizeValue(value: unknown): Record<string, unknown> {
     keyCount: keys.length,
     keysPreview: keys.slice(0, KEY_PREVIEW_LIMIT).map(truncateKey),
     omitted: true,
+  };
+}
+
+function summarizeStructuredContent(value: unknown): Record<string, unknown> {
+  const record = asRecord(value);
+  if (!record || Array.isArray(value)) return summarizeValue(value);
+  let preservedBytes = 0;
+  const keys = Object.keys(record);
+  const fields = Object.fromEntries(Object.entries(record).slice(0, KEY_PREVIEW_LIMIT).map(([key, field]) => {
+    const fieldBytes = byteLength(safeStringify(field));
+    if (fieldBytes <= STRUCTURED_CONTENT_FIELD_PRESERVE_MAX_BYTES
+      && preservedBytes + fieldBytes <= STRUCTURED_CONTENT_PRESERVE_MAX_BYTES) {
+      preservedBytes += fieldBytes;
+      return [key, field];
+    }
+    return [key, summarizeValue(field)];
+  }));
+  return {
+    preservedFields: fields,
+    summary: {
+      type: "object",
+      estimatedBytes: estimateValueBytes(value),
+      keyCount: keys.length,
+      keysPreview: keys.slice(0, KEY_PREVIEW_LIMIT).map(truncateKey),
+      omitted: true,
+    },
   };
 }
 

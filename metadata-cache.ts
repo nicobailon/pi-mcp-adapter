@@ -79,29 +79,29 @@ export function saveMetadataCache(cache: MetadataCache): void {
   renameSync(tmpPath, cachePath);
 }
 
-export function computeServerHash(definition: ServerEntry): string {
+export function computeServerHash(definition: ServerEntry, environment: NodeJS.ProcessEnv = process.env): string {
   // Hash only fields that affect server identity and tool/resource output.
   // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
   // that don't change which tools a server exposes.
   const identity: Record<string, unknown> = {
     command: definition.command,
     args: definition.args,
-    socket: resolveConfigPath(definition.socket),
-    env: interpolateEnvRecord(definition.env),
-    cwd: resolveConfigPath(definition.cwd),
-    url: resolveServerUrl(definition),
-    headers: interpolateEnvRecord(definition.headers),
+    socket: resolveConfigPath(definition.socket, environment),
+    env: interpolateEnvRecord(definition.env, environment),
+    cwd: resolveConfigPath(definition.cwd, environment),
+    url: resolveServerUrl(definition, environment),
+    headers: interpolateEnvRecord(definition.headers, environment),
     requestHeadersCommand: definition.requestHeadersCommand
       ? {
-          command: interpolateEnvVars(definition.requestHeadersCommand.command),
-          args: definition.requestHeadersCommand.args?.map(interpolateEnvVars),
-          env: interpolateEnvRecord(definition.requestHeadersCommand.env),
+          command: interpolateEnvVars(definition.requestHeadersCommand.command, environment),
+          args: definition.requestHeadersCommand.args?.map((argument) => interpolateEnvVars(argument, environment)),
+          env: interpolateEnvRecord(definition.requestHeadersCommand.env, environment),
           timeoutMs: definition.requestHeadersCommand.timeoutMs,
         }
       : undefined,
     auth: definition.auth,
     protocolVersion: definition.protocolVersion,
-    bearerToken: resolveBearerToken(definition),
+    bearerToken: resolveBearerToken(definition, environment),
     bearerTokenEnv: definition.bearerTokenEnv,
     exposeResources: definition.exposeResources,
     includeTools: definition.includeTools,
@@ -114,11 +114,12 @@ export function computeServerHash(definition: ServerEntry): string {
 export function isServerCacheValid(
   entry: ServerCacheEntry,
   definition: ServerEntry,
-  maxAgeMs: number = CACHE_MAX_AGE_MS
+  maxAgeMs: number = CACHE_MAX_AGE_MS,
+  environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
   let configHash: string;
   try {
-    configHash = computeServerHash(definition);
+    configHash = computeServerHash(definition, environment);
   } catch {
     return false;
   }

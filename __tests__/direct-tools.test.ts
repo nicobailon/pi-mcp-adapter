@@ -272,6 +272,24 @@ describe("metadata cache hashing", () => {
     );
   });
 
+  it("hashes an embedding host's explicit environment", () => {
+    const definition = {
+      url: "https://example.test/mcp",
+      headers: { Authorization: "Bearer ${PRIVATE_TOKEN}" },
+    };
+    const first = computeServerHash(definition, { PRIVATE_TOKEN: "first" });
+    const second = computeServerHash(definition, { PRIVATE_TOKEN: "second" });
+
+    expect(first).not.toBe(second);
+    expect(computeServerHash(definition, { PRIVATE_TOKEN: "first" })).toBe(first);
+    expect(isServerCacheValid({
+      configHash: first,
+      cachedAt: Date.now(),
+      tools: [],
+      resources: [],
+    }, definition, undefined, { PRIVATE_TOKEN: "first" })).toBe(true);
+  });
+
   it("does not hash URL placeholders with missing environment variables", () => {
     delete process.env.MCP_HASH_URL;
 
