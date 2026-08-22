@@ -3,7 +3,7 @@ import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
-import { getServerPrefix, isServerDisabled, parseUiPromptHandoff } from "./types.ts";
+import { getServerPrefix, hasRecentFailure, isServerDisabled, parseUiPromptHandoff } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
@@ -302,11 +302,20 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
   const disabledCount = servers.filter(s => s.disabled).length;
   const enabledServers = servers.filter(s => !s.disabled);
-  const totalTools = enabledServers.reduce((sum, s) => sum + s.toolCount, 0);
+  const failingServers = enabledServers.filter(s => s.status === "failed");
+  const unknownCountServers = enabledServers.filter(s => s.status === "not connected");
+  // Failed servers are excluded from the tool total: during the failure
+  // backoff window their cached tools are not callable. Not-connected
+  // servers without cached metadata have an unknown count, not zero.
+  const totalTools = enabledServers.filter(s => s.status !== "failed").reduce((sum, s) => sum + s.toolCount, 0);
   const connectedCount = enabledServers.filter(s => s.status === "connected").length;
 
+  const notes: string[] = [];
+  if (disabledCount > 0) notes.push(`${disabledCount} disabled`);
+  if (failingServers.length > 0) notes.push(`${failingServers.length} failing, excluded from counts`);
+  if (unknownCountServers.length > 0) notes.push(`${unknownCountServers.length} disconnected, counts unknown`);
   let text = `MCP: ${connectedCount}/${enabledServers.length} servers, ${totalTools} tools`;
-  if (disabledCount > 0) text += ` (${disabledCount} disabled)`;
+  if (notes.length > 0) text += ` (${notes.join("; ")})`;
   text += "\n\n";
   for (const server of servers) {
     if (server.disabled) {
@@ -314,7 +323,9 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       continue;
     }
     if (server.status === "connected") {
-      text += `✓ ${server.name} (${server.toolCount} tools)\n`;
+      // A connected server exposing zero tools is a malfunction, not health.
+      const glyph = server.toolCount === 0 ? "⚠" : "✓";
+      text += `${glyph} ${server.name} (${server.toolCount} tools)\n`;
       continue;
     }
     if (server.status === "needs-auth") {
@@ -338,7 +349,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "status", servers, totalTools, connectedCount, disabledCount },
+    details: { mode: "status", servers, totalTools, connectedCount, disabledCount, failingCount: failingServers.length },
   };
 }
 
@@ -433,16 +444,42 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
   }
 }
 
+function liveToolMatches(
+  state: McpExtensionState,
+  toolName: string,
+  exact: boolean,
+): { server: string; tool: ToolMetadata }[] {
+  return getEnabledToolMatches(state, toolName, exact)
+    .filter(({ server }) => !hasRecentFailure(state.failureTracker, server));
+}
+
+function withheldForRecentFailure(
+  mode: "describe" | "list",
+  serverName: string,
+  failedAgo: number,
+  extra: Record<string, unknown> = {},
+): ProxyToolResult {
+  return {
+    content: [{
+      type: "text" as const,
+      text: `Server "${serverName}" failed ${failedAgo}s ago — cached tools withheld until it reconnects. Use mcp({ connect: "${serverName}" }) to retry.`,
+    }],
+    details: { mode, server: serverName, error: "recent_failure", failedAgoSeconds: failedAgo, ...extra },
+  };
+}
+
 export function executeDescribe(state: McpExtensionState, toolName: string): ProxyToolResult {
-  const exactMatches = getEnabledToolMatches(state, toolName, true);
+  const exactAll = getEnabledToolMatches(state, toolName, true);
+  const exactMatches = liveToolMatches(state, toolName, true);
   if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
-  if (exactMatches.length === 0 && getEnabledToolMatches(state, toolName, false).length > 1) {
+  if (exactMatches.length === 0 && liveToolMatches(state, toolName, false).length > 1) {
     return ambiguousToolResult("describe", toolName);
   }
 
   let serverName = exactMatches[0]?.server;
   let toolMeta = exactMatches[0]?.tool;
   let disabledMatch: string | undefined;
+  let failedMatch = exactAll.find(({ server }) => hasRecentFailure(state.failureTracker, server))?.server;
 
   if (!toolMeta) {
     for (const [server, metadata] of state.toolMetadata.entries()) {
@@ -452,6 +489,10 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
         disabledMatch ??= server;
         continue;
       }
+      if (hasRecentFailure(state.failureTracker, server)) {
+        failedMatch ??= server;
+        continue;
+      }
       serverName = server;
       toolMeta = found;
       break;
@@ -459,6 +500,10 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
   }
 
   if (!serverName || !toolMeta) {
+    if (failedMatch) {
+      const failedAgo = getFailureAgeSeconds(state, failedMatch) ?? 0;
+      return withheldForRecentFailure("describe", failedMatch, failedAgo, { requestedTool: toolName });
+    }
     if (disabledMatch) return disabledResult("describe", disabledMatch);
     const suggestions = rankSuggestions(state, toolName, 5);
     const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
@@ -504,6 +549,15 @@ export function executeSearch(
 ): ProxyToolResult {
   const showSchemas = includeSchemas !== false;
   if (server && isServerDisabled(state.config.mcpServers[server])) return disabledResult("search", server);
+  // Servers inside the failure backoff window are skipped: their cached
+  // tools are not callable until a successful reconnect revalidates them.
+  const failedServers = Object.keys(state.config.mcpServers)
+    .filter(name => !server || name === server)
+    .filter(name => !isServerDisabled(state.config.mcpServers[name]))
+    .filter(name => hasRecentFailure(state.failureTracker, name));
+  const failedNote = failedServers.length > 0
+    ? `\n\nExcluded while failing (retry after reconnect): ${failedServers.join(", ")}`
+    : "";
 
   let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;
   if (regex) {
@@ -546,6 +600,7 @@ export function executeSearch(
       const definition = state.config.mcpServers[serverName];
       if (isServerDisabled(definition)) continue;
       if (server && serverName !== server) continue;
+      if (failedServers.includes(serverName)) continue;
       for (const tool of metadata) {
         const matched = pattern.test(tool.name) || pattern.test(tool.description)
           || resolveSearchKeywords(definition, tool.originalName, serverName, globalPrefix).some(keyword => pattern.test(keyword));
@@ -559,9 +614,11 @@ export function executeSearch(
         details: { mode: "search", error: "empty_query" },
       };
     }
-    matches = (state.toolMetadata.get(server) ?? [])
-      .map(tool => ({ server, tool, score: 0 }))
-      .sort((a, b) => a.tool.name.localeCompare(b.tool.name));
+    matches = failedServers.includes(server)
+      ? []
+      : (state.toolMetadata.get(server) ?? [])
+        .map(tool => ({ server, tool, score: 0 }))
+        .sort((a, b) => a.tool.name.localeCompare(b.tool.name));
   } else {
     matches = rankToolMatches(state, query, server);
   }
@@ -580,7 +637,7 @@ export function executeSearch(
         ? ` Servers ${connectingServers.map(name => `"${name}"`).join(", ")} are still connecting; retry in a moment.`
         : "";
     return {
-      content: [{ type: "text" as const, text: `${msg}${connectingMessage}` }],
+      content: [{ type: "text" as const, text: `${msg}${connectingMessage}${failedNote}`.trim() }],
       details: {
         mode: "search",
         matches: [],
@@ -589,6 +646,7 @@ export function executeSearch(
         nextOffset: null,
         query,
         ...(connectingServers.length > 0 ? { connectingServers } : {}),
+        ...(failedServers.length > 0 ? { excludedServers: failedServers } : {}),
       },
     };
   }
@@ -617,6 +675,7 @@ export function executeSearch(
     }
   }
   if (page.hasMore) text += `\n${page.items.length} of ${page.total} — offset: ${page.nextOffset} for more\n`;
+  if (failedNote) text += `${failedNote}\n`;
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
@@ -627,6 +686,7 @@ export function executeSearch(
       hasMore: page.hasMore,
       nextOffset: page.nextOffset,
       query,
+      ...(failedServers.length > 0 ? { excludedServers: failedServers } : {}),
     },
   };
 }
@@ -640,6 +700,11 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     };
   }
   if (isServerDisabled(definition)) return disabledResult("list", server);
+
+  const failedAgo = getFailureAgeSeconds(state, server);
+  if (failedAgo !== null) {
+    return withheldForRecentFailure("list", server, failedAgo, { tools: [], count: 0 });
+  }
 
   const metadata = state.toolMetadata.get(server);
   const toolNames = metadata?.map(m => m.name) ?? [];
