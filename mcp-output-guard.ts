@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ContentBlock, McpSettings } from "./types.ts";
 
 export const DEFAULT_MCP_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -271,7 +271,33 @@ async function boundMcpResult(result: unknown, detailsMaxBytes: number): Promise
   const raw = safeStringify(result);
   const rawBytes = byteLength(raw);
   if (rawBytes <= detailsMaxBytes) return result;
-  return summarizeMcpResult(result, raw, rawBytes);
+  const marker = { omitted: true } as const;
+  if (byteLength(safeStringify(marker)) > detailsMaxBytes) return undefined;
+
+  const summary = await summarizeMcpResult(result, raw, rawBytes);
+  if (byteLength(safeStringify(summary)) <= detailsMaxBytes) return summary;
+  return compactMcpResultOmission(summary, marker, detailsMaxBytes);
+}
+
+async function compactMcpResultOmission(
+  summary: McpResultSummary,
+  marker: Readonly<{ omitted: true }>,
+  maxBytes: number,
+): Promise<unknown> {
+  if (summary.fullResultPath) {
+    const withPathAndSize = {
+      ...marker,
+      rawResultBytes: summary.rawResultBytes,
+      fullResultPath: summary.fullResultPath,
+    };
+    if (byteLength(safeStringify(withPathAndSize)) <= maxBytes) return withPathAndSize;
+    const withPath = { ...marker, fullResultPath: summary.fullResultPath };
+    if (byteLength(safeStringify(withPath)) <= maxBytes) return withPath;
+    await discardArtifact(summary.fullResultPath);
+  }
+
+  const withSize = { ...marker, rawResultBytes: summary.rawResultBytes };
+  return byteLength(safeStringify(withSize)) <= maxBytes ? withSize : marker;
 }
 
 async function summarizeMcpResult(result: unknown, raw: string, rawBytes: number): Promise<McpResultSummary> {
@@ -419,6 +445,14 @@ async function saveArtifact(kind: string, text: string): Promise<{ path?: string
     return { path };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function discardArtifact(path: string): Promise<void> {
+  try {
+    await rm(dirname(path), { recursive: true, force: true });
+  } catch {
+    // Cleanup cannot increase the returned details payload.
   }
 }
 

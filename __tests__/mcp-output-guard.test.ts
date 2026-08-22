@@ -48,7 +48,7 @@ describe("guardMcpOutput", () => {
       {
         maxBytes: 300,
         maxLines: 8,
-        detailsMaxBytes: 200,
+        detailsMaxBytes: 1200,
         rawMcpResult: { content: [{ type: "text", text }], isError: false, structuredContent: { rows: [text] } },
       },
     );
@@ -101,7 +101,7 @@ describe("guardMcpOutput", () => {
 
     const guarded = await guardMcpOutput(
       [{ type: "text", text: "ok" }],
-      { detailsMaxBytes: 100, rawMcpResult },
+      { detailsMaxBytes: 4096, rawMcpResult },
     );
 
     expect((guarded.mcpResult as McpResultSummary).structuredContent).toMatchObject({
@@ -127,7 +127,7 @@ describe("guardMcpOutput", () => {
     };
     const guarded = await guardMcpOutput(
       [{ type: "text", text: "ok" }],
-      { detailsMaxBytes: 100, rawMcpResult: { structuredContent } },
+      { detailsMaxBytes: 4096, rawMcpResult: { structuredContent } },
     );
 
     const structuredSummary = (guarded.mcpResult as McpResultSummary).structuredContent;
@@ -178,11 +178,17 @@ describe("guardMcpOutput", () => {
     expect(Object.keys(preservedFields).every((key) => preview.keysPreview.includes(key))).toBe(true);
     expect(Object.keys(preservedFields)
       .every((key) => Buffer.byteLength(key, "utf8") <= 120)).toBe(true);
+
+    const tightlyGuarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 512, rawMcpResult: { structuredContent } },
+    );
+    expect(Buffer.byteLength(JSON.stringify(tightlyGuarded.mcpResult), "utf8")).toBeLessThanOrEqual(512);
   });
 
   it("spills the oversized raw result as compact JSON and reports its compact byte size", async () => {
-    const rawMcpResult = { content: [{ type: "text", text: "ok" }], isError: false, structuredContent: { rows: "z".repeat(500) } };
-    const guarded = await guardMcpOutput([{ type: "text", text: "ok" }], { detailsMaxBytes: 50, rawMcpResult });
+    const rawMcpResult = { content: [{ type: "text", text: "ok" }], isError: false, structuredContent: { rows: "z".repeat(5000) } };
+    const guarded = await guardMcpOutput([{ type: "text", text: "ok" }], { detailsMaxBytes: 1024, rawMcpResult });
 
     const summary = guarded.mcpResult as McpResultSummary;
     expect(summary.omitted).toBe(true);
@@ -193,6 +199,21 @@ describe("guardMcpOutput", () => {
     expect(saved).toBe(compact);
     expect(saved).not.toContain("\n");
     expect(summary.rawResultBytes).toBe(Buffer.byteLength(compact, "utf8"));
+  });
+
+  it("omits MCP details when the configured bound cannot hold an omission marker", async () => {
+    const rawMcpResult = { structuredContent: { body: "x".repeat(5000) } };
+    const markerOnly = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 32, rawMcpResult },
+    );
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 1, rawMcpResult },
+    );
+
+    expect(markerOnly.mcpResult).toEqual({ omitted: true });
+    expect(guarded.mcpResult).toBeUndefined();
   });
 
   it("passes image blocks through untouched, even large ones", async () => {
