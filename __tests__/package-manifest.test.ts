@@ -21,7 +21,7 @@ const hostPeerPackages = {
 };
 
 describe("package.json files", () => {
-  it("exports the TypeScript source entry for SDK consumers", () => {
+  it("exports source entry points and plain Node host helpers", () => {
     expect(packageJson.types).toBe("./index.ts");
     expect(packageJson.exports).toMatchObject({
       ".": {
@@ -30,9 +30,9 @@ describe("package.json files", () => {
         default: "./index.ts",
       },
       "./types": {
-        types: "./types.ts",
-        import: "./types.ts",
-        default: "./types.ts",
+        types: "./dist/types.d.ts",
+        import: "./dist/types.js",
+        default: "./dist/types.js",
       },
       "./config": {
         types: "./config.ts",
@@ -40,9 +40,9 @@ describe("package.json files", () => {
         default: "./config.ts",
       },
       "./metadata-cache": {
-        types: "./metadata-cache.ts",
-        import: "./metadata-cache.ts",
-        default: "./metadata-cache.ts",
+        types: "./dist/metadata-cache.d.ts",
+        import: "./dist/metadata-cache.js",
+        default: "./dist/metadata-cache.js",
       },
     });
   });

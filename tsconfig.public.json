@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "declaration": true,
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist",
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": ".",
+    "sourceMap": true
+  },
+  "include": [
+    "metadata-cache.ts",
+    "types.ts"
+  ]
+}
