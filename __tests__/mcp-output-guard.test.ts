@@ -130,7 +130,10 @@ describe("guardMcpOutput", () => {
       { detailsMaxBytes: 100, rawMcpResult: { structuredContent } },
     );
 
-    expect((guarded.mcpResult as McpResultSummary).structuredContent).toMatchObject({
+    const structuredSummary = (guarded.mcpResult as McpResultSummary).structuredContent;
+
+    expect(structuredSummary).not.toHaveProperty("type");
+    expect(structuredSummary).toMatchObject({
       preservedFields: {
         type: "reserve_result",
         omitted: false,
@@ -139,7 +142,12 @@ describe("guardMcpOutput", () => {
         estimatedBytes: 23,
         body: { omitted: true },
       },
-      summary: { type: "object", omitted: true },
+      summary: {
+        type: "object",
+        keyCount: 6,
+        keysPreview: ["type", "omitted", "keyCount", "keysPreview", "estimatedBytes", "body"],
+        omitted: true,
+      },
     });
   });
 

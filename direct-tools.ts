@@ -551,7 +551,10 @@ export function createDirectToolExecutor(
           (conn) => conn.client.readResource({ uri: spec.resourceUri! }, requestOptions),
         );
         const content = transformMcpResourceContents(result.contents ?? [], state.owner?.signal);
-        const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
+        const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], {
+          ...outputGuardOptions,
+          ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
+        });
         return {
           content: guarded.content,
           details: { server: spec.serverName, resourceUri: spec.resourceUri, ...guardedMcpDetails(guarded) },

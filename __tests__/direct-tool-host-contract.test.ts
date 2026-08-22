@@ -91,4 +91,47 @@ describe("direct tool host contracts", () => {
       mcpResult: rawResult,
     });
   });
+
+  it("returns a bounded raw MCP result for direct resources when configured", async () => {
+    const rawResult = {
+      contents: [{ uri: "docs://handbook", mimeType: "text/plain", text: "accepted" }],
+      _meta: { traceId: "resource-7" },
+    };
+    const connection = {
+      status: "connected",
+      client: { readResource: vi.fn().mockResolvedValue(rawResult) },
+    };
+    const state = {
+      config: {
+        settings: { directToolResultDetails: "bounded" },
+        mcpServers: { demo: { command: "demo" } },
+      },
+      manager: {
+        getConnection: vi.fn(() => connection),
+        getRequestOptions: vi.fn(() => undefined),
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+    const { createDirectToolExecutor } = await import("../direct-tools.ts");
+    const execute = createDirectToolExecutor(() => state, () => null, {
+      serverName: "demo",
+      originalName: "handbook",
+      prefixedName: "demo_handbook",
+      description: "Read handbook",
+      resourceUri: "docs://handbook",
+    });
+
+    const result = await execute("call-20", {}, undefined, undefined, undefined as any);
+
+    expect(result.details).toMatchObject({
+      server: "demo",
+      resourceUri: "docs://handbook",
+      mcpResult: rawResult,
+    });
+    expect(connection.client.readResource).toHaveBeenCalledWith({ uri: "docs://handbook" }, undefined);
+  });
 });
