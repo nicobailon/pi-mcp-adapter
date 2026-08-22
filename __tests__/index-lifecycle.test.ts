@@ -109,10 +109,12 @@ vi.mock("../utils.ts", () => ({
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function createState() {
@@ -1377,6 +1379,84 @@ describe("mcpAdapter session lifecycle", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("retries initialization from the proxy tool after an initialization failure", async () => {
+    const state = createState();
+    mocks.initializeMcp
+      .mockRejectedValueOnce(new Error("first boom"))
+      .mockResolvedValueOnce(state);
+    mocks.executeSearch.mockResolvedValue({ content: [{ type: "text", text: "results" }] });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers } = createPi();
+      mcpAdapter(api);
+
+      await handlers.get("session_start")?.({}, { hasUI: false });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+      const callCtx = { hasUI: false, cwd: "/tmp/retry", mode: "print" };
+      const result = await proxyTool.execute("call-1", { search: "demo" }, undefined, undefined, callCtx);
+
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+      expect(mocks.initializeMcp.mock.calls[1][1]).toBe(callCtx);
+      expect(result).toEqual({ content: [{ type: "text", text: "results" }] });
+      expect(mocks.executeSearch).toHaveBeenCalledWith(state, "demo", undefined, undefined, undefined, undefined, undefined);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("returns retry guidance when proxy retry initialization also fails", async () => {
+    mocks.initializeMcp
+      .mockRejectedValueOnce(new Error("first boom"))
+      .mockRejectedValueOnce(new Error("retry boom"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers } = createPi();
+      mcpAdapter(api);
+
+      await handlers.get("session_start")?.({}, { hasUI: false });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+      const result = await proxyTool.execute("call-1", { search: "demo" }, undefined, undefined, { hasUI: false });
+      const text = result.content[0].text;
+
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+      expect(text).not.toBe("MCP not initialized");
+      expect(text).toContain("retry boom");
+      expect(text).toContain("call mcp(...) again to retry initialization");
+      expect(result.details).toEqual({ error: "init_failed", message: "retry boom" });
+      expect(mocks.executeSearch).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("does not turn a shutdown-aborted initialization into retry guidance", async () => {
+    const initializing = createDeferred<any>();
+    mocks.initializeMcp.mockReturnValue(initializing.promise);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    await handlers.get("session_start")?.({}, { hasUI: false });
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const resultPromise = proxyTool.execute("call-1", { search: "demo" }, undefined, undefined, { hasUI: false });
+
+    await handlers.get("session_shutdown")?.();
+    initializing.reject(new Error("network down"));
+
+    await expect(resultPromise).rejects.toThrow("network down");
+    expect(mocks.executeSearch).not.toHaveBeenCalled();
   });
 
   it("shuts down OAuth on session_shutdown", async () => {

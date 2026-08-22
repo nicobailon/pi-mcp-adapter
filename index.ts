@@ -45,6 +45,7 @@ export {
 } from "./types.ts";
 
 const INIT_WAIT_TIMEOUT_MS = 30_000;
+const INIT_FAILURE_MESSAGE_MAX_CHARS = 1_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
 
 export interface McpServerRegistration {
@@ -102,6 +103,41 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let currentOwner: McpRuntimeOwner | null = null;
   let currentOAuthRuntime: McpOAuthRuntime | null = null;
   let lifecycleGeneration = 0;
+  let retainedInitFailure: string | null = null;
+
+  function retainInitFailure(error: unknown): string {
+    const message = truncateAtWord(formatTerminalError(error), INIT_FAILURE_MESSAGE_MAX_CHARS);
+    retainedInitFailure = message;
+    return message;
+  }
+
+  function clearRetainedInitFailure(): void {
+    retainedInitFailure = null;
+  }
+
+  function buildInitRetryInstruction(prefix: string, failure: string | null = retainedInitFailure): string {
+    const retry = "Fix the MCP server configuration or startup failure, then call mcp(...) again to retry initialization.";
+    return failure ? `${prefix}: ${failure}. ${retry}` : `${prefix}. ${retry}`;
+  }
+
+  function isOwnerAbortError(error: unknown, owner: McpRuntimeOwner): boolean {
+    if (!owner.signal.aborted) return isAbortError(error);
+    const reason = owner.signal.reason;
+    if (reason instanceof Error && reason.message === "MCP initialization failed" && error !== reason) {
+      return isAbortError(error);
+    }
+    return true;
+  }
+
+  function startGatewayRetryInitialization(ctx: ExtensionContext): void {
+    const generation = ++lifecycleGeneration;
+    const owner = createMcpRuntimeOwner();
+    const oauthRuntime = createOAuthRuntime(owner.signal);
+    currentOwner = owner;
+    currentOAuthRuntime = oauthRuntime;
+    state = null;
+    startInitialization(ctx, owner, oauthRuntime, generation, "stale_gateway_retry_initialization");
+  }
 
   async function shutdownState(currentState: McpExtensionState | null, reason: string): Promise<void> {
     if (!currentState) {
@@ -416,6 +452,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
 
       state = nextState;
+      clearRetainedInitFailure();
       for (const [name, definition] of runtimeServers) {
         if (Object.hasOwn(nextState.config.mcpServers, name)) {
           console.error(`MCP: runtime-registered server "${name}" now collides with a configured server; keeping the configured server`);
@@ -451,7 +488,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (initPromise !== promise && initPromise !== null) {
         return;
       }
-      console.error(`MCP initialization failed: ${formatTerminalError(err)}`);
+      const message = retainInitFailure(err);
+      console.error(`MCP initialization failed: ${message}`);
       initPromise = null;
       if (state) return;
 
@@ -501,6 +539,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     currentOAuthRuntime = oauthRuntime;
     state = null;
     initPromise = null;
+    clearRetainedInitFailure();
 
     // Abort synchronously before awaiting cleanup so old callbacks and startup
     // work cannot resume into a stale ExtensionContext.
@@ -562,6 +601,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     currentOAuthRuntime = null;
     state = null;
     initPromise = null;
+    clearRetainedInitFailure();
 
     // Abort before awaiting cleanup so delayed initialization cannot touch stale
     // Pi context after session shutdown.
@@ -844,7 +884,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             executeOwner?.throwIfInactive();
             state = initialized;
           } catch (error) {
-            if (executeOwner && isAbortError(error, executeOwner.signal)) throw error;
+            if (executeOwner && isOwnerAbortError(error, executeOwner)) throw error;
             const message = error instanceof Error ? error.message : String(error);
             return {
               content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
@@ -854,8 +894,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         if (!state) {
           return {
-            content: [{ type: "text" as const, text: "MCP not initialized" }],
-            details: { mode: "script", error: "not_initialized" },
+            content: [{ type: "text" as const, text: retainedInitFailure
+              ? buildInitRetryInstruction("MCP is not initialized after an earlier initialization failure")
+              : "MCP not initialized" }],
+            details: { mode: "script", error: "not_initialized", ...(retainedInitFailure ? { message: retainedInitFailure } : {}) },
           };
         }
         executeOwner?.throwIfInactive();
@@ -907,7 +949,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         server?: string;
         action?: string;
       }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, _ctx: ExtensionContext) {
-        const executeOwner = currentOwner;
+        let executeOwner = currentOwner;
         const parseArgs = (value: string | Record<string, unknown> | undefined): Record<string, unknown> | undefined => {
           if (value === undefined || value === "") return undefined;
           let args: unknown;
@@ -943,6 +985,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           throw new Error("Gateway params were nested inside `args`; pass them top-level (for example, mcp({ search: \"...\" }) or mcp({ tool: \"...\", args: {} })).");
         }
 
+        if (!state && !initPromise && retainedInitFailure) {
+          startGatewayRetryInitialization(_ctx);
+          executeOwner = currentOwner;
+        }
+
         if (!state && initPromise) {
           try {
             const initialized = await awaitWithTimeout(initPromise, INIT_WAIT_TIMEOUT_MS);
@@ -955,18 +1002,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             executeOwner?.throwIfInactive();
             state = initialized;
           } catch (error) {
-            if (executeOwner && isAbortError(error, executeOwner.signal)) throw error;
-            const message = error instanceof Error ? error.message : String(error);
+            if (executeOwner && isOwnerAbortError(error, executeOwner)) throw error;
+            const message = retainInitFailure(error);
             return {
-              content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
+              content: [{ type: "text" as const, text: buildInitRetryInstruction("MCP initialization failed", message) }],
               details: { error: "init_failed", message },
             };
           }
         }
         if (!state) {
           return {
-            content: [{ type: "text" as const, text: "MCP not initialized" }],
-            details: { error: "not_initialized" },
+            content: [{ type: "text" as const, text: retainedInitFailure
+              ? buildInitRetryInstruction("MCP is not initialized after an earlier initialization failure")
+              : "MCP not initialized" }],
+            details: { error: "not_initialized", ...(retainedInitFailure ? { message: retainedInitFailure } : {}) },
           };
         }
         executeOwner?.throwIfInactive();
