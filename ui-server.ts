@@ -40,6 +40,8 @@ import {
   type UiStreamSummary,
 } from "./types.ts";
 
+export type { UiServerHandle };
+
 const MAX_BODY_SIZE = 2 * 1024 * 1024;
 const ABANDONED_GRACE_MS = 60_000;
 const WATCHDOG_INTERVAL_MS = 5_000;
