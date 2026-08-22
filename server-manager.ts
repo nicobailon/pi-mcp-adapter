@@ -497,7 +497,7 @@ export class McpServerManager {
     if (definition.command) {
       client = this.createClient(name, definition);
       let command = definition.command;
-      let args = (definition.args ?? []).map(interpolateEnvVars);
+      let args = (definition.args ?? []).map((argument) => interpolateEnvVars(argument));
 
       if (command === "npx" || command === "npm") {
         const resolved = await resolveNpxBinary(command, args, signal);

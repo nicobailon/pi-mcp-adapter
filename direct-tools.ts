@@ -19,6 +19,7 @@ import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl, tr
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
+import { Check, Errors } from "typebox/value";
 
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
@@ -31,6 +32,58 @@ type DirectAutoAuthResult =
   | { status: "skipped" }
   | { status: "success" }
   | { status: "failed"; message: string };
+
+/**
+ * Recover one model-emitted JSON layer for schema-declared object and array
+ * properties, then validate the complete input against the same schema.
+ */
+export function prepareDirectToolArguments(inputSchema: unknown, args: unknown): unknown {
+  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) return args;
+  const schema = inputSchema as Record<string, unknown>;
+  if (schema.type !== "object") return args;
+  const input = args && typeof args === "object" && !Array.isArray(args)
+    ? args as Record<string, unknown>
+    : null;
+  const properties = schema.properties;
+  let prepared: Record<string, unknown> | undefined;
+
+  if (input && properties && typeof properties === "object" && !Array.isArray(properties)) {
+    for (const [name, propertySchema] of Object.entries(properties)) {
+      if (!Object.hasOwn(input, name) || typeof input[name] !== "string"
+        || !propertySchema || typeof propertySchema !== "object" || Array.isArray(propertySchema)) continue;
+      const expectedType = (propertySchema as Record<string, unknown>).type;
+      if (expectedType !== "object" && expectedType !== "array") continue;
+      try {
+        const parsed: unknown = JSON.parse(input[name] as string);
+        const matches = expectedType === "array"
+          ? Array.isArray(parsed)
+          : parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+        if (matches) {
+          prepared ??= { ...input };
+          prepared[name] = parsed;
+        }
+      } catch {
+        // Validation below reports malformed or shape-incompatible values.
+      }
+    }
+  }
+
+  const candidate = prepared ?? args;
+  if (!Check(inputSchema as never, candidate)) {
+    const errors = Errors(inputSchema as never, candidate);
+    const issues = errors.slice(0, 8).map((error) => ({
+      instancePath: error.instancePath || "/",
+      keyword: error.keyword,
+      message: error.message,
+    }));
+    throw new TypeError(`MCP direct tool arguments do not match the advertised input schema: ${JSON.stringify({
+      issues,
+      total: errors.length,
+      truncated: errors.length > issues.length,
+    })}`);
+  }
+  return candidate;
+}
 
 function getDirectAuthRequiredMessage(
   state: McpExtensionState,
@@ -498,7 +551,10 @@ export function createDirectToolExecutor(
           (conn) => conn.client.readResource({ uri: spec.resourceUri! }, requestOptions),
         );
         const content = transformMcpResourceContents(result.contents ?? [], state.owner?.signal);
-        const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
+        const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], {
+          ...outputGuardOptions,
+          ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
+        });
         return {
           content: guarded.content,
           details: { server: spec.serverName, resourceUri: spec.resourceUri, ...guardedMcpDetails(guarded) },
@@ -539,7 +595,13 @@ export function createDirectToolExecutor(
         const content = transformMcpContent(mcpContent, state.owner?.signal);
         const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
         const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
-        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed" });
+        const guarded = await guardMcpOutput(outputContent, {
+          ...outputGuardOptions,
+          prefix: "Error: ",
+          suffix: schemaText,
+          emptyTextFallback: "Tool execution failed",
+          ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
+        });
         return {
           content: guarded.content,
           details: { error: "tool_error", server: spec.serverName, ...guardedMcpDetails(guarded) },
@@ -550,7 +612,11 @@ export function createDirectToolExecutor(
       const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
       if (hasUi) {
         const uiSummary = summarizeUiSessionResult(uiSession);
-        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiSummary.message}` });
+        const guarded = await guardMcpOutput(outputContent, {
+          ...outputGuardOptions,
+          suffix: `\n\n${uiSummary.message}`,
+          ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
+        });
         return {
           content: guarded.content,
           details: {
@@ -564,7 +630,10 @@ export function createDirectToolExecutor(
         };
       }
 
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions });
+      const guarded = await guardMcpOutput(outputContent, {
+        ...outputGuardOptions,
+        ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
+      });
       return {
         content: guarded.content,
         details: { server: spec.serverName, tool: spec.originalName, ...guardedMcpDetails(guarded) },
@@ -590,12 +659,16 @@ export function createDirectToolExecutor(
         };
       }
       const message = error instanceof Error ? error.message : String(error);
+      const aborted = isAbortError(error, ownedSignal);
+      if (!aborted) {
+        await state.manager.close(spec.serverName).catch(() => {});
+      }
       uiSession?.sendToolCancelled(message);
       const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
       const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaText });
       return {
         content: guarded.content,
-        details: { error: isAbortError(error, ownedSignal) ? "aborted" : "call_failed", server: spec.serverName, ...guardedMcpDetails(guarded) },
+        details: { error: aborted ? "aborted" : "call_failed", server: spec.serverName, ...guardedMcpDetails(guarded) },
       };
     } finally {
       if (uiSession?.reused) {

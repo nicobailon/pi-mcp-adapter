@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added a pure `mcp:` reference resolver API for consumers that validate adapter tool names from explicit config and cache inputs. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for PR #420.
+- Direct tools can opt into strict advertised-schema validation with one-layer JSON recovery for object and array properties. Thanks to [@4ndr3wxh1ll](https://github.com/4ndr3wxh1ll) for PR #430.
+- Direct tools can opt into guarded raw MCP result details, retaining bounded structured fields while summarizing oversized values.
+- Embedding hosts can import the configuration loader and metadata cache helpers from public package subpaths.
+- Embedding hosts can validate cached metadata against an explicit private process environment.
 
 ### Fixed
 - OAuth token invalidation now preserves credentials replaced by another Pi process instead of letting a stale refresh delete newly authorized shared credentials. Thanks to [@mjlbach](https://github.com/mjlbach) for PR #422.

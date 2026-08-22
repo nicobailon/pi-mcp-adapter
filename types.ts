@@ -506,6 +506,16 @@ export interface McpSettings {
   idleTimeout?: number; // minutes, default 10, 0 to disable
   requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
   directTools?: boolean;
+  /**
+   * Validate direct-tool inputs against the advertised schema after recovering
+   * one JSON string layer for object and array properties. Defaults to false.
+   */
+  strictDirectToolArguments?: boolean;
+  /**
+   * Include the byte-bounded raw MCP result in direct-tool details. The default
+   * `lean` mode keeps the existing small details object.
+   */
+  directToolResultDetails?: "lean" | "bounded";
   /** Show the advisory when 75 or more direct tools resolve. Defaults to true. */
   warnOnLargeDirectTools?: boolean;
   /** Register the trusted MCP-only JavaScript scripting tool. Defaults to true; set false to hide it. */

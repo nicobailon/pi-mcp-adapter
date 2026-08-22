@@ -11,14 +11,24 @@
       "default": "./index.ts"
     },
     "./types": {
-      "types": "./types.ts",
-      "import": "./types.ts",
-      "default": "./types.ts"
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js",
+      "default": "./dist/types.js"
     },
     "./oauth": {
       "types": "./oauth.ts",
       "import": "./oauth.ts",
       "default": "./oauth.ts"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js",
+      "default": "./dist/config.js"
+    },
+    "./metadata-cache": {
+      "types": "./dist/metadata-cache.d.ts",
+      "import": "./dist/metadata-cache.js",
+      "default": "./dist/metadata-cache.js"
     }
   },
   "license": "MIT",
@@ -30,8 +40,11 @@
     "pi-mcp-adapter": "cli.js"
   },
   "scripts": {
+    "build:public": "tsc -p tsconfig.public.json",
+    "prepare": "npm run build:public",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && npm run test:public-exports",
+    "test:public-exports": "node --test public-exports.test.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:oauth": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory PI_MCP_ADAPTER_DISABLE_AUTH_CACHE=1 node --import tsx --test --test-concurrency=1 oauth-public-api.test.ts mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
@@ -133,7 +146,8 @@
     "skills",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "dist"
   ],
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",

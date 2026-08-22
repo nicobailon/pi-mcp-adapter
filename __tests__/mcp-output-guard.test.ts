@@ -48,7 +48,7 @@ describe("guardMcpOutput", () => {
       {
         maxBytes: 300,
         maxLines: 8,
-        detailsMaxBytes: 200,
+        detailsMaxBytes: 1200,
         rawMcpResult: { content: [{ type: "text", text }], isError: false, structuredContent: { rows: [text] } },
       },
     );
@@ -71,7 +71,7 @@ describe("guardMcpOutput", () => {
     const summary = guarded.mcpResult as McpResultSummary;
     expect(summary).toMatchObject({ omitted: true, isError: false, contentBlocks: 1 });
     expect(summary.fullResultPath).toBeTruthy();
-    expect(summary.structuredContent).toMatchObject({ omitted: true });
+    expect(summary.structuredContent).toMatchObject({ summary: { omitted: true } });
     expect(JSON.stringify(summary)).not.toContain("line-19");
   });
 
@@ -85,9 +85,110 @@ describe("guardMcpOutput", () => {
     expect((summarized.mcpResult as McpResultSummary).fullResultPath).toBeTruthy();
   });
 
+  it("preserves bounded leading structured fields when the raw result is summarized", async () => {
+    const receipt = {
+      contract: "agent_tool_operation_receipt_v1",
+      tool_call_id: "call-17",
+    };
+    const rawMcpResult = {
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: {
+        contract: "reserve_governed_tool_result_v1",
+        operation_receipt: receipt,
+        output_refs: [{ id: "x".repeat(8_000) }],
+      },
+    };
+
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 4096, rawMcpResult },
+    );
+
+    expect((guarded.mcpResult as McpResultSummary).structuredContent).toMatchObject({
+      preservedFields: {
+        contract: "reserve_governed_tool_result_v1",
+        operation_receipt: receipt,
+      },
+    });
+    expect((guarded.mcpResult as McpResultSummary).structuredContent).toMatchObject({
+      preservedFields: { output_refs: { omitted: true } },
+      summary: { type: "object", omitted: true },
+    });
+  });
+
+  it("keeps structured payload fields separate from summary metadata", async () => {
+    const structuredContent = {
+      type: "reserve_result",
+      omitted: false,
+      keyCount: 17,
+      keysPreview: ["domain-key"],
+      estimatedBytes: 23,
+      body: "x".repeat(8_000),
+    };
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 4096, rawMcpResult: { structuredContent } },
+    );
+
+    const structuredSummary = (guarded.mcpResult as McpResultSummary).structuredContent;
+
+    expect(structuredSummary).not.toHaveProperty("type");
+    expect(structuredSummary).toMatchObject({
+      preservedFields: {
+        type: "reserve_result",
+        omitted: false,
+        keyCount: 17,
+        keysPreview: ["domain-key"],
+        estimatedBytes: 23,
+        body: { omitted: true },
+      },
+      summary: {
+        type: "object",
+        keyCount: 6,
+        keysPreview: ["type", "omitted", "keyCount", "keysPreview", "estimatedBytes", "body"],
+        omitted: true,
+      },
+    });
+  });
+
+  it("keeps the structured summary bounded when property names are oversized", async () => {
+    const sharedPrefix = `field-${"k".repeat(20_000)}`;
+    const structuredContent = {
+      contract: "reserve_governed_tool_result_v1",
+      operation_receipt: { contract: "agent_tool_operation_receipt_v1", tool_call_id: "call-17" },
+      output_refs: [],
+      ...Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`${sharedPrefix}-${index}`, index])),
+    };
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 16 * 1024, rawMcpResult: { structuredContent } },
+    );
+
+    const summary = guarded.mcpResult as McpResultSummary;
+    expect(summary.omitted).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(summary), "utf8")).toBeLessThanOrEqual(16 * 1024);
+    const preservedFields = summary.structuredContent?.preservedFields as Record<string, unknown>;
+    const preview = summary.structuredContent?.summary as { keysPreview: string[] };
+    expect(preservedFields).toMatchObject({
+      contract: "reserve_governed_tool_result_v1",
+      operation_receipt: { contract: "agent_tool_operation_receipt_v1", tool_call_id: "call-17" },
+      output_refs: [],
+    });
+    expect(new Set(preview.keysPreview).size).toBe(preview.keysPreview.length);
+    expect(Object.keys(preservedFields).every((key) => preview.keysPreview.includes(key))).toBe(true);
+    expect(Object.keys(preservedFields)
+      .every((key) => Buffer.byteLength(key, "utf8") <= 120)).toBe(true);
+
+    const tightlyGuarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 512, rawMcpResult: { structuredContent } },
+    );
+    expect(Buffer.byteLength(JSON.stringify(tightlyGuarded.mcpResult), "utf8")).toBeLessThanOrEqual(512);
+  });
+
   it("spills the oversized raw result as compact JSON and reports its compact byte size", async () => {
-    const rawMcpResult = { content: [{ type: "text", text: "ok" }], isError: false, structuredContent: { rows: "z".repeat(500) } };
-    const guarded = await guardMcpOutput([{ type: "text", text: "ok" }], { detailsMaxBytes: 50, rawMcpResult });
+    const rawMcpResult = { content: [{ type: "text", text: "ok" }], isError: false, structuredContent: { rows: "z".repeat(5000) } };
+    const guarded = await guardMcpOutput([{ type: "text", text: "ok" }], { detailsMaxBytes: 1024, rawMcpResult });
 
     const summary = guarded.mcpResult as McpResultSummary;
     expect(summary.omitted).toBe(true);
@@ -98,6 +199,21 @@ describe("guardMcpOutput", () => {
     expect(saved).toBe(compact);
     expect(saved).not.toContain("\n");
     expect(summary.rawResultBytes).toBe(Buffer.byteLength(compact, "utf8"));
+  });
+
+  it("omits MCP details when the configured bound cannot hold an omission marker", async () => {
+    const rawMcpResult = { structuredContent: { body: "x".repeat(5000) } };
+    const markerOnly = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 32, rawMcpResult },
+    );
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 1, rawMcpResult },
+    );
+
+    expect(markerOnly.mcpResult).toEqual({ omitted: true });
+    expect(guarded.mcpResult).toBeUndefined();
   });
 
   it("passes image blocks through untouched, even large ones", async () => {

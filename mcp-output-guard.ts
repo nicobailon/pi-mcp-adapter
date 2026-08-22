@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ContentBlock, McpSettings } from "./types.ts";
 
 export const DEFAULT_MCP_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -10,7 +10,9 @@ export const DEFAULT_MCP_DETAILS_MAX_BYTES = 16 * 1024;
 
 const CONTENT_SUMMARY_LIMIT = 20;
 const KEY_PREVIEW_LIMIT = 20;
-const KEY_MAX_CHARS = 120;
+const KEY_MAX_BYTES = 120;
+const STRUCTURED_CONTENT_PRESERVE_MAX_BYTES = 4 * 1024;
+const STRUCTURED_CONTENT_FIELD_PRESERVE_MAX_BYTES = 512;
 
 type Recordish = Record<string, unknown>;
 
@@ -269,7 +271,33 @@ async function boundMcpResult(result: unknown, detailsMaxBytes: number): Promise
   const raw = safeStringify(result);
   const rawBytes = byteLength(raw);
   if (rawBytes <= detailsMaxBytes) return result;
-  return summarizeMcpResult(result, raw, rawBytes);
+  const marker = { omitted: true } as const;
+  if (byteLength(safeStringify(marker)) > detailsMaxBytes) return undefined;
+
+  const summary = await summarizeMcpResult(result, raw, rawBytes);
+  if (byteLength(safeStringify(summary)) <= detailsMaxBytes) return summary;
+  return compactMcpResultOmission(summary, marker, detailsMaxBytes);
+}
+
+async function compactMcpResultOmission(
+  summary: McpResultSummary,
+  marker: Readonly<{ omitted: true }>,
+  maxBytes: number,
+): Promise<unknown> {
+  if (summary.fullResultPath) {
+    const withPathAndSize = {
+      ...marker,
+      rawResultBytes: summary.rawResultBytes,
+      fullResultPath: summary.fullResultPath,
+    };
+    if (byteLength(safeStringify(withPathAndSize)) <= maxBytes) return withPathAndSize;
+    const withPath = { ...marker, fullResultPath: summary.fullResultPath };
+    if (byteLength(safeStringify(withPath)) <= maxBytes) return withPath;
+    await discardArtifact(summary.fullResultPath);
+  }
+
+  const withSize = { ...marker, rawResultBytes: summary.rawResultBytes };
+  return byteLength(safeStringify(withSize)) <= maxBytes ? withSize : marker;
 }
 
 async function summarizeMcpResult(result: unknown, raw: string, rawBytes: number): Promise<McpResultSummary> {
@@ -289,7 +317,7 @@ async function summarizeMcpResult(result: unknown, raw: string, rawBytes: number
   };
 
   if (record && "structuredContent" in record) {
-    summary.structuredContent = summarizeValue(record.structuredContent);
+    summary.structuredContent = summarizeStructuredContent(record.structuredContent);
   }
   if (record && "_meta" in record) {
     summary.meta = summarizeValue(record._meta);
@@ -336,8 +364,40 @@ function summarizeValue(value: unknown): Record<string, unknown> {
     type: Array.isArray(value) ? "array" : "object",
     estimatedBytes: estimateValueBytes(value),
     keyCount: keys.length,
-    keysPreview: keys.slice(0, KEY_PREVIEW_LIMIT).map(truncateKey),
+    keysPreview: uniqueBoundedKeys(keys.slice(0, KEY_PREVIEW_LIMIT)),
     omitted: true,
+  };
+}
+
+function summarizeStructuredContent(value: unknown): Record<string, unknown> {
+  const record = asRecord(value);
+  if (!record || Array.isArray(value)) return summarizeValue(value);
+  const keys = Object.keys(record);
+  const entries = Object.entries(record).slice(0, KEY_PREVIEW_LIMIT);
+  const boundedKeys = uniqueBoundedKeys(entries.map(([key]) => key));
+  const fields: Record<string, unknown> = {};
+  let preservedBytes = byteLength("{}");
+  for (let index = 0; index < entries.length; index++) {
+    const [, field] = entries[index]!;
+    const boundedKey = boundedKeys[index]!;
+    const fieldBytes = byteLength(safeStringify(field));
+    const candidate = fieldBytes <= STRUCTURED_CONTENT_FIELD_PRESERVE_MAX_BYTES
+      ? field
+      : summarizeValue(field);
+    const entryBytes = serializedObjectEntryBytes(boundedKey, candidate, Object.keys(fields).length > 0);
+    if (preservedBytes + entryBytes > STRUCTURED_CONTENT_PRESERVE_MAX_BYTES) continue;
+    fields[boundedKey] = candidate;
+    preservedBytes += entryBytes;
+  }
+  return {
+    preservedFields: fields,
+    summary: {
+      type: "object",
+      estimatedBytes: estimateValueBytes(value),
+      keyCount: keys.length,
+      keysPreview: boundedKeys,
+      omitted: true,
+    },
   };
 }
 
@@ -352,7 +412,29 @@ function estimateValueBytes(value: unknown, depth = 0): number {
 }
 
 function truncateKey(key: string): string {
-  return key.length <= KEY_MAX_CHARS ? key : `${key.slice(0, KEY_MAX_CHARS - 1)}…`;
+  if (byteLength(key) <= KEY_MAX_BYTES) return key;
+  const suffix = "…";
+  return `${truncateStringToBytes(key, KEY_MAX_BYTES - byteLength(suffix))}${suffix}`;
+}
+
+function uniqueBoundedKeys(keys: string[]): string[] {
+  const used = new Set<string>();
+  return keys.map((key) => {
+    let candidate = truncateKey(key);
+    let ordinal = 2;
+    while (used.has(candidate)) {
+      const suffix = `~${ordinal}`;
+      candidate = `${truncateStringToBytes(key, KEY_MAX_BYTES - byteLength(suffix))}${suffix}`;
+      ordinal += 1;
+    }
+    used.add(candidate);
+    return candidate;
+  });
+}
+
+function serializedObjectEntryBytes(key: string, value: unknown, hasPrevious: boolean): number {
+  const serialized = safeStringify({ [key]: value });
+  return Math.max(0, byteLength(serialized) - byteLength("{}")) + (hasPrevious ? 1 : 0);
 }
 
 async function saveArtifact(kind: string, text: string): Promise<{ path?: string; error?: string }> {
@@ -363,6 +445,14 @@ async function saveArtifact(kind: string, text: string): Promise<{ path?: string
     return { path };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function discardArtifact(path: string): Promise<void> {
+  try {
+    await rm(dirname(path), { recursive: true, force: true });
+  } catch {
+    // Cleanup cannot increase the returned details payload.
   }
 }
 

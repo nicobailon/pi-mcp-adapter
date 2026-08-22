@@ -190,6 +190,7 @@ export function getConfigDiscoveryPaths(overridePath?: string, cwd = process.cwd
 }
 
 export function findAvailableImportConfigs(cwd = process.cwd()): DiscoveredImportConfig[] {
+  if (isExclusiveConfigMode()) return [];
   const discovered: DiscoveredImportConfig[] = [];
 
   for (const importKind of Object.keys(IMPORT_PATHS) as ImportKind[]) {
@@ -235,8 +236,11 @@ export function getMcpDiscoverySummary(
   const sources = getConfigSourceSummaries(sourceSpecs);
   const includeHostConfigs = options.includeHostConfigs !== false;
 
+  const importKinds = isExclusiveConfigMode()
+    ? (readValidatedConfig(getEffectivePiGlobalConfigPath(overridePath), "MCP exclusive config")?.imports ?? [])
+    : (Object.keys(IMPORT_PATHS) as ImportKind[]);
   const imports = includeHostConfigs
-    ? (Object.keys(IMPORT_PATHS) as ImportKind[])
+    ? importKinds
       .map((kind) => {
         const imported = loadImportedConfig(kind, cwd, `Failed to inspect imported MCP config from ${kind}:`);
         if (!imported) return null;
@@ -248,10 +252,14 @@ export function getMcpDiscoverySummary(
       })
       .filter((value): value is ImportConfigSummary => value !== null)
     : [];
-  const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
+  const hostConfigDiscovery = isExclusiveConfigMode()
+    ? "off"
+    : getConfiguredHostConfigDiscovery(overridePath, cwd);
   const hostConfigs = imports.map((entry) => ({ ...entry, active: hostConfigDiscovery === "on" }));
   const settings = getMergedSettings(overridePath, cwd);
-  const agentPlugins = getAgentPluginSummaries(settings?.agentPluginPaths, cwd);
+  const agentPlugins = isExclusiveConfigMode()
+    ? []
+    : getAgentPluginSummaries(settings?.agentPluginPaths, cwd);
   const totalServerCount = sources.reduce((sum, source) => sum + source.serverCount, 0) + agentPlugins.reduce((sum, plugin) => sum + plugin.serverCount, 0);
   const hasSharedServers = sources.some((source) => source.kind === "shared" && source.serverCount > 0) || agentPlugins.some(plugin => plugin.serverCount > 0);
   const hasPiOwnedServers = sources.some((source) => source.kind === "pi" && source.serverCount > 0);
@@ -297,7 +305,7 @@ export function loadMcpConfig(overridePath?: string, cwd = process.cwd()): McpCo
   // Host files are a lower-precedence fallback. This ordering means an opt-in
   // discovery cannot override a shared or Pi-owned definition, and all normal
   // URL-bound credential stripping remains in mergeServerMaps.
-  let config: McpConfig = hostConfigDiscovery === "on"
+  let config: McpConfig = !isExclusiveConfigMode() && hostConfigDiscovery === "on"
     ? loadDiscoveredHostConfigs(cwd)
     : { mcpServers: {} };
 
@@ -306,6 +314,8 @@ export function loadMcpConfig(overridePath?: string, cwd = process.cwd()): McpCo
     if (!loaded) continue;
     config = mergeConfigs(config, expandImports(loaded, cwd));
   }
+
+  if (isExclusiveConfigMode()) return config;
 
   const packageConfig = loadPackageMcpConfigs(cwd);
   const pluginConfig = loadAgentPluginConfigs(config.settings?.agentPluginPaths, cwd);
@@ -392,10 +402,22 @@ function getConfigConflicts(
 }
 
 function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
-  const userPath = getPiGlobalConfigPath(overridePath);
+  const userPath = getEffectivePiGlobalConfigPath(overridePath);
   const projectPath = getProjectConfigPath(cwd);
   const projectPiPath = getProjectPiConfigPath(cwd);
   const sources: ConfigSourceSpec[] = [];
+
+  if (isExclusiveConfigMode()) {
+    return [{
+      id: "pi-global",
+      label: "Pi exclusive config",
+      readPath: userPath,
+      writePath: userPath,
+      kind: "user",
+      shared: false,
+      scope: "global",
+    }];
+  }
 
   if (GENERIC_GLOBAL_CONFIG_PATH !== userPath) {
     sources.push({
@@ -459,6 +481,14 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
   }
 
   return sources;
+}
+
+function isExclusiveConfigMode(): boolean {
+  return process.env.PI_MCP_CONFIG_MODE?.trim().toLowerCase() === "exclusive";
+}
+
+function getEffectivePiGlobalConfigPath(overridePath?: string): string {
+  return getPiGlobalConfigPath(isExclusiveConfigMode() ? undefined : overridePath);
 }
 
 function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
