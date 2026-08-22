@@ -68,25 +68,7 @@ describe("buildProxyDescription", () => {
       },
     };
 
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: "hash",
-          cachedAt: Date.now(),
-          tools: [
-            {
-              name: "launch_app",
-              description: "Launch the demo app",
-              inputSchema: { type: "object", properties: {} },
-            },
-          ],
-          resources: [],
-        },
-      },
-    };
-
-    const description = buildProxyDescription(config, cache, []);
+    const description = buildProxyDescription(config);
 
     expect(description).toContain('mcp({ action: "ui-messages" })');
     expect(description).toContain("Retrieve accumulated messages from completed UI sessions");
@@ -97,66 +79,13 @@ describe("buildProxyDescription", () => {
     expect(description).not.toContain("MCP + pi");
   });
 
-  it("excludes configured tools from proxy summaries", () => {
-    const config: McpConfig = {
-      settings: { toolPrefix: "server" },
-      mcpServers: {
-        figma: {
-          command: "npx",
-          args: ["-y", "figma"],
-          excludeTools: ["read_figjam", "figma_get_screenshot"],
-        },
-      },
-    };
-
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        figma: {
-          configHash: computeServerHash(config.mcpServers.figma),
-          cachedAt: Date.now(),
-          tools: [
-            { name: "get_screenshot", description: "Take screenshot" },
-            { name: "get_nodes", description: "Get nodes" },
-          ],
-          resources: [
-            { name: "figjam", uri: "ui://figjam", description: "FigJam" },
-          ],
-        },
-      },
-    };
-
-    const description = buildProxyDescription(config, cache, []);
-
-    expect(description).toContain("Servers: figma (1 tools)");
-    expect(description).not.toContain("figma (3 tools)");
-  });
-
-  it("keeps safe cached tools in proxy server summaries", () => {
-    const config: McpConfig = {
-      settings: { toolPrefix: "server" },
-      mcpServers: {
-        "my-server": { command: "hyphen", excludeTools: ["my_2d_server_do_thing"] },
-        my_2d_server: { command: "escaped", excludeTools: ["my_2d_server_do_thing"] },
-      },
-    };
-    const cache: MetadataCache = {
-      version: 1,
-      servers: Object.fromEntries(Object.entries(config.mcpServers).map(([serverName, definition]) => [serverName, {
-        configHash: computeServerHash(definition),
-        cachedAt: Date.now(),
-        tools: [{ name: "do_thing", description: serverName }],
-        resources: [],
-      }])),
-    };
-
-    expect(buildProxyDescription(config, cache, [])).toContain("Servers: my-server (1 tools)");
-  });
-
-  it("does not expose cached app-only tools to model-facing surfaces", () => {
+  it("is a pure function of config — runtime metadata never reaches the description (I5)", () => {
     const config: McpConfig = {
       settings: { toolPrefix: "server", directTools: true },
-      mcpServers: { demo: { command: "demo", directTools: true } },
+      mcpServers: {
+        demo: { command: "npx", args: ["-y", "demo-server"], directTools: true },
+        ghost: { command: "npx", args: ["-y", "ghost-server"] },
+      },
     };
     const cache: MetadataCache = {
       version: 1,
@@ -164,89 +93,57 @@ describe("buildProxyDescription", () => {
         demo: {
           configHash: computeServerHash(config.mcpServers.demo),
           cachedAt: Date.now(),
-          tools: [{ name: "app_only", description: "App", uiVisibility: ["app"] }],
-          resources: [],
+          tools: [
+            { name: "launch_app", description: "Launch the demo app" },
+            { name: "close_app", description: "Close the demo app" },
+          ],
+          resources: [{ name: "guide", uri: "file://guide", description: "Guide" }],
+          instructions: "teaser words that must never leak: skill-29",
         },
-      },
-    };
-
-    expect(resolveDirectTools(config, cache, "server")).toEqual([]);
-    expect(buildProxyDescription(config, cache, [])).not.toContain("Servers: demo (1 tools)");
-  });
-
-  it("ignores invalid cache entries in proxy descriptions", () => {
-    const config: McpConfig = {
-      mcpServers: { demo: { command: "new", includeTools: ["demo_search"] } },
-    };
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: "stale",
+        ghost: {
+          configHash: computeServerHash(config.mcpServers.ghost),
           cachedAt: Date.now(),
-          tools: [{ name: "search", description: "Stale" }],
-          resources: [],
-          instructions: "stale instructions",
-        },
-      },
-    };
-
-    const description = buildProxyDescription(config, cache, []);
-    expect(description).not.toContain("Servers: demo (1 tools)");
-    expect(description).not.toContain("stale instructions");
-  });
-
-  it("includes a truncated instructions snippet for servers that provide one", () => {
-    const config: McpConfig = {
-      mcpServers: {
-        demo: { command: "npx", args: ["-y", "demo-server"] },
-      },
-    };
-
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: computeServerHash(config.mcpServers.demo),
-          cachedAt: Date.now(),
-          tools: [{ name: "read_skill", description: "Read a skill" }],
-          resources: [],
-          instructions: `Skills catalog.\n\nAvailable skills:\n${Array.from({ length: 30 }, (_, i) => `- skill-${i}: does thing ${i}`).join("\n")}`,
-        },
-      },
-    };
-
-    const description = buildProxyDescription(config, cache, []);
-
-    expect(description).toContain('Server instructions (truncated - full text via mcp({ instructions: "name" })):');
-    expect(description).toContain("demo: Skills catalog. Available skills: - skill-0:");
-    expect(description).toContain("...");
-    expect(description).not.toContain("skill-29");
-  });
-
-  it("omits the instructions section when no server provides instructions", () => {
-    const config: McpConfig = {
-      mcpServers: {
-        demo: { command: "npx", args: ["-y", "demo-server"] },
-      },
-    };
-
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: "hash",
-          cachedAt: Date.now(),
-          tools: [{ name: "read_skill", description: "Read a skill" }],
+          tools: [],
           resources: [],
         },
       },
     };
 
-    const description = buildProxyDescription(config, cache, []);
+    // The cache is live (2 tools + 1 resource resolve from it) but the
+    // description cannot see it: no counts, no teasers, no connection state.
+    expect(resolveDirectTools(config, cache, "server").length).toBe(3);
 
+    const description = buildProxyDescription(config);
+
+    expect(description).toContain("Servers: demo, ghost");
+    expect(description).not.toMatch(/\(\d+ tools?\)/);
+    expect(description).not.toContain("Direct tools available");
+    expect(description).not.toContain("teaser words");
     expect(description).not.toContain("Server instructions");
-    expect(description).toContain('mcp({ instructions: "name" })');
+    expect(description).toBe(buildProxyDescription(config));
+  });
+
+  it("omits disabled servers from the Servers line and lists them as disabled", () => {
+    const config: McpConfig = {
+      mcpServers: {
+        demo: { command: "npx", args: ["-y", "demo-server"] },
+        parked: { command: "npx", args: ["-y", "parked-server"], disabled: true },
+      },
+    };
+
+    const description = buildProxyDescription(config);
+
+    expect(description).toContain("Servers: demo\n");
+    expect(description).toContain("Disabled servers (enable with /mcp enable <server> and /reload): parked");
+  });
+
+  it("omits the Servers line entirely when no servers are configured", () => {
+    const config: McpConfig = { mcpServers: {} };
+
+    const description = buildProxyDescription(config);
+
+    expect(description).not.toContain("Servers:");
+    expect(description).toContain("Usage:");
   });
 });
 
@@ -517,7 +414,6 @@ describe("excludeTools filtering", () => {
     expect(buildToolMetadata(entry.tools as any, [], config.mcpServers["my-server"], "my-server", "server", config.mcpServers).metadata).toEqual([]);
     expect(reconstructToolMetadata("my-server", entry, "server", config.mcpServers["my-server"], config.mcpServers, cache)).toEqual([]);
     expect(resolveDirectTools(config, cache, "server")).toEqual([]);
-    expect(buildProxyDescription(config, cache, [])).not.toContain("my-server (1 tools)");
   });
 
   it("ignores invalid cache entries for collision candidates", () => {
@@ -549,7 +445,6 @@ describe("excludeTools filtering", () => {
 
     expect(reconstructToolMetadata("my-server", currentEntry, "server", config.mcpServers["my-server"], config.mcpServers, cache)).toEqual([]);
     expect(resolveDirectTools(config, cache, "server")).toEqual([]);
-    expect(buildProxyDescription(config, cache, [])).not.toContain("my-server (1 tools)");
   });
 
   it("ignores cached app-only tools for reconstructed metadata collision candidates", () => {

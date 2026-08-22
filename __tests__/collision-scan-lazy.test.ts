@@ -72,16 +72,10 @@ beforeEach(() => {
 });
 
 describe("cross-server collision scan is skipped without tool filters", () => {
-  it("buildProxyDescription does not generate candidates without filters", () => {
-    const { config, cache } = makeTwoServerConfig();
-    buildProxyDescription(config, cache, []);
+  it("buildProxyDescription never generates candidates — it is config-pure", () => {
+    const { config } = makeLargeFilteredConfig(40);
+    buildProxyDescription(config);
     expect(mockedGetToolNameCandidates).not.toHaveBeenCalled();
-  });
-
-  it("buildProxyDescription builds filtered candidates once", () => {
-    const { config, cache } = makeLargeFilteredConfig(40);
-    buildProxyDescription(config, cache, []);
-    expect(mockedGetToolNameCandidates).toHaveBeenCalledTimes(40);
   });
 
   it("resolveDirectTools does not generate candidates without filters", () => {
