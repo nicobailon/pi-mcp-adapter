@@ -25,8 +25,8 @@ return result.data;
 
 ## Workflow
 
-1. Find candidate tools with `await tools.search({ query, server?, limit?, offset? })`.
-2. Inspect the exact returned path with `await tools.describe({ path })`.
+1. Find candidate tools with `await tools.search({ query, server?, limit?, offset? })` — resolves to `{ items: [{ path, name, server, description? }], total, hasMore, nextOffset }`; page with `offset` while `hasMore` is true.
+2. Inspect the exact returned path with `await tools.describe({ path })` — resolves to the tool descriptor (with `inputTypeScript`), or `{ path, error: { code, message, suggestions } }`.
 3. Call it with `tools.call(path, args)`.
 
 Calls resolve to `{ ok: true, data }` or `{ ok: false, error }`; handle failed calls instead of expecting them to stop the script. `emit(value)` adds user-visible output before the final `return` value. `console` output is captured too.

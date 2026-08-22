@@ -58,7 +58,7 @@ describe("formatToolName", () => {
 });
 
 describe("buildProxyDescription", () => {
-  it("documents the ui-messages action", () => {
+  it("keeps the preamble and leaves usage guidance to the schema", () => {
     const config: McpConfig = {
       mcpServers: {
         demo: {
@@ -88,12 +88,13 @@ describe("buildProxyDescription", () => {
 
     const description = buildProxyDescription(config, cache, []);
 
-    expect(description).toContain('mcp({ action: "ui-messages" })');
-    expect(description).toContain("Retrieve accumulated messages from completed UI sessions");
     expect(description).toContain("server status, tool search/describe, auth, and single MCP tool calls");
     expect(description).toContain("When one request needs several MCP calls with logic between them, use mcpScript.");
-    expect(description).toContain("Search MCP tools by name/description");
     expect(description).toContain("Non-MCP Pi tools should be called directly, not through mcp.");
+    expect(description).not.toContain("Usage:");
+    expect(description).not.toContain("Mode: action");
+    expect(description).not.toContain("ui-messages");
+    expect(description).not.toContain("auth-start");
     expect(description).not.toContain("MCP + pi");
   });
 
@@ -196,7 +197,7 @@ describe("buildProxyDescription", () => {
     expect(description).not.toContain("stale instructions");
   });
 
-  it("includes a truncated instructions snippet for servers that provide one", () => {
+  it("does not embed server instructions in the description", () => {
     const config: McpConfig = {
       mcpServers: {
         demo: { command: "npx", args: ["-y", "demo-server"] },
@@ -218,35 +219,9 @@ describe("buildProxyDescription", () => {
 
     const description = buildProxyDescription(config, cache, []);
 
-    expect(description).toContain('Server instructions (truncated - full text via mcp({ instructions: "name" })):');
-    expect(description).toContain("demo: Skills catalog. Available skills: - skill-0:");
-    expect(description).toContain("...");
-    expect(description).not.toContain("skill-29");
-  });
-
-  it("omits the instructions section when no server provides instructions", () => {
-    const config: McpConfig = {
-      mcpServers: {
-        demo: { command: "npx", args: ["-y", "demo-server"] },
-      },
-    };
-
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: "hash",
-          cachedAt: Date.now(),
-          tools: [{ name: "read_skill", description: "Read a skill" }],
-          resources: [],
-        },
-      },
-    };
-
-    const description = buildProxyDescription(config, cache, []);
-
     expect(description).not.toContain("Server instructions");
-    expect(description).toContain('mcp({ instructions: "name" })');
+    expect(description).not.toContain("Skills catalog");
+    expect(description).not.toContain("skill-0");
   });
 });
 
