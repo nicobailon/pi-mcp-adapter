@@ -1,5 +1,6 @@
 // types.ts - Core type definitions
 import type {
+  CallToolResult,
   ContentBlock as McpContentBlock,
   ListPromptsResult,
   ListResourcesResult,
@@ -7,7 +8,7 @@ import type {
   Transport as McpTransport,
 } from "@modelcontextprotocol/client";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
-import type { UiStreamMode } from "./ui-stream-types.ts";
+import type { UiStreamMode, UiStreamSummary } from "./ui-stream-types.ts";
 import type { UiToolVisibility } from "./ui-tool-visibility.ts";
 
 export type Transport = McpTransport;
@@ -41,6 +42,15 @@ export interface McpStatusSnapshot {
   readonly totalResources: number;
   readonly connectedCount: number;
   readonly disabledCount: number;
+}
+
+/**
+ * Minimal event-bus surface the status publisher needs. Lives here (leaf
+ * module) so `state.ts` can reference it without importing `mcp-status.ts`,
+ * which imports the state type back — an import cycle at type level.
+ */
+export interface McpStatusEventBus {
+  emit(channel: string, data: unknown): void;
 }
 
 // Import sources for config
@@ -154,6 +164,30 @@ export interface UiHostContext {
 }
 
 export type UiDisplayMode = "inline" | "fullscreen" | "pip";
+
+/**
+ * Live handle to a started UI tool session. Lives here (leaf module) so
+ * `state.ts` can reference it without importing `ui-server.ts`, which
+ * imports the state type back — an import cycle at type level.
+ */
+export interface UiServerHandle {
+  url: string;
+  port: number;
+  sessionToken: string;
+  serverName: string;
+  toolName: string;
+  viewer?: "browser" | "glimpse" | "suppressed";
+  windowOpen?: boolean;
+  close: (reason?: string) => void;
+  sendToolInput: (args: Record<string, unknown>) => void;
+  sendToolResult: (result: CallToolResult) => void;
+  sendResultPatch: (result: CallToolResult) => void;
+  sendToolCancelled: (reason: string) => void;
+  sendHostContext: (context: UiHostContext) => void;
+  /** Get accumulated messages from this session */
+  getSessionMessages: () => UiSessionMessages;
+  getStreamSummary: () => UiStreamSummary | undefined;
+}
 
 // Re-export stream types from the shared lightweight module.
 // This allows the example package to import stream schemas without pulling the full types.ts dependency graph.

@@ -3,14 +3,11 @@ import {
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
   type McpServerStatusSnapshot,
+  type McpStatusEventBus,
   type McpStatusSnapshot,
 } from "./types.ts";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
-
-export interface McpStatusEventBus {
-  emit(channel: string, data: unknown): void;
-}
 
 function getActiveFailureAgeSeconds(state: McpExtensionState, serverName: string): number | undefined {
   const failedAt = state.failureTracker.get(serverName);

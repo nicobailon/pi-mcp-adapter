@@ -35,9 +35,12 @@ import {
   type UiProxyRequestBody,
   type UiProxyResult,
   type UiResourceContent,
+  type UiServerHandle,
   type UiSessionMessages,
   type UiStreamSummary,
 } from "./types.ts";
+
+export type { UiServerHandle };
 
 const MAX_BODY_SIZE = 2 * 1024 * 1024;
 const ABANDONED_GRACE_MS = 60_000;
@@ -73,25 +76,6 @@ export interface UiServerOptions {
   onMessage?: (params: UiMessageParams) => Promise<void> | void;
   onContextUpdate?: (params: UiModelContextParams) => Promise<void> | void;
   onComplete?: (reason: string) => void;
-}
-
-export interface UiServerHandle {
-  url: string;
-  port: number;
-  sessionToken: string;
-  serverName: string;
-  toolName: string;
-  viewer?: "browser" | "glimpse" | "suppressed";
-  windowOpen?: boolean;
-  close: (reason?: string) => void;
-  sendToolInput: (args: Record<string, unknown>) => void;
-  sendToolResult: (result: CallToolResult) => void;
-  sendResultPatch: (result: CallToolResult) => void;
-  sendToolCancelled: (reason: string) => void;
-  sendHostContext: (context: UiHostContext) => void;
-  /** Get accumulated messages from this session */
-  getSessionMessages: () => UiSessionMessages;
-  getStreamSummary: () => UiStreamSummary | undefined;
 }
 
 export async function startUiServer(options: UiServerOptions): Promise<UiServerHandle> {
