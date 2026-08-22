@@ -338,7 +338,7 @@ function summarizeValue(value: unknown): Record<string, unknown> {
     type: Array.isArray(value) ? "array" : "object",
     estimatedBytes: estimateValueBytes(value),
     keyCount: keys.length,
-    keysPreview: keys.slice(0, KEY_PREVIEW_LIMIT).map(truncateKey),
+    keysPreview: uniqueBoundedKeys(keys.slice(0, KEY_PREVIEW_LIMIT)),
     omitted: true,
   };
 }
@@ -347,11 +347,13 @@ function summarizeStructuredContent(value: unknown): Record<string, unknown> {
   const record = asRecord(value);
   if (!record || Array.isArray(value)) return summarizeValue(value);
   const keys = Object.keys(record);
+  const entries = Object.entries(record).slice(0, KEY_PREVIEW_LIMIT);
+  const boundedKeys = uniqueBoundedKeys(entries.map(([key]) => key));
   const fields: Record<string, unknown> = {};
   let preservedBytes = byteLength("{}");
-  for (const [key, field] of Object.entries(record).slice(0, KEY_PREVIEW_LIMIT)) {
-    const boundedKey = truncateKey(key);
-    if (Object.hasOwn(fields, boundedKey)) continue;
+  for (let index = 0; index < entries.length; index++) {
+    const [, field] = entries[index]!;
+    const boundedKey = boundedKeys[index]!;
     const fieldBytes = byteLength(safeStringify(field));
     const candidate = fieldBytes <= STRUCTURED_CONTENT_FIELD_PRESERVE_MAX_BYTES
       ? field
@@ -367,7 +369,7 @@ function summarizeStructuredContent(value: unknown): Record<string, unknown> {
       type: "object",
       estimatedBytes: estimateValueBytes(value),
       keyCount: keys.length,
-      keysPreview: keys.slice(0, KEY_PREVIEW_LIMIT).map(truncateKey),
+      keysPreview: boundedKeys,
       omitted: true,
     },
   };
@@ -387,6 +389,21 @@ function truncateKey(key: string): string {
   if (byteLength(key) <= KEY_MAX_BYTES) return key;
   const suffix = "…";
   return `${truncateStringToBytes(key, KEY_MAX_BYTES - byteLength(suffix))}${suffix}`;
+}
+
+function uniqueBoundedKeys(keys: string[]): string[] {
+  const used = new Set<string>();
+  return keys.map((key) => {
+    let candidate = truncateKey(key);
+    let ordinal = 2;
+    while (used.has(candidate)) {
+      const suffix = `~${ordinal}`;
+      candidate = `${truncateStringToBytes(key, KEY_MAX_BYTES - byteLength(suffix))}${suffix}`;
+      ordinal += 1;
+    }
+    used.add(candidate);
+    return candidate;
+  });
 }
 
 function serializedObjectEntryBytes(key: string, value: unknown, hasPrevious: boolean): number {

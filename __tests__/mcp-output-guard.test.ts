@@ -152,9 +152,13 @@ describe("guardMcpOutput", () => {
   });
 
   it("keeps the structured summary bounded when property names are oversized", async () => {
-    const structuredContent = Object.fromEntries(
-      Array.from({ length: 20 }, (_, index) => [`field-${index}-${"k".repeat(20_000)}`, index]),
-    );
+    const sharedPrefix = `field-${"k".repeat(20_000)}`;
+    const structuredContent = {
+      contract: "reserve_governed_tool_result_v1",
+      operation_receipt: { contract: "agent_tool_operation_receipt_v1", tool_call_id: "call-17" },
+      output_refs: [],
+      ...Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`${sharedPrefix}-${index}`, index])),
+    };
     const guarded = await guardMcpOutput(
       [{ type: "text", text: "ok" }],
       { detailsMaxBytes: 16 * 1024, rawMcpResult: { structuredContent } },
@@ -163,7 +167,16 @@ describe("guardMcpOutput", () => {
     const summary = guarded.mcpResult as McpResultSummary;
     expect(summary.omitted).toBe(true);
     expect(Buffer.byteLength(JSON.stringify(summary), "utf8")).toBeLessThanOrEqual(16 * 1024);
-    expect(Object.keys(summary.structuredContent?.preservedFields as Record<string, unknown>)
+    const preservedFields = summary.structuredContent?.preservedFields as Record<string, unknown>;
+    const preview = summary.structuredContent?.summary as { keysPreview: string[] };
+    expect(preservedFields).toMatchObject({
+      contract: "reserve_governed_tool_result_v1",
+      operation_receipt: { contract: "agent_tool_operation_receipt_v1", tool_call_id: "call-17" },
+      output_refs: [],
+    });
+    expect(new Set(preview.keysPreview).size).toBe(preview.keysPreview.length);
+    expect(Object.keys(preservedFields).every((key) => preview.keysPreview.includes(key))).toBe(true);
+    expect(Object.keys(preservedFields)
       .every((key) => Buffer.byteLength(key, "utf8") <= 120)).toBe(true);
   });
 
