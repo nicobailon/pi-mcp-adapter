@@ -298,7 +298,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const cache = loadMetadataCache();
     const result = syncDirectTools(config, cache);
     syncProxyTool(config, cache, result.specs);
-    const nsResult = syncNamespaceProxyTools({
+    syncNamespaceTools(config, cache);
+    const changed = result.added.length + result.updated.length + result.deactivated.length;
+    if (changed > 0 && ctx?.hasUI) {
+      ctx.ui.notify(
+        `MCP: direct tools refreshed (+${result.added.length}, ~${result.updated.length}, -${result.deactivated.length})`,
+        "info",
+      );
+    }
+  }
+
+  function syncNamespaceTools(config: McpConfig, cache: MetadataCache | null): void {
+    const result = syncNamespaceProxyTools({
       config,
       cache,
       envOverride: namespaceEnvOverride,
@@ -312,15 +323,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       renderShell: toolRenderShell,
       renderResult: renderMcpToolResult,
     });
-    for (const name of nsResult.added) registeredNamespaceProxyTools.add(name);
-    for (const name of nsResult.deactivated) registeredNamespaceProxyTools.delete(name);
-    const changed = result.added.length + result.updated.length + result.deactivated.length;
-    if (changed > 0 && ctx?.hasUI) {
-      ctx.ui.notify(
-        `MCP: direct tools refreshed (+${result.added.length}, ~${result.updated.length}, -${result.deactivated.length})`,
-        "info",
-      );
-    }
+    for (const name of result.added) registeredNamespaceProxyTools.add(name);
+    for (const name of result.deactivated) registeredNamespaceProxyTools.delete(name);
   }
 
   const registeredPromptCommands = new Set<string>();
@@ -1065,21 +1069,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // `mcp:<server>` references on the first session_start turn. Without this
   // eager call, the tool-groups expansion runs before MCP initialization
   // completes and emits false `[unknown-tool] mcp__<server>` diagnostics.
-  const initialNamespaceResult = syncNamespaceProxyTools({
-    config: earlyConfig,
-    cache: earlyCache,
-    envOverride: namespaceEnvOverride,
-    existingDirectNames: new Set(registeredDirectTools.keys()),
-    existingNamespaceNames: registeredNamespaceProxyTools,
-    pi,
-    getState: () => state,
-    getInitPromise: () => initPromise,
-    getPiTools: () => pi.getAllTools(),
-    renderOptions: toolRenderOptions,
-    renderShell: toolRenderShell,
-    renderResult: renderMcpToolResult,
-  });
-  for (const name of initialNamespaceResult.added) registeredNamespaceProxyTools.add(name);
+  syncNamespaceTools(earlyConfig, earlyCache);
   startLoadTimeInitialization();
 }
 

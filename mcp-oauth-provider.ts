@@ -71,6 +71,18 @@ function issuersMatch(first: string, second: string): boolean {
     || (second.endsWith("/") && second.slice(0, -1) === first)
 }
 
+function toOAuthTokens(tokens: StoredTokens): IssuerBoundTokens {
+  const result: IssuerBoundTokens = {
+    access_token: tokens.accessToken,
+    token_type: "Bearer",
+  }
+  if (tokens.refreshToken !== undefined) result.refresh_token = tokens.refreshToken
+  if (tokens.expiresAt !== undefined) result.expires_in = Math.max(0, Math.floor(tokens.expiresAt - Date.now() / 1000))
+  if (tokens.scope !== undefined) result.scope = tokens.scope
+  if (tokens.issuer !== undefined) result.issuer = tokens.issuer
+  return result
+}
+
 // Callback server configuration
 const DEFAULT_OAUTH_CALLBACK_PORT = 19876
 const DEFAULT_OAUTH_CALLBACK_PATH = "/callback"
@@ -426,16 +438,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       this.pendingAuthAccessToken = entry.tokens.accessToken
     }
 
-    return {
-      access_token: entry.tokens.accessToken,
-      token_type: "Bearer",
-      refresh_token: entry.tokens.refreshToken,
-      expires_in: entry.tokens.expiresAt
-        ? Math.max(0, Math.floor(entry.tokens.expiresAt - Date.now() / 1000))
-        : undefined,
-      scope: entry.tokens.scope,
-      ...(entry.tokens.issuer !== undefined ? { issuer: entry.tokens.issuer } : {}),
-    } as IssuerBoundTokens
+    return toOAuthTokens(entry.tokens)
   }
 
   /**

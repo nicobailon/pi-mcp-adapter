@@ -3,10 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { computeServerHash } from "../metadata-cache.ts";
 import type { ServerEntry } from "../types.ts";
 
-const CACHE_SHAPE = (entries: Array<[string, { tools: Array<{ name: string }>; definition?: ServerEntry; configHash?: string; cachedAt?: number }]>) => ({
+const CACHE_SHAPE = (entries: Array<[string, { tools: Array<{ name: string }>; resources?: Array<{ name: string; uri: string }>; definition?: ServerEntry; configHash?: string; cachedAt?: number }]>) => ({
   version: 1,
   servers: Object.fromEntries(entries.map(([server, v]) => [server, {
     tools: v.tools,
+    resources: v.resources ?? [],
     configHash: v.configHash ?? computeServerHash(v.definition ?? { command: server }),
     cachedAt: v.cachedAt ?? Date.now(),
   }])),
@@ -80,6 +81,25 @@ describe("syncNamespaceProxyTools", () => {
     expect(registered.has("mcp__context_mode")).toBe(true);
     const tool = registered.get("mcp__context_mode")!;
     expect(tool.execute).toBeTypeOf("function");
+  });
+
+  it("registers proxy-only servers that expose only resources", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { docs: { command: "docs" } } },
+      cache: CACHE_SHAPE([["docs", { tools: [], resources: [{ name: "guide", uri: "file://guide" }] }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__docs")).toBe(true);
   });
 
   it("does NOT register for directTools: true servers (avoids duplicating direct tools)", async () => {

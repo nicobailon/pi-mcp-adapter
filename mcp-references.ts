@@ -1,10 +1,8 @@
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
-import { isServerCacheValid, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
+import { createCachedToolSelectorCandidateIndex, isServerCacheValid, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import {
-  createToolSelectorCandidateIndex,
   formatToolName,
-  getToolNameCandidates,
   isServerDisabled,
   isToolAllowed,
   resolveToolPrefix,
@@ -27,10 +25,11 @@ export interface McpReferenceResolution {
   diagnostics: string[];
 }
 
-type DirectToolSelectorOverride = { servers: Set<string>; tools: Map<string, Set<string>> };
+export type DirectToolSelectorOverride = { servers: Set<string>; tools: Map<string, Set<string>> };
 type DirectSelection = true | string[] | false;
 type DirectNameOwner = { serverName: string; originalName: string };
 type DirectNameEntry = { name: string; originalName: string };
+type CachedServer = { serverName: string; definition: ServerEntry; entry: ServerCacheEntry; prefix: ToolPrefix };
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 
@@ -70,9 +69,26 @@ function resolveDirectSelection(
   return config.settings?.directTools === true;
 }
 
+export function isMcpServerDirectlyRegistered(
+  definition: { directTools?: boolean | string[] } | undefined,
+  settings: McpConfig["settings"],
+  serverName: string,
+  envOverride: DirectToolSelectorOverride | null,
+): boolean {
+  if (envOverride) return envOverride.servers.has(serverName);
+  if (definition?.directTools !== undefined) {
+    return definition.directTools === true || (Array.isArray(definition.directTools) && definition.directTools.length > 0);
+  }
+  return settings?.directTools === true;
+}
+
+export function hasCallableCachedTargets(entry: Pick<ServerCacheEntry, "tools" | "resources">, definition: Pick<ServerEntry, "exposeResources">): boolean {
+  return entry.tools.length > 0 || (definition.exposeResources !== false && (entry.resources?.length ?? 0) > 0);
+}
+
 function hasNamespaceProxy(
   config: McpConfig,
-  cache: MetadataCache,
+  cache: MetadataCache | null,
   envOverride: DirectToolSelectorOverride | null,
   collidingNamespaceNames: ReadonlySet<string>,
   existingDirectNames: ReadonlySet<string>,
@@ -80,23 +96,29 @@ function hasNamespaceProxy(
 ): boolean {
   const definition = config.mcpServers[serverName];
   if (!definition || isServerDisabled(definition)) return false;
-  if (envOverride) {
-    if (envOverride.servers.has(serverName)) return false;
-  } else {
-    if (definition.directTools === true || (Array.isArray(definition.directTools) && definition.directTools.length > 0)) return false;
-    if (definition.directTools === undefined && config.settings?.directTools === true) return false;
-  }
+  if (isMcpServerDirectlyRegistered(definition, config.settings, serverName, envOverride)) return false;
   const toolName = namespaceProxyName(serverName);
   if (collidingNamespaceNames.has(toolName) || existingDirectNames.has(toolName)) return false;
-  const entry = cache.servers[serverName];
-  return !!entry && isServerCacheValid(entry, definition) && entry.tools.length > 0;
+  const entry = resolveValidCache(definition, cache, serverName);
+  return !!entry && hasCallableCachedTargets(entry, definition);
 }
 
-function resolveValidCache(config: McpConfig, cache: MetadataCache | null, serverName: string): ServerCacheEntry | undefined {
-  const definition = config.mcpServers[serverName];
+function resolveValidCache(definition: ServerEntry | undefined, cache: MetadataCache | null, serverName: string): ServerCacheEntry | undefined {
   const entry = cache?.servers[serverName];
   if (!definition || !entry || !isServerCacheValid(entry, definition)) return undefined;
   return entry;
+}
+
+function cachedServers(config: McpConfig, cache: MetadataCache | null): CachedServer[] {
+  const servers: CachedServer[] = [];
+  if (!cache) return servers;
+  for (const [serverName, definition] of Object.entries(config.mcpServers)) {
+    if (isServerDisabled(definition)) continue;
+    const entry = resolveValidCache(definition, cache, serverName);
+    if (!entry) continue;
+    servers.push({ serverName, definition, entry, prefix: resolveToolPrefix(definition, config.settings?.toolPrefix) });
+  }
+  return servers;
 }
 
 function namespaceCollisionNames(
@@ -122,12 +144,7 @@ function registeredDirectNames(
   selectorIndex: ToolSelectorCandidateIndex | undefined,
 ): Map<string, DirectNameOwner> {
   const owners = new Map<string, DirectNameOwner>();
-  if (!cache) return owners;
-  for (const [serverName, definition] of Object.entries(config.mcpServers)) {
-    if (isServerDisabled(definition)) continue;
-    const entry = resolveValidCache(config, cache, serverName);
-    if (!entry) continue;
-    const prefix = resolveToolPrefix(definition, config.settings?.toolPrefix);
+  for (const { serverName, definition, entry, prefix } of cachedServers(config, cache)) {
     const selection = resolveDirectSelection(config, definition, serverName, envOverride);
     for (const { name, originalName } of directNameEntries(entry, serverName, definition, prefix, selection, selectorIndex)) {
       if (!owners.has(name)) owners.set(name, { serverName, originalName });
@@ -138,24 +155,7 @@ function registeredDirectNames(
 
 function allCurrentCandidates(config: McpConfig, cache: MetadataCache | null): ToolSelectorCandidateIndex | undefined {
   if (!cache) return undefined;
-  const candidates = new Set<string>();
-  for (const [serverName, definition] of Object.entries(config.mcpServers)) {
-    if (isServerDisabled(definition)) continue;
-    const entry = resolveValidCache(config, cache, serverName);
-    if (!entry) continue;
-    const prefix = resolveToolPrefix(definition, config.settings?.toolPrefix);
-    for (const tool of entry.tools) {
-      if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
-      for (const candidate of getToolNameCandidates(tool.name, serverName, prefix, false)) candidates.add(candidate);
-    }
-    if (definition.exposeResources !== false) {
-      for (const resource of entry.resources ?? []) {
-        const baseName = `read_${resourceNameToToolName(resource.name)}`;
-        for (const candidate of getToolNameCandidates(baseName, serverName, prefix, false)) candidates.add(candidate);
-      }
-    }
-  }
-  return createToolSelectorCandidateIndex(candidates);
+  return createCachedToolSelectorCandidateIndex(config.mcpServers, cache, config.settings?.toolPrefix ?? "server");
 }
 
 function directToolName(
@@ -257,7 +257,7 @@ function resolveKnownServerReference(
     diagnostics.push(`MCP reference "${parsed.raw}" refers to disabled or unknown server "${serverName}"`);
     return;
   }
-  const entry = resolveValidCache(config, cache, serverName);
+  const entry = resolveValidCache(definition, cache, serverName);
   if (!entry) {
     diagnostics.push(`MCP reference "${parsed.raw}" cannot be resolved: no valid cached metadata for server "${serverName}"`);
     return;
@@ -275,7 +275,7 @@ function resolveKnownServerReference(
     return;
   }
 
-  if (hasNamespaceProxy(config, cache!, envOverride, collidingNamespaceNames, existingDirectNames, serverName)) {
+  if (hasNamespaceProxy(config, cache, envOverride, collidingNamespaceNames, existingDirectNames, serverName)) {
     if (hasAllowedProxyTool(entry, serverName, definition, prefix, selectorIndex, parsed.tool)) {
       addName(names, seen, namespaceProxyName(serverName));
       return;
@@ -302,11 +302,7 @@ function resolveBareToolReference(
   diagnostics: string[],
 ): void {
   let matched = false;
-  for (const [serverName, definition] of Object.entries(config.mcpServers)) {
-    if (isServerDisabled(definition)) continue;
-    const entry = resolveValidCache(config, cache, serverName);
-    if (!entry) continue;
-    const prefix = resolveToolPrefix(definition, config.settings?.toolPrefix);
+  for (const { serverName, definition, entry, prefix } of cachedServers(config, cache)) {
     const selection = resolveDirectSelection(config, definition, serverName, envOverride);
     const directNames = ownedDirectToolNames(
       directNameEntries(entry, serverName, definition, prefix, selection, selectorIndex, toolName),
@@ -317,7 +313,7 @@ function resolveBareToolReference(
       addName(names, seen, name);
       matched = true;
     }
-    if (hasNamespaceProxy(config, cache!, envOverride, collidingNamespaceNames, existingDirectNames, serverName) &&
+    if (hasNamespaceProxy(config, cache, envOverride, collidingNamespaceNames, existingDirectNames, serverName) &&
         hasAllowedProxyTool(entry, serverName, definition, prefix, selectorIndex, toolName)) {
       addName(names, seen, namespaceProxyName(serverName));
       matched = true;

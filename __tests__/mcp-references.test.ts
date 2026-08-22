@@ -100,6 +100,17 @@ describe("resolveMcpToolReferences", () => {
     expect(result).toEqual({ names: ["mcp__demo"], diagnostics: [] });
   });
 
+  it("resolves proxy-only resource references when the server has no tools", () => {
+    const definition: ServerEntry = { command: "demo" };
+    const result = resolveMcpToolReferences(
+      ["mcp:demo/demo_read_guide"],
+      configFor({ demo: definition }),
+      cacheWithResources([["demo", { definition, tools: [], resources: [{ name: "guide", uri: "file://guide" }] }]]),
+    );
+
+    expect(result).toEqual({ names: ["mcp__demo"], diagnostics: [] });
+  });
+
   it("rejects unknown proxy-only server/tool references", () => {
     const definition: ServerEntry = { command: "demo" };
     const result = resolveMcpToolReferences(

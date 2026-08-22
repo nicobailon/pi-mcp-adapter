@@ -6,7 +6,7 @@ import { isServerCacheValid, type MetadataCache } from "./metadata-cache.ts";
 import { executeCall } from "./proxy-modes.ts";
 import { createMcpProxyToolCallRenderer, createMcpToolResultRenderer, resolveMcpToolRenderOptions, type McpToolRenderOptions, type RenderTheme, type McpToolRenderContext } from "./tool-result-renderer.ts";
 export { namespaceProxyName } from "./mcp-references.ts";
-import { namespaceProxyName } from "./mcp-references.ts";
+import { hasCallableCachedTargets, isMcpServerDirectlyRegistered, namespaceProxyName, type DirectToolSelectorOverride } from "./mcp-references.ts";
 
 /**
  * Namespace-proxy tool registration for proxy-only MCP servers.
@@ -30,23 +30,6 @@ export interface NamespaceProxySpec {
   description: string;
 }
 
-type DirectToolSelectorOverride = { servers: Set<string>; tools: Map<string, Set<string>> };
-
-function isDirectlyRegistered(
-  definition: { directTools?: boolean | string[] } | undefined,
-  settings: McpConfig["settings"],
-  serverName: string,
-  envOverride: DirectToolSelectorOverride | null,
-): boolean {
-  if (envOverride) {
-    return envOverride.servers.has(serverName);
-  }
-  if (definition?.directTools !== undefined) {
-    return definition.directTools === true || (Array.isArray(definition.directTools) && definition.directTools.length > 0);
-  }
-  return settings?.directTools === true;
-}
-
 function namespaceProxyCandidate(
   config: McpConfig,
   cache: MetadataCache,
@@ -56,9 +39,9 @@ function namespaceProxyCandidate(
 ): NamespaceProxySpec | null {
   const definition = config.mcpServers[serverName];
   if (!definition || isServerDisabled(definition)) return null;
-  if (isDirectlyRegistered(definition, config.settings, serverName, envOverride)) return null;
+  if (isMcpServerDirectlyRegistered(definition, config.settings, serverName, envOverride)) return null;
   const entry = cache.servers?.[serverName];
-  if (!entry || !isServerCacheValid(entry, definition) || entry.tools.length === 0) return null;
+  if (!entry || !isServerCacheValid(entry, definition) || !hasCallableCachedTargets(entry, definition)) return null;
   const toolName = namespaceProxyName(serverName);
   if (existingDirectNames.has(toolName)) return null;
   return {
@@ -208,7 +191,7 @@ function registerNamespaceProxyTool(
   renderShell: "self" | "default",
   renderResult: unknown,
 ): void {
-  input.pi.registerTool({
+  (input.pi.registerTool as (tool: unknown) => unknown)({
     name: spec.toolName,
     label: `MCP: ${spec.serverName}`,
     description: spec.description,
@@ -223,7 +206,7 @@ function registerNamespaceProxyTool(
       spec.serverName,
       input.getPiTools,
     ),
-  } as never);
+  });
 }
 
 function getActiveToolsForStaleCleanup(pi: ExtensionAPI, staleNames: string[]): string[] | undefined {
