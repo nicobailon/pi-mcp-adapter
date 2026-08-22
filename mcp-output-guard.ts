@@ -10,7 +10,7 @@ export const DEFAULT_MCP_DETAILS_MAX_BYTES = 16 * 1024;
 
 const CONTENT_SUMMARY_LIMIT = 20;
 const KEY_PREVIEW_LIMIT = 20;
-const KEY_MAX_CHARS = 120;
+const KEY_MAX_BYTES = 120;
 const STRUCTURED_CONTENT_PRESERVE_MAX_BYTES = 4 * 1024;
 const STRUCTURED_CONTENT_FIELD_PRESERVE_MAX_BYTES = 512;
 
@@ -346,17 +346,21 @@ function summarizeValue(value: unknown): Record<string, unknown> {
 function summarizeStructuredContent(value: unknown): Record<string, unknown> {
   const record = asRecord(value);
   if (!record || Array.isArray(value)) return summarizeValue(value);
-  let preservedBytes = 0;
   const keys = Object.keys(record);
-  const fields = Object.fromEntries(Object.entries(record).slice(0, KEY_PREVIEW_LIMIT).map(([key, field]) => {
+  const fields: Record<string, unknown> = {};
+  let preservedBytes = byteLength("{}");
+  for (const [key, field] of Object.entries(record).slice(0, KEY_PREVIEW_LIMIT)) {
+    const boundedKey = truncateKey(key);
+    if (Object.hasOwn(fields, boundedKey)) continue;
     const fieldBytes = byteLength(safeStringify(field));
-    if (fieldBytes <= STRUCTURED_CONTENT_FIELD_PRESERVE_MAX_BYTES
-      && preservedBytes + fieldBytes <= STRUCTURED_CONTENT_PRESERVE_MAX_BYTES) {
-      preservedBytes += fieldBytes;
-      return [key, field];
-    }
-    return [key, summarizeValue(field)];
-  }));
+    const candidate = fieldBytes <= STRUCTURED_CONTENT_FIELD_PRESERVE_MAX_BYTES
+      ? field
+      : summarizeValue(field);
+    const entryBytes = serializedObjectEntryBytes(boundedKey, candidate, Object.keys(fields).length > 0);
+    if (preservedBytes + entryBytes > STRUCTURED_CONTENT_PRESERVE_MAX_BYTES) continue;
+    fields[boundedKey] = candidate;
+    preservedBytes += entryBytes;
+  }
   return {
     preservedFields: fields,
     summary: {
@@ -380,7 +384,14 @@ function estimateValueBytes(value: unknown, depth = 0): number {
 }
 
 function truncateKey(key: string): string {
-  return key.length <= KEY_MAX_CHARS ? key : `${key.slice(0, KEY_MAX_CHARS - 1)}…`;
+  if (byteLength(key) <= KEY_MAX_BYTES) return key;
+  const suffix = "…";
+  return `${truncateStringToBytes(key, KEY_MAX_BYTES - byteLength(suffix))}${suffix}`;
+}
+
+function serializedObjectEntryBytes(key: string, value: unknown, hasPrevious: boolean): number {
+  const serialized = safeStringify({ [key]: value });
+  return Math.max(0, byteLength(serialized) - byteLength("{}")) + (hasPrevious ? 1 : 0);
 }
 
 async function saveArtifact(kind: string, text: string): Promise<{ path?: string; error?: string }> {

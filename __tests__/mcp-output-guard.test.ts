@@ -151,6 +151,22 @@ describe("guardMcpOutput", () => {
     });
   });
 
+  it("keeps the structured summary bounded when property names are oversized", async () => {
+    const structuredContent = Object.fromEntries(
+      Array.from({ length: 20 }, (_, index) => [`field-${index}-${"k".repeat(20_000)}`, index]),
+    );
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      { detailsMaxBytes: 16 * 1024, rawMcpResult: { structuredContent } },
+    );
+
+    const summary = guarded.mcpResult as McpResultSummary;
+    expect(summary.omitted).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(summary), "utf8")).toBeLessThanOrEqual(16 * 1024);
+    expect(Object.keys(summary.structuredContent?.preservedFields as Record<string, unknown>)
+      .every((key) => Buffer.byteLength(key, "utf8") <= 120)).toBe(true);
+  });
+
   it("spills the oversized raw result as compact JSON and reports its compact byte size", async () => {
     const rawMcpResult = { content: [{ type: "text", text: "ok" }], isError: false, structuredContent: { rows: "z".repeat(500) } };
     const guarded = await guardMcpOutput([{ type: "text", text: "ok" }], { detailsMaxBytes: 50, rawMcpResult });
