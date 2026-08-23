@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DIRECT_TOOLS_ADVISORY_THRESHOLD, buildProxyDescription, getLargeDirectToolsAdvisory, resolveDirectTools } from "../direct-tools.ts";
+import { buildToolInventoryGuidelines } from "../direct-tool-surface.ts";
 import {
   computeServerHash,
   getMissingConfiguredDirectToolServers,
@@ -1254,5 +1255,100 @@ describe("excludeTools filtering", () => {
     const specs = resolveDirectTools(config, cache, "none");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["get_nodes"]);
+  });
+});
+
+describe("buildToolInventoryGuidelines", () => {
+  it("returns undefined for off or empty cache", () => {
+    const config: McpConfig = {
+      settings: { toolInventory: "off" },
+      mcpServers: { demo: { command: "npx", args: ["-y", "demo"] } },
+    };
+    expect(buildToolInventoryGuidelines(config, null)).toBeUndefined();
+    expect(buildToolInventoryGuidelines(config, { version: 1, servers: {} })).toBeUndefined();
+  });
+
+  it("lists tool names per server in names mode", () => {
+    const config: McpConfig = {
+      settings: { toolInventory: "names", toolPrefix: "server" },
+      mcpServers: { demo: { command: "npx", args: ["-y", "demo"] } },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: computeServerHash(config.mcpServers.demo),
+          cachedAt: Date.now(),
+          tools: [
+            { name: "launch_app", description: "Launch the demo app" },
+            { name: "close_app", description: "Close the demo app" },
+          ],
+          resources: [],
+        },
+      },
+    };
+
+    const guidelines = buildToolInventoryGuidelines(config, cache);
+
+    expect(guidelines).toHaveLength(1);
+    expect(guidelines?.[0]).toContain('MCP server "demo" tools:');
+    expect(guidelines?.[0]).toContain("demo_launch_app");
+    expect(guidelines?.[0]).toContain("demo_close_app");
+    expect(guidelines?.[0]).not.toContain("Launch the demo app");
+  });
+
+  it("includes one-line descriptions in descriptions mode", () => {
+    const config: McpConfig = {
+      settings: { toolInventory: "descriptions" },
+      mcpServers: { demo: { command: "npx", args: ["-y", "demo"] } },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: computeServerHash(config.mcpServers.demo),
+          cachedAt: Date.now(),
+          tools: [{ name: "launch_app", description: "Launch the demo application" }],
+          resources: [],
+        },
+      },
+    };
+
+    const guidelines = buildToolInventoryGuidelines(config, cache);
+
+    expect(guidelines?.[0]).toContain("demo_launch_app — Launch the demo application");
+  });
+
+  it("respects excludeTools and per-server directTool prefix", () => {
+    const config: McpConfig = {
+      settings: { toolInventory: "names", toolPrefix: "short" },
+      mcpServers: {
+        demo: {
+          command: "npx",
+          args: ["-y", "demo"],
+          toolPrefix: "short",
+          excludeTools: ["launch_app"],
+        },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: computeServerHash(config.mcpServers.demo),
+          cachedAt: Date.now(),
+          tools: [
+            { name: "launch_app", description: "Launch" },
+            { name: "close_app", description: "Close" },
+          ],
+          resources: [],
+        },
+      },
+    };
+
+    const guidelines = buildToolInventoryGuidelines(config, cache);
+
+    expect(guidelines?.[0]).toContain("close_app");
+    expect(guidelines?.[0]).not.toContain("launch_app");
   });
 });

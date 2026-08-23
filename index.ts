@@ -8,8 +8,7 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
-import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
-import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+import { buildProxyDescription, buildToolInventoryGuidelines, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { computeServerHash, isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
@@ -350,6 +349,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const renderMcpToolResult = createMcpToolResultRenderer(toolRenderOptions);
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
+  let proxyToolGuidelines: string | null = null;
   let directToolsFrozen = false;
   let largeDirectToolsAdvisoryDelivered = false;
   // Session/runtime scoped server registrations from other extensions. They
@@ -1774,13 +1774,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     };
   }
 
-  function registerProxyTool(description: string): void {
+  function registerProxyTool(description: string, guidelines: string[] | undefined): void {
     callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)({
       name: "mcp",
       label: "MCP",
       description,
-      promptSnippet: "MCP gateway — install by URL, status, search, describe, auth, and single MCP tool calls",
-      renderShell: toolRenderShell,
+      ...(guidelines && guidelines.length > 0 ? { promptGuidelines: guidelines } : {}),
+      promptSnippet: "MCP gateway — install by URL, status, search, describe, auth, and single MCP tool calls",      renderShell: toolRenderShell,
       renderCall: createMcpProxyToolCallRenderer(toolRenderOptions),
       parameters: Type.Object({
         tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
@@ -1971,6 +1971,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }));
     proxyToolRegistered = true;
     proxyToolDescription = description;
+    proxyToolGuidelines = guidelines && guidelines.length > 0 ? guidelines.join("\n") : null;
   }
 
   function syncProxyTool(config: McpConfig, cache: MetadataCache | null, directSpecs: DirectToolSpec[]): void {
@@ -1992,11 +1993,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
     if (shouldRegisterProxyTool) {
       const description = buildProxyDescription(config);
-      if (!proxyToolRegistered || proxyToolDescription !== description) {
+      const guidelines = buildToolInventoryGuidelines(config, cache);
+      const guidelinesKey = guidelines && guidelines.length > 0 ? guidelines.join("\n") : null;
+      if (!proxyToolRegistered || proxyToolDescription !== description || proxyToolGuidelines !== guidelinesKey) {
         finalizationRegistrations?.add("mcp");
-        registerProxyTool(description);
-        finalizationGuard?.();
-      }
+        registerProxyTool(description, guidelines);
+        finalizationGuard?.();      }
       const activeTools = getActiveToolsIfReady();
       if (activeTools?.includes("mcp")) {
         // Observed host reactivation ends our fallback ownership. A later
@@ -2014,6 +2016,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (unregistered.includes("mcp")) {
         proxyToolRegistered = false;
         proxyToolDescription = null;
+        proxyToolGuidelines = null;
       }
     }
   }

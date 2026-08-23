@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   resolveConfiguredClaudePluginMcp: vi.fn((config: unknown) => structuredClone(config)),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
+  buildToolInventoryGuidelines: vi.fn(() => undefined),
   createDirectToolExecutor: vi.fn(() => vi.fn()),
   getMissingConfiguredDirectToolServers: vi.fn(() => []),
   resolveDirectTools: vi.fn(() => []),
@@ -72,6 +73,7 @@ vi.mock("../metadata-cache.ts", () => ({
 vi.mock("../direct-tool-surface.ts", () => ({
   buildProxyDescription: mocks.buildProxyDescription,
   getLargeDirectToolsAdvisory: vi.fn(() => undefined),
+  buildToolInventoryGuidelines: mocks.buildToolInventoryGuidelines,
   getMissingConfiguredDirectToolServers: mocks.getMissingConfiguredDirectToolServers,
   prepareDirectToolArguments: vi.fn((_schema: unknown, args: unknown) => args),
   resolveDirectTools: mocks.resolveDirectTools,

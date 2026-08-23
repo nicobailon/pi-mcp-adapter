@@ -611,6 +611,21 @@ export interface McpSettings {
   /** Register per-server mcp__<server> namespace proxies. Defaults to true. */
   namespaceProxyTools?: boolean;
   /**
+   * Expose a per-server tool inventory to the model via the proxy tool's
+   * prompt guidelines so it knows which MCP tools exist without loading their
+   * full schemas. This is the middle tier between the opaque proxy (the
+   * model discovers tools on demand) and directTools (full schemas loaded as
+   * native tools): names only is cheapest, names+one-line descriptions adds
+   * modest fixed context. Defaults to "off" (proxy only).
+   */
+  toolInventory?: "off" | "names" | "descriptions";
+  /**
+   * Maximum number of tools listed per server in the toolInventory output.
+   * Defaults to 30. Tools are listed in server order, so set a low limit to
+   * keep the fixed context small on servers with many tools.
+   */
+  toolInventoryLimit?: number;
+  /**
    * Validate direct-tool inputs against the advertised schema after recovering
    * one JSON string layer for object and array properties. Defaults to false.
    */

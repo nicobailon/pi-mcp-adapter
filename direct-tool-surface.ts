@@ -6,6 +6,7 @@ import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.t
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
+import { truncateAtWord } from "./utils.ts";
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 export const DIRECT_TOOLS_ADVISORY_THRESHOLD = 75;
@@ -241,4 +242,59 @@ export function buildProxyDescription(config: McpConfig): string {
   desc += `\nMode: action > tool (call) > connect > describe > instructions > search > server (list) > nothing (status)`;
 
   return desc;
+}
+
+const TOOL_INVENTORY_DESCRIPTION_LENGTH = 70;
+
+/**
+ * Build a per-server tool inventory for the proxy tool's prompt guidelines.
+ * This is the middle tier between the opaque proxy (model discovers tools on
+ * demand) and directTools (full schemas as native tools): the model sees which
+ * tools each server exposes without paying for their complete JSON schemas.
+ *
+ * Returns undefined when the setting is off or there is nothing to list, so
+ * callers can omit the promptGuidelines field (and keep the prompt byte-stable
+ * across metadata refreshes, per buildProxyDescription).
+ */
+export function buildToolInventoryGuidelines(
+  config: McpConfig,
+  cache: MetadataCache | null,
+): string[] | undefined {
+  const mode = config.settings?.toolInventory;
+  if (!mode || mode === "off") return undefined;
+  if (!cache) return undefined;
+
+  const prefix = config.settings?.toolPrefix ?? "server";
+  const limit = config.settings?.toolInventoryLimit ?? 30;
+  const guidelines: string[] = [];
+
+  for (const [serverName, definition] of Object.entries(config.mcpServers)) {
+    if (isServerDisabled(definition)) continue;
+    const entry = cache.servers[serverName];
+    if (!entry || !isServerCacheValid(entry, definition)) continue;
+
+    const effectivePrefix = resolveToolPrefix(definition, prefix);
+    const names: string[] = [];
+    for (const tool of (entry.tools ?? []).slice(0, limit)) {
+      if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
+      if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) continue;
+      const prefixedName = formatToolName(tool.name, serverName, effectivePrefix);
+      if (mode === "descriptions") {
+        const description = tool.description
+          ? ` — ${truncateAtWord(tool.description.replace(/\s+/g, " ").trim(), TOOL_INVENTORY_DESCRIPTION_LENGTH)}`
+          : "";
+        names.push(`${prefixedName}${description}`);
+      } else {
+        names.push(prefixedName);
+      }
+    }
+    if (names.length === 0) continue;
+    const joined = names.join(", ");
+    const suffix = (entry.tools?.length ?? 0) > names.length
+      ? ` (+${(entry.tools?.length ?? 0) - names.length} more)`
+      : "";
+    guidelines.push(`MCP server "${serverName}" tools: ${joined}${suffix}. Get schemas via mcp({"tool":"..."})`);
+  }
+
+  return guidelines.length > 0 ? guidelines : undefined;
 }

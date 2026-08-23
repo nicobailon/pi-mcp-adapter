@@ -523,6 +523,8 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
 | `directTools` | Global default for all servers (default: false). `true`, `false`, or `"search"`. Per-server overrides this. |
 | `namespaceProxyTools` | Register per-server `mcp__<server>` wrappers (default: true). Set to `false` to omit them from the model's tool list; `mcp`, `mcpScript`, and direct tools are unaffected. References such as `mcp:<server>` that rely on a wrapper will no longer resolve. Run `/reload` after changing this setting. |
+| `toolInventory` | Expose a per-server tool inventory in the proxy tool's prompt guidelines so the model knows which MCP tools exist without loading their full schemas: `"off"` (default), `"names"` (cheapest, tool names only), or `"descriptions"` (names + one-line descriptions). Read from the metadata cache without connecting. |
+| `toolInventoryLimit` | Maximum tools listed per server in `toolInventory` output (default: 30). |
 | `strictDirectToolArguments` | Validate direct-tool inputs against their advertised schemas and recover one JSON string layer for object and array properties (default: false). |
 | `directToolResultDetails` | Direct-tool result details: `"lean"` (default) or `"bounded"` to retain the guarded raw MCP result. |
 | `warnOnLargeDirectTools` | Show the advisory when 75 or more direct tools resolve (default: `true`). Set to `false` to suppress only this advisory. |
