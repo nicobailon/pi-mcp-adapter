@@ -5,6 +5,7 @@ import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from 
 import { executeCall } from "./proxy-modes.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
+import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import type { McpExtensionState } from "./state.ts";
 import { findToolByName, formatSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
@@ -202,6 +203,7 @@ export async function runMcpScript(
     let error: unknown;
     try {
       for (const [server, metadata] of state.toolMetadata) {
+        if (isServerInActiveFailureBackoff(state, server)) continue;
         const tool = findToolByName(metadata, path);
         if (!tool) continue;
         const inputTypeScript = tool.inputSchema

@@ -90,6 +90,7 @@
     "search-ranking.ts",
     "tool-approval.ts",
     "init.ts",
+    "failure-backoff.ts",
     "ui-session.ts",
     "proxy-modes.ts",
     "direct-tools.ts",

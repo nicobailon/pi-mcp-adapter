@@ -181,6 +181,31 @@ describe("runMcpScript", () => {
     });
   });
 
+  it("keeps active failed-backoff tools out of script describe results", async () => {
+    const backoffState = {
+      ...state,
+      manager: { getConnection: vi.fn(() => undefined) },
+      failureTracker: new Map([["fixture", Date.now()]]),
+    } as unknown as McpExtensionState;
+
+    const result = await runMcpScript(
+      backoffState,
+      'return { search: await tools.search({ query: "fixture" }), describe: await tools.describe({ path: "fixture_echo" }) };',
+    );
+
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
+      search: { items: [], total: 0, hasMore: false, nextOffset: null },
+      describe: {
+        path: "fixture_echo",
+        error: {
+          code: "tool_not_found",
+          message: "Tool not found: fixture_echo",
+          suggestions: [],
+        },
+      },
+    });
+  });
+
   it("records operation metadata and timing for search, describe, and calls", async () => {
     const result = await runMcpScript(
       state,

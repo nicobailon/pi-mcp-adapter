@@ -169,6 +169,8 @@ export function resolveDirectTools(
   cache: MetadataCache | null,
   prefix: ToolPrefix,
   envOverride?: string[],
+  unavailableServers: ReadonlySet<string> = new Set(),
+  reservedNames?: Set<string>,
 ): DirectToolSpec[] {
   const specs: DirectToolSpec[] = [];
   if (!cache) return specs;
@@ -276,11 +278,17 @@ export function resolveDirectTools(
     }
   }
 
-  if (config.settings?.warnOnLargeDirectTools !== false && specs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD) {
-    console.warn(`MCP: ${specs.length} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered. Set settings.warnOnLargeDirectTools to false to hide this advisory.`);
+  for (const spec of specs) reservedNames?.add(spec.prefixedName);
+
+  const emittedSpecs = unavailableServers.size === 0
+    ? specs
+    : specs.filter((spec) => !unavailableServers.has(spec.serverName));
+
+  if (config.settings?.warnOnLargeDirectTools !== false && emittedSpecs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD) {
+    console.warn(`MCP: ${emittedSpecs.length} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered. Set settings.warnOnLargeDirectTools to false to hide this advisory.`);
   }
 
-  return specs;
+  return emittedSpecs;
 }
 
 /**

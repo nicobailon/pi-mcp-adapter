@@ -17,6 +17,7 @@ import {
   writeStarterProjectConfig,
 } from "./config.ts";
 import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
+import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
@@ -131,6 +132,7 @@ export async function showTools(state: McpExtensionState, ctx: ExtensionContext)
 
   const allTools = [...state.toolMetadata.entries()]
     .filter(([serverName]) => !isServerDisabled(state.config.mcpServers[serverName]))
+    .filter(([serverName]) => !isServerInActiveFailureBackoff(state, serverName))
     .flatMap(([, metadata]) => metadata.map(m => m.name));
 
   if (allTools.length === 0) {
@@ -196,9 +198,9 @@ export async function reconnectServer(
       state.serverInstructions.delete(name);
     }
     updateMetadataCache(state, name);
-    notifyToolMetadataUpdated(state, name, "command-reconnect");
+    const restored = clearFailure(state, name, "command-reconnect");
+    if (!restored) notifyToolMetadataUpdated(state, name, "command-reconnect");
     markKeepAliveAfterConnect(state, name);
-    clearFailure(state, name);
 
     if (ui) {
       ui.notify(

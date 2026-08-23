@@ -6,16 +6,7 @@ import {
   type McpStatusEventBus,
   type McpStatusSnapshot,
 } from "./types.ts";
-
-const FAILURE_BACKOFF_MS = 60 * 1000;
-
-function getActiveFailureAgeSeconds(state: McpExtensionState, serverName: string): number | undefined {
-  const failedAt = state.failureTracker.get(serverName);
-  if (!failedAt) return undefined;
-  const ageMs = Date.now() - failedAt;
-  if (ageMs > FAILURE_BACKOFF_MS) return undefined;
-  return Math.round(ageMs / 1000);
-}
+import { getFailureAgeSeconds, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 
 /** Build a sanitized snapshot without connecting or querying any MCP server. */
 export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnapshot {
@@ -29,12 +20,13 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
     const definition = state.config.mcpServers[name];
     const disabled = definition?.disabled === true;
     const connection = disabled ? undefined : state.manager.getConnection(name);
-    const metadata = disabled ? undefined : state.toolMetadata.get(name);
+    const failedAgoSeconds = disabled ? null : getFailureAgeSeconds(state, name);
+    const activeFailure = !disabled && isServerInActiveFailureBackoff(state, name);
+    const metadata = disabled || activeFailure ? undefined : state.toolMetadata.get(name);
     const toolCount = metadata?.length ?? (connection?.status === "connected" ? connection.tools.length : 0);
-    const resourceCount = disabled
+    const resourceCount = disabled || activeFailure
       ? undefined
       : state.resourceCounts?.get(name) ?? (connection?.status === "connected" ? connection.resources.length : undefined);
-    const failedAgoSeconds = disabled ? undefined : getActiveFailureAgeSeconds(state, name);
 
     let status: McpServerStatusSnapshot["status"] = "not-connected";
     if (disabled) {
@@ -45,7 +37,7 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
       connectedCount++;
     } else if (connection?.status === "needs-auth") {
       status = "needs-auth";
-    } else if (failedAgoSeconds !== undefined) {
+    } else if (activeFailure) {
       status = "failed";
     } else if (metadata !== undefined) {
       status = "cached";
@@ -58,7 +50,7 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
       status,
       toolCount,
       ...(resourceCount !== undefined ? { resourceCount } : {}),
-      ...(status === "failed" && failedAgoSeconds !== undefined ? { failedAgoSeconds } : {}),
+      ...(status === "failed" && failedAgoSeconds !== null ? { failedAgoSeconds } : {}),
       disabled,
     });
   }

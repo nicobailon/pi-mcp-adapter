@@ -344,6 +344,108 @@ describe("metadata cache hashing", () => {
 });
 
 describe("direct tool metadata bootstrap", () => {
+  it("omits cached direct tools from servers in active failure backoff", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server", directTools: true },
+      mcpServers: {
+        demo: { command: "demo", directTools: true },
+        failed: { command: "failed", directTools: true },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: computeServerHash(config.mcpServers.demo),
+          cachedAt: Date.now(),
+          tools: [{ name: "search", description: "Search" }],
+          resources: [],
+        },
+        failed: {
+          configHash: computeServerHash(config.mcpServers.failed),
+          cachedAt: Date.now(),
+          tools: [{ name: "stale", description: "Stale" }],
+          resources: [],
+        },
+      },
+    };
+
+    expect(resolveDirectTools(config, cache, "server", undefined, new Set(["failed"])).map(tool => tool.prefixedName)).toEqual([
+      "demo_search",
+    ]);
+  });
+
+  it("keeps duplicate direct names reserved by failed-backoff servers", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const config: McpConfig = {
+      settings: { toolPrefix: "none", directTools: true, warnOnLargeDirectTools: false },
+      mcpServers: {
+        failed: { command: "failed" },
+        healthy: { command: "healthy" },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        failed: {
+          configHash: computeServerHash(config.mcpServers.failed),
+          cachedAt: Date.now(),
+          tools: [{ name: "search", description: "Failed" }],
+          resources: [],
+        },
+        healthy: {
+          configHash: computeServerHash(config.mcpServers.healthy),
+          cachedAt: Date.now(),
+          tools: [{ name: "search", description: "Healthy" }],
+          resources: [],
+        },
+      },
+    };
+
+    expect(resolveDirectTools(config, cache, "none").map(tool => [tool.serverName, tool.prefixedName])).toEqual([
+      ["failed", "search"],
+    ]);
+    expect(resolveDirectTools(config, cache, "none", undefined, new Set(["failed"]))).toEqual([]);
+  });
+
+  it("keeps healthy selector results stable when another server is in backoff", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server", directTools: true, warnOnLargeDirectTools: false },
+      mcpServers: {
+        "my-server": { command: "healthy", excludeTools: ["my_2d_server_search_records"] },
+        my_2d_server: { command: "failed" },
+      },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        "my-server": {
+          configHash: computeServerHash(config.mcpServers["my-server"]),
+          cachedAt: Date.now(),
+          tools: [{ name: "search-records", description: "Healthy" }],
+          resources: [],
+        },
+        my_2d_server: {
+          configHash: computeServerHash(config.mcpServers.my_2d_server),
+          cachedAt: Date.now(),
+          tools: [{ name: "search_records", description: "Failed" }],
+          resources: [],
+        },
+      },
+    };
+
+    const withoutBackoff = resolveDirectTools(config, cache, "server").map(tool => [tool.serverName, tool.prefixedName]);
+    const withBackoff = resolveDirectTools(config, cache, "server", undefined, new Set(["my_2d_server"])).map(tool => [tool.serverName, tool.prefixedName]);
+
+    expect(withoutBackoff).toEqual([
+      ["my-server", "my-server_search-records"],
+      ["my_2d_server", "my_2d_server_search_records"],
+    ]);
+    expect(withBackoff).toEqual([
+      ["my-server", "my-server_search-records"],
+    ]);
+  });
+
   it("includes env-selected servers without config-level direct tool settings", () => {
     const config: McpConfig = {
       mcpServers: {

@@ -335,7 +335,7 @@ describe("syncNamespaceProxyTools", () => {
     expect(unregistered).toContain("mcp__context_mode");
   });
 
-  it("does not deactivate direct tools while cleaning stale namespace proxies", async () => {
+  it("deactivates stale namespace proxies when hidden direct tools reserve their names", async () => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered, unregistered } = makePi();
     pi.registerTool({ name: "mcp__demo_search", execute: vi.fn() });
@@ -345,6 +345,28 @@ describe("syncNamespaceProxyTools", () => {
       cache: { version: 1, servers: {} },
       envOverride: null,
       existingDirectNames: new Set(["mcp__demo_search"]),
+      existingNamespaceNames: new Set(["mcp__demo_search"]),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__demo_search")).toBe(false);
+    expect(unregistered).toContain("mcp__demo_search");
+  });
+
+  it("keeps active direct tools when they replace stale namespace proxy names", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered, unregistered } = makePi();
+    pi.registerTool({ name: "mcp__demo_search", execute: vi.fn() });
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: {} },
+      cache: { version: 1, servers: {} },
+      envOverride: null,
+      existingDirectNames: new Set(["mcp__demo_search"]),
+      activeDirectNames: new Set(["mcp__demo_search"]),
       existingNamespaceNames: new Set(["mcp__demo_search"]),
       pi,
       getState: () => null,
@@ -404,6 +426,30 @@ describe("syncNamespaceProxyTools", () => {
 
     expect(registered.has("mcp__my_server")).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('servers "my-server", "my_server" normalize to the same name'));
+  });
+
+  it("keeps namespace collisions reserved when one server is in backoff", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { "my-server": { command: "one" }, my_server: { command: "two" } } },
+      cache: CACHE_SHAPE([
+        ["my-server", { tools: [{ name: "one" }], definition: { command: "one" } }],
+        ["my_server", { tools: [{ name: "two" }], definition: { command: "two" } }],
+      ]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      unavailableServers: new Set(["my-server"]),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__my_server")).toBe(false);
   });
 
   it("registers a new server and keeps existing ones in a single sync", async () => {

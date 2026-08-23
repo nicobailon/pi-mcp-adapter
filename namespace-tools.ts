@@ -76,13 +76,14 @@ function resolveNamespaceProxyTools(
   cache: MetadataCache | null,
   envOverride: DirectToolSelectorOverride | null,
   existingDirectNames: Set<string>,
+  unavailableServers: ReadonlySet<string>,
 ): NamespaceProxySpec[] {
   if (!config || !cache) return [];
   return filterCollidingNamespaceProxyTools(
     Object.keys(config.mcpServers)
       .map((serverName) => namespaceProxyCandidate(config, cache, envOverride, existingDirectNames, serverName))
       .filter((spec): spec is NamespaceProxySpec => spec !== null),
-  );
+  ).filter((spec) => !unavailableServers.has(spec.serverName));
 }
 
 /**
@@ -158,7 +159,9 @@ export interface SyncNamespaceProxyToolsInput {
   cache: MetadataCache | null;
   envOverride: DirectToolSelectorOverride | null;
   existingDirectNames: Set<string>;
+  activeDirectNames?: ReadonlySet<string>;
   existingNamespaceNames: Set<string>;
+  unavailableServers?: ReadonlySet<string>;
   pi: ExtensionAPI;
   getState: GetState;
   getInitPromise: GetInitPromise;
@@ -220,8 +223,9 @@ function getActiveToolsForStaleCleanup(pi: ExtensionAPI, staleNames: string[]): 
 }
 
 function deactivateStaleNamespaceTools(input: SyncNamespaceProxyToolsInput, nextNames: Set<string>): string[] {
+  const activeDirectNames = input.activeDirectNames ?? new Set<string>();
   const staleNames = [...input.existingNamespaceNames].filter(
-    (name) => !nextNames.has(name) && !input.existingDirectNames.has(name),
+    (name) => !nextNames.has(name) && !activeDirectNames.has(name),
   );
   const deactivated: string[] = [];
   const unregisterTool = (input.pi as unknown as {
@@ -253,6 +257,7 @@ export function syncNamespaceProxyTools(input: SyncNamespaceProxyToolsInput): Sy
     input.cache,
     input.envOverride,
     input.existingDirectNames,
+    input.unavailableServers ?? new Set(),
   );
   const nextNames = new Set(specs.map((s) => s.toolName));
   const result: SyncNamespaceProxyToolsResult = { specs, added: [], updated: [], deactivated: [] };

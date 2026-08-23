@@ -71,6 +71,8 @@ describe("search ranking", () => {
     const state = {
       toolMetadata: new Map([["demo", [tool("search_records", "Find records")]]]),
       config: { mcpServers: { demo: { command: "demo", searchKeywords: { search_records: ["fuzzy"] } } } },
+      manager: { getConnection: () => undefined },
+      failureTracker: new Map(),
     } as unknown as McpExtensionState;
 
     expect(rankToolMatches(state, "fuzzy")).toHaveLength(1);

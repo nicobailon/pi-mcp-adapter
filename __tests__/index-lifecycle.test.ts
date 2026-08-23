@@ -104,7 +104,12 @@ vi.mock("../proxy-modes.ts", () => ({
 vi.mock("../utils.ts", () => ({
   formatTerminalError: (error: unknown) => error instanceof Error ? error.message : String(error),
   getConfigPathFromArgv: mocks.getConfigPathFromArgv,
+  interpolateEnvRecord: (value: Record<string, string> | undefined) => value,
+  interpolateEnvVars: (value: string | undefined) => value,
   normalizeDirectToolInputSchema: mocks.normalizeDirectToolInputSchema,
+  resolveBearerToken: (definition: { bearerToken?: string }) => definition.bearerToken,
+  resolveConfigPath: (value: string | undefined) => value,
+  resolveServerUrl: (definition: { url?: string }) => definition.url,
   sanitizeTerminalText: (text: string) => text,
   truncateAtWord: mocks.truncateAtWord,
 }));
@@ -121,7 +126,7 @@ function createDeferred<T>() {
 
 function createState() {
   return {
-    manager: { getAllConnections: () => new Map() },
+    manager: { getAllConnections: () => new Map(), getConnection: vi.fn(() => undefined) },
     lifecycle: {
       gracefulShutdown: vi.fn().mockResolvedValue(undefined),
       ensureConverged: vi.fn().mockResolvedValue(undefined),
@@ -669,6 +674,92 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
   });
 
+  it("does not refresh frozen direct tools on failure-backoff metadata updates", async () => {
+    const config = {
+      settings: { freezeDirectTools: true },
+      mcpServers: {
+        demo: { command: "npx", args: ["-y", "demo-server"], directTools: true },
+      },
+    };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValue([
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search demo",
+      },
+    ]);
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const callsAfterInitialSync = mocks.resolveDirectTools.mock.calls.length;
+    state.onToolMetadataUpdated?.("demo", "failure-backoff-started");
+
+    expect(mocks.resolveDirectTools).toHaveBeenCalledTimes(callsAfterInitialSync);
+  });
+
+  it("keeps hidden direct tool names reserved against namespace proxies during backoff", async () => {
+    const { computeServerHash } = await import("../metadata-cache.ts");
+    const failedDefinition = { command: "failed", directTools: true };
+    const proxyDefinition = { command: "foo" };
+    const config = {
+      settings: { toolPrefix: "mcp" },
+      mcpServers: {
+        failed: failedDefinition,
+        foo: proxyDefinition,
+      },
+    };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.loadMetadataCache.mockReturnValue({
+      version: 1,
+      servers: {
+        foo: {
+          configHash: computeServerHash(proxyDefinition),
+          cachedAt: Date.now(),
+          tools: [{ name: "run" }],
+          resources: [],
+        },
+      },
+    });
+    mocks.resolveDirectTools.mockImplementation((_config, _cache, _prefix, _env, unavailableServers, reservedNames) => {
+      reservedNames?.add("mcp__foo");
+      if (unavailableServers?.has("failed")) {
+        return [];
+      }
+      return [{
+        serverName: "failed",
+        originalName: "foo",
+        prefixedName: "mcp__foo",
+        description: "Failed direct",
+      }];
+    });
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    state.failureTracker.set("failed", Date.now());
+    state.onToolMetadataUpdated?.("failed", "failure-backoff-started");
+
+    expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({
+      name: "mcp__foo",
+      description: expect.stringContaining("Namespace-proxy"),
+    }));
+  });
+
   it("publishes connected status only after replacing stale cached direct tools", async () => {
     const config = {
       settings: { disableProxyTool: true },
@@ -1069,6 +1160,8 @@ describe("mcpAdapter session lifecycle", () => {
       null,
       "server",
       undefined,
+      expect.any(Set),
+      expect.any(Set),
     );
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "memory_search" }));
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));

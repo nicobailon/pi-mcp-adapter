@@ -37,8 +37,9 @@ import {
   type McpRuntimeOwner,
 } from "./runtime-owner.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
+import { FAILURE_BACKOFF_MS, getFailureAgeSeconds } from "./failure-backoff.ts";
+export { getFailureAgeSeconds, getFailureMessage, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 
-const FAILURE_BACKOFF_MS = 60 * 1000;
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
 const failureExpiryTimers = new WeakMap<McpExtensionState, Map<string, ReturnType<typeof setTimeout>>>();
 
@@ -51,13 +52,19 @@ function getFailureExpiryTimers(state: McpExtensionState): Map<string, ReturnTyp
   return timers;
 }
 
-export function clearFailure(state: McpExtensionState, serverName: string): void {
+export function clearFailure(state: McpExtensionState, serverName: string, restoredReason?: string): boolean {
+  const wasActive = getFailureAgeSeconds(state, serverName) !== null;
   state.failureTracker.delete(serverName);
   state.failureMessages?.delete(serverName);
   const timers = failureExpiryTimers.get(state);
   const timer = timers?.get(serverName);
   if (timer) clearTimeout(timer);
   timers?.delete(serverName);
+  if (restoredReason && wasActive) {
+    notifyToolMetadataUpdated(state, serverName, restoredReason);
+    publishMcpStatusSnapshot(state);
+  }
+  return wasActive;
 }
 
 export function recordFailure(state: McpExtensionState, serverName: string, message: string): void {
@@ -73,12 +80,15 @@ export function recordFailure(state: McpExtensionState, serverName: string, mess
     if (state.failureTracker.get(serverName) === failedAt) {
       state.failureTracker.delete(serverName);
       state.failureMessages?.delete(serverName);
+      notifyToolMetadataUpdated(state, serverName, "failure-backoff-expired");
       publishMcpStatusSnapshot(state);
     }
     getFailureExpiryTimers(state).delete(serverName);
   }, FAILURE_BACKOFF_MS);
   timer.unref?.();
   getFailureExpiryTimers(state).set(serverName, timer);
+  notifyToolMetadataUpdated(state, serverName, "failure-backoff-started");
+  publishMcpStatusSnapshot(state);
 }
 
 export function isTuiMode(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolean {
@@ -407,9 +417,9 @@ export async function initializeMcp(
             }
             updateServerMetadata(state, name);
             updateMetadataCache(state, name);
-            notifyToolMetadataUpdated(state, name, "direct-tools-bootstrap");
+            const restored = clearFailure(state, name, "direct-tools-bootstrap");
+            if (!restored) notifyToolMetadataUpdated(state, name, "direct-tools-bootstrap");
             markKeepAliveAfterConnect(state, name);
-            clearFailure(state, name);
             return { name, ok: true };
           } catch (error) {
             if (isAbortError(error, runtimeSignal)) {
@@ -435,8 +445,8 @@ export async function initializeMcp(
     if (!owner.isActive()) return;
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
-    notifyToolMetadataUpdated(state, serverName, "lifecycle-reconnect");
-    clearFailure(state, serverName);
+    const restored = clearFailure(state, serverName, "lifecycle-reconnect");
+    if (!restored) notifyToolMetadataUpdated(state, serverName, "lifecycle-reconnect");
     updateStatusBar(state);
   });
 
@@ -449,13 +459,13 @@ export async function initializeMcp(
 
   lifecycle.setHealthRestoredCallback((serverName) => {
     if (!owner.isActive()) return;
-    clearFailure(state, serverName);
+    clearFailure(state, serverName, "health-restored");
     updateStatusBar(state);
   });
 
   lifecycle.setAuthRequiredCallback((serverName) => {
     if (!owner.isActive()) return;
-    clearFailure(state, serverName);
+    clearFailure(state, serverName, "auth-required");
     updateStatusBar(state);
   });
 
@@ -617,19 +627,6 @@ export function updateStatusBar(state: McpExtensionState): void {
   ui.setStatus("mcp", ui.theme ? ui.theme.fg("accent", formattedStatus) : formattedStatus);
 }
 
-export function getFailureAgeSeconds(state: McpExtensionState, serverName: string): number | null {
-  const failedAt = state.failureTracker.get(serverName);
-  if (!failedAt) return null;
-  const ageMs = Date.now() - failedAt;
-  if (ageMs > FAILURE_BACKOFF_MS) return null;
-  return Math.round(ageMs / 1000);
-}
-
-export function getFailureMessage(state: McpExtensionState, serverName: string): string | null {
-  if (getFailureAgeSeconds(state, serverName) === null) return null;
-  return state.failureMessages?.get(serverName) ?? null;
-}
-
 export async function lazyConnect(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<boolean> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
@@ -658,10 +655,10 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
     if (newConnection.status === "needs-auth") {
       return false;
     }
-    clearFailure(state, serverName);
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
-    notifyToolMetadataUpdated(state, serverName, "lazy-connect");
+    const restored = clearFailure(state, serverName, "lazy-connect");
+    if (!restored) notifyToolMetadataUpdated(state, serverName, "lazy-connect");
     markKeepAliveAfterConnect(state, serverName);
     updateStatusBar(state);
     return true;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { executeCall, executeDescribe, executeSearch } from "../proxy-modes.ts";
+import { executeCall, executeDescribe, executeList, executeSearch, executeStatus } from "../proxy-modes.ts";
 import type { McpExtensionState } from "../state.ts";
 
 function createState(): McpExtensionState {
@@ -31,6 +31,7 @@ function createState(): McpExtensionState {
       getConnection: () => undefined,
       isConnecting: () => false,
     },
+    serverInstructions: new Map(),
     failureTracker: new Map(),
   } as unknown as McpExtensionState;
 }
@@ -167,6 +168,32 @@ describe("proxy discovery", () => {
 
     const describeResult = executeDescribe(state, "demo_find");
     expect(JSON.stringify(describeResult)).not.toContain("zzalias");
+  });
+
+  it("keeps cached failed-backoff tools out of proxy discovery surfaces", () => {
+    const state = createState();
+    state.failureTracker.set("demo", Date.now());
+
+    expect(executeSearch(state, "demo").details).toMatchObject({ count: 0, matches: [] });
+    expect(executeDescribe(state, "demo_search").details).toMatchObject({ mode: "describe", error: "server_backoff", server: "demo" });
+    expect(executeList(state, "demo").details).toMatchObject({ mode: "list", error: "server_backoff", tools: [], count: 0 });
+    expect(executeStatus(state).details).toMatchObject({
+      totalTools: 0,
+      servers: [expect.objectContaining({ name: "demo", status: "failed", toolCount: 0 })],
+    });
+  });
+
+  it("does not filter needs-auth servers with stale failure entries", () => {
+    const state = createState();
+    state.failureTracker.set("demo", Date.now());
+    state.manager.getConnection = () => ({ status: "needs-auth" }) as any;
+
+    expect(executeSearch(state, "demo").details).toMatchObject({ count: 2 });
+    expect(executeList(state, "demo").details).toMatchObject({ mode: "list", count: 2 });
+    expect(executeStatus(state).details).toMatchObject({
+      totalTools: 2,
+      servers: [expect.objectContaining({ name: "demo", status: "needs-auth", toolCount: 2 })],
+    });
   });
 
   it("suggests the matching tool for a prefix-mangled describe name", () => {

@@ -5,6 +5,7 @@ import {
   publishMcpStatusShutdown,
   publishMcpStatusSnapshot,
 } from "../mcp-status.ts";
+import { executeStatus } from "../proxy-modes.ts";
 
 function createState() {
   const manager = {
@@ -25,6 +26,7 @@ function createState() {
     toolMetadata: new Map([
       ["connected", [{ name: "search" }]],
       ["cached", [{ name: "cached_search" }, { name: "read_doc" }]],
+      ["failed", [{ name: "failed_search" }, { name: "failed_read" }]],
       ["idle", [{ name: "old_search" }]],
     ]),
     resourceCounts: new Map([["connected", 2], ["cached", 1]]),
@@ -73,6 +75,44 @@ describe("MCP status snapshots", () => {
     expect(snapshot).not.toHaveProperty("client");
     expect(snapshot).not.toHaveProperty("transport");
     expect(snapshot).not.toHaveProperty("config");
+  });
+
+  it("keeps needs-auth status out of failure backoff even with a fresh failure entry", () => {
+    const state = createState();
+    state.failureTracker.set("auth", Date.now());
+    state.manager.getConnection.mockImplementation((name: string) => name === "auth"
+      ? { status: "needs-auth", tools: [], resources: [] }
+      : undefined);
+
+    const snapshot = createMcpStatusSnapshot(state);
+
+    expect(snapshot.servers.find(server => server.name === "auth")).toMatchObject({
+      name: "auth",
+      status: "needs-auth",
+      toolCount: 0,
+    });
+  });
+
+  it("keeps proxy status and shared snapshots in parity for cached failure states", () => {
+    const state = createState();
+    state.manager.getConnection.mockImplementation((name: string) => {
+      if (name === "connected") return { status: "connected", tools: [{ name: "search" }], resources: [] };
+      if (name === "auth") return { status: "needs-auth", tools: [], resources: [] };
+      return undefined;
+    });
+
+    const snapshot = createMcpStatusSnapshot(state);
+    const proxy = executeStatus(state).details as { servers: Array<{ name: string; status: string; toolCount: number }> };
+
+    for (const server of snapshot.servers) {
+      const proxyServer = proxy.servers.find(candidate => candidate.name === server.name);
+      expect(proxyServer).toBeDefined();
+      expect(proxyServer).toMatchObject({
+        name: server.name,
+        status: server.status === "not-connected" ? "not connected" : server.status,
+        toolCount: server.toolCount,
+      });
+    }
   });
 
   it("publishes an empty snapshot at shutdown", () => {

@@ -111,6 +111,7 @@ function createState() {
   return {
     manager: {
       getAllConnections: () => new Map(),
+      getConnection: vi.fn(() => undefined),
       close: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {

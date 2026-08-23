@@ -8,6 +8,7 @@ import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, 
 import { cloneMcpConfig, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tools.ts";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
+import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
@@ -250,10 +251,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     });
   }
 
-  function resolveCurrentDirectTools(config: McpConfig, cache: MetadataCache | null): DirectToolSpec[] {
+  function activeFailureServers(): Set<string> {
+    const currentState = state;
+    if (!currentState) return new Set();
+    return new Set(Object.keys(currentState.config.mcpServers).filter((serverName) => isServerInActiveFailureBackoff(currentState, serverName)));
+  }
+
+  function resolveCurrentDirectTools(config: McpConfig, cache: MetadataCache | null, reservedNames?: Set<string>): DirectToolSpec[] {
     if (envRaw === "__none__") return [];
     const prefix = config.settings?.toolPrefix ?? "server";
-    return resolveDirectTools(config, cache, prefix, envDirectToolOverride);
+    return resolveDirectTools(config, cache, prefix, envDirectToolOverride, activeFailureServers(), reservedNames);
   }
 
   function getActiveToolsIfReady(): string[] | undefined {
@@ -287,11 +294,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function syncDirectTools(config: McpConfig, cache: MetadataCache | null): {
     specs: DirectToolSpec[];
+    reservedDirectNames: Set<string>;
+    activeDirectNames: Set<string>;
     added: string[];
     updated: string[];
     deactivated: string[];
   } {
-    const specs = resolveCurrentDirectTools(config, cache);
+    const reservedDirectNames = new Set<string>();
+    const specs = resolveCurrentDirectTools(config, cache, reservedDirectNames);
     const nextNames = new Set(specs.map((spec) => spec.prefixedName));
     const added: string[] = [];
     const updated: string[] = [];
@@ -320,7 +330,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
 
     deactivateTools(deactivated);
-    return { specs, added, updated, deactivated };
+    return { specs, reservedDirectNames, activeDirectNames: nextNames, added, updated, deactivated };
   }
 
   function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false>): void {
@@ -337,7 +347,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const cache = loadMetadataCache();
     const result = syncDirectTools(config, cache);
     syncProxyTool(config, cache, result.specs);
-    syncNamespaceTools(config, cache);
+    syncNamespaceTools(config, cache, result.reservedDirectNames, result.activeDirectNames);
     const changed = result.added.length + result.updated.length + result.deactivated.length;
     if (changed > 0 && ctx?.hasUI) {
       ctx.ui.notify(
@@ -347,13 +357,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   }
 
-  function syncNamespaceTools(config: McpConfig, cache: MetadataCache | null): void {
+  function syncNamespaceTools(
+    config: McpConfig,
+    cache: MetadataCache | null,
+    reservedDirectNames: Set<string> = new Set(registeredDirectTools.keys()),
+    activeDirectNames: Set<string> = new Set(registeredDirectTools.keys()),
+  ): void {
     const result = syncNamespaceProxyTools({
       config,
       cache,
       envOverride: namespaceEnvOverride,
-      existingDirectNames: new Set(registeredDirectTools.keys()),
+      existingDirectNames: reservedDirectNames,
+      activeDirectNames,
       existingNamespaceNames: registeredNamespaceProxyTools,
+      unavailableServers: activeFailureServers(),
       pi,
       getState: () => state,
       getInitPromise: () => initPromise,
@@ -1115,13 +1132,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   }
 
-  const initialDirectTools = syncDirectTools(earlyConfig, earlyCache).specs;
-  syncProxyTool(earlyConfig, earlyCache, initialDirectTools);
+  const initialDirectResult = syncDirectTools(earlyConfig, earlyCache);
+  syncProxyTool(earlyConfig, earlyCache, initialDirectResult.specs);
   // Register namespace-proxy tools eagerly so tool-groups/slow-mode can validate
   // `mcp:<server>` references on the first session_start turn. Without this
   // eager call, the tool-groups expansion runs before MCP initialization
   // completes and emits false `[unknown-tool] mcp__<server>` diagnostics.
-  syncNamespaceTools(earlyConfig, earlyCache);
+  syncNamespaceTools(earlyConfig, earlyCache, initialDirectResult.reservedDirectNames, initialDirectResult.activeDirectNames);
   startLoadTimeInitialization();
 }
 
