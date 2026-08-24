@@ -445,7 +445,7 @@ describe("proxy auto auth", () => {
       name: "search",
       arguments: { q: "hello" },
       _meta: undefined,
-    }, { timeout: 1234 });
+    }, expect.objectContaining({ timeout: 1234, onprogress: expect.any(Function) }));
     expect(result.content[0].text).toContain("ok");
   });
 

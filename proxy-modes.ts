@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
-import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/client";
+import { UrlElicitationRequiredError, type Client, type Progress, type RequestOptions } from "@modelcontextprotocol/client";
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
@@ -30,13 +30,33 @@ const INSTRUCTIONS_PREVIEW_LENGTH = 300;
 const REGEX_SAFETY_CHECK_PARAMS = {
   attackTimeout: 50,
   incubationTimeout: 50,
-  timeout: 250,
-} as const;
+      timeout: 250,
+    } as const;
 
 type AutoAuthResult =
   | { status: "skipped" }
   | { status: "success" }
   | { status: "failed"; message: string };
+
+/**
+ * Bridges SDK request-local progress callbacks to the interactive UI notify
+ * path (#437 item 3). The SDK owns `_meta.progressToken` injection when
+ * `onprogress` is set; this never writes the token manually.
+ */
+function withUiProgressBridge(
+  options: RequestOptions | undefined,
+  ui: McpExtensionState["ui"],
+  toolName: string,
+): RequestOptions | undefined {
+  if (!ui) return options;
+  return {
+    ...options,
+    onprogress: (progress: Progress) => {
+      const ratio = `${progress.progress}${progress.total === undefined ? "" : `/${progress.total}`}`;
+      ui.notify(progress.message ? `${progress.message} (${ratio})` : `MCP ${toolName}: ${ratio}`, "info");
+    },
+  };
+}
 
 function getToolMatches(metadata: ToolMetadata[] | undefined, toolName: string, exact: boolean): ToolMetadata[] {
   if (!metadata) return [];
@@ -1189,7 +1209,11 @@ export async function executeCall(
   }
 
   let uiSession: UiSessionRuntime | null = null;
-  const requestOptions = state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
+  const requestOptions = withUiProgressBridge(
+    state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined),
+    state.ui,
+    toolMeta.originalName,
+  );
 
   const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
   const recoverAuthConnection = async () => {
@@ -1269,6 +1293,7 @@ export async function executeCall(
     );
 
     if (toolMeta.uiResourceUri) {
+      // SAFETY: ui-session renderer consumes the raw wire result shape, which the SDK types do not expose publicly
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
 
       if (result.isError) {
