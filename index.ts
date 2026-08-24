@@ -870,7 +870,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         return;
       }
 
-      const result = await authenticateServer(serverName, state.config, commandCtx, commandCtx.signal, state.oauthRuntime);
+      const result = await authenticateServer(
+        serverName,
+        state.config,
+        commandCtx,
+        commandCtx.signal,
+        state.oauthRuntime,
+        state.authStorageOptions,
+      );
       if (result.ok) {
         commandOwner?.throwIfInactive();
         await reconnectServer(state, commandCtx, serverName);

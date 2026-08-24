@@ -519,6 +519,66 @@ describe("mcp-auth-flow explicit auth", () => {
     rmSync(projectB, { recursive: true, force: true });
   });
 
+  it("keeps same-name pending flows and credentials isolated in session storage", async () => {
+    let call = 0;
+    mocks.sdkAuth.mockImplementation(async (provider) => {
+      call++;
+      if (call <= 2) {
+        await provider.saveClientInformation({ client_id: `session-client-${call}` });
+        await provider.redirectToAuthorization(new URL(`https://auth.example.com/session-authorize-${call}`));
+        return "REDIRECT";
+      }
+      await provider.saveTokens({ access_token: "session-token-b", token_type: "Bearer" });
+      return "AUTHORIZED";
+    });
+    const {
+      completeAuthFromInput,
+      createOAuthRuntime,
+      hasPendingAuth,
+      shutdownOAuth,
+      startAuth,
+    } = await import("../mcp-auth-flow.ts");
+    const { getAuthForUrl, getAuthStorageOptions } = await import("../mcp-auth.ts");
+    const runtimeA = createOAuthRuntime();
+    const runtimeB = createOAuthRuntime();
+    const authStorageOptionsA = getAuthStorageOptions(undefined, process.cwd(), "session");
+    const authStorageOptionsB = getAuthStorageOptions(undefined, process.cwd(), "session");
+    const definition = {
+      url: "https://api.example.com/mcp",
+      auth: "oauth" as const,
+    };
+
+    await startAuth("shared-session", definition.url, definition, {
+      authStorageOptions: authStorageOptionsA,
+      runtime: runtimeA,
+    });
+    await startAuth("shared-session", definition.url, definition, {
+      authStorageOptions: authStorageOptionsB,
+      runtime: runtimeB,
+    });
+
+    expect(hasPendingAuth("shared-session", authStorageOptionsA, runtimeA)).toBe(true);
+    expect(hasPendingAuth("shared-session", authStorageOptionsB, runtimeB)).toBe(true);
+    await completeAuthFromInput("shared-session", "code-b", {
+      authStorageOptions: authStorageOptionsB,
+      runtime: runtimeB,
+    });
+
+    expect(hasPendingAuth("shared-session", authStorageOptionsA, runtimeA)).toBe(true);
+    expect(hasPendingAuth("shared-session", authStorageOptionsB, runtimeB)).toBe(false);
+    expect(getAuthForUrl("shared-session", definition.url, authStorageOptionsA)).toMatchObject({
+      clientInfo: { clientId: "session-client-1" },
+    });
+    expect(getAuthForUrl("shared-session", definition.url, authStorageOptionsA)?.tokens).toBeUndefined();
+    expect(getAuthForUrl("shared-session", definition.url, authStorageOptionsB)).toMatchObject({
+      clientInfo: { clientId: "session-client-2" },
+      tokens: { accessToken: "session-token-b" },
+    });
+
+    await shutdownOAuth(runtimeA);
+    await shutdownOAuth(runtimeB);
+  });
+
   it("preserves stored dynamic client info when tokens exist", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       expect(await provider.clientInformation()).toEqual({ client_id: "stored-client", client_secret: "stored-secret", redirect_uris: ["http://localhost:19876/callback"] });

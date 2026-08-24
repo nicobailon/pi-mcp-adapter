@@ -287,7 +287,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
    */
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
     if (this.invalidatedClientId !== undefined) {
-      invalidateAuthEntryCache(this.serverName)
+      invalidateAuthEntryCache(this.serverName, this.storageOptions)
     }
     const issuer = this.discoveredIssuer
     const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
@@ -421,7 +421,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     // Once this provider rejects a token, bypass its process-local cache until
     // another process replaces that token in shared secure storage.
     if (this.invalidatedAccessToken !== undefined) {
-      invalidateAuthEntryCache(this.serverName)
+      invalidateAuthEntryCache(this.serverName, this.storageOptions)
     }
 
     // Use getAuthForUrl to validate tokens are for the current server URL.
@@ -580,7 +580,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.invalidatedClientId = this.lastObservedClientId
         this.lastObservedClientId = undefined
         this.flowClientInfo = undefined
-        invalidateAuthEntryCache(this.serverName)
+        invalidateAuthEntryCache(this.serverName, this.storageOptions)
         break
       case "tokens":
         // Invalidation is provider-local. Persistently deleting a shared token
@@ -590,7 +590,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.invalidatedAccessToken = this.pendingAuthAccessToken ?? this.lastSavedAccessToken
         this.lastSavedAccessToken = undefined
         this.pendingAuthAccessToken = undefined
-        invalidateAuthEntryCache(this.serverName)
+        invalidateAuthEntryCache(this.serverName, this.storageOptions)
         break
       case "verifier":
         clearCodeVerifier(this.serverName, this.storageOptions)

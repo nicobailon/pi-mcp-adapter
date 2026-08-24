@@ -31,7 +31,7 @@ import {
   clearCodeVerifier,
   getOAuthState,
   clearOAuthState,
-  getAuthBaseDir,
+  getAuthStorageIdentity,
   OAuthCredentialStoreError,
   type AuthStorageOptions,
   type StoredTokens,
@@ -127,7 +127,7 @@ function getRuntimeState(runtime: McpOAuthRuntime): RuntimeState {
 }
 
 function getPendingAuthKey(serverName: string, options: AuthStorageOptions): string {
-  return `${serverName}|${getAuthBaseDir(options)}`
+  return `${serverName}|${getAuthStorageIdentity(options)}`
 }
 
 export function hasPendingAuth(serverName: string, options?: AuthStorageOptions, runtime?: McpOAuthRuntime): boolean {
@@ -765,7 +765,7 @@ export async function authenticate(
   const authStorageOptions = options.authStorageOptions ?? {}
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
-  const authKey = `${serverName}|${serverUrl}|${getAuthBaseDir(authStorageOptions)}`
+  const authKey = `${serverName}|${serverUrl}|${getAuthStorageIdentity(authStorageOptions)}`
   const inFlight = runtimeState.pendingAuthentications.get(authKey)
   if (inFlight) {
     return inFlight

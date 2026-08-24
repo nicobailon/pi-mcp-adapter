@@ -122,7 +122,11 @@ export async function initializeMcp(
   const config = options.config !== undefined
     ? cloneMcpConfig(options.config)
     : loadMcpConfig(configPath, cwd);
-  const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
+  const authStorageOptions = getAuthStorageOptions(
+    config.settings?.oauthDir,
+    cwd,
+    config.settings?.oauthPersistence,
+  );
 
   const ownsOAuthRuntime = options.oauthRuntime === undefined;
   const oauthRuntime = options.oauthRuntime ?? createOAuthRuntime(owner.signal);

@@ -20,7 +20,7 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 - **Auto-Discovery** - Discovers OAuth endpoints from server metadata
 - **Automatic Token Refresh** - SDK handles expired tokens automatically
 - **State Parameter Validation** - CSRF protection
-- **Secure Token Storage** - Persistent OAuth entries are stored in the operating system credential store
+- **Configurable Token Lifetime** - OAuth entries use the operating system credential store by default or session-isolated process memory when configured
 
 ## Configuration
 
@@ -70,6 +70,7 @@ You can optionally provide a pre-registered client:
 
 ### Configuration Options
 
+- `settings.oauthPersistence` - `"persistent"` (default) stores credentials in the operating-system credential store. `"session"` keeps credentials in memory for one adapter session, requiring independent authorization for concurrent Pi sessions and discarding credentials on session replacement or process exit.
 - `url` - The MCP server URL (required)
 - `auth` - Set to `"oauth"` to force OAuth, `false` to disable, or omit to auto-detect
 - `oauth.grantType` - `"authorization_code"` (default, browser flow) or `"client_credentials"` (non-interactive)
@@ -229,6 +230,8 @@ A Node.js HTTP server runs on a loopback callback endpoint and handles the activ
 
 Persistent OAuth entries are stored per configured server name in the operating system credential store, using macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
 
+With `settings.oauthPersistence: "session"`, each adapter session instead owns a separate in-memory credential store and OAuth-flow identity. Tokens and dynamic client registration are shared only within that adapter session. Concurrent Pi sessions using the same server name and URL cannot read or overwrite one another's credentials, and session replacement or process exit discards the store. This mode never reads, migrates, removes, or writes persistent or legacy credentials.
+
 The adapter fails closed when the OS credential store is unavailable. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth; the adapter does not silently fall back to plaintext token files.
 
 On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path requires `keyctl` and `node` on `PATH`; missing, locked, or otherwise unavailable credential stores still fail closed.
@@ -259,7 +262,7 @@ For private servers with known-broken metadata, `oauth.skipIssuerMetadataValidat
 
 ### OS Credential Store
 
-Persistent OAuth credentials are written to the OS credential store. Legacy plaintext files are read only for one-way migration and are removed after successful import. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
+Persistent OAuth credentials are written to the OS credential store. Legacy plaintext files are read only for one-way migration and are removed after successful import. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication. Session-scoped OAuth remains in process memory and does not inspect either storage location.
 
 Credential entries reside in process memory for the lifetime of the Pi process on every supported credential-store platform rather than being re-read per request. They are never written anywhere but the OS credential store, and the process-memory copy is discarded on exit.
 
