@@ -233,6 +233,10 @@ export class McpServerManager {
     this.authStorageOptions = options;
   }
 
+  getAuthStorageOptions(): AuthStorageOptions {
+    return this.authStorageOptions;
+  }
+
   setOAuthRuntime(runtime: McpOAuthRuntime): void {
     this.oauthRuntime = runtime;
   }
@@ -628,7 +632,7 @@ export class McpServerManager {
       // behind needs-auth.
       if (isUnauthorizedHttpError(error) && supportsOAuth(definition) && cleanupFailures.length === 0) {
         if (!invalidated) {
-          invalidateAuthEntryCache(name);
+          invalidateAuthEntryCache(name, this.authStorageOptions);
           invalidated = true;
         }
         return {
@@ -978,7 +982,7 @@ export class McpServerManager {
       if (isUnauthorizedHttpError(result.error)) {
         if (supportsOAuth(definition)) {
           if (!invalidated) {
-            invalidateAuthEntryCache(serverName);
+            invalidateAuthEntryCache(serverName, this.authStorageOptions);
             invalidated = true;
           }
           return {

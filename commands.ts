@@ -21,7 +21,7 @@ import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
-import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
+import { getAuthStorageOptions, inspectAuthForUrl, type AuthStorageOptions } from "./mcp-auth.ts";
 import { inspectBearerTokenForUrl, removeBearerToken } from "./mcp-bearer-store.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
 import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
@@ -251,6 +251,7 @@ export async function authenticateServer(
   ctx: ExtensionContext,
   signal?: AbortSignal,
   runtime?: McpOAuthRuntime,
+  sharedAuthStorageOptions?: AuthStorageOptions,
 ): Promise<McpAuthResult> {
   const ui = ctx.hasUI ? ctx.ui : undefined;
   const cwd = ctx.cwd;
@@ -288,9 +289,13 @@ export async function authenticateServer(
     }
 
     ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
-    const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
+    const authStorageOptions = sharedAuthStorageOptions ?? getAuthStorageOptions(
+      config.settings?.oauthDir,
+      cwd,
+      config.settings?.oauthPersistence,
+    );
     const status = await authenticate(serverName, serverUrl, definition, {
-      ...(authStorageOptions.baseDir ? { authStorageOptions } : {}),
+      ...(authStorageOptions.baseDir || authStorageOptions.persistence ? { authStorageOptions } : {}),
       onAuthorizationUrl: () => {},
       onAuthorizationInput: async (authorizationUrl, inputSignal) => {
         if (inputSignal.aborted) return undefined;
@@ -563,7 +568,14 @@ function buildMcpPanelCallbacks(
       const overlay = getOverlayHandle?.();
       overlay?.setHidden(true);
       try {
-        return await authenticateServer(serverName, config, ctx, state.owner?.signal, state.oauthRuntime);
+        return await authenticateServer(
+          serverName,
+          config,
+          ctx,
+          state.owner?.signal,
+          state.oauthRuntime,
+          state.authStorageOptions,
+        );
       } finally {
         overlay?.setHidden(false);
         overlay?.focus();
