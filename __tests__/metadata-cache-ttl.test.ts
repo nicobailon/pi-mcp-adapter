@@ -46,6 +46,7 @@ describe("metadata cache ttl hints", () => {
     const server = definition();
 
     expect(isServerCacheValid(entry(server, 0, 0), server)).toBe(false);
+    expect(isServerCacheValid(entry(server, -1, 0), server)).toBe(false);
     expect(isServerCacheValid(entry(server, 500, 1_000), server)).toBe(true);
     expect(isServerCacheValid(entry(server, 1_000, 1_000), server)).toBe(false);
   });

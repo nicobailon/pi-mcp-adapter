@@ -799,7 +799,6 @@ export class McpServerManager {
     const connection = this.connections.get(serverName);
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.tools = tools;
-    connection.toolListHints = undefined;
     connection.toolsRevision = (connection.toolsRevision ?? 0) + 1;
     this.metadataListChangedListener?.(serverName, "tools-list-changed");
     this.pendingMetadataPublications.delete(serverName);

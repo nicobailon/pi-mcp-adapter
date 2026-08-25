@@ -127,6 +127,7 @@ export function isServerCacheValid(
   if (!entry.cachedAt || typeof entry.cachedAt !== "number") return false;
   const declaredTtlMs = entry.ttlMs;
   if (typeof declaredTtlMs === "number" && Number.isSafeInteger(declaredTtlMs) && declaredTtlMs >= 0) {
+    if (declaredTtlMs === 0) return false;
     const ageMs = Date.now() - entry.cachedAt;
     const effectiveMaxAge = maxAgeMs > 0 ? Math.min(maxAgeMs, declaredTtlMs) : declaredTtlMs;
     return ageMs < effectiveMaxAge;
