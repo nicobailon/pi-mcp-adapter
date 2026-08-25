@@ -160,6 +160,7 @@ function createPi(options: { unregisterTool?: false | ((name: string) => boolean
       on: vi.fn((event: string, handler: (...args: any[]) => unknown) => {
         handlers.set(event, handler);
       }),
+      events: { on: vi.fn(), emit: vi.fn() },
       getAllTools: vi.fn(() => []),
       getActiveTools: vi.fn(() => activeTools),
       setActiveTools: vi.fn((nextActiveTools: string[]) => {
@@ -187,6 +188,7 @@ function createStatusObservingPi() {
     activeTools = [...nextActiveTools];
   });
   api.events = {
+    on: vi.fn(),
     emit: vi.fn((channel: string, payload: { connectedCount?: number }) => {
       if (channel !== MCP_STATUS_EVENT || payload.connectedCount !== 1) return;
       connectedSurfaces.push(activeTools

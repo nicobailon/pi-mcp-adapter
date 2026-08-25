@@ -147,22 +147,43 @@ A Pi package can ship MCP servers for the installed adapter without requiring a 
 An extension can register MCP servers with the installed adapter at runtime, for example a plugin host that discovers plugins after load:
 
 ```ts
-import { registerMcpServer } from "pi-mcp-adapter";
+const MCP_RUNTIME_REGISTER_EVENT = "pi-mcp-adapter:runtime-register:v1";
+type RuntimeRegistrationRequest = {
+  version: 1;
+  name: string;
+  definition: { url: string };
+  result?:
+    | { ok: true; registration: { dispose(): Promise<void> } }
+    | { ok: false; error: Error };
+};
 
 export default function pluginHost(pi) {
-  const registration = registerMcpServer({
-    pi,
-    name: "acme__docs",
-    definition: {
-      url: "https://mcp.example.com/mcp",
-    },
+  let registration: { dispose(): Promise<void> } | undefined;
+
+  pi.on("session_start", () => {
+    if (registration) return;
+    const request: RuntimeRegistrationRequest = {
+      version: 1,
+      name: "acme__docs",
+      definition: { url: "https://mcp.example.com/mcp" },
+    };
+    pi.events.emit(MCP_RUNTIME_REGISTER_EVENT, request);
+    if (!request.result) throw new Error("pi-mcp-adapter is not installed");
+    if (!request.result.ok) throw request.result.error;
+    registration = request.result.registration;
   });
-  // Later, when the plugin is uninstalled:
-  await registration.dispose();
+
+  pi.on("session_shutdown", async () => {
+    const current = registration;
+    registration = undefined;
+    await current?.dispose();
+  });
 }
 ```
 
-Runtime registrations are session scoped and never written to config files. Duplicate server names fail closed against configured servers and other registrations. Registered servers use the normal lazy connection, OAuth, approval, and shutdown behavior, but they are proxy-tool-only and their tools become visible at the next tool sync. To change a definition, dispose the registration and register again. Registration throws when no adapter is installed for the given Pi instance.
+Cross-extension registration uses Pi's shared event bus and does not require a runtime import from `pi-mcp-adapter`. Emit during `session_start` or later so the adapter listener is installed. The adapter writes `request.result` synchronously; the first adapter listener to respond wins.
+
+Runtime registrations are session scoped and never written to config files. Duplicate server names fail closed against configured servers and other registrations. Registered servers use the normal lazy connection, OAuth, approval, and shutdown behavior, but they are proxy-tool-only and their tools become visible at the next tool sync. To change a definition, dispose the registration and register again.
 
 ### SDK configuration
 

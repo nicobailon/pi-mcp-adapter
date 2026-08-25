@@ -53,8 +53,21 @@ export interface McpServerRegistration {
   dispose(): Promise<void>;
 }
 
-// Routes runtime registrations to the adapter installed for a specific Pi
-// instance, so a process with several adapters cannot cross-register.
+export const MCP_RUNTIME_REGISTER_EVENT = "pi-mcp-adapter:runtime-register:v1" as const;
+export const MCP_RUNTIME_REGISTER_VERSION = 1 as const;
+
+export type McpRuntimeRegistrationResult =
+  | { ok: true; registration: McpServerRegistration }
+  | { ok: false; error: Error };
+
+export interface McpRuntimeRegistrationRequest {
+  version: typeof MCP_RUNTIME_REGISTER_VERSION;
+  name: string;
+  definition: ServerEntry;
+  result?: McpRuntimeRegistrationResult;
+}
+
+// Fast path for callers that share the adapter's module and ExtensionAPI.
 const runtimeRegistrars = new WeakMap<ExtensionAPI, (name: string, definition: ServerEntry) => McpServerRegistration>();
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
@@ -402,7 +415,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   registerPromptCommands(resolveCachedPrompts(earlyConfig));
 
-  runtimeRegistrars.set(pi, (name: string, definition: ServerEntry): McpServerRegistration => {
+  const registerRuntimeServer = (name: string, definition: ServerEntry): McpServerRegistration => {
     if (typeof name !== "string" || name.trim() === "") {
       throw new Error("MCP server name must be a non-empty string");
     }
@@ -439,6 +452,21 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         updateStatusBar(currentState);
       },
     };
+  };
+  runtimeRegistrars.set(pi, registerRuntimeServer);
+  pi.events.on(MCP_RUNTIME_REGISTER_EVENT, (rawRequest: unknown) => {
+    if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
+    const request = rawRequest as McpRuntimeRegistrationRequest;
+    if (request.result !== undefined) return;
+    if (request.version !== MCP_RUNTIME_REGISTER_VERSION) {
+      request.result = { ok: false, error: new Error(`Unsupported MCP runtime registration version: ${String(request.version)}`) };
+      return;
+    }
+    try {
+      request.result = { ok: true, registration: registerRuntimeServer(request.name, request.definition) };
+    } catch (error) {
+      request.result = { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+    }
   });
 
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
@@ -1162,10 +1190,18 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
 export function registerMcpServer(options: { pi: ExtensionAPI; name: string; definition: ServerEntry }): McpServerRegistration {
   const { pi, name, definition } = options;
   const register = runtimeRegistrars.get(pi);
-  if (!register) {
+  if (register) return register(name, definition);
+  const request: McpRuntimeRegistrationRequest = {
+    version: MCP_RUNTIME_REGISTER_VERSION,
+    name,
+    definition,
+  };
+  pi.events.emit(MCP_RUNTIME_REGISTER_EVENT, request);
+  if (!request.result) {
     throw new Error("pi-mcp-adapter is not installed for this Pi instance");
   }
-  return register(name, definition);
+  if (!request.result.ok) throw request.result.error;
+  return request.result.registration;
 }
 
 export default createMcpAdapter();

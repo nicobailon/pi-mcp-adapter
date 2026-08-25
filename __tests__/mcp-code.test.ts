@@ -29,6 +29,7 @@ describe("runMcpScript", () => {
       registerFlag: vi.fn(),
       registerCommand: vi.fn(),
       on: vi.fn(),
+      events: { on: vi.fn(), emit: vi.fn() },
       getAllTools: vi.fn(() => []),
     } as any);
 
@@ -47,6 +48,7 @@ describe("runMcpScript", () => {
       registerFlag: vi.fn(),
       registerCommand: vi.fn(),
       on: vi.fn(),
+      events: { on: vi.fn(), emit: vi.fn() },
       getAllTools: vi.fn(() => []),
     } as any);
 
