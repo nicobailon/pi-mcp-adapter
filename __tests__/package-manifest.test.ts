@@ -11,6 +11,7 @@ const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   exports?: Record<string, unknown>;
+  scripts?: Record<string, string>;
   types?: string;
 };
 
@@ -45,6 +46,22 @@ describe("package.json files", () => {
         default: "./dist/metadata-cache.js",
       },
     });
+  });
+
+  it("ships public host helpers without install-time prepare", () => {
+    const publishedFiles = new Set(packageJson.files ?? []);
+
+    expect(packageJson.scripts?.prepare).toBeUndefined();
+    expect(packageJson.scripts?.prepack).toBe("npm run build:public");
+    expect(publishedFiles.has("dist")).toBe(true);
+    for (const entry of Object.values(packageJson.exports ?? {})) {
+      if (!entry || typeof entry !== "object") continue;
+      for (const target of Object.values(entry)) {
+        if (typeof target === "string" && target.startsWith("./dist/")) {
+          expect(readFileSync(join(repoRoot, target), "utf-8").length).toBeGreaterThan(0);
+        }
+      }
+    }
   });
 
   it("publishes every root runtime TypeScript module", () => {

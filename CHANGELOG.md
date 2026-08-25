@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Stdio MCP startup errors now identify a configured missing or non-directory `cwd` instead of blaming the executable. Thanks to [@SoyElf](https://github.com/SoyElf) for #442.
+- Package installs with `--omit=dev` no longer run the public helper build during `prepare`; Git installs and package tarballs still include the built public exports. Thanks to [@KripaMishra](https://github.com/KripaMishra) for #441.
 - MCP gateway descriptions now stay stable across metadata-only refreshes and keep live counts behind `mcp({})`. Thanks to [@voidfreud](https://github.com/voidfreud) for PR #432.
 - Failed MCP servers in active backoff no longer remain advertised through cached direct tools, gateway list/search/describe results, or status tool counts. Thanks to [@voidfreud](https://github.com/voidfreud) for PR #434.
 - OAuth token invalidation now preserves credentials replaced by another Pi process instead of letting a stale refresh delete newly authorized shared credentials. Thanks to [@mjlbach](https://github.com/mjlbach) for PR #422.
