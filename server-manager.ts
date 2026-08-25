@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import {
   Client,
@@ -514,6 +514,12 @@ export class McpServerManager {
       client = this.createClient(name, definition);
       let command = definition.command;
       let args = (definition.args ?? []).map((argument) => interpolateEnvVars(argument));
+      const cwd = resolveConfigPath(definition.cwd) ?? this.defaultCwd;
+      if (cwd !== undefined) {
+        const cwdStats = statSync(cwd, { throwIfNoEntry: false });
+        if (!cwdStats) throw new Error(`MCP server "${name}" configured cwd does not exist: "${cwd}"`);
+        if (!cwdStats.isDirectory()) throw new Error(`MCP server "${name}" configured cwd is not a directory: "${cwd}"`);
+      }
 
       if (command === "npx" || command === "npm") {
         const resolved = await resolveNpxBinary(command, args, signal);
@@ -526,7 +532,6 @@ export class McpServerManager {
       throwIfAborted(signal);
 
       if (definition.pluginDataDir) mkdirSync(definition.pluginDataDir, { recursive: true });
-      const cwd = resolveConfigPath(definition.cwd) ?? this.defaultCwd;
       const stdioTransport = new StdioClientTransport({
         command,
         args,

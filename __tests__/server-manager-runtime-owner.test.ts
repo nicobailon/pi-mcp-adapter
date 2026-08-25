@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, rmSync } from "node:fs";
 
 const mocks = vi.hoisted(() => ({
   clients: [] as any[],
@@ -51,6 +52,11 @@ describe("MCP manager owner races", () => {
     mocks.connectGate = null;
     mocks.connectError = null;
     mocks.resolveGate = null;
+    mkdirSync("/tmp/session", { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync("/tmp/session", { recursive: true, force: true });
   });
 
   it("closes a connection that finishes after owner shutdown before insertion", async () => {

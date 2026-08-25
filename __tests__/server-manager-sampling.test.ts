@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { homedir } from "node:os";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 const mocks = vi.hoisted(() => ({
@@ -42,6 +42,7 @@ vi.mock("../npx-resolver.ts", () => ({
 
 describe("McpServerManager sampling", () => {
   const originalMcpTestCwd = process.env.MCP_TEST_CWD;
+  const originalHome = process.env.HOME;
 
   beforeEach(() => {
     mocks.clients.length = 0;
@@ -55,6 +56,15 @@ describe("McpServerManager sampling", () => {
     } else {
       process.env.MCP_TEST_CWD = originalMcpTestCwd;
     }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync("/tmp/pi-mcp-cwd", { recursive: true, force: true });
+    rmSync("/tmp/pi-mcp-home", { recursive: true, force: true });
+    rmSync("/tmp/pi-session-cwd", { recursive: true, force: true });
+    rmSync("/tmp/server-cwd", { recursive: true, force: true });
   });
 
   it("advertises sampling and registers the handler before connecting", async () => {
@@ -429,6 +439,9 @@ describe("McpServerManager sampling", () => {
   it("expands environment variables and tilde in stdio cwd", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     process.env.MCP_TEST_CWD = "/tmp/pi-mcp-cwd";
+    process.env.HOME = "/tmp/pi-mcp-home";
+    mkdirSync("/tmp/pi-mcp-cwd/nested", { recursive: true });
+    mkdirSync("/tmp/pi-mcp-home/nested", { recursive: true });
 
     const envManager = new McpServerManager();
     await envManager.connect("env-cwd", {
@@ -445,11 +458,12 @@ describe("McpServerManager sampling", () => {
     });
 
     expect(mocks.transports[0].options).toMatchObject({ cwd: "/tmp/pi-mcp-cwd/nested" });
-    expect(mocks.transports[1].options).toMatchObject({ cwd: join(homedir(), "nested") });
+    expect(mocks.transports[1].options).toMatchObject({ cwd: "/tmp/pi-mcp-home/nested" });
   });
 
   it("uses the session cwd for stdio servers without an explicit cwd", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
+    mkdirSync("/tmp/pi-session-cwd", { recursive: true });
     const manager = new McpServerManager("/tmp/pi-session-cwd");
 
     await manager.connect("session-cwd", { command: "node", args: ["server.js"] });
@@ -459,6 +473,8 @@ describe("McpServerManager sampling", () => {
 
   it("prefers an explicit stdio cwd over the session cwd", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
+    mkdirSync("/tmp/pi-session-cwd", { recursive: true });
+    mkdirSync("/tmp/server-cwd", { recursive: true });
     const manager = new McpServerManager("/tmp/pi-session-cwd");
 
     await manager.connect("explicit-cwd", {

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Embedding hosts can validate cached metadata against an explicit private process environment.
 
 ### Fixed
+- Stdio MCP startup errors now identify a configured missing or non-directory `cwd` instead of blaming the executable. Thanks to [@SoyElf](https://github.com/SoyElf) for #442.
 - MCP gateway descriptions now stay stable across metadata-only refreshes and keep live counts behind `mcp({})`. Thanks to [@voidfreud](https://github.com/voidfreud) for PR #432.
 - Failed MCP servers in active backoff no longer remain advertised through cached direct tools, gateway list/search/describe results, or status tool counts. Thanks to [@voidfreud](https://github.com/voidfreud) for PR #434.
 - OAuth token invalidation now preserves credentials replaced by another Pi process instead of letting a stale refresh delete newly authorized shared credentials. Thanks to [@mjlbach](https://github.com/mjlbach) for PR #422.
