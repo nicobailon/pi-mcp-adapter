@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Persistent metadata cache entries now honor server-advertised `ttlMs` hints without extending the default max age. Thanks to [@Seinra](https://github.com/Seinra) for #431.
 - Added a pure `mcp:` reference resolver API for consumers that validate adapter tool names from explicit config and cache inputs. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for PR #420.
 - Direct tools can opt into strict advertised-schema validation with one-layer JSON recovery for object and array properties. Thanks to [@4ndr3wxh1ll](https://github.com/4ndr3wxh1ll) for PR #430.
 - Direct tools can opt into guarded raw MCP result details, retaining bounded structured fields while summarizing oversized values.

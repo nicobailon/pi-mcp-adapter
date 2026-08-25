@@ -686,6 +686,9 @@ export interface ServerCacheEntry {
   resources: CachedResource[];
   prompts?: CachedPrompt[];
   instructions?: string;
+  /** Server-level hints from the aggregated tools/list result. */
+  ttlMs?: ListToolsResult["ttlMs"];
+  cacheScope?: ListToolsResult["cacheScope"];
   cachedAt: number;
 }
 

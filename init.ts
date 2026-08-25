@@ -562,6 +562,8 @@ export function updateMetadataCache(
     resources,
     ...(prompts !== undefined ? { prompts } : {}),
     ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
+    ...(connection.toolListHints?.ttlMs !== undefined ? { ttlMs: connection.toolListHints.ttlMs } : {}),
+    ...(connection.toolListHints?.cacheScope !== undefined ? { cacheScope: connection.toolListHints.cacheScope } : {}),
     cachedAt: Date.now(),
   };
 
