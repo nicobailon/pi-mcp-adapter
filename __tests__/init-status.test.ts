@@ -59,6 +59,15 @@ describe("updateStatusBar", () => {
     expect(setStatus).toHaveBeenCalledWith("mcp", "styled:🔌 MCP: 1 server enabled");
   });
 
+  it("keeps status text plain when the host provides a string theme", () => {
+    const setStatus = vi.fn();
+    const state = createState({ setStatus, theme: "light" });
+
+    updateStatusBar(state);
+
+    expect(setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled");
+  });
+
   it("keeps the icon when explicitly enabled", () => {
     const setStatus = vi.fn();
     updateStatusBar(createState({ setStatus }, { showStatusIcon: true }));
