@@ -19,6 +19,7 @@ import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl } f
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
+import { captureTaskManagerResult, getTaskManagerClaimVault, prepareTaskManagerArgs, validateTaskManagerArgs } from "./taskmanager-claim-vault.ts";
 import { Check, Errors } from "typebox/value";
 
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -420,7 +421,10 @@ export function createDirectToolExecutor(
       };
     }
 
-    const normalizedParams = spec.resourceUri ? params : normalizeToolArguments(params);
+    let normalizedParams = spec.resourceUri ? params : normalizeToolArguments(params);
+    const claimVault = getTaskManagerClaimVault(state, state.owner);
+    validateTaskManagerArgs(claimVault, spec.serverName, spec.originalName, normalizedParams);
+    const modelVisibleParams = normalizedParams;
     const approval = await ensureToolCallApproved(state, spec.serverName, {
       name: spec.prefixedName,
       originalName: spec.originalName,
@@ -444,6 +448,8 @@ export function createDirectToolExecutor(
         },
       };
     }
+
+    normalizedParams = prepareTaskManagerArgs(claimVault, spec.serverName, spec.originalName, normalizedParams) ?? {};
 
     let uiSession: UiSessionRuntime | null = null;
     const requestOptions = state.manager.getRequestOptions?.(spec.serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
@@ -504,7 +510,7 @@ export function createDirectToolExecutor(
         ? await maybeStartUiSession(state, {
             serverName: spec.serverName,
             toolName: spec.originalName,
-            toolArgs: normalizedParams,
+            toolArgs: modelVisibleParams,
             uiResourceUri: spec.uiResourceUri!,
             ...(spec.uiStreamMode !== undefined ? { streamMode: spec.uiStreamMode } : {}),
             ...(signal ? { signal } : {}),
@@ -512,7 +518,7 @@ export function createDirectToolExecutor(
           })
         : null;
 
-      const result = await withSessionRecovery<ClientCallToolResult>(
+      let result = await withSessionRecovery<ClientCallToolResult>(
         {
           manager: state.manager,
           config: state.config,
@@ -526,6 +532,7 @@ export function createDirectToolExecutor(
           _meta: uiSession?.requestMeta,
         }, requestOptions), ownedSignal),
       );
+      result = captureTaskManagerResult(getTaskManagerClaimVault(state, state.owner), spec.serverName, spec.originalName, result, normalizedParams) as ClientCallToolResult;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
 
       if (result.isError) {

@@ -19,6 +19,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+import { captureTaskManagerResult, getTaskManagerClaimVault, prepareTaskManagerArgs, validateTaskManagerArgs } from "./taskmanager-claim-vault.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -1163,7 +1164,10 @@ export async function executeCall(
     return disabledCallResult(serverName, toolMeta);
   }
 
-  const normalizedArgs = toolMeta.resourceUri ? args ?? {} : normalizeToolArguments(args);
+  let normalizedArgs = toolMeta.resourceUri ? args ?? {} : normalizeToolArguments(args);
+  const claimVault = getTaskManagerClaimVault(state, state.owner);
+  validateTaskManagerArgs(claimVault, serverName, toolMeta.originalName, normalizedArgs);
+  const modelVisibleArgs = normalizedArgs;
   const approval = await ensureToolCallApproved(
     state,
     serverName,
@@ -1187,6 +1191,8 @@ export async function executeCall(
       },
     };
   }
+
+  normalizedArgs = prepareTaskManagerArgs(claimVault, serverName, toolMeta.originalName, normalizedArgs) ?? {};
 
   let uiSession: UiSessionRuntime | null = null;
   const requestOptions = state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
@@ -1245,7 +1251,7 @@ export async function executeCall(
       ? await maybeStartUiSession(state, {
           serverName,
           toolName: toolMeta.originalName,
-          toolArgs: normalizedArgs,
+          toolArgs: modelVisibleArgs,
           uiResourceUri: toolMeta.uiResourceUri,
           ...(toolMeta.uiStreamMode !== undefined ? { streamMode: toolMeta.uiStreamMode } : {}),
           ...(signal ? { signal } : {}),
@@ -1253,7 +1259,7 @@ export async function executeCall(
         })
       : null;
 
-    const result = await withSessionRecovery<ClientCallToolResult>(
+    let result = await withSessionRecovery<ClientCallToolResult>(
       {
         manager: state.manager,
         config: state.config,
@@ -1267,6 +1273,7 @@ export async function executeCall(
         _meta: uiSession?.requestMeta,
       }, requestOptions), ownedSignal),
     );
+    result = captureTaskManagerResult(getTaskManagerClaimVault(state, state.owner), serverName, toolMeta.originalName, result, normalizedArgs) as ClientCallToolResult;
 
     if (toolMeta.uiResourceUri) {
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
