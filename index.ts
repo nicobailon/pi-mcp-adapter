@@ -56,6 +56,9 @@ export interface McpServerRegistration {
 export const MCP_RUNTIME_REGISTER_EVENT = "pi-mcp-adapter:runtime-register:v1" as const;
 export const MCP_RUNTIME_REGISTER_VERSION = 1 as const;
 
+export const MCP_RUNTIME_SNAPSHOT_EVENT = "pi-mcp-adapter:runtime-snapshot:v1" as const;
+export const MCP_RUNTIME_SNAPSHOT_VERSION = 1 as const;
+
 export type McpRuntimeRegistrationResult =
   | { ok: true; registration: McpServerRegistration }
   | { ok: false; error: Error };
@@ -67,8 +70,26 @@ export interface McpRuntimeRegistrationRequest {
   result?: McpRuntimeRegistrationResult;
 }
 
+export interface McpRuntimeServerSnapshot {
+  readonly name: string;
+  readonly definition: ServerEntry;
+  readonly runtime: true;
+  readonly persisted: false;
+}
+
+export type McpRuntimeSnapshotResult =
+  | { ok: true; snapshot: McpRuntimeServerSnapshot }
+  | { ok: false; error: Error };
+
+export interface McpRuntimeSnapshotRequest {
+  version: typeof MCP_RUNTIME_SNAPSHOT_VERSION;
+  name: string;
+  result?: McpRuntimeSnapshotResult;
+}
+
 // Fast path for callers that share the adapter's module and ExtensionAPI.
 const runtimeRegistrars = new WeakMap<ExtensionAPI, (name: string, definition: ServerEntry) => McpServerRegistration>();
+const runtimeSnapshotters = new WeakMap<ExtensionAPI, (name: string) => McpRuntimeServerSnapshot>();
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -213,7 +234,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let directToolsFrozen = false;
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
-  const runtimeServers = new Map<string, ServerEntry>();
+  const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
 
   // Mirrors init's per-server lifecycle registration so runtime servers get
   // idle cleanup and keep-alive health recovery like configured servers.
@@ -428,8 +449,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     // Runtime-registered servers are proxy-tool-only: direct tools are frozen
     // at startup and must not be rebuilt for late registrations.
-    const entry: ServerEntry = { ...structuredClone(definition), directTools: false };
-    runtimeServers.set(name, entry);
+    const snapshotDefinition = structuredClone(definition);
+    const entry: ServerEntry = { ...structuredClone(snapshotDefinition), directTools: false };
+    runtimeServers.set(name, { definition: snapshotDefinition, entry });
     const registeredState = state;
     if (registeredState) {
       registeredState.config.mcpServers[name] = entry;
@@ -453,7 +475,34 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       },
     };
   };
+  const getRuntimeServerSnapshot = (name: string): McpRuntimeServerSnapshot => {
+    if (typeof name !== "string" || name.trim() === "") {
+      throw new Error("MCP runtime server name must be a non-empty string");
+    }
+    const runtimeServer = runtimeServers.get(name);
+    if (!runtimeServer) {
+      throw new Error(`MCP runtime server "${name}" is not registered or has been disposed`);
+    }
+    const activeState = state;
+    if (!activeState) {
+      throw new Error(`MCP runtime server "${name}" is unavailable because the adapter has no active state`);
+    }
+    const activeEntry = activeState.config.mcpServers[name];
+    if (Object.hasOwn(activeState.config.mcpServers, name) && activeEntry !== runtimeServer.entry) {
+      throw new Error(`MCP runtime server "${name}" is shadowed by a configured server`);
+    }
+    if (activeEntry !== runtimeServer.entry) {
+      throw new Error(`MCP runtime server "${name}" is unavailable in the active adapter state`);
+    }
+    return {
+      name,
+      definition: structuredClone(runtimeServer.definition),
+      runtime: true,
+      persisted: false,
+    };
+  };
   runtimeRegistrars.set(pi, registerRuntimeServer);
+  runtimeSnapshotters.set(pi, getRuntimeServerSnapshot);
   pi.events.on(MCP_RUNTIME_REGISTER_EVENT, (rawRequest: unknown) => {
     if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
     const request = rawRequest as McpRuntimeRegistrationRequest;
@@ -464,6 +513,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     try {
       request.result = { ok: true, registration: registerRuntimeServer(request.name, request.definition) };
+    } catch (error) {
+      request.result = { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  });
+  pi.events.on(MCP_RUNTIME_SNAPSHOT_EVENT, (rawRequest: unknown) => {
+    if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
+    const request = rawRequest as McpRuntimeSnapshotRequest;
+    if (request.result !== undefined) return;
+    if (request.version !== MCP_RUNTIME_SNAPSHOT_VERSION) {
+      request.result = { ok: false, error: new Error(`Unsupported MCP runtime snapshot version: ${String(request.version)}`) };
+      return;
+    }
+    try {
+      request.result = { ok: true, snapshot: getRuntimeServerSnapshot(request.name) };
     } catch (error) {
       request.result = { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
     }
@@ -501,13 +564,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
       state = nextState;
       clearRetainedInitFailure();
-      for (const [name, definition] of runtimeServers) {
+      for (const [name, { entry }] of runtimeServers) {
         if (Object.hasOwn(nextState.config.mcpServers, name)) {
           console.error(`MCP: runtime-registered server "${name}" now collides with a configured server; keeping the configured server`);
           continue;
         }
-        nextState.config.mcpServers[name] = definition;
-        attachRuntimeServerLifecycle(nextState, name, definition);
+        nextState.config.mcpServers[name] = entry;
+        attachRuntimeServerLifecycle(nextState, name, entry);
       }
       nextState.onToolMetadataUpdated = (_serverName, _reason) => {
         if (state !== nextState || !owner.isActive()) return;
@@ -1202,6 +1265,27 @@ export function registerMcpServer(options: { pi: ExtensionAPI; name: string; def
   }
   if (!request.result.ok) throw request.result.error;
   return request.result.registration;
+}
+
+/**
+ * Return a detached, non-persisted snapshot of one runtime-registered MCP
+ * server. Configured servers and runtime registrations shadowed by config are
+ * never exported through this API.
+ */
+export function getRuntimeMcpServerSnapshot(options: { pi: ExtensionAPI; name: string }): McpRuntimeServerSnapshot {
+  const { pi, name } = options;
+  const getSnapshot = runtimeSnapshotters.get(pi);
+  if (getSnapshot) return getSnapshot(name);
+  const request: McpRuntimeSnapshotRequest = {
+    version: MCP_RUNTIME_SNAPSHOT_VERSION,
+    name,
+  };
+  pi.events.emit(MCP_RUNTIME_SNAPSHOT_EVENT, request);
+  if (!request.result) {
+    throw new Error("pi-mcp-adapter is not installed for this Pi instance");
+  }
+  if (!request.result.ok) throw request.result.error;
+  return request.result.snapshot;
 }
 
 export default createMcpAdapter();

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a fail-closed API for child extensions to snapshot one selected runtime MCP server without exporting configured servers or persisting the registration. (#453)
+
 ## [2.29.0] - 2026-08-26
 
 ### Highlights
