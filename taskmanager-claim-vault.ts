@@ -23,9 +23,36 @@ function isValidTimestamp(value: string): boolean {
   return Number.isFinite(Date.parse(value));
 }
 
+function parseJsonRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    return recordObject(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
 function resultData(result: unknown): Record<string, unknown> | undefined {
   const object = recordObject(result);
-  return recordObject(object?.structuredContent) ?? recordObject(object?.data) ?? object;
+  if (!object) return undefined;
+
+  const structured = recordObject(object.structuredContent);
+  const structuredResult = parseJsonRecord(structured?.result);
+  if (structuredResult) return structuredResult;
+  if (structured) return structured;
+
+  const data = recordObject(object.data);
+  const dataResult = parseJsonRecord(data?.result);
+  if (dataResult) return dataResult;
+  if (data) return data;
+
+  if (Array.isArray(object.content)) {
+    for (const item of object.content) {
+      const parsed = parseJsonRecord(recordObject(item)?.text);
+      if (parsed) return parsed;
+    }
+  }
+  return object;
 }
 
 function cloneWithoutToken(value: unknown, token: string): unknown {
