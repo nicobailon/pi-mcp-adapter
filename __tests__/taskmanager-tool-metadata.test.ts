@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildToolMetadata } from "../tool-metadata.ts";
+import { reconstructToolMetadata } from "../metadata-cache.ts";
 import { isTaskManagerClaimTool } from "../taskmanager-claim-vault.ts";
 
 describe("TaskManager model-facing metadata", () => {
@@ -60,6 +61,31 @@ describe("TaskManager model-facing metadata", () => {
     const schema = metadata[0]!.inputSchema as any;
     expect(schema.properties.claim_handle).toEqual({ type: "string", description: "Preferred handle" });
     expect(schema.properties.claim_token).toBeUndefined();
+    expect(schema.required).toEqual(["claim_handle"]);
+  });
+
+  it("applies the same projection when reconstructing cached metadata", () => {
+    const metadata = reconstructToolMetadata("taskmanager", {
+      configHash: "unused",
+      cachedAt: Date.now(),
+      tools: [{
+        name: "renew_task_claim",
+        description: "Renew using the claim_token returned by claim_task.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task_id: { type: "string" },
+            claim_token: { type: "string", description: "Raw claim token" },
+          },
+          required: ["task_id", "claim_token"],
+        },
+      }],
+    } as any, "server", {}, {} as any);
+    const tool = metadata[0]!;
+    const schema = tool.inputSchema as any;
+    expect(tool.description).toContain("claim_handle");
+    expect(tool.description).not.toContain("claim_token");
+    expect(schema.properties).toEqual({ claim_handle: { type: "string", description: "Raw claim handle" } });
     expect(schema.required).toEqual(["claim_handle"]);
   });
 

@@ -44,6 +44,10 @@ describe("TaskManager claim capability vault", () => {
 
     expect(handle).toMatch(/^claim_/);
     expect(JSON.stringify(result)).not.toContain("fastmcp-secret");
+    expect(JSON.parse((result.content[0] as any).text)).toMatchObject({ claim_handle: handle });
+    expect(JSON.parse(result.structuredContent.result)).toMatchObject({ claim_handle: handle });
+    expect((result.content[0] as any).text).not.toContain("fastmcp-secret");
+    expect(result.structuredContent.result).not.toContain("fastmcp-secret");
     expect(prepareTaskManagerArgs(vault, "taskmanager", "renew_task_claim", { claim_handle: handle })).toEqual({
       task_id: "1",
       claim_token: "fastmcp-secret",
