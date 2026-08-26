@@ -28,6 +28,38 @@ describe("TaskManager claim capability vault", () => {
     expect(vault.listMetadata()[0]).not.toHaveProperty("token");
   });
 
+  it("captures, redacts, renews, and releases FastMCP JSON-string results", () => {
+    const vault = new TaskManagerClaimVault("session-fastmcp");
+    const claimPayload = JSON.stringify({
+      id: "1",
+      claimed: true,
+      claim_token: "fastmcp-secret",
+      claimed_until: "2026-08-26T02:00:00Z",
+    });
+    const result = captureTaskManagerResult(vault, "taskmanager", "claim_task", {
+      structuredContent: { result: claimPayload },
+      content: [{ type: "text", text: claimPayload }],
+    }, { task_id: "1" }) as any;
+    const handle = result.structuredContent.claim_handle;
+
+    expect(handle).toMatch(/^claim_/);
+    expect(JSON.stringify(result)).not.toContain("fastmcp-secret");
+    expect(prepareTaskManagerArgs(vault, "taskmanager", "renew_task_claim", { claim_handle: handle })).toEqual({
+      task_id: "1",
+      claim_token: "fastmcp-secret",
+    });
+
+    captureTaskManagerResult(vault, "taskmanager", "renew_task_claim", {
+      structuredContent: { result: JSON.stringify({ renewed: true, claimed_until: "2026-08-26T03:00:00Z" }) },
+    }, { claim_token: "fastmcp-secret", task_id: "1" });
+    expect(vault.listMetadata()[0]).toMatchObject({ claimedUntil: "2026-08-26T03:00:00Z", uncertain: false });
+
+    captureTaskManagerResult(vault, "taskmanager", "release_task_claim", {
+      structuredContent: { result: JSON.stringify({ released: true, status: "pending" }) },
+    }, { claim_token: "fastmcp-secret", task_id: "1" });
+    expect(vault.listMetadata()).toEqual([]);
+  });
+
   it("resolves only matching handles and updates renewal metadata", () => {
     const vault = new TaskManagerClaimVault("session-a");
     const result = captureTaskManagerResult(vault, "taskmanager", "claim_task", claim(), { task_id: "task_1" }) as any;
