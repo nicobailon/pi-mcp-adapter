@@ -626,7 +626,8 @@ export function updateStatusBar(state: McpExtensionState): void {
     ui.setStatus("mcp", undefined);
     return;
   }
-  ui.setStatus("mcp", ui.theme ? ui.theme.fg("accent", formattedStatus) : formattedStatus);
+  const theme = ui.theme;
+  ui.setStatus("mcp", typeof theme?.fg === "function" ? theme.fg("accent", formattedStatus) : formattedStatus);
 }
 
 export async function lazyConnect(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<boolean> {
