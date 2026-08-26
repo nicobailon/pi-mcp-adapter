@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added an opt-in Parallel Search preset to `/mcp setup` for web search and page fetching without an API key. Thanks to [@georgeatparallel](https://github.com/georgeatparallel) for PR #448.
 - Persistent metadata cache entries now honor server-advertised `ttlMs` hints without extending the default max age. Thanks to [@Seinra](https://github.com/Seinra) for #431.
 - Proxy tool calls now forward server progress notifications to the interactive UI notification path via the MCP SDK's request-local `onprogress` option. Thanks to [@Seinra](https://github.com/Seinra) for PR #440 and for mapping the area in #431.
 - Added a pure `mcp:` reference resolver API for consumers that validate adapter tool names from explicit config and cache inputs. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for PR #420.

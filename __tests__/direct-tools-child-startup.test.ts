@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe("direct tools in child Pi processes", () => {
-  it("registers an env-selected cold-cache tool before agent_start", async () => {
+  it.each(["env", "config"])("registers and invokes a cold-cache tool selected by %s", async selection => {
     const root = await mkdtemp(join(tmpdir(), "pi-mcp-direct-tool-child-"));
     roots.push(root);
     const agentDir = join(root, "agent");
@@ -25,7 +25,7 @@ describe("direct tools in child Pi processes", () => {
         demo: {
           command: process.execPath,
           args: [resolve("__tests__/fixtures/delayed-mcp-server.mjs")],
-          directTools: true,
+          ...(selection === "config" ? { directTools: true } : {}),
         },
       },
     }));
@@ -43,7 +43,8 @@ describe("direct tools in child Pi processes", () => {
           MCP_CHILD_ADAPTER_PATH: resolve("index.ts"),
           MCP_CHILD_PROBE_PATH: resolve("__tests__/fixtures/direct-tools-agent-start-probe.ts"),
           MCP_CHILD_INVOKE_TOOL: "demo_reload_identity",
-          MCP_DIRECT_TOOLS: "demo/reload_identity",
+          MCP_CHILD_INPUT: selection === "config" ? "Call the demo tool." : undefined,
+          MCP_DIRECT_TOOLS: selection === "env" ? "demo/reload_identity" : undefined,
         },
         timeout: 15_000,
       },
