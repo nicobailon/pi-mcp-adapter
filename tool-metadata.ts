@@ -6,6 +6,58 @@ import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 
+const TASK_MANAGER_CLAIM_PRODUCERS = new Set(["claim_task", "resolve_and_claim_task", "resolve_blocker_and_claim_task"]);
+const TASK_MANAGER_CLAIM_FENCED = new Set([
+  "renew_task_claim",
+  "release_task_claim",
+  "complete_task",
+  "complete_task_from_pr",
+  "set_agent_status",
+  "add_task_comment",
+  "update_task",
+]);
+
+function isTaskManagerServer(serverName: string): boolean {
+  return /taskmanager|nexus/i.test(serverName);
+}
+
+function projectTaskManagerSchema(schema: unknown): unknown {
+  if (typeof schema === "string") return schema.replaceAll("claim_token", "claim_handle").replaceAll("claim token", "claim handle");
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(projectTaskManagerSchema);
+  const source = schema as Record<string, unknown>;
+  const projected: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (key === "claim_token" && Object.hasOwn(source, "claim_handle")) continue;
+    const projectedKey = key === "claim_token" ? "claim_handle" : key;
+    if (key === "required" && Array.isArray(value)) {
+      projected[projectedKey] = [...new Set(value.map(item => item === "claim_token" ? "claim_handle" : item))];
+    } else {
+      projected[projectedKey] = projectTaskManagerSchema(value);
+    }
+  }
+  return projected;
+}
+
+export function projectTaskManagerMetadata(
+  serverName: string,
+  toolName: string,
+  description: string,
+  inputSchema: unknown,
+): { description: string; inputSchema: unknown } {
+  if (!isTaskManagerServer(serverName) || (!TASK_MANAGER_CLAIM_PRODUCERS.has(toolName) && !TASK_MANAGER_CLAIM_FENCED.has(toolName))) {
+    return { description, inputSchema };
+  }
+  // The upstream schema remains untouched for the wire call. This projection
+  // is model-facing only; the vault translates claim_handle back internally.
+  return {
+    description: description
+      .replaceAll("claim_token", "claim_handle")
+      .replaceAll("claim token", "claim handle"),
+    inputSchema: projectTaskManagerSchema(inputSchema),
+  };
+}
+
 export function buildToolMetadata(
   tools: McpTool[],
   resources: McpResource[],
@@ -96,6 +148,7 @@ export function buildToolMetadata(
     }
     seenNames.add(name);
 
+    const taskManagerProjection = projectTaskManagerMetadata(serverName, tool.name, tool.description ?? "", tool.inputSchema);
     let uiResourceUri: string | undefined;
     try {
       uiResourceUri = getToolUiResourceUri({ _meta: tool._meta });
@@ -106,8 +159,8 @@ export function buildToolMetadata(
     metadata.push({
       name,
       originalName: tool.name,
-      description: tool.description ?? "",
-      ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+      description: taskManagerProjection.description,
+      ...(tool.inputSchema !== undefined ? { inputSchema: taskManagerProjection.inputSchema } : {}),
       ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
       ...(uiVisibility !== undefined ? { uiVisibility } : {}),
       ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
