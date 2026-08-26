@@ -51,12 +51,12 @@ describe("TaskManager claim capability vault", () => {
 
     captureTaskManagerResult(vault, "taskmanager", "renew_task_claim", {
       structuredContent: { result: JSON.stringify({ renewed: true, claimed_until: "2026-08-26T03:00:00Z" }) },
-    }, { claim_token: "fastmcp-secret", task_id: "1" });
+    }, { claim_handle: handle });
     expect(vault.listMetadata()[0]).toMatchObject({ claimedUntil: "2026-08-26T03:00:00Z", uncertain: false });
 
     captureTaskManagerResult(vault, "taskmanager", "release_task_claim", {
       structuredContent: { result: JSON.stringify({ released: true, status: "pending" }) },
-    }, { claim_token: "fastmcp-secret", task_id: "1" });
+    }, { claim_handle: handle });
     expect(vault.listMetadata()).toEqual([]);
   });
 
@@ -65,21 +65,23 @@ describe("TaskManager claim capability vault", () => {
     const result = captureTaskManagerResult(vault, "taskmanager", "claim_task", claim(), { task_id: "task_1" }) as any;
     const handle = result.structuredContent.claim_handle;
 
-    expect(prepareTaskManagerArgs(vault, "taskmanager", "renew_task_claim", { task_id: "task_1", claim_handle: handle })).toMatchObject({
-      task_id: "task_1",
+    expect(prepareTaskManagerArgs(vault, "taskmanager", "renew_task_claim", { claim_handle: handle, disposition: "retain" })).toEqual({
       claim_token: "raw-secret",
+      task_id: "task_1",
+      disposition: "retain",
     });
-    expect(() => prepareTaskManagerArgs(vault, "taskmanager", "renew_task_claim", { task_id: "task_2", claim_handle: handle })).toThrow("does not match");
+    expect(() => prepareTaskManagerArgs(vault, "taskmanager", "renew_task_claim", { task_id: "task_1", claim_handle: handle })).toThrow("already binds task_id");
+    expect(() => prepareTaskManagerArgs(vault, "taskmanager", "renew_task_claim", { task_id: "task_2", claim_handle: handle })).toThrow("already binds task_id");
 
     const renewed = captureTaskManagerResult(vault, "taskmanager", "renew_task_claim", {
       structuredContent: { renewed: true, claimed_until: "2026-08-26T03:00:00Z" },
-    }, { task_id: "task_1", claim_handle: handle }) as any;
+    }, { claim_handle: handle }) as any;
     expect(JSON.stringify(renewed)).not.toContain("raw-secret");
     expect(vault.listMetadata()[0]).toMatchObject({ claimedUntil: "2026-08-26T03:00:00Z", uncertain: false, timestampValid: true });
 
     captureTaskManagerResult(vault, "taskmanager", "renew_task_claim", {
       structuredContent: { renewed: true, claimed_until: "malformed" },
-    }, { task_id: "task_1", claim_handle: handle });
+    }, { claim_handle: handle });
     expect(vault.listMetadata()[0]).toMatchObject({ claimedUntil: "malformed", uncertain: true, timestampValid: false });
   });
 
@@ -96,11 +98,11 @@ describe("TaskManager claim capability vault", () => {
     const result = captureTaskManagerResult(vault, "nexus", "claim_task", claim("secret-2"), { task_id: "task_1" }) as any;
     const handle = result.structuredContent.claim_handle;
 
-    captureTaskManagerResult(vault, "nexus", "release_task_claim", { structuredContent: { released: false } }, { task_id: "task_1", claim_handle: handle });
+    captureTaskManagerResult(vault, "nexus", "release_task_claim", { structuredContent: { released: false } }, { claim_handle: handle });
     expect(vault.listMetadata()[0]).toMatchObject({ uncertain: true });
-    captureTaskManagerResult(vault, "nexus", "release_task_claim", { isError: true, structuredContent: { error: "timeout" } }, { task_id: "task_1", claim_handle: handle });
+    captureTaskManagerResult(vault, "nexus", "release_task_claim", { isError: true, structuredContent: { error: "timeout" } }, { claim_handle: handle });
     expect(vault.listMetadata()[0]).toMatchObject({ uncertain: true });
-    captureTaskManagerResult(vault, "nexus", "release_task_claim", { structuredContent: { released: true } }, { task_id: "task_1", claim_handle: handle });
+    captureTaskManagerResult(vault, "nexus", "release_task_claim", { structuredContent: { released: true } }, { claim_handle: handle });
     expect(vault.listMetadata()).toEqual([]);
   });
 

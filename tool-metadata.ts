@@ -21,19 +21,34 @@ function isTaskManagerServer(serverName: string): boolean {
   return /taskmanager|nexus/i.test(serverName);
 }
 
-function projectTaskManagerSchema(schema: unknown): unknown {
+function projectTaskManagerSchema(schema: unknown, removeTaskId = false): unknown {
   if (typeof schema === "string") return schema.replaceAll("claim_token", "claim_handle").replaceAll("claim token", "claim handle");
   if (!schema || typeof schema !== "object") return schema;
-  if (Array.isArray(schema)) return schema.map(projectTaskManagerSchema);
+  if (Array.isArray(schema)) return schema.map(value => projectTaskManagerSchema(value, removeTaskId));
   const source = schema as Record<string, unknown>;
   const projected: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {
+    if (removeTaskId && key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
+      const properties = value as Record<string, unknown>;
+      const hasHandle = Object.hasOwn(properties, "claim_handle");
+      projected[key] = Object.fromEntries(
+        Object.entries(properties)
+          .filter(([property]) => property !== "task_id" && !(property === "claim_token" && hasHandle))
+          .map(([property, propertySchema]) => [
+            property === "claim_token" ? "claim_handle" : property,
+            projectTaskManagerSchema(propertySchema, removeTaskId),
+          ]),
+      );
+      continue;
+    }
     if (key === "claim_token" && Object.hasOwn(source, "claim_handle")) continue;
     const projectedKey = key === "claim_token" ? "claim_handle" : key;
     if (key === "required" && Array.isArray(value)) {
-      projected[projectedKey] = [...new Set(value.map(item => item === "claim_token" ? "claim_handle" : item))];
+      projected[projectedKey] = [...new Set(value
+        .filter(item => !removeTaskId || item !== "task_id")
+        .map(item => item === "claim_token" ? "claim_handle" : item))];
     } else {
-      projected[projectedKey] = projectTaskManagerSchema(value);
+      projected[projectedKey] = projectTaskManagerSchema(value, removeTaskId);
     }
   }
   return projected;
@@ -54,7 +69,7 @@ export function projectTaskManagerMetadata(
     description: description
       .replaceAll("claim_token", "claim_handle")
       .replaceAll("claim token", "claim handle"),
-    inputSchema: projectTaskManagerSchema(inputSchema),
+    inputSchema: projectTaskManagerSchema(inputSchema, TASK_MANAGER_CLAIM_FENCED.has(toolName)),
   };
 }
 
