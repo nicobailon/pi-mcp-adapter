@@ -104,6 +104,15 @@ describe("TaskManager claim capability vault", () => {
     expect(vault.listMetadata()).toEqual([]);
   });
 
+  it("captures capabilities from every claim-producing TaskManager operation", () => {
+    for (const toolName of ["claim_task", "resolve_and_claim_task", "resolve_blocker_and_claim_task"]) {
+      const vault = new TaskManagerClaimVault(`session-${toolName}`);
+      const result = captureTaskManagerResult(vault, "taskmanager", toolName, claim(toolName), { task_id: "task_1" }) as any;
+      expect(result.structuredContent.claim_handle).toMatch(/^claim_/);
+      expect(vault.listMetadata()).toHaveLength(1);
+    }
+  });
+
   it("rejects unknown handles and ignores unrelated servers", () => {
     const vault = new TaskManagerClaimVault();
     expect(() => prepareTaskManagerArgs(vault, "taskmanager", "complete_task", { claim_handle: "claim_missing" })).toThrow("Unknown");

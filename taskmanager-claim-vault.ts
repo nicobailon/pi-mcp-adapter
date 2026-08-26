@@ -13,7 +13,10 @@ type Receipt = {
 const vaults = new WeakMap<object, TaskManagerClaimVault>();
 const cleanupRegistered = new WeakSet<object>();
 const MAX_RECOVERY_RECEIPTS = 100;
-const CLAIM_TOOLS = /^(claim_task|renew_task_claim|release_task_claim|complete_task(?:_from_pr)?|set_agent_status|add_task_comment|update_task)$/;
+// Keep this list aligned with TaskManager's claim-producing and claim-fenced
+// lifecycle operations. Every operation that can mint or consume a capability
+// must pass through the same vault, including atomic claim variants.
+const CLAIM_TOOLS = /^(claim_task|resolve_and_claim_task|resolve_blocker_and_claim_task|renew_task_claim|release_task_claim|complete_task(?:_from_pr)?|set_agent_status|add_task_comment|update_task)$/;
 
 function recordObject(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -204,7 +207,9 @@ export function prepareTaskManagerArgs(vault: TaskManagerClaimVault, serverName:
 
 export function captureTaskManagerResult(vault: TaskManagerClaimVault, serverName: string, toolName: string, result: unknown, args: Record<string, unknown> | undefined): unknown {
   if (!isTaskManagerClaimTool(serverName, toolName)) return result;
-  if (toolName === "claim_task") return vault.captureClaim(result, typeof args?.task_id === "string" ? args.task_id : undefined);
+  if (toolName === "claim_task" || toolName === "resolve_and_claim_task" || toolName === "resolve_blocker_and_claim_task") {
+    return vault.captureClaim(result, typeof args?.task_id === "string" ? args.task_id : undefined);
+  }
   if (toolName === "renew_task_claim") return vault.updateRenewal(result, args);
   return vault.finish(result, toolName, args);
 }

@@ -7,7 +7,7 @@ import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
-import { formatSchema } from "./tool-metadata.ts";
+import { formatSchema, projectTaskManagerMetadata } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
@@ -242,12 +242,13 @@ export function resolveDirectTools(
         continue;
       }
       seenNames.add(prefixedName);
+      const taskManagerProjection = projectTaskManagerMetadata(serverName, tool.name, tool.description ?? "", tool.inputSchema);
       specs.push({
         serverName,
         originalName: tool.name,
         prefixedName,
-        description: tool.description ?? "",
-        ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+        description: taskManagerProjection.description,
+        ...(tool.inputSchema !== undefined ? { inputSchema: taskManagerProjection.inputSchema } : {}),
         ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
         ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
       });
