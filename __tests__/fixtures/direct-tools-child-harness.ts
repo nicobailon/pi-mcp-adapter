@@ -36,6 +36,13 @@ await session.bindExtensions({ mode: "print", onError: error => console.error(er
 try {
   await session.reload();
   await session.extensionRunner.emit({ type: "agent_start" });
+  const invoke = process.env.MCP_CHILD_INVOKE_TOOL;
+  if (invoke) {
+    const tool = session.getToolDefinition(invoke);
+    if (!tool) throw new Error(`Direct tool was not registered with the agent: ${invoke}`);
+    const result = await tool.execute("parallel-search-call", {}, undefined, undefined, { hasUI: false } as any);
+    console.log(`DIRECT_TOOL_RESULT=${JSON.stringify(result.content)}`);
+  }
 } finally {
   await session.extensionRunner.emit({ type: "session_shutdown", reason: "test" });
   session.dispose();

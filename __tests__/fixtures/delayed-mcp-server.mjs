@@ -2,7 +2,7 @@ import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { ListResourcesRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListResourcesRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const pidPath = process.env.MCP_RELOAD_PID_DIR ? join(process.env.MCP_RELOAD_PID_DIR, `${process.pid}.json`) : undefined;
 const identity = { pid: process.pid, toolName: "reload_identity" };
@@ -24,6 +24,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [{ name: identity.toolName, description: "reload identity", inputSchema: { type: "object", properties: {} } }],
   };
+});
+server.setRequestHandler(CallToolRequestSchema, async request => {
+  if (request.params.name !== identity.toolName) throw new Error("unknown tool");
+  return { content: [{ type: "text", text: "fixture evidence visible to the model" }] };
 });
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
 await server.connect(new StdioServerTransport());

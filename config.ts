@@ -43,6 +43,16 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
     entry: { url: "https://mcp.context7.com/mcp", protocolVersion: "auto" },
   },
   {
+    id: "parallel-search",
+    name: "Parallel Search",
+    summary: "Search the web and fetch pages without an API key.",
+    entry: {
+      url: "https://search.parallel.ai/mcp",
+      protocolVersion: "auto",
+      directTools: true,
+    },
+  },
+  {
     id: "notion",
     name: "Notion",
     summary: "Search and work with your Notion workspace.",

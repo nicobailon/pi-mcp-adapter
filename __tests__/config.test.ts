@@ -1682,6 +1682,11 @@ describe("config discovery", () => {
     for (const preset of KNOWN_SERVER_PRESETS.filter(({ entry }) => entry.url)) {
       expect(preset.entry.protocolVersion).toBe("auto");
     }
+    expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "parallel-search")?.entry).toEqual({
+      url: "https://search.parallel.ai/mcp",
+      protocolVersion: "auto",
+      directTools: true,
+    });
     expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "chrome-devtools")?.entry.protocolVersion).toBeUndefined();
   });
 });
