@@ -171,9 +171,39 @@ export class TaskManagerClaimVault {
     if (!object) return result;
     const sanitized = cloneWithoutToken(result, token) as Record<string, unknown>;
     const structured = recordObject(sanitized.structuredContent);
-    if (structured) sanitized.structuredContent = { ...structured, ...additions };
-    else if (Object.keys(additions).length > 0) sanitized.structuredContent = additions;
+    if (structured) {
+      const projectedStructured = { ...structured, ...additions };
+      sanitized.structuredContent = projectedStructured;
+      if (typeof structured.result === "string" && Object.keys(additions).length > 0) {
+        const parsedResult = this.addJsonFields(structured.result, additions);
+        if (parsedResult !== structured.result) {
+          projectedStructured.result = parsedResult;
+        }
+      }
+    } else if (Object.keys(additions).length > 0) sanitized.structuredContent = additions;
+
+    // FastMCP can put the authoritative result in a JSON text block while also
+    // returning structuredContent. Keep the vaulted handle model-visible in
+    // that path too, without ever copying the raw token into the text.
+    if (Object.keys(additions).length > 0 && Array.isArray(sanitized.content)) {
+      sanitized.content = sanitized.content.map(item => {
+        const content = recordObject(item);
+        if (typeof content?.text !== "string") return item;
+        const text = this.addJsonFields(content.text, additions);
+        return text === content.text ? item : { ...content, text };
+      });
+    }
     return sanitized;
+  }
+
+  private addJsonFields(value: string, additions: Record<string, unknown>): string {
+    try {
+      const parsed = JSON.parse(value);
+      if (!recordObject(parsed)) return value;
+      return JSON.stringify({ ...parsed, ...additions });
+    } catch {
+      return value;
+    }
   }
 }
 
