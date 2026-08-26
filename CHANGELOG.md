@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- MCP status updates now fall back to plain text when a non-TUI host provides a non-callable theme. Thanks to [@jinnnyang](https://github.com/jinnnyang) for #449.
+- MCP status updates now use plain text when a non-TUI host provides a theme without styling methods. Thanks to [@jinnnyang](https://github.com/jinnnyang) for #449.
 
 ## [2.28.0] - 2026-08-26
 
