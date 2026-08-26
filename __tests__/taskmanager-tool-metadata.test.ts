@@ -25,7 +25,8 @@ describe("TaskManager model-facing metadata", () => {
     expect(tool.description).not.toContain("claim_token");
     expect(schema.properties.claim_handle).toEqual({ type: "string", description: "Raw claim handle" });
     expect(schema.properties.claim_token).toBeUndefined();
-    expect(schema.required).toEqual(["task_id", "claim_handle"]);
+    expect(schema.properties.task_id).toBeUndefined();
+    expect(schema.required).toEqual(["claim_handle"]);
   });
 
   it("does not mutate the upstream schema and classifies every capability-producing operation", () => {

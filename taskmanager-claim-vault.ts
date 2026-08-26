@@ -112,8 +112,8 @@ export class TaskManagerClaimVault {
     if (!args || typeof args.claim_handle !== "string") return args;
     const receipt = this.receipts.get(args.claim_handle);
     if (!receipt) throw new Error("Unknown or expired TaskManager claim handle");
-    if (typeof args.task_id === "string" && args.task_id !== receipt.taskId) {
-      throw new Error("TaskManager claim handle does not match task_id");
+    if (Object.hasOwn(args, "task_id")) {
+      throw new Error("TaskManager claim handle already binds task_id; do not supply task_id");
     }
     const { claim_handle: _handle, ...rest } = args;
     return { ...rest, claim_token: receipt.token, task_id: receipt.taskId };
