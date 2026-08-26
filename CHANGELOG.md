@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added a fail-closed API for child extensions to snapshot one selected runtime MCP server without exporting configured servers or persisting the registration. (#453)
 
+### Fixed
+
+- Server-scoped MCP calls now resolve raw upstream tool names before normalized fallbacks without weakening ambiguity checks. Thanks to [@MikeLP](https://github.com/MikeLP) for #452.
+
 ## [2.29.0] - 2026-08-26
 
 ### Highlights

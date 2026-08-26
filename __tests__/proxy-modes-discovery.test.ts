@@ -295,6 +295,59 @@ describe("proxy discovery", () => {
     expect(callTool).toHaveBeenCalledTimes(1);
   });
 
+  it("resolves a raw upstream name for an explicitly selected server", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
+    const state = {
+      config: { mcpServers: { codegraph: { command: "codegraph" } } },
+      toolMetadata: new Map([["codegraph", [
+        { name: "codegraph_codegraph_explore", originalName: "codegraph_explore", description: "Explore code" },
+      ]]]),
+      manager: {
+        getConnection: () => ({ status: "connected", client: { callTool } }),
+        touch: () => {},
+        incrementInFlight: () => {},
+        decrementInFlight: () => {},
+        getRequestOptions: () => undefined,
+      },
+      failureTracker: new Map(),
+      serverInstructions: new Map(),
+      completedUiSessions: [],
+    } as unknown as McpExtensionState;
+
+    const result = await executeCall(state, "codegraph_explore", { query: "identity provider" }, "codegraph");
+
+    expect(result.details).toMatchObject({ server: "codegraph", tool: "codegraph_explore" });
+    expect(result.details).not.toMatchObject({ error: "tool_not_found" });
+    expect(callTool).toHaveBeenCalledWith(
+      { name: "codegraph_explore", arguments: { query: "identity provider" }, _meta: undefined },
+      undefined,
+    );
+  });
+
+  it("fails closed for same-server normalized original-name collisions", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
+    const state = {
+      config: { mcpServers: { demo: { command: "demo" } } },
+      toolMetadata: new Map([["demo", [
+        { name: "demo_first", originalName: "search--one", description: "First" },
+        { name: "demo_second", originalName: "search-_one", description: "Second" },
+      ]]]),
+      manager: {
+        getConnection: () => ({ status: "connected", client: { callTool } }),
+        touch: () => {},
+        incrementInFlight: () => {},
+        decrementInFlight: () => {},
+        getRequestOptions: () => undefined,
+      },
+      failureTracker: new Map(),
+      serverInstructions: new Map(),
+      completedUiSessions: [],
+    } as unknown as McpExtensionState;
+
+    await expect(executeCall(state, "search__one", {}, "demo")).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
   it("tells callers to invoke native Pi tools directly", async () => {
     const result = await executeCall(
       createState(),
