@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Server-scoped MCP calls now resolve raw upstream tool names before normalized fallbacks without weakening ambiguity checks. Thanks to [@MikeLP](https://github.com/MikeLP) for #452.
+- Windows request-header command cleanup now treats an already-exited process (`taskkill` exit code 128) as successful cleanup. Thanks to [@peterxcx](https://github.com/peterxcx) for #457.
 
 ## [2.29.0] - 2026-08-26
 

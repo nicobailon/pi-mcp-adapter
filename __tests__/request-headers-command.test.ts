@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { createRequestHeadersCommandFetch } from "../request-headers-command.ts";
@@ -13,6 +13,28 @@ function commandScript(source: string): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function runWithWindowsTaskkillExitCode(status: number): Promise<Response> {
+  const dir = mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-taskkill-"));
+  const priorPlatform = process.platform;
+  const taskkill = join(dir, priorPlatform === "win32" ? "taskkill.cmd" : "taskkill");
+  writeFileSync(taskkill, priorPlatform === "win32" ? `@exit ${status}\r\n` : `#!/bin/sh\nexit ${status}\n`);
+  chmodSync(taskkill, 0o755);
+  const priorPath = process.env.PATH;
+  process.env.PATH = `${dir}${delimiter}${priorPath ?? ""}`;
+  Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+  try {
+    const script = commandScript('process.stdout.write(JSON.stringify({ "x-derived": "ok" }));\n');
+    const fetch = createRequestHeadersCommandFetch(
+      { command: process.execPath, args: [script] },
+      async () => new Response("ok"),
+    );
+    return await fetch("https://mcp.example.test/mcp");
+  } finally {
+    process.env.PATH = priorPath;
+    Object.defineProperty(process, "platform", { configurable: true, value: priorPlatform });
+  }
 }
 
 const readEnvelope = `
@@ -69,6 +91,16 @@ describe("per-request HTTP header commands", () => {
     await fetch("https://mcp.example.test/mcp", { method: "POST", body: "one" });
     await fetch("https://mcp.example.test/mcp", { method: "POST", body: "two" });
     expect(bodies).toEqual(["one", "two"]);
+  });
+
+  it("treats Windows taskkill exit code 128 as successful cleanup", async () => {
+    await expect(runWithWindowsTaskkillExitCode(128)).resolves.toBeInstanceOf(Response);
+  });
+
+  it("preserves real Windows taskkill cleanup failures", async () => {
+    await expect(runWithWindowsTaskkillExitCode(7)).rejects.toThrow(
+      "HTTP request headers command cleanup failed: taskkill exited with code 7",
+    );
   });
 
   it.skipIf(process.platform === "win32")("uses one cleanup process snapshot per stabilization pass", async () => {

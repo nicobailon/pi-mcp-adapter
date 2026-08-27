@@ -92,7 +92,7 @@ function killRequestHeadersCommand(child: ChildProcess, trackedPosixDescendantPi
       encoding: "utf8",
       windowsHide: true,
     });
-    if (result.status === 0 || isTaskkillNoSuchProcess(result)) return;
+    if (result.status === 0 || result.status === 128 || isTaskkillNoSuchProcess(result)) return;
     throw new Error(`HTTP request headers command cleanup failed: taskkill exited with code ${result.status ?? "unknown"}`);
   }
 
