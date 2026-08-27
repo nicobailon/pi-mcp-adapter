@@ -29,6 +29,55 @@ function psFailureReason(result: { status: number | null; signal: NodeJS.Signals
     : `ps exited with code ${result.status}`;
 }
 
+function parsePosixDescendantPids(rootPid: number, stdout: string): number[] {
+  const childrenByParent = new Map<number, number[]>();
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    const children = childrenByParent.get(ppid);
+    if (children) children.push(pid);
+    else childrenByParent.set(ppid, [pid]);
+  }
+
+  const processPids = new Set<number>();
+  const stack = [...(childrenByParent.get(rootPid) ?? [])];
+  while (stack.length > 0) {
+    const pid = stack.pop()!;
+    processPids.add(pid);
+    stack.push(...(childrenByParent.get(pid) ?? []));
+  }
+  return [...processPids];
+}
+
+function collectPosixDescendantPidsAsync(rootPid: number): Promise<number[]> {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    const ps = spawn("ps", ["-e", "-o", "pid=,ppid="], {
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    ps.stdout.setEncoding("utf8");
+    ps.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (stdout.length > 1024 * 1024) {
+        ps.kill("SIGKILL");
+        reject(new Error("HTTP request headers command cleanup failed: lightweight ps output exceeded 1 MiB"));
+      }
+    });
+    ps.on("error", () => reject(new Error("HTTP request headers command cleanup failed: ps failed to start")));
+    ps.on("close", (code, signal) => {
+      if (code !== 0) {
+        reject(new Error(`HTTP request headers command cleanup failed: ${psFailureReason({ status: code, signal })}`));
+        return;
+      }
+      resolve(parsePosixDescendantPids(rootPid, stdout));
+    });
+  });
+}
+
 function collectPosixProcessPids(rootPid: number, cleanupToken?: string): number[] {
   const result = runPosixPs(["axeww", "-o", "pid=,ppid=,command="]);
   if (result.status !== 0) {
@@ -204,15 +253,21 @@ async function invokeRequestHeadersCommand(
 
     const trackedPosixDescendantPids = new Set<number>();
     let trackingError: Error | undefined;
+    let trackingInFlight = false;
     const trackPosixDescendants = () => {
-      if (!USE_PROCESS_GROUP || child.pid === undefined || settled || trackingError) return;
-      try {
-        for (const pid of collectPosixProcessPids(child.pid, cleanupToken)) trackedPosixDescendantPids.add(pid);
-      } catch (error) {
-        trackingError = error instanceof Error ? error : new Error(String(error));
-      }
+      if (!USE_PROCESS_GROUP || child.pid === undefined || settled || trackingError || trackingInFlight) return;
+      trackingInFlight = true;
+      collectPosixDescendantPidsAsync(child.pid).then((pids) => {
+        if (settled) return;
+        for (const pid of pids) trackedPosixDescendantPids.add(pid);
+      }).catch((error) => {
+        if (!settled) trackingError = error instanceof Error ? error : new Error(String(error));
+      }).finally(() => {
+        trackingInFlight = false;
+      });
     };
-    const descendantTracker = USE_PROCESS_GROUP ? setInterval(trackPosixDescendants, 50) : undefined;
+    trackPosixDescendants();
+    const descendantTracker = USE_PROCESS_GROUP ? setInterval(trackPosixDescendants, 25) : undefined;
     descendantTracker?.unref();
 
     const finish = (result: CommandResult) => {
