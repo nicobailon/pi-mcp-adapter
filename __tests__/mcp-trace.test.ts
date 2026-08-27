@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Transport } from "@modelcontextprotocol/client";
 import {
+  MCP_ROUTING_TRACE_ALLOWED_FIELDS,
+  createMcpRoutingTraceEvent,
   createMcpTraceEvent,
   isMcpTraceEnabled,
   McpTraceWriter,
@@ -64,6 +66,45 @@ describe("MCP protocol tracing", () => {
     expect(sensitiveMetadata.relatedRequestId).toBe("[REDACTED_ID]");
     expect(JSON.stringify(sensitiveMetadata)).not.toContain("example.test");
     expect(JSON.stringify(sensitiveMetadata)).not.toContain("private/path");
+  });
+
+  it("serializes routing telemetry through an exact allowlist with no payload or fiscal identifiers", () => {
+    const event = createMcpRoutingTraceEvent({
+      provider: "provider-with-secret-marker",
+      model: "model-X1234567L",
+      operation: "call",
+      server: "seasi-B87654321",
+      tool: "vies_check-Z0489581P",
+      resultCode: "invalid_arguments",
+      cacheOutcome: "hit",
+      connectionAttempted: false,
+      durationMs: 12.345,
+      requestBytes: 120,
+      responseBytes: 80,
+      prompt: "never persist",
+      args: { vat_number: "never persist" },
+      result: "never persist",
+      url: "https://example.test/private",
+      headers: { Authorization: "Bearer never-persist" },
+      environment: { API_KEY: "never-persist" },
+    } as Parameters<typeof createMcpRoutingTraceEvent>[0] & Record<string, unknown>);
+
+    expect(Object.keys(event).sort()).toEqual([...MCP_ROUTING_TRACE_ALLOWED_FIELDS].sort());
+    const serialized = JSON.stringify(event);
+    expect(serialized).not.toContain("never persist");
+    expect(serialized).not.toContain("never-persist");
+    expect(serialized).not.toContain("example.test");
+    expect(serialized).not.toMatch(/[XYZ]\d{7}[A-Z]|[A-Z]\d{8}/);
+    expect(event).toMatchObject({
+      recordType: "routing",
+      operation: "call",
+      resultCode: "invalid_arguments",
+      cacheOutcome: "hit",
+      connectionAttempted: false,
+      durationMs: 12.35,
+      requestBytes: 120,
+      responseBytes: 80,
+    });
   });
 
   it("resets a reused destination before appending new events", async () => {

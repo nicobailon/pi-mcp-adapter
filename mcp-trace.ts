@@ -5,6 +5,12 @@ import type { Transport } from "@modelcontextprotocol/client";
 import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
 
 export const MCP_TRACE_SCHEMA_VERSION = 1;
+export const MCP_ROUTING_TRACE_SCHEMA_VERSION = 1;
+export const MCP_ROUTING_TRACE_ALLOWED_FIELDS = [
+  "version", "recordType", "timestamp", "provider", "model", "operation",
+  "server", "tool", "resultCode", "cacheOutcome", "connectionAttempted",
+  "durationMs", "requestBytes", "responseBytes",
+] as const;
 export const DEFAULT_MCP_TRACE_MAX_BYTES = 256 * 1024;
 export const DEFAULT_MCP_TRACE_MAX_EVENTS = 10_000;
 
@@ -39,6 +45,42 @@ export interface McpTraceEvent {
   durationMs?: number;
 }
 
+export type McpRoutingOperation = "call" | "search" | "describe" | "connect" | "list" | "status";
+export type McpRoutingCacheOutcome = "hit" | "miss" | "stale" | "invalid" | "not_checked";
+
+export interface McpRoutingTraceInput {
+  provider?: string;
+  model?: string;
+  operation: McpRoutingOperation;
+  server?: string;
+  tool?: string;
+  resultCode?: string | number;
+  cacheOutcome: McpRoutingCacheOutcome;
+  connectionAttempted: boolean;
+  durationMs?: number;
+  requestBytes?: number;
+  responseBytes?: number;
+}
+
+export interface McpRoutingTraceEvent {
+  version: typeof MCP_ROUTING_TRACE_SCHEMA_VERSION;
+  recordType: "routing";
+  timestamp: string;
+  provider?: string;
+  model?: string;
+  operation: McpRoutingOperation;
+  server?: string;
+  tool?: string;
+  resultCode?: string | number;
+  cacheOutcome: McpRoutingCacheOutcome;
+  connectionAttempted: boolean;
+  durationMs?: number;
+  requestBytes?: number;
+  responseBytes?: number;
+}
+
+export type McpTraceRecord = McpTraceEvent | McpRoutingTraceEvent;
+
 export interface McpTraceWriterOptions {
   filePath: string;
   maxBytes?: number;
@@ -59,6 +101,7 @@ export function redactTraceText(value: string, maxLength = 160): string {
     return "[REDACTED]";
   }
   let redacted = value
+    .replace(/\b(?:[XYZ]\d{7}[A-Z]|[A-Z]\d{8})\b/g, "[REDACTED_IDENTIFIER]")
     .replace(/\b[a-z][a-z\d+.-]*:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")
     .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "[REDACTED_AUTH]")
     .replace(/\b(?:token|secret|password|passwd|api[_-]?key|authorization|cookie)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]");
@@ -119,6 +162,37 @@ export function createMcpTraceEvent(
   return event;
 }
 
+function boundedMetric(value: number | undefined, precision = 0): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return undefined;
+  const factor = 10 ** precision;
+  return Math.round(Math.min(value, Number.MAX_SAFE_INTEGER) * factor) / factor;
+}
+
+/** Build routing telemetry from an explicit field allowlist; unknown input keys are never copied. */
+export function createMcpRoutingTraceEvent(input: McpRoutingTraceInput): McpRoutingTraceEvent {
+  const event: McpRoutingTraceEvent = {
+    version: MCP_ROUTING_TRACE_SCHEMA_VERSION,
+    recordType: "routing",
+    timestamp: new Date().toISOString(),
+    operation: input.operation,
+    cacheOutcome: input.cacheOutcome,
+    connectionAttempted: input.connectionAttempted === true,
+  };
+  if (input.provider) event.provider = redactTraceText(input.provider, 80);
+  if (input.model) event.model = redactTraceText(input.model, 120);
+  if (input.server) event.server = redactTraceText(input.server, 120);
+  if (input.tool) event.tool = redactTraceText(input.tool, 120);
+  if (typeof input.resultCode === "number" && Number.isFinite(input.resultCode)) event.resultCode = input.resultCode;
+  else if (typeof input.resultCode === "string") event.resultCode = redactTraceText(input.resultCode, 80);
+  const durationMs = boundedMetric(input.durationMs, 2);
+  const requestBytes = boundedMetric(input.requestBytes);
+  const responseBytes = boundedMetric(input.responseBytes);
+  if (durationMs !== undefined) event.durationMs = durationMs;
+  if (requestBytes !== undefined) event.requestBytes = requestBytes;
+  if (responseBytes !== undefined) event.responseBytes = responseBytes;
+  return event;
+}
+
 export class McpTraceWriter {
   private readonly maxBytes: number;
   private readonly maxEvents: number;
@@ -166,7 +240,7 @@ export class McpTraceWriter {
     return { bytes: this.bytesWritten, events: this.eventsWritten };
   }
 
-  write(event: McpTraceEvent): void {
+  write(event: McpTraceRecord): void {
     if (this.disabled || this.eventsWritten >= this.maxEvents) return;
     let line: string;
     try {
