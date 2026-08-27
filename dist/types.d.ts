@@ -368,6 +368,16 @@ export interface McpSettings {
     requestTimeoutMs?: number;
     directTools?: boolean;
     /**
+     * Register ordinary per-server `mcp__<server>` namespace proxy tools.
+     * Defaults to true. MCP prompt slash commands are unaffected.
+     */
+    namespaceProxyTools?: boolean;
+    /**
+     * Validate ordinary gateway calls against valid cached tool schemas before
+     * any lazy connection, authentication, approval, or call. Defaults to false.
+     */
+    strictProxyToolArguments?: boolean;
+    /**
      * Validate direct-tool inputs against the advertised schema after recovering
      * one JSON string layer for object and array properties. Defaults to false.
      */

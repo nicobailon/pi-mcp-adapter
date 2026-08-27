@@ -19,7 +19,7 @@ import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl } f
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
-import { Check, Errors } from "typebox/value";
+import { prepareAndValidateToolArguments } from "./json-schema-validator.ts";
 
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
@@ -34,54 +34,19 @@ type DirectAutoAuthResult =
 
 /**
  * Recover one model-emitted JSON layer for schema-declared object and array
- * properties, then validate the complete input against the same schema.
+ * properties, then validate the complete input against the shared validator.
  */
 export function prepareDirectToolArguments(inputSchema: unknown, args: unknown): unknown {
   if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) return args;
-  const schema = inputSchema as Record<string, unknown>;
-  if (schema.type !== "object") return args;
-  const input = args && typeof args === "object" && !Array.isArray(args)
-    ? args as Record<string, unknown>
-    : null;
-  const properties = schema.properties;
-  let prepared: Record<string, unknown> | undefined;
-
-  if (input && properties && typeof properties === "object" && !Array.isArray(properties)) {
-    for (const [name, propertySchema] of Object.entries(properties)) {
-      if (!Object.hasOwn(input, name) || typeof input[name] !== "string"
-        || !propertySchema || typeof propertySchema !== "object" || Array.isArray(propertySchema)) continue;
-      const expectedType = (propertySchema as Record<string, unknown>).type;
-      if (expectedType !== "object" && expectedType !== "array") continue;
-      try {
-        const parsed: unknown = JSON.parse(input[name] as string);
-        const matches = expectedType === "array"
-          ? Array.isArray(parsed)
-          : parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
-        if (matches) {
-          prepared ??= { ...input };
-          prepared[name] = parsed;
-        }
-      } catch {
-        // Validation below reports malformed or shape-incompatible values.
-      }
-    }
-  }
-
-  const candidate = prepared ?? args;
-  if (!Check(inputSchema as never, candidate)) {
-    const errors = Errors(inputSchema as never, candidate);
-    const issues = errors.slice(0, 8).map((error) => ({
-      instancePath: error.instancePath || "/",
-      keyword: error.keyword,
-      message: error.message,
-    }));
+  const prepared = prepareAndValidateToolArguments(inputSchema, args);
+  if (!prepared.valid) {
     throw new TypeError(`MCP direct tool arguments do not match the advertised input schema: ${JSON.stringify({
-      issues,
-      total: errors.length,
-      truncated: errors.length > issues.length,
+      issues: prepared.issues,
+      total: prepared.totalIssues,
+      truncated: prepared.totalIssues > prepared.issues.length,
     })}`);
   }
-  return candidate;
+  return prepared.args;
 }
 
 function getDirectAuthRequiredMessage(

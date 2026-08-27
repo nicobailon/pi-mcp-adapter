@@ -473,7 +473,12 @@ describe("config discovery", () => {
     });
 
     writeJson(join(home, ".pi", "agent", "mcp.json"), {
-      settings: { toolPrefix: "short", directTools: true },
+      settings: {
+        toolPrefix: "short",
+        directTools: true,
+        namespaceProxyTools: false,
+        strictProxyToolArguments: true,
+      },
       mcpServers: {
         shared: { command: "pi-global" },
         piOnly: { command: "pi-only" },
@@ -510,6 +515,8 @@ describe("config discovery", () => {
       showStatusIcon: false,
       toolPrefix: "none",
       directTools: true,
+      namespaceProxyTools: false,
+      strictProxyToolArguments: true,
       autoAuth: true,
       oauthDir: ".pi/oauth",
     });

@@ -83,6 +83,73 @@ describe("syncNamespaceProxyTools", () => {
     expect(tool.execute).toBeTypeOf("function");
   });
 
+  it("keeps namespace proxies enabled when namespaceProxyTools is omitted", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { demo: { command: "demo" } } },
+      cache: CACHE_SHAPE([["demo", { tools: [{ name: "search" }] }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp__demo")).toBe(true);
+  });
+
+  it("does not register namespace proxies when namespaceProxyTools is false", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    const result = syncNamespaceProxyTools({
+      config: {
+        settings: { namespaceProxyTools: false },
+        mcpServers: { demo: { command: "demo" } },
+      },
+      cache: CACHE_SHAPE([["demo", { tools: [{ name: "search" }] }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(result.specs).toEqual([]);
+    expect(registered.has("mcp__demo")).toBe(false);
+  });
+
+  it("deactivates stale namespace proxies when namespaceProxyTools is switched off", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered, unregistered } = makePi();
+    pi.registerTool({ name: "mcp__demo", execute: vi.fn() });
+
+    const result = syncNamespaceProxyTools({
+      config: {
+        settings: { namespaceProxyTools: false },
+        mcpServers: { demo: { command: "demo" } },
+      },
+      cache: CACHE_SHAPE([["demo", { tools: [{ name: "search" }] }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(["mcp__demo"]),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(result.deactivated).toEqual(["mcp__demo"]);
+    expect(unregistered).toEqual(["mcp__demo"]);
+    expect(registered.has("mcp__demo")).toBe(false);
+  });
+
   it("registers proxy-only servers that expose only resources", async () => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered } = makePi();

@@ -78,7 +78,7 @@ function resolveNamespaceProxyTools(
   existingDirectNames: Set<string>,
   unavailableServers: ReadonlySet<string>,
 ): NamespaceProxySpec[] {
-  if (!config || !cache) return [];
+  if (!config || !cache || config.settings?.namespaceProxyTools === false) return [];
   return filterCollidingNamespaceProxyTools(
     Object.keys(config.mcpServers)
       .map((serverName) => namespaceProxyCandidate(config, cache, envOverride, existingDirectNames, serverName))

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added compatibility-safe `namespaceProxyTools` and `strictProxyToolArguments` settings. Hosts can opt out of ordinary `mcp__<server>` namespace proxies while retaining `mcp`, and can reject unknown targets, stale metadata, unsupported schemas, and invalid arguments before any connection, auth, approval, or server call.
 - Added a fail-closed API for child extensions to snapshot one selected runtime MCP server without exporting configured servers or persisting the registration. (#453)
 
 ### Fixed

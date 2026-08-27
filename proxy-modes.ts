@@ -2,14 +2,15 @@ import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent"
 import { UrlElicitationRequiredError, type Client, type Progress, type RequestOptions } from "@modelcontextprotocol/client";
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
-import type { ToolMetadata, McpContent } from "./types.ts";
+import type { ToolMetadata, McpContent, MetadataCache } from "./types.ts";
 import { getServerPrefix, isServerDisabled, parseUiPromptHandoff } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
-import { reconstructPromptMetadata } from "./metadata-cache.ts";
+import { isServerCacheValid, loadMetadataCache, reconstructPromptMetadata, reconstructToolMetadata } from "./metadata-cache.ts";
+import { prepareAndValidateToolArguments } from "./json-schema-validator.ts";
 import { resolveMcpResultContent, transformMcpContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
@@ -20,7 +21,7 @@ import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } fro
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 
-type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
+type ProxyToolResult = AgentToolResult<Record<string, unknown>> & { isError?: boolean };
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
 
@@ -109,6 +110,223 @@ function getServerScopedToolMatch(metadata: ToolMetadata[] | undefined, toolName
     if (matches.length === 1) return { tool: matches[0]!, precedence };
   }
   return undefined;
+}
+
+type StrictCallPreflight =
+  | { ok: true; serverName: string; toolMeta: ToolMetadata; args: Record<string, unknown> }
+  | { ok: false; result: ProxyToolResult };
+
+function strictPreflightFailure(
+  message: string,
+  details: Record<string, unknown>,
+): StrictCallPreflight {
+  return {
+    ok: false,
+    result: {
+      isError: true,
+      content: [{ type: "text" as const, text: message }],
+      details: {
+        mode: "call",
+        ...details,
+        connectionAttempted: false,
+      },
+    },
+  };
+}
+
+function cachedMetadataForServer(
+  state: McpExtensionState,
+  cache: MetadataCache | null,
+  serverName: string,
+): ToolMetadata[] | null {
+  const definition = state.config.mcpServers[serverName];
+  const entry = cache?.servers?.[serverName];
+  if (!definition || !entry || !isServerCacheValid(entry, definition)) return null;
+  return reconstructToolMetadata(
+    serverName,
+    entry,
+    state.config.settings?.toolPrefix ?? "server",
+    definition,
+    state.config.mcpServers,
+    cache ?? undefined,
+  );
+}
+
+function parseCanonicalTarget(toolName: string, serverOverride?: string): { server?: string; tool: string } {
+  if (serverOverride) return { server: serverOverride, tool: toolName };
+  const separator = toolName.indexOf("/");
+  if (separator <= 0 || separator === toolName.length - 1) return { tool: toolName };
+  return { server: toolName.slice(0, separator), tool: toolName.slice(separator + 1) };
+}
+
+function strictCallPreflight(
+  state: McpExtensionState,
+  requestedTool: string,
+  args: Record<string, unknown> | undefined,
+  serverOverride?: string,
+): StrictCallPreflight {
+  const target = parseCanonicalTarget(requestedTool, serverOverride);
+  const cache = loadMetadataCache();
+  const boundedSearchTerm = target.tool.slice(0, 100);
+  let selectedServer = target.server;
+  let selectedTool: ToolMetadata | undefined;
+
+  if (selectedServer) {
+    const definition = state.config.mcpServers[selectedServer];
+    if (!definition) {
+      return strictPreflightFailure(
+        `Server "${selectedServer}" was not found. Search configured MCP tools before retrying.`,
+        {
+          error: "server_not_found",
+          server: selectedServer,
+          requestedTool: target.tool,
+          nextAction: `mcp({ search: ${JSON.stringify(boundedSearchTerm)} })`,
+        },
+      );
+    }
+    if (isServerDisabled(definition)) {
+      return strictPreflightFailure(
+        `Server "${selectedServer}" is disabled. Enable it and reload before retrying.`,
+        {
+          error: "server_disabled",
+          server: selectedServer,
+          requestedTool: target.tool,
+          nextAction: `/mcp enable ${selectedServer} then /reload`,
+        },
+      );
+    }
+    const metadata = cachedMetadataForServer(state, cache, selectedServer);
+    if (!metadata) {
+      return strictPreflightFailure(
+        `Cached metadata for "${selectedServer}" is missing or stale. Connect explicitly to refresh it.`,
+        {
+          error: "metadata_unavailable",
+          server: selectedServer,
+          requestedTool: target.tool,
+          nextAction: `mcp({ connect: ${JSON.stringify(selectedServer)} })`,
+        },
+      );
+    }
+    const match = getServerScopedToolMatch(metadata, target.tool);
+    if (match === "ambiguous") {
+      return strictPreflightFailure(
+        `Tool "${target.tool}" is ambiguous on server "${selectedServer}". Use its exact canonical name.`,
+        {
+          error: "ambiguous_tool",
+          server: selectedServer,
+          requestedTool: target.tool,
+          nextAction: `mcp({ search: ${JSON.stringify(boundedSearchTerm)}, server: ${JSON.stringify(selectedServer)} })`,
+        },
+      );
+    }
+    selectedTool = match?.tool;
+  } else {
+    const matches: Array<{ serverName: string; tool: ToolMetadata }> = [];
+    for (const serverName of Object.keys(state.config.mcpServers)) {
+      const definition = state.config.mcpServers[serverName];
+      if (!definition || isServerDisabled(definition)) continue;
+      const metadata = cachedMetadataForServer(state, cache, serverName);
+      if (!metadata) continue;
+      const match = getServerScopedToolMatch(metadata, target.tool);
+      if (match === "ambiguous") {
+        return strictPreflightFailure(
+          `Tool "${target.tool}" is ambiguous on server "${serverName}". Use an exact canonical target.`,
+          {
+            error: "ambiguous_tool",
+            server: serverName,
+            requestedTool: target.tool,
+            nextAction: `mcp({ search: ${JSON.stringify(boundedSearchTerm)}, server: ${JSON.stringify(serverName)} })`,
+          },
+        );
+      }
+      if (match) matches.push({ serverName, tool: match.tool });
+    }
+    if (matches.length > 1) {
+      return strictPreflightFailure(
+        `Tool "${target.tool}" matches multiple servers. Retry with an explicit server.`,
+        {
+          error: "ambiguous_tool",
+          requestedTool: target.tool,
+          suggestions: matches.slice(0, 5).map(({ serverName, tool }) => `${serverName}/${tool.originalName}`),
+          nextAction: `mcp({ search: ${JSON.stringify(boundedSearchTerm)} }) then retry with server`,
+        },
+      );
+    }
+    if (matches.length === 1) {
+      selectedServer = matches[0]!.serverName;
+      selectedTool = matches[0]!.tool;
+    }
+  }
+
+  if (!selectedServer || !selectedTool) {
+    const suggestions = rankSuggestions(state, target.tool, 5).slice(0, 5);
+    return strictPreflightFailure(
+      `Tool "${target.tool}" was not found in valid cached MCP metadata. Search before retrying.`,
+      {
+        error: "tool_not_found",
+        ...(selectedServer ? { server: selectedServer } : {}),
+        requestedTool: target.tool,
+        suggestions,
+        nextAction: `mcp({ search: ${JSON.stringify(boundedSearchTerm)} })`,
+      },
+    );
+  }
+
+  const canonicalTarget = `${selectedServer}/${selectedTool.originalName}`;
+  if (selectedTool.resourceUri) {
+    return { ok: true, serverName: selectedServer, toolMeta: selectedTool, args: args ?? {} };
+  }
+  if (!selectedTool.inputSchema) {
+    return strictPreflightFailure(
+      `Cached metadata for "${canonicalTarget}" has no usable input schema. Refresh metadata before retrying.`,
+      {
+        error: "metadata_unavailable",
+        reason: "missing_schema",
+        server: selectedServer,
+        canonicalTarget,
+        requestedTool: target.tool,
+        nextAction: `mcp({ connect: ${JSON.stringify(selectedServer)} })`,
+      },
+    );
+  }
+
+  let prepared;
+  try {
+    prepared = prepareAndValidateToolArguments(selectedTool.inputSchema, normalizeToolArguments(args));
+  } catch {
+    return strictPreflightFailure(
+      `Cached schema for "${canonicalTarget}" is unsupported. Refresh or fix the server metadata before retrying.`,
+      {
+        error: "metadata_unavailable",
+        reason: "unsupported_schema",
+        server: selectedServer,
+        canonicalTarget,
+        requestedTool: target.tool,
+        nextAction: `mcp({ connect: ${JSON.stringify(selectedServer)} })`,
+      },
+    );
+  }
+  if (!prepared.valid) {
+    return strictPreflightFailure(
+      `Arguments for "${canonicalTarget}" do not match its cached schema. Describe the tool and retry.`,
+      {
+        error: "invalid_arguments",
+        server: selectedServer,
+        canonicalTarget,
+        requestedTool: target.tool,
+        issues: prepared.issues,
+        totalIssues: prepared.totalIssues,
+        issuesTruncated: prepared.totalIssues > prepared.issues.length,
+        nextAction: `mcp({ describe: ${JSON.stringify(canonicalTarget)} })`,
+      },
+    );
+  }
+  return {
+    ok: true,
+    serverName: selectedServer,
+    toolMeta: selectedTool,
+    args: prepared.args as Record<string, unknown>,
+  };
 }
 
 function ambiguousToolResult(mode: "call" | "describe", toolName: string): ProxyToolResult {
@@ -885,6 +1103,14 @@ export async function executeCall(
   throwIfAborted(ownedSignal);
   let serverName: string | undefined = serverOverride;
   let toolMeta: ToolMetadata | undefined;
+  if (state.config.settings?.strictProxyToolArguments === true) {
+    const preflight = strictCallPreflight(state, toolName, args, serverOverride);
+    if (preflight.ok === false) return preflight.result;
+    serverName = preflight.serverName;
+    toolMeta = preflight.toolMeta;
+    toolName = preflight.toolMeta.originalName;
+    args = preflight.args;
+  }
   let autoAuthAttempted = false;
   const prefixMode = state.config.settings?.toolPrefix ?? "server";
   const disabledCallResult = (disabledServer: string, metadata?: ToolMetadata): ProxyToolResult => {

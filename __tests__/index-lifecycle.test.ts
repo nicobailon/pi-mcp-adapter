@@ -303,6 +303,32 @@ describe("mcpAdapter session lifecycle", () => {
     }));
   });
 
+  it("keeps the ordinary mcp gateway and omits namespace proxies when configured", async () => {
+    mocks.loadMcpConfig.mockReturnValue({
+      settings: { namespaceProxyTools: false },
+      mcpServers: { demo: { command: "demo" } },
+    });
+    mocks.loadMetadataCache.mockReturnValue({
+      version: 1,
+      servers: {
+        demo: {
+          configHash: "unused-when-disabled",
+          cachedAt: Date.now(),
+          tools: [{ name: "search" }],
+          resources: [],
+        },
+      },
+    });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    mcpAdapter(api);
+
+    const ordinaryToolNames = api.registerTool.mock.calls.map((call: any[]) => call[0].name);
+    expect(ordinaryToolNames).toContain("mcp");
+    expect(ordinaryToolNames.some((name: string) => name.startsWith("mcp__"))).toBe(false);
+  });
+
   it("uses compact self-rendered rows for proxy and direct tools by default", async () => {
     mocks.loadMcpConfig.mockReturnValue({
       mcpServers: {

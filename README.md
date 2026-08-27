@@ -375,6 +375,8 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
     "toolResultRendering": "compact",
     "collapsedResultLines": 1,
     "notifyOnStartupConnect": true,
+    "namespaceProxyTools": true,
+    "strictProxyToolArguments": false,
     "warnOnLargeDirectTools": true,
     "hostConfigDiscovery": "off",
     "approveTools": ["github_delete_*", "notion_update_*"],
@@ -406,6 +408,8 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `oauthDir` | Legacy OAuth `tokens.json` import directory for this MCP config. Relative paths resolve from the active project cwd. `MCP_OAUTH_DIR` still wins when set. Persistent OAuth credentials are stored in the OS credential store, not this directory. |
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
+| `namespaceProxyTools` | Register ordinary per-server `mcp__<server>` gateway tools for proxy-only servers (default: `true`). Set to `false` for a single ordinary `mcp` ingress. MCP prompt slash commands are unaffected. |
+| `strictProxyToolArguments` | Validate ordinary `mcp({ tool, args })` calls against valid cached schemas before any lazy connection, auth, approval, or server call (default: `false`). |
 | `strictDirectToolArguments` | Validate direct-tool inputs against their advertised schemas and recover one JSON string layer for object and array properties (default: false). |
 | `directToolResultDetails` | Direct-tool result details: `"lean"` (default) or `"bounded"` to retain the guarded raw MCP result. |
 | `warnOnLargeDirectTools` | Show the advisory when 75 or more direct tools resolve (default: `true`). Set to `false` to suppress only this advisory. |
@@ -420,6 +424,14 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `trace` | Opt-in metadata-only protocol tracing. Set `{ enabled: true }` globally or `trace: true` on a server. The per-session JSONL file defaults to `.pi/mcp-traces/`; `file`, `maxBytes` (default 262144), and `maxEvents` (default 10000) can be set. Raw MCP payloads, prompts, tool arguments/results, auth data, and URLs are never persisted. |
 
 Per-server `idleTimeout`, `requestTimeoutMs`, and `approveTools` override the global settings. `debug` remains stderr display and is unrelated to protocol tracing.
+
+#### Single ordinary gateway and strict proxy preflight
+
+Installations remain backwards compatible: omitting `namespaceProxyTools` keeps ordinary `mcp__<server>` namespace proxies. Set it to `false` to retain only the ordinary `mcp` gateway; existing namespace proxies are deactivated on synchronization. This can affect host tool groups that refer directly to `mcp:<server>`, so migrate those policies before opting out. MCP prompt commands such as `/mcp__server__prompt` are commands, not ordinary callable proxies, and are not changed by this flag.
+
+With `strictProxyToolArguments:true`, a normal tool call must resolve through valid cached metadata and pass its cached JSON Schema before the adapter can connect, authenticate, request approval, or call the server. Missing/stale metadata returns `metadata_unavailable` with an explicit `mcp({ connect: "server" })` refresh action. Unknown or ambiguous targets and invalid arguments are hard `isError:true` failures with bounded suggestions/issues; they never auto-reroute. One JSON string layer is recovered only for schema-declared object/array properties; scalar coercion is not performed.
+
+Rollback is configuration-only: set `namespaceProxyTools:true` and `strictProxyToolArguments:false`, then reload Pi. No metadata or server data migration is required.
 
 ### Tool Approval
 
