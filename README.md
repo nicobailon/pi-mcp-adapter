@@ -423,6 +423,8 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `outputGuard` | Guard oversized MCP output: `true` (default), `false`, or `{ maxBytes, maxLines, detailsMaxBytes }`. See [Output Guard](#output-guard). |
 | `trace` | Opt-in metadata-only protocol tracing. Set `{ enabled: true }` globally or `trace: true` on a server. The per-session JSONL file defaults to `.pi/mcp-traces/`; `file`, `maxBytes` (default 262144), and `maxEvents` (default 10000) can be set. Raw MCP payloads, prompts, tool arguments/results, auth data, and URLs are never persisted. |
 
+The writer reconstructs both protocol and routing records at the persistence boundary instead of serializing caller-owned objects. Routing records use a versioned exact allowlist: provider/model, operation, server/tool, result code, cache outcome, connection attempted, duration, and request/response byte counts. Unknown fields are dropped; URLs, authorization markers, standalone secret tokens, and NIF/CIF/NIE-like identifiers are redacted from every allowed string field. File byte/event limits remain fail-safe and tracing failures never change MCP behavior.
+
 Per-server `idleTimeout`, `requestTimeoutMs`, and `approveTools` override the global settings. `debug` remains stderr display and is unrelated to protocol tracing.
 
 #### Single ordinary gateway and strict proxy preflight

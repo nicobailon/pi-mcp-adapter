@@ -101,7 +101,8 @@ export function redactTraceText(value: string, maxLength = 160): string {
     return "[REDACTED]";
   }
   let redacted = value
-    .replace(/\b(?:[XYZ]\d{7}[A-Z]|[A-Z]\d{8})\b/g, "[REDACTED_IDENTIFIER]")
+    .replace(/\b(?:[XYZ]\d{7}[A-Z]|[A-Z]\d{8}|\d{8}[A-Z])\b/g, "[REDACTED_IDENTIFIER]")
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED_SECRET]")
     .replace(/\b[a-z][a-z\d+.-]*:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")
     .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "[REDACTED_AUTH]")
     .replace(/\b(?:token|secret|password|passwd|api[_-]?key|authorization|cookie)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]");
@@ -169,19 +170,24 @@ function boundedMetric(value: number | undefined, precision = 0): number | undef
 }
 
 /** Build routing telemetry from an explicit field allowlist; unknown input keys are never copied. */
+const ROUTING_OPERATIONS = new Set<McpRoutingOperation>(["call", "search", "describe", "connect", "list", "status"]);
+const ROUTING_CACHE_OUTCOMES = new Set<McpRoutingCacheOutcome>(["hit", "miss", "stale", "invalid", "not_checked"]);
+
 export function createMcpRoutingTraceEvent(input: McpRoutingTraceInput): McpRoutingTraceEvent {
+  const operation = ROUTING_OPERATIONS.has(input.operation) ? input.operation : "status";
+  const cacheOutcome = ROUTING_CACHE_OUTCOMES.has(input.cacheOutcome) ? input.cacheOutcome : "not_checked";
   const event: McpRoutingTraceEvent = {
     version: MCP_ROUTING_TRACE_SCHEMA_VERSION,
     recordType: "routing",
     timestamp: new Date().toISOString(),
-    operation: input.operation,
-    cacheOutcome: input.cacheOutcome,
+    operation,
+    cacheOutcome,
     connectionAttempted: input.connectionAttempted === true,
   };
-  if (input.provider) event.provider = redactTraceText(input.provider, 80);
-  if (input.model) event.model = redactTraceText(input.model, 120);
-  if (input.server) event.server = redactTraceText(input.server, 120);
-  if (input.tool) event.tool = redactTraceText(input.tool, 120);
+  if (typeof input.provider === "string" && input.provider) event.provider = redactTraceText(input.provider, 80);
+  if (typeof input.model === "string" && input.model) event.model = redactTraceText(input.model, 120);
+  if (typeof input.server === "string" && input.server) event.server = redactTraceText(input.server, 120);
+  if (typeof input.tool === "string" && input.tool) event.tool = redactTraceText(input.tool, 120);
   if (typeof input.resultCode === "number" && Number.isFinite(input.resultCode)) event.resultCode = input.resultCode;
   else if (typeof input.resultCode === "string") event.resultCode = redactTraceText(input.resultCode, 80);
   const durationMs = boundedMetric(input.durationMs, 2);
@@ -191,6 +197,56 @@ export function createMcpRoutingTraceEvent(input: McpRoutingTraceInput): McpRout
   if (requestBytes !== undefined) event.requestBytes = requestBytes;
   if (responseBytes !== undefined) event.responseBytes = responseBytes;
   return event;
+}
+
+function sanitizeMcpTraceRecord(record: McpTraceRecord): McpTraceRecord | undefined {
+  if (!record || typeof record !== "object") return undefined;
+  if ((record as Partial<McpRoutingTraceEvent>).recordType === "routing") {
+    const candidate = record as McpRoutingTraceEvent;
+    return createMcpRoutingTraceEvent({
+      ...(typeof candidate.provider === "string" ? { provider: candidate.provider } : {}),
+      ...(typeof candidate.model === "string" ? { model: candidate.model } : {}),
+      operation: candidate.operation,
+      ...(typeof candidate.server === "string" ? { server: candidate.server } : {}),
+      ...(typeof candidate.tool === "string" ? { tool: candidate.tool } : {}),
+      ...((typeof candidate.resultCode === "string" || typeof candidate.resultCode === "number") ? { resultCode: candidate.resultCode } : {}),
+      cacheOutcome: candidate.cacheOutcome,
+      connectionAttempted: candidate.connectionAttempted === true,
+      ...(typeof candidate.durationMs === "number" ? { durationMs: candidate.durationMs } : {}),
+      ...(typeof candidate.requestBytes === "number" ? { requestBytes: candidate.requestBytes } : {}),
+      ...(typeof candidate.responseBytes === "number" ? { responseBytes: candidate.responseBytes } : {}),
+    });
+  }
+
+  const candidate = record as McpTraceEvent;
+  const directions = new Set<McpTraceDirection>(["outbound", "inbound"]);
+  const transports = new Set<McpTraceTransport>(["stdio", "unix-socket", "sse", "streamable-http", "unknown"]);
+  const kinds = new Set<McpTraceMessageKind>(["request", "response", "notification"]);
+  const statuses = new Set<McpTraceEvent["status"]>(["sent", "received", "error"]);
+  if (!directions.has(candidate.direction) || !transports.has(candidate.transport)
+    || !kinds.has(candidate.kind) || !statuses.has(candidate.status) || typeof candidate.server !== "string") {
+    return undefined;
+  }
+  const safe: McpTraceEvent = {
+    version: MCP_TRACE_SCHEMA_VERSION,
+    timestamp: new Date().toISOString(),
+    direction: candidate.direction,
+    server: redactTraceText(candidate.server, 120),
+    transport: candidate.transport,
+    kind: candidate.kind,
+    status: candidate.status,
+  };
+  if (typeof candidate.method === "string") safe.method = redactTraceText(candidate.method, 120);
+  if (candidate.id === null || typeof candidate.id === "string" || typeof candidate.id === "number") safe.id = traceId(candidate.id) ?? null;
+  const relatedRequestId = traceId(candidate.relatedRequestId);
+  if (relatedRequestId !== undefined && relatedRequestId !== null) safe.relatedRequestId = relatedRequestId;
+  if (typeof candidate.errorCode === "number" && Number.isFinite(candidate.errorCode)) safe.errorCode = candidate.errorCode;
+  else if (typeof candidate.errorCode === "string") safe.errorCode = redactTraceText(candidate.errorCode, 80);
+  const bytes = boundedMetric(candidate.bytes);
+  const durationMs = boundedMetric(candidate.durationMs, 2);
+  if (bytes !== undefined) safe.bytes = bytes;
+  if (durationMs !== undefined) safe.durationMs = durationMs;
+  return safe;
 }
 
 export class McpTraceWriter {
@@ -244,7 +300,9 @@ export class McpTraceWriter {
     if (this.disabled || this.eventsWritten >= this.maxEvents) return;
     let line: string;
     try {
-      line = `${JSON.stringify(event)}\n`;
+      const safeEvent = sanitizeMcpTraceRecord(event);
+      if (!safeEvent) return;
+      line = `${JSON.stringify(safeEvent)}\n`;
     } catch {
       this.disabled = true;
       return;

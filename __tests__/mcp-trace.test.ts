@@ -74,8 +74,8 @@ describe("MCP protocol tracing", () => {
       model: "model-X1234567L",
       operation: "call",
       server: "seasi-B87654321",
-      tool: "vies_check-Z0489581P",
-      resultCode: "invalid_arguments",
+      tool: "vies_check-12345678Z",
+      resultCode: "sk-abcdefghijklmnop123456",
       cacheOutcome: "hit",
       connectionAttempted: false,
       durationMs: 12.345,
@@ -94,17 +94,55 @@ describe("MCP protocol tracing", () => {
     expect(serialized).not.toContain("never persist");
     expect(serialized).not.toContain("never-persist");
     expect(serialized).not.toContain("example.test");
-    expect(serialized).not.toMatch(/[XYZ]\d{7}[A-Z]|[A-Z]\d{8}/);
+    expect(serialized).not.toMatch(/[XYZ]\d{7}[A-Z]|[A-Z]\d{8}|\d{8}[A-Z]/);
     expect(event).toMatchObject({
       recordType: "routing",
       operation: "call",
-      resultCode: "invalid_arguments",
+      resultCode: "[REDACTED_SECRET]",
       cacheOutcome: "hit",
       connectionAttempted: false,
       durationMs: 12.35,
       requestBytes: 120,
       responseBytes: 80,
     });
+  });
+
+  it("reconstructs routing records at the writer boundary and drops forged payload fields", async () => {
+    const persisted: string[] = [];
+    const writer = new McpTraceWriter({
+      filePath: "/tmp/mcp-trace.jsonl",
+      writeFile: vi.fn(async () => undefined),
+      appendFile: vi.fn(async (_path, data) => { persisted.push(data); }),
+      mkdir: vi.fn(async () => undefined),
+    });
+    const forged = {
+      ...createMcpRoutingTraceEvent({
+        provider: "provider",
+        model: "model",
+        operation: "call",
+        server: "sumario",
+        tool: "mem_search",
+        resultCode: "ok",
+        cacheOutcome: "hit",
+        connectionAttempted: true,
+        durationMs: 1.5,
+        requestBytes: 10,
+        responseBytes: 20,
+      }),
+      prompt: "forbidden-prompt",
+      args: { secret: "forbidden-args" },
+      result: "forbidden-result",
+      url: "https://example.test/private",
+      headers: { Authorization: "Bearer forbidden" },
+      environment: { TOKEN: "forbidden-env" },
+    };
+    writer.write(forged as Parameters<typeof writer.write>[0]);
+    await writer.flush();
+
+    expect(persisted).toHaveLength(1);
+    const record = JSON.parse(persisted[0]!);
+    expect(Object.keys(record).sort()).toEqual([...MCP_ROUTING_TRACE_ALLOWED_FIELDS].sort());
+    expect(persisted[0]).not.toMatch(/forbidden|example\.test|prompt|args|headers|environment/);
   });
 
   it("resets a reused destination before appending new events", async () => {
