@@ -845,6 +845,7 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
             ...(typeof oauth.clientId === "string" ? { clientId: oauth.clientId } : {}),
             ...(typeof oauth.clientSecret === "string" ? { clientSecret: oauth.clientSecret } : {}),
             ...(typeof oauth.scope === "string" ? { scope: oauth.scope } : {}),
+            ...(typeof oauth.authServerMetadataUrl === "string" ? { authServerMetadataUrl: oauth.authServerMetadataUrl } : {}),
             ...(typeof oauth.skipIssuerMetadataValidation === "boolean"
               ? { skipIssuerMetadataValidation: oauth.skipIssuerMetadataValidation }
               : {}),

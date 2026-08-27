@@ -149,6 +149,47 @@ describe("mcp-auth-flow explicit auth", () => {
     );
   });
 
+  it("uses configured authorization-server metadata instead of protected-resource discovery", async () => {
+    const metadataUrl = "https://auth.example.com/oauth2/default/.well-known/openid-configuration";
+    const metadata = {
+      issuer: "https://auth.example.com/oauth2/default",
+      authorization_endpoint: "https://auth.example.com/oauth2/default/authorize",
+      token_endpoint: "https://auth.example.com/oauth2/default/token",
+      response_types_supported: ["code"],
+    };
+    mocks.fetch
+      .mockResolvedValueOnce(new Response(null, {
+        headers: { "www-authenticate": 'Bearer resource_metadata="https://other.example.com/.well-known/oauth-protected-resource"' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(metadata), {
+        headers: { "content-type": "application/json" },
+      }));
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      await expect(provider.discoveryState()).resolves.toMatchObject({
+        authorizationServerUrl: metadata.issuer,
+        authorizationServerMetadata: metadata,
+        resourceMetadata: { resource: "https://api.example.com/mcp" },
+      });
+      return "AUTHORIZED";
+    });
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    await expect(startAuth("metadata-override", "https://api.example.com/mcp", {
+      auth: "oauth",
+      oauth: { authServerMetadataUrl: metadataUrl },
+    })).resolves.toEqual({ authorizationUrl: "" });
+
+    expect(mocks.fetch).toHaveBeenNthCalledWith(
+      2,
+      metadataUrl,
+      expect.objectContaining({ headers: { accept: "application/json" } }),
+    );
+    expect(mocks.sdkAuth).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ serverUrl: "https://api.example.com/mcp" }),
+    );
+  });
+
   it("keeps a pending flow when an advertised RFC 9207 issuer is missing", async () => {
     let oauthState = "";
     mocks.sdkAuth.mockImplementation(async (provider, options) => {

@@ -386,6 +386,8 @@ export interface OAuthConfig {
   clientUri?: string;
   /** Client logo URL for dynamic registration; shown on consent screens */
   logoUri?: string;
+  /** HTTPS URL for an authorization-server metadata document used instead of MCP discovery */
+  authServerMetadataUrl?: string;
   /** Security-weakening escape hatch for known-misconfigured authorization servers. */
   skipIssuerMetadataValidation?: boolean;
 }

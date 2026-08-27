@@ -238,6 +238,25 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     }
     config.logoUri = logoUri
   }
+  if (definition.oauth?.authServerMetadataUrl !== undefined) {
+    if (typeof definition.oauth.authServerMetadataUrl !== "string") {
+      throw new Error("OAuth authServerMetadataUrl must be a string")
+    }
+    const authServerMetadataUrl = interpolateEnvVars(definition.oauth.authServerMetadataUrl).trim()
+    if (!authServerMetadataUrl) {
+      throw new Error("OAuth authServerMetadataUrl must not be empty")
+    }
+    let parsed: URL
+    try {
+      parsed = new URL(authServerMetadataUrl)
+    } catch {
+      throw new Error("OAuth authServerMetadataUrl must be an absolute https:// URL")
+    }
+    if (parsed.protocol !== "https:") {
+      throw new Error("OAuth authServerMetadataUrl must be an absolute https:// URL")
+    }
+    config.authServerMetadataUrl = authServerMetadataUrl
+  }
   if (definition.oauth?.skipIssuerMetadataValidation !== undefined) {
     if (typeof definition.oauth.skipIssuerMetadataValidation !== "boolean") {
       throw new Error("OAuth skipIssuerMetadataValidation must be a boolean")

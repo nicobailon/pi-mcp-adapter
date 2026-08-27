@@ -456,6 +456,36 @@ describe("mcp-auth-flow", () => {
       )
     })
 
+    it("should accept and trim an absolute https OAuth authServerMetadataUrl", () => {
+      const config = extractOAuthConfig({
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: { authServerMetadataUrl: "  https://auth.example.com/.well-known/openid-configuration  " },
+      })
+      assert.strictEqual(config.authServerMetadataUrl, "https://auth.example.com/.well-known/openid-configuration")
+    })
+
+    it("should reject malformed OAuth authServerMetadataUrl values", () => {
+      for (const authServerMetadataUrl of ["", "  ", "http://auth.example.com/metadata", "not a url"]) {
+        assert.throws(
+          () => extractOAuthConfig({
+            url: "https://api.example.com/mcp",
+            auth: "oauth",
+            oauth: { authServerMetadataUrl },
+          }),
+          /authServerMetadataUrl must (not be empty|be an absolute https:\/\/ URL)/,
+        )
+      }
+      assert.throws(
+        () => extractOAuthConfig({
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { authServerMetadataUrl: 123 as unknown as string },
+        }),
+        /authServerMetadataUrl must be a string/,
+      )
+    })
+
     it("should trim OAuth redirectUri and client metadata values", () => {
       const config = extractOAuthConfig({
         url: "https://api.example.com/mcp",

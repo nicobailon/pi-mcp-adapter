@@ -29,6 +29,7 @@ import {
   type StoredTokens,
   type StoredClientInfo,
 } from "./mcp-auth.ts"
+import { OAuthMetadataSchema, OpenIdProviderDiscoveryMetadataSchema } from "@modelcontextprotocol/core"
 import { resolveCommandSecret } from "./utils.ts"
 import { getAppClientUri, getAppName } from "./agent-dir.ts"
 
@@ -130,6 +131,7 @@ export interface McpOAuthConfig {
   clientName?: string
   clientUri?: string
   logoUri?: string
+  authServerMetadataUrl?: string
   skipIssuerMetadataValidation?: boolean
 }
 
@@ -159,6 +161,85 @@ function addAuthorizationParams(authorizationUrl: URL, params: Record<string, st
 /** Callbacks for OAuth flow interactions */
 export interface McpOAuthCallbacks {
   onRedirect: (url: URL) => void | Promise<void>
+}
+
+function inferIssuerFromMetadataUrl(metadataUrl: string): string | undefined {
+  const url = new URL(metadataUrl)
+  const pathname = url.pathname.replace(/\/+$/, "") || "/"
+  const oauthPrefix = "/.well-known/oauth-authorization-server"
+  if (pathname === oauthPrefix || pathname.startsWith(`${oauthPrefix}/`)) {
+    const issuerPath = pathname.slice(oauthPrefix.length) || "/"
+    return new URL(issuerPath, url.origin).toString()
+  }
+
+  const oidcPath = "/.well-known/openid-configuration"
+  if (pathname === oidcPath || pathname.startsWith(`${oidcPath}/`)) {
+    const issuerPath = pathname.slice(oidcPath.length) || "/"
+    return new URL(issuerPath, url.origin).toString()
+  }
+  if (pathname.endsWith(oidcPath)) {
+    const issuerPath = pathname.slice(0, -oidcPath.length) || "/"
+    return new URL(issuerPath, url.origin).toString()
+  }
+  return undefined
+}
+
+function validateConfiguredIssuer(metadataUrl: string, issuer: string, skipIssuerValidation: boolean): void {
+  let parsedIssuer: URL
+  try {
+    parsedIssuer = new URL(issuer)
+  } catch (error) {
+    throw new Error("OAuth authorization-server metadata issuer must be an absolute URL", { cause: error })
+  }
+  if (parsedIssuer.protocol !== "http:" && parsedIssuer.protocol !== "https:") {
+    throw new Error("OAuth authorization-server metadata issuer must use http:// or https://")
+  }
+
+  const expectedIssuer = inferIssuerFromMetadataUrl(metadataUrl)
+  if (skipIssuerValidation) return
+  if (expectedIssuer !== undefined && !issuersMatch(expectedIssuer, issuer)) {
+    throw new Error(
+      `OAuth authorization-server metadata issuer does not match authServerMetadataUrl: expected ${expectedIssuer}`,
+    )
+  }
+  if (expectedIssuer === undefined && !issuersMatch(new URL(metadataUrl).origin, issuer)) {
+    throw new Error(
+      `OAuth authorization-server metadata issuer does not match authServerMetadataUrl origin: expected ${new URL(metadataUrl).origin}`,
+    )
+  }
+}
+
+async function loadConfiguredDiscoveryState(
+  metadataUrl: string,
+  serverUrl: string,
+  skipIssuerValidation: boolean,
+  signal?: AbortSignal,
+): Promise<OAuthDiscoveryState> {
+  const response = await fetch(metadataUrl, {
+    headers: { accept: "application/json" },
+    ...(signal !== undefined ? { signal } : {}),
+  })
+  if (!response.ok) {
+    await response.text().catch(() => {})
+    throw new Error(`OAuth authServerMetadataUrl request failed with HTTP ${response.status}`)
+  }
+
+  const payload = await response.json()
+  const oauthResult = OAuthMetadataSchema.safeParse(payload)
+  const metadata = oauthResult.success
+    ? oauthResult.data
+    : OpenIdProviderDiscoveryMetadataSchema.parse(payload)
+  validateConfiguredIssuer(metadataUrl, metadata.issuer, skipIssuerValidation)
+
+  const resource = new URL(serverUrl)
+  resource.hash = ""
+  return {
+    authorizationServerUrl: metadata.issuer,
+    authorizationServerMetadata: metadata,
+    // The configured AS document is authoritative, so avoid a second PRM
+    // lookup while still binding the token request to the configured resource.
+    resourceMetadata: { resource: resource.toString() },
+  }
 }
 
 /**
@@ -525,6 +606,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
     this.throwIfInactive()
+    if (!this.flowDiscoveryState && this.config.authServerMetadataUrl !== undefined) {
+      this.flowDiscoveryState = await loadConfiguredDiscoveryState(
+        this.config.authServerMetadataUrl,
+        this.serverUrl,
+        this.config.skipIssuerMetadataValidation === true,
+        this.runtimeSignal,
+      )
+    }
     return this.flowDiscoveryState ? structuredClone(this.flowDiscoveryState) : undefined
   }
 
