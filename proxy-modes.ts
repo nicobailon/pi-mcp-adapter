@@ -705,33 +705,45 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
 }
 
 export function executeDescribe(state: McpExtensionState, toolName: string): ProxyToolResult {
-  const exactMatches = getEnabledToolMatches(state, toolName, true)
-    .filter((match) => !isServerInActiveFailureBackoff(state, match.server));
-  if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
-  if (exactMatches.length === 0 && getEnabledToolMatches(state, toolName, false).filter((match) => !isServerInActiveFailureBackoff(state, match.server)).length > 1) {
-    return ambiguousToolResult("describe", toolName);
-  }
-
-  let serverName = exactMatches[0]?.server;
-  let toolMeta = exactMatches[0]?.tool;
+  const target = parseCanonicalTarget(toolName);
+  let serverName: string | undefined;
+  let toolMeta: ToolMetadata | undefined;
   let disabledMatch: string | undefined;
   let failedMatch: string | undefined;
 
-  if (!toolMeta) {
-    for (const [server, metadata] of state.toolMetadata.entries()) {
-      const found = findToolByName(metadata, toolName);
-      if (!found) continue;
-      if (isServerDisabled(state.config.mcpServers[server])) {
-        disabledMatch ??= server;
-        continue;
+  if (target.server) {
+    if (isServerDisabled(state.config.mcpServers[target.server])) return disabledResult("describe", target.server);
+    if (isServerInActiveFailureBackoff(state, target.server)) return serverBackoffResult(state, "describe", target.server);
+    const match = getServerScopedToolMatch(state.toolMetadata.get(target.server), target.tool);
+    if (match === "ambiguous") return ambiguousToolResult("describe", toolName);
+    serverName = match ? target.server : undefined;
+    toolMeta = match?.tool;
+  } else {
+    const exactMatches = getEnabledToolMatches(state, toolName, true)
+      .filter((match) => !isServerInActiveFailureBackoff(state, match.server));
+    if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
+    if (exactMatches.length === 0 && getEnabledToolMatches(state, toolName, false).filter((match) => !isServerInActiveFailureBackoff(state, match.server)).length > 1) {
+      return ambiguousToolResult("describe", toolName);
+    }
+
+    serverName = exactMatches[0]?.server;
+    toolMeta = exactMatches[0]?.tool;
+    if (!toolMeta) {
+      for (const [server, metadata] of state.toolMetadata.entries()) {
+        const found = findToolByName(metadata, toolName);
+        if (!found) continue;
+        if (isServerDisabled(state.config.mcpServers[server])) {
+          disabledMatch ??= server;
+          continue;
+        }
+        if (isServerInActiveFailureBackoff(state, server)) {
+          failedMatch ??= server;
+          continue;
+        }
+        serverName = server;
+        toolMeta = found;
+        break;
       }
-      if (isServerInActiveFailureBackoff(state, server)) {
-        failedMatch ??= server;
-        continue;
-      }
-      serverName = server;
-      toolMeta = found;
-      break;
     }
   }
 

@@ -11,7 +11,7 @@ vi.mock("../metadata-cache.ts", async (importOriginal) => ({
   saveMetadataCache: vi.fn(),
 }));
 
-import { executeCall } from "../proxy-modes.ts";
+import { executeCall, executeDescribe } from "../proxy-modes.ts";
 
 function cacheFor(entries: Array<[string, ServerEntry, Array<{ name: string; inputSchema?: unknown }>, Partial<{ cachedAt: number; configHash: string }>?]>): MetadataCache {
   return {
@@ -229,6 +229,11 @@ describe("strict proxy argument preflight", () => {
       },
     });
     expect(JSON.stringify(result)).not.toContain("2026");
+    const exactNextActionTarget = /^mcp\(\{ describe: "([^"]+)" \}\)$/.exec(String(result.details.nextAction))?.[1];
+    expect(exactNextActionTarget).toBe("demo/search");
+    expect(executeDescribe(state, exactNextActionTarget!)).toMatchObject({
+      details: { mode: "describe", server: "demo", tool: { originalName: "search" } },
+    });
     expect(manager.connect).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();
   });
