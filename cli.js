@@ -202,13 +202,13 @@ async function runInit(argv, log = console.log) {
 async function importTokenModules(error) {
   try {
     const [store, config, utils] = await Promise.all([
-      import("./mcp-bearer-store.ts"),
-      import("./config.ts"),
-      import("./utils.ts"),
+      import("./dist/mcp-bearer-store.js"),
+      import("./dist/config.js"),
+      import("./dist/utils.js"),
     ]);
     return { store, config, utils };
   } catch (err) {
-    error("Token commands need a Node.js version that can load TypeScript modules (Node 22.18+ or 23+).");
+    error("Unable to load token command modules.");
     error(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
     return undefined;
   }

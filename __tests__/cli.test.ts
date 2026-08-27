@@ -269,7 +269,7 @@ describe("cli token helper", () => {
   it("stores a bearer token from stdin bound to the configured URL", async () => {
     setupProject();
     const { main } = await import("../cli.js");
-    const { getBearerTokenForUrl, resetTestBearerTokenStore } = await import("../mcp-bearer-store.ts");
+    const { getBearerTokenForUrl, resetTestBearerTokenStore } = await import("../dist/mcp-bearer-store.js");
     resetTestBearerTokenStore();
 
     const logs: string[] = [];
@@ -287,7 +287,7 @@ describe("cli token helper", () => {
   it("rejects a token passed as a command-line argument", async () => {
     setupProject();
     const { main } = await import("../cli.js");
-    const { getTestBearerTokenStoreEntries, resetTestBearerTokenStore } = await import("../mcp-bearer-store.ts");
+    const { getTestBearerTokenStoreEntries, resetTestBearerTokenStore } = await import("../dist/mcp-bearer-store.js");
     resetTestBearerTokenStore();
 
     const errors: string[] = [];
@@ -318,7 +318,7 @@ describe("cli token helper", () => {
   it("reports status and removes stored tokens without exposing them", async () => {
     setupProject();
     const { main } = await import("../cli.js");
-    const { getBearerTokenForUrl, resetTestBearerTokenStore, saveBearerTokenForUrl } = await import("../mcp-bearer-store.ts");
+    const { getBearerTokenForUrl, resetTestBearerTokenStore, saveBearerTokenForUrl } = await import("../dist/mcp-bearer-store.js");
     resetTestBearerTokenStore();
     saveBearerTokenForUrl("remote", "secret-token", "https://example.test/mcp");
 
