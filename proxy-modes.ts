@@ -1115,11 +1115,13 @@ export async function executeCall(
   throwIfAborted(ownedSignal);
   let serverName: string | undefined = serverOverride;
   let toolMeta: ToolMetadata | undefined;
+  let serverScopedResolution = serverOverride !== undefined;
   if (state.config.settings?.strictProxyToolArguments === true) {
     const preflight = strictCallPreflight(state, toolName, args, serverOverride);
     if (preflight.ok === false) return preflight.result;
     serverName = preflight.serverName;
     toolMeta = preflight.toolMeta;
+    serverScopedResolution = true;
     toolName = preflight.toolMeta.originalName;
     args = preflight.args;
   }
@@ -1194,7 +1196,7 @@ export async function executeCall(
   if (serverName && !toolMeta) {
     const connected = await lazyConnect(state, serverName, ownedSignal);
     if (connected) {
-      if (serverOverride) {
+      if (serverScopedResolution) {
         const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
         if (match === "ambiguous") return ambiguousToolResult("call", toolName);
         toolMeta = match?.tool;
@@ -1311,7 +1313,7 @@ export async function executeCall(
   }
 
   if (!serverName || !toolMeta) {
-    const nativeTool = !serverOverride
+    const nativeTool = !serverScopedResolution
       ? getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp")
       : undefined;
     if (nativeTool) {
@@ -1419,7 +1421,7 @@ export async function executeCall(
       if (!restored) notifyToolMetadataUpdated(state, serverName, "proxy-call-reconnect");
       markKeepAliveAfterConnect(state, serverName);
       updateStatusBar(state);
-      if (serverOverride) {
+      if (serverScopedResolution) {
         const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
         if (match === "ambiguous") return ambiguousToolResult("call", toolName);
         toolMeta = match?.tool;

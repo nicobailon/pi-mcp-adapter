@@ -281,6 +281,22 @@ describe("strict proxy argument preflight", () => {
     expect(manager.connect).not.toHaveBeenCalled();
   });
 
+  it("keeps a canonical server/tool target server-scoped after lazy connect", async () => {
+    const definition = { command: "demo" };
+    cacheState.value = cacheFor([["demo", definition, [{ name: "search", inputSchema: requiredSchema }]]]);
+    const { state, manager, callTool } = createState({
+      definitions: { demo: definition },
+      metadata: [["demo", [metadata("demo", "search", requiredSchema)]]],
+    });
+
+    const result = await executeCall(state, "demo/search", { query: "synthetic" });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.details).toMatchObject({ server: "demo", tool: "search" });
+    expect(manager.connect).toHaveBeenCalledTimes(1);
+    expect(callTool).toHaveBeenCalledTimes(1);
+  });
+
   it("validates before lazy connect and calls the selected atomic tool exactly once", async () => {
     const definition = { command: "demo" };
     cacheState.value = cacheFor([["demo", definition, [{ name: "search", inputSchema: requiredSchema }]]]);
