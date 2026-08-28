@@ -52,6 +52,14 @@ describe("namespaceProxyName", () => {
     expect(namespaceProxyName("context-mode")).toBe("mcp__context_mode");
     expect(namespaceProxyName("my-server-1")).toBe("mcp__my_server_1");
   });
+
+  it("uses provider-safe namespace names without encoded-form collisions", async () => {
+    const { namespaceProxyName } = await importSync();
+    expect(namespaceProxyName("数")).toBe("mcp___mcpns_6570");
+    expect(namespaceProxyName("_6570_")).toBe("mcp___6570_");
+    expect(namespaceProxyName("_mcpns_6570")).toBe("mcp___mcpns_5f_6d_63_70_6e_73_5f_36_35_37_30");
+    expect(namespaceProxyName("数")).toMatch(/^[A-Za-z0-9_]+$/);
+  });
 });
 
 describe("syncNamespaceProxyTools", () => {
@@ -426,6 +434,29 @@ describe("syncNamespaceProxyTools", () => {
 
     expect(registered.has("mcp__my_server")).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('servers "my-server", "my_server" normalize to the same name'));
+  });
+
+  it("registers Unicode and literal encoded-form server namespaces separately", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { "数": { command: "unicode" }, _6570_: { command: "encoded" } } },
+      cache: CACHE_SHAPE([
+        ["数", { tools: [{ name: "search" }], definition: { command: "unicode" } }],
+        ["_6570_", { tools: [{ name: "search" }], definition: { command: "encoded" } }],
+      ]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(registered.has("mcp___mcpns_6570")).toBe(true);
+    expect(registered.has("mcp___6570_")).toBe(true);
   });
 
   it("keeps namespace collisions reserved when one server is in backoff", async () => {

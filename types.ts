@@ -716,7 +716,7 @@ export interface McpPanelResult {
 /**
  * Get server prefix based on tool prefix mode.
  */
-export function sanitizeServerPrefix(serverName: string, preserveProviderValid = true): string {
+function sanitizeServerPrefix(serverName: string, preserveProviderValid = true): string {
   const validCharacters = preserveProviderValid ? /^[A-Za-z0-9_-]$/ : /^[A-Za-z0-9]$/;
   return Array.from(serverName, char =>
     validCharacters.test(char) ? char : `_${char.codePointAt(0)!.toString(16)}_`,
