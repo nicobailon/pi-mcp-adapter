@@ -76,6 +76,7 @@ type PendingAuth = {
   serverUrl: string
   authorizationUrl: string
   manualRedirect: boolean
+  manualCompletionController?: AbortController
   discovery: AuthDiscovery
   authStorageOptions: AuthStorageOptions
 }
@@ -474,6 +475,7 @@ export async function startAuth(
       serverUrl,
       authorizationUrl: capturedUrl.toString(),
       manualRedirect,
+      ...(manualRedirect ? { manualCompletionController: new AbortController() } : {}),
       discovery,
       authStorageOptions,
     }, oauthState, signal, generation)
@@ -505,7 +507,13 @@ async function setPendingAuth(
   state.pendingAuths.set(key, pendingAuth)
   state.pendingAuthStates.set(key, oauthState)
   const cleanupTimer = setTimeout(() => {
-    void clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, pendingAuth.authStorageOptions).catch(error => {
+    void clearPendingAuthAndReleaseIfIdle(
+      runtime,
+      serverName,
+      oauthState,
+      pendingAuth.authStorageOptions,
+      new Error("OAuth authorization timeout - authorization took too long"),
+    ).catch(error => {
       console.error(`MCP Auth: Timed-out flow cleanup failed: ${formatTerminalError(error)}`)
     })
   }, MANUAL_AUTH_TIMEOUT_MS)
@@ -513,7 +521,13 @@ async function setPendingAuth(
   state.pendingAuthCleanupTimers.set(key, cleanupTimer)
 }
 
-async function clearPendingAuth(runtime: McpOAuthRuntime, serverName: string, oauthState?: string, fallbackStorageOptions: AuthStorageOptions = {}): Promise<void> {
+async function clearPendingAuth(
+  runtime: McpOAuthRuntime,
+  serverName: string,
+  oauthState?: string,
+  fallbackStorageOptions: AuthStorageOptions = {},
+  reason: Error = new Error("Authorization cancelled"),
+): Promise<void> {
   const state = getRuntimeState(runtime)
   const key = getPendingAuthKey(serverName, fallbackStorageOptions)
   const pendingAuth = state.pendingAuths.get(key)
@@ -527,6 +541,7 @@ async function clearPendingAuth(runtime: McpOAuthRuntime, serverName: string, oa
     state.pendingAuthCleanupTimers.delete(key)
   }
 
+  pendingAuth?.manualCompletionController?.abort(reason)
   pendingAuth?.authProvider.deactivate()
   state.pendingAuths.delete(key)
   state.pendingAuthStates.delete(key)
@@ -545,9 +560,10 @@ async function clearPendingAuthAndReleaseIfIdle(
   serverName: string,
   oauthState: string | undefined,
   fallbackStorageOptions: AuthStorageOptions = {},
+  reason?: Error,
 ): Promise<void> {
   await cleanupAndReleaseCallbackServerIfIdle(
-    () => clearPendingAuth(runtime, serverName, oauthState, fallbackStorageOptions),
+    () => clearPendingAuth(runtime, serverName, oauthState, fallbackStorageOptions, reason),
   )
 }
 
@@ -648,6 +664,19 @@ export function parseAuthorizationCodeInput(input: string, expectedState?: strin
 type AuthorizationResponse = {
   input: AuthorizationCodeInput
   source: "callback" | "manual"
+}
+
+function waitForManualCompletionCancellation(signal: AbortSignal): Promise<AuthorizationCodeInput> {
+  return new Promise((_, reject) => {
+    const rejectFromSignal = () => {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("Authorization cancelled"))
+    }
+    if (signal.aborted) {
+      rejectFromSignal()
+      return
+    }
+    signal.addEventListener("abort", rejectFromSignal, { once: true })
+  })
 }
 
 /**
@@ -846,7 +875,7 @@ export async function authenticate(
       // Register the localhost callback before opening the browser. Remote
       // pre-registered callbacks are completed by pasting their full URL.
       const callbackPromise: Promise<AuthorizationCodeInput> = pendingAuth.manualRedirect
-        ? new Promise(() => {})
+        ? waitForManualCompletionCancellation(pendingAuth.manualCompletionController!.signal)
         : waitForCallback(oauthState)
       void callbackPromise.catch(() => {})
 

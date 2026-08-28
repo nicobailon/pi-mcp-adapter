@@ -1178,6 +1178,52 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.open).not.toHaveBeenCalled();
   });
 
+  it("closes hosted callback input when the pending flow times out", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+        await provider.redirectToAuthorization(new URL(
+          "https://auth.example.com/authorize?redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fauth_callback",
+        ));
+        return "REDIRECT";
+      });
+      mocks.open.mockResolvedValueOnce(undefined);
+      const { authenticate } = await import("../mcp-auth-flow.ts");
+      let promptSignal: AbortSignal | undefined;
+      let markPromptStarted: (() => void) | undefined;
+      const promptStarted = new Promise<void>((resolve) => {
+        markPromptStarted = resolve;
+      });
+
+      const operation = authenticate("remote-timeout", "https://api.example.com/mcp", {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: {
+          clientId: "registered-client",
+          redirectUri: "https://claude.ai/api/mcp/auth_callback",
+        },
+      }, {
+        onAuthorizationUrl: () => {},
+        onAuthorizationInput: async (_authorizationUrl, signal) => {
+          promptSignal = signal;
+          markPromptStarted?.();
+          return new Promise(() => {});
+        },
+      });
+
+      await promptStarted;
+      const rejection = expect(operation).rejects.toThrow(
+        "OAuth authorization timeout - authorization took too long",
+      );
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      await rejection;
+      expect(promptSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("enforces strict callback port for pre-registered OAuth clients", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
