@@ -178,7 +178,9 @@ function formatManualAuthInstructions(serverName: string, authorizationUrl: stri
     "After approving, copy the full callback URL from your browser address bar and send it back with:",
     `mcp({ action: "auth-complete", server: "${serverName}", args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" } })`,
     "",
-    'You can also pass just the `code` query parameter as `args: { code: "PASTE_CODE_HERE" }`. JSON-string args remain supported.',
+    redirect.remote
+      ? "Remote HTTPS callbacks must include the full callback URL so the OAuth state can be checked. JSON-string args remain supported."
+      : 'You can also pass just the `code` query parameter as `args: { code: "PASTE_CODE_HERE" }`. JSON-string args remain supported.',
     redirectNote,
   ].filter(Boolean).join("\n");
 }

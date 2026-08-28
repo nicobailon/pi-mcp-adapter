@@ -94,6 +94,8 @@ describe("manual OAuth proxy actions", () => {
 
     expect(result.content[0].text).toContain("pre-registered HTTPS callback");
     expect(result.content[0].text).toContain("even if the destination page reports an error");
+    expect(result.content[0].text).toContain("Remote HTTPS callbacks must include the full callback URL");
+    expect(result.content[0].text).not.toContain('args: { code: "PASTE_CODE_HERE" }');
     expect(result.content[0].text).not.toContain("redirected localhost URL");
   });
 

@@ -331,6 +331,17 @@ describe("mcp-auth-flow", () => {
       )
     })
 
+    it("should reject non-local OAuth redirectUri values with invalid ports", async () => {
+      await assert.rejects(
+        async () => await startAuth("bad-remote-port", "https://api.example.com/mcp", {
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { redirectUri: "https://example.com:0/callback" },
+        }),
+        /positive numeric port/
+      )
+    })
+
     it("should reject OAuth redirectUri values without an explicit port", async () => {
       await assert.rejects(
         async () => await startAuth("no-port-redirect", "https://api.example.com/mcp", {

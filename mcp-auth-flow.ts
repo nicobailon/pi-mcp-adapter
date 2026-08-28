@@ -331,6 +331,12 @@ function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
 
   const hostname = url.hostname.toLowerCase()
   const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1"
+  if (url.port) {
+    const parsedPort = Number.parseInt(url.port, 10)
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+      throw new Error("OAuth redirectUri port must be a positive numeric port")
+    }
+  }
   if (url.protocol === "https:" && !isLocalhost) {
     return { mode: "manual" }
   }
@@ -736,7 +742,11 @@ export async function completeAuthFromInput(
   throwIfAborted(signal)
   const key = getPendingAuthKey(serverName, fallbackAuthStorageOptions)
   const oauthState = runtimeState.pendingAuthStates.get(key)
+  const pendingAuth = runtimeState.pendingAuths.get(key)
   throwIfAborted(signal)
+  if (pendingAuth?.manualRedirect && !getSearchParamsFromInput(input.trim())) {
+    throw new Error("Paste the full OAuth callback URL, including its code and state parameters")
+  }
   const parsed = parseAuthorizationRedirectInput(input, oauthState)
   return completeAuth(serverName, parsed, options)
 }
