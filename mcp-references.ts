@@ -6,6 +6,7 @@ import {
   isServerDisabled,
   isToolAllowed,
   resolveToolPrefix,
+  sanitizeServerPrefix,
   type CachedTool,
   type McpConfig,
   type ServerCacheEntry,
@@ -34,7 +35,13 @@ type CachedServer = { serverName: string; definition: ServerEntry; entry: Server
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 
 export function namespaceProxyName(serverName: string): string {
-  return `mcp__${serverName.replace(/-/g, "_")}`;
+  // Keep the legacy `-` -> `_` normalization (matches the harness resolver
+  // contract) but hex-encode any remaining character outside the provider-safe
+  // set (`^[a-zA-Z0-9_-]+$`, which OpenAI's Responses/Codex API enforces on
+  // tool names), the same way direct-tool server prefixes are sanitized.
+  // Registration and `mcp:` reference resolution both route through this
+  // function, so server references keep resolving unchanged.
+  return `mcp__${sanitizeServerPrefix(serverName.replace(/-/g, "_"))}`;
 }
 
 export function parseMcpReference(raw: string): ParsedMcpReference {
