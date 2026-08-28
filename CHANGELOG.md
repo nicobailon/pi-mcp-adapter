@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP Apps UI hosts now advertise the `io.modelcontextprotocol/ui` extension capability so compatible servers can expose their UI resources. Thanks to [@VikashLoomba](https://github.com/VikashLoomba) for #465.
+
 ### Fixed
 
 - Pre-registered OAuth clients can use HTTPS callback URLs through manual callback completion instead of being rejected as non-local redirects. Thanks to [@jluisrojas](https://github.com/jluisrojas) for PR #464.

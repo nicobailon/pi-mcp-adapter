@@ -34,6 +34,7 @@ import {
 import { resolveNpxBinary } from "./npx-resolver.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { logger } from "./logger.ts";
+import { RESOURCE_MIME_TYPE } from "./ui-app-bridge-helpers.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { invalidateAuthEntryCache, type AuthStorageOptions } from "./mcp-auth.ts";
@@ -725,6 +726,11 @@ export class McpServerManager {
 
   private buildClientCapabilities() {
     return {
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: [RESOURCE_MIME_TYPE],
+        },
+      },
       ...(this.samplingConfig ? { sampling: {} } : {}),
       ...(this.elicitationConfig
         ? {
