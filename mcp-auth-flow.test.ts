@@ -320,14 +320,14 @@ describe("mcp-auth-flow", () => {
       )
     })
 
-    it("should reject non-local OAuth redirectUri values", async () => {
+    it("should reject insecure non-local OAuth redirectUri values", async () => {
       await assert.rejects(
         async () => await startAuth("remote-redirect", "https://api.example.com/mcp", {
           url: "https://api.example.com/mcp",
           auth: "oauth",
-          oauth: { redirectUri: "https://example.com:3118/callback" },
+          oauth: { redirectUri: "http://example.com:3118/callback" },
         }),
-        /localhost or loopback/
+        /https:\/\/ URI or an http:\/\/ localhost or loopback URI/
       )
     })
 

@@ -297,7 +297,7 @@ export async function authenticateServer(
         return ui.input(
           `Complete ${serverName} OAuth\n\n` +
             `${terminalHyperlink("Open authorization page", authorizationUrl)}\n${authorizationUrl}\n\n` +
-            "Approve access, then paste the full localhost callback URL below.",
+            "Approve access, then paste the full callback URL from the browser address bar below.",
           undefined,
           { signal: inputSignal },
         );

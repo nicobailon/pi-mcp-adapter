@@ -143,22 +143,30 @@ function getAuthFailedMessage(state: McpExtensionState, serverName: string, mess
   return `OAuth authentication failed for "${serverName}": ${message}. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
 }
 
-function getRedirectPort(authorizationUrl: string): number | undefined {
+function getRedirectDetails(authorizationUrl: string): { port?: number; remote: boolean } {
   try {
     const redirectUri = new URL(authorizationUrl).searchParams.get("redirect_uri");
-    if (!redirectUri) return undefined;
-    const port = Number.parseInt(new URL(redirectUri).port, 10);
-    return Number.isInteger(port) ? port : undefined;
+    if (!redirectUri) return { remote: false };
+    const redirect = new URL(redirectUri);
+    const hostname = redirect.hostname.toLowerCase();
+    const local = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+    const port = Number.parseInt(redirect.port, 10);
+    return {
+      ...(Number.isInteger(port) ? { port } : {}),
+      remote: !local,
+    };
   } catch {
-    return undefined;
+    return { remote: false };
   }
 }
 
 function formatManualAuthInstructions(serverName: string, authorizationUrl: string): string {
-  const port = getRedirectPort(authorizationUrl);
-  const portNote = port
-    ? `\nThe redirect URL will use local port ${port}. On a remote server it is expected for that localhost page to fail locally; copy the address bar URL anyway.`
-    : "";
+  const redirect = getRedirectDetails(authorizationUrl);
+  const redirectNote = redirect.remote
+    ? "The provider uses a pre-registered HTTPS callback. Copy its full URL from the browser address bar, even if the destination page reports an error."
+    : redirect.port
+      ? `The redirect URL will use local port ${redirect.port}. On a remote server it is expected for that localhost page to fail locally; copy the address bar URL anyway.`
+      : "";
 
   return [
     `MCP OAuth required for "${serverName}".`,
@@ -167,11 +175,11 @@ function formatManualAuthInstructions(serverName: string, authorizationUrl: stri
     "",
     authorizationUrl,
     "",
-    "After approving, copy the full redirected localhost URL from your browser address bar and send it back with:",
+    "After approving, copy the full callback URL from your browser address bar and send it back with:",
     `mcp({ action: "auth-complete", server: "${serverName}", args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" } })`,
     "",
     'You can also pass just the `code` query parameter as `args: { code: "PASTE_CODE_HERE" }`. JSON-string args remain supported.',
-    portNote.trimEnd(),
+    redirectNote,
   ].filter(Boolean).join("\n");
 }
 

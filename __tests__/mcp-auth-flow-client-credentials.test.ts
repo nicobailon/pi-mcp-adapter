@@ -1152,6 +1152,32 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.open).not.toHaveBeenCalled();
   });
 
+  it("uses manual completion for a pre-registered HTTPS redirect URI", async () => {
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      expect(provider.redirectUrl).toBe("https://claude.ai/api/mcp/auth_callback");
+      expect(provider.clientMetadata.redirect_uris).toEqual(["https://claude.ai/api/mcp/auth_callback"]);
+      await provider.redirectToAuthorization(new URL(
+        "https://auth.example.com/authorize?redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fauth_callback",
+      ));
+      return "REDIRECT";
+    });
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    const result = await startAuth("remote-redirect", "https://api.example.com/mcp", {
+      url: "https://api.example.com/mcp",
+      auth: "oauth",
+      oauth: {
+        clientId: "registered-client",
+        redirectUri: "https://claude.ai/api/mcp/auth_callback",
+      },
+    });
+
+    expect(result.authorizationUrl).toContain("https://auth.example.com/authorize");
+    expect(mocks.ensureCallbackServer).not.toHaveBeenCalled();
+    expect(mocks.waitForCallback).not.toHaveBeenCalled();
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+
   it("enforces strict callback port for pre-registered OAuth clients", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
