@@ -20,6 +20,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
 import { Check, Errors } from "typebox/value";
+import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
@@ -594,6 +595,16 @@ export function createDirectToolExecutor(
         return {
           content: [{ type: "text" as const, text: message }],
           details: { error: "url_elicitation_required", server: spec.serverName, action },
+        };
+      }
+      const inputRequired = getInputRequiredNeedsUiDetails(error, spec.resourceUri
+        ? { server: spec.serverName, resourceUri: spec.resourceUri }
+        : { server: spec.serverName, tool: spec.originalName });
+      if (inputRequired) {
+        uiSession?.sendToolCancelled(inputRequired.message);
+        return {
+          content: [{ type: "text" as const, text: inputRequired.message }],
+          details: { ...inputRequired },
         };
       }
       const message = error instanceof Error ? error.message : String(error);

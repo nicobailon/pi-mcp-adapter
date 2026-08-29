@@ -19,6 +19,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -1406,6 +1407,14 @@ export async function executeCall(
       return {
         content: [{ type: "text" as const, text: message }],
         details: { mode: "call", error: "url_elicitation_required", ...callIdentity, action },
+      };
+    }
+    const inputRequired = getInputRequiredNeedsUiDetails(error, callIdentity);
+    if (inputRequired) {
+      uiSession?.sendToolCancelled(inputRequired.message);
+      return {
+        content: [{ type: "text" as const, text: inputRequired.message }],
+        details: { mode: "call", ...inputRequired },
       };
     }
     const message = error instanceof Error ? error.message : String(error);

@@ -302,7 +302,7 @@ Use `"auto"` to probe for MCP 2026-07-28 and conservatively fall back to the cla
 
 Use `"2026-07-28"` to pin that revision. Pinning has no legacy or SSE fallback and fails if the server does not offer the requested version.
 
-The stable SDK handles era-specific request envelopes, result decoding, list-changed subscriptions, cancellation, and multi-round-trip sampling/elicitation. The adapter keeps strict OAuth issuer validation in every mode. Adapter-level roots support, standard MCP logging presentation, and configuration/UI for protocol cache hints are not yet implemented.
+The stable SDK handles era-specific request envelopes, result decoding, list-changed subscriptions, cancellation, and multi-round-trip sampling/elicitation. The SDK's embedded-input progress callback does not expose the originating tool or resource identity, so the adapter cannot maintain a durable per-tool waiting status row; interactive sessions keep the existing input dialog visible, and proxy calls show request progress when UI is available. The adapter keeps strict OAuth issuer validation in every mode. Adapter-level roots support, standard MCP logging presentation, and configuration/UI for protocol cache hints are not yet implemented.
 
 For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port. A configured `https://` callback runs in manual mode because the adapter cannot receive a callback on another host. After authorization, copy the full callback URL from the browser address bar and paste it into `/mcp-auth` or `mcp({ action: "auth-complete", ... })`.
 

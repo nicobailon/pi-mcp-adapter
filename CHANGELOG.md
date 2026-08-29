@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Hardened MCP 2026 multi-round input flows across proxy, direct, resource, and UI-resource calls, with actionable no-UI errors and cancellation cleanup.
+
 ## [2.31.0] - 2026-08-28
 
 ### Highlights

@@ -21,6 +21,7 @@ import { isGlimpseAvailable, openGlimpseWindow } from "./glimpse-ui.ts";
 import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { throwIfAborted } from "./abort.ts";
+import { InputRequiredNeedsUiError } from "./errors.ts";
 
 let activeGlimpseWindow: { close(): void } | null = null;
 
@@ -559,7 +560,7 @@ export async function maybeStartUiSession(
       },
     };
   } catch (error) {
-    if (error instanceof UrlElicitationRequiredError || isAbortError(error, runtimeSignal)) throw error;
+    if (error instanceof UrlElicitationRequiredError || error instanceof InputRequiredNeedsUiError || isAbortError(error, runtimeSignal)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     log.error("Failed to start UI session", error instanceof Error ? error : undefined);
     state.ui?.notify(

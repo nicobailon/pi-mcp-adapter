@@ -221,3 +221,144 @@ export function wrapError(error: unknown, context?: McpUiErrorContext): McpUiErr
 export function isErrorCode(error: unknown, code: string): boolean {
   return error instanceof McpUiError && error.code === code;
 }
+
+/**
+ * Stable adapter error code for an SDK-native input_required result that the
+ * current client cannot fulfil because its embedded-request handler is not
+ * registered. The SDK keeps the request key/method in `SdkError.data`; this
+ * adapter detail intentionally copies only bounded, actionable fields.
+ */
+export const INPUT_REQUIRED_NEEDS_UI = "input_required_needs_ui" as const;
+
+export interface InputRequiredNeedsUiDetails {
+  error: typeof INPUT_REQUIRED_NEEDS_UI;
+  server: string;
+  tool?: string;
+  resourceUri?: string;
+  inputKey: string;
+  inputMethod: string;
+  message: string;
+}
+
+export interface InputRequiredIdentity {
+  server: string;
+  tool?: string;
+  resourceUri?: string;
+}
+
+const INPUT_REQUIRED_METHODS = new Set([
+  "elicitation/create",
+  "sampling/createMessage",
+]);
+const MAX_INPUT_REQUIRED_SERVER_LENGTH = 96;
+const MAX_INPUT_REQUIRED_TARGET_LENGTH = 160;
+const MAX_INPUT_REQUIRED_DETAIL_LENGTH = 128;
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function boundedText(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
+}
+
+interface EmbeddedInputRequest {
+  inputKey: string;
+  inputMethod: string;
+  server?: string;
+  tool?: string;
+  resourceUri?: string;
+}
+
+function findEmbeddedInputRequest(error: unknown): EmbeddedInputRequest | undefined {
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 8 && current !== undefined && current !== null; depth++) {
+    if (seen.has(current)) return undefined;
+    seen.add(current);
+    const record = asRecord(current);
+    if (!record) return undefined;
+
+    if (record.code === INPUT_REQUIRED_NEEDS_UI) {
+      const details = asRecord(record.details);
+      const inputKey = boundedText(details?.inputKey, MAX_INPUT_REQUIRED_DETAIL_LENGTH);
+      const inputMethod = boundedText(details?.inputMethod, MAX_INPUT_REQUIRED_DETAIL_LENGTH);
+      if (inputKey && inputMethod && INPUT_REQUIRED_METHODS.has(inputMethod)) {
+        const server = boundedText(details?.server, MAX_INPUT_REQUIRED_SERVER_LENGTH);
+        const tool = boundedText(details?.tool, MAX_INPUT_REQUIRED_TARGET_LENGTH);
+        const resourceUri = boundedText(details?.resourceUri, MAX_INPUT_REQUIRED_TARGET_LENGTH);
+        return {
+          inputKey,
+          inputMethod,
+          ...(server ? { server } : {}),
+          ...(tool ? { tool } : {}),
+          ...(resourceUri ? { resourceUri } : {}),
+        };
+      }
+    }
+
+    if (record.code === "CAPABILITY_NOT_SUPPORTED") {
+      const data = asRecord(record.data);
+      const inputKey = boundedText(data?.key, MAX_INPUT_REQUIRED_DETAIL_LENGTH);
+      const inputMethod = boundedText(data?.method, MAX_INPUT_REQUIRED_DETAIL_LENGTH);
+      if (inputKey && inputMethod && INPUT_REQUIRED_METHODS.has(inputMethod)) {
+        return { inputKey, inputMethod };
+      }
+    }
+
+    current = record.cause;
+  }
+  return undefined;
+}
+
+/**
+ * Convert a missing embedded-input handler into an adapter-owned result
+ * detail. Matching requires the SDK's typed code/data shape (or this module's
+ * typed wrapper), rather than arbitrary error-message text.
+ */
+export function getInputRequiredNeedsUiDetails(
+  error: unknown,
+  identity: InputRequiredIdentity,
+): InputRequiredNeedsUiDetails | undefined {
+  const request = findEmbeddedInputRequest(error);
+  if (!request) return undefined;
+
+  const server = boundedText(request.server ?? identity.server, MAX_INPUT_REQUIRED_SERVER_LENGTH) ?? "unknown";
+  const tool = boundedText(request.tool ?? identity.tool, MAX_INPUT_REQUIRED_TARGET_LENGTH);
+  const resourceUri = boundedText(request.resourceUri ?? identity.resourceUri, MAX_INPUT_REQUIRED_TARGET_LENGTH);
+  const target = resourceUri
+    ? `read resource "${resourceUri}"`
+    : tool
+      ? `call tool "${tool}"`
+      : "complete the MCP request";
+  const guidance = request.inputMethod === "elicitation/create"
+    ? "Run this call in an interactive Pi session with elicitation enabled, then retry."
+    : "Run this call in an interactive Pi session with the required MCP capability enabled, then retry.";
+  const message = `MCP server "${server}" requested input to ${target}, but this session has no handler for "${request.inputMethod}" (input "${request.inputKey}"). ${guidance}`;
+
+  return {
+    error: INPUT_REQUIRED_NEEDS_UI,
+    server,
+    ...(tool ? { tool } : {}),
+    ...(resourceUri ? { resourceUri } : {}),
+    inputKey: request.inputKey,
+    inputMethod: request.inputMethod,
+    message,
+  };
+}
+
+/** Error form used by UiResourceHandler so an outer tool call can preserve the classification. */
+export class InputRequiredNeedsUiError extends McpUiError {
+  constructor(readonly details: InputRequiredNeedsUiDetails, cause?: Error) {
+    super(details.message, {
+      code: INPUT_REQUIRED_NEEDS_UI,
+      context: { ...details },
+      recoveryHint: "Run this call in an interactive Pi session with the required MCP input handler enabled, then retry.",
+      ...(cause ? { cause } : {}),
+    });
+    this.name = "InputRequiredNeedsUiError";
+  }
+}
