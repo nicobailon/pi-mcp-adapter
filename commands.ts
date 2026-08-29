@@ -59,12 +59,22 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     const metadata = state.toolMetadata.get(name);
     const toolCount = metadata?.length ?? 0;
     const failedAgo = getFailureAgeSeconds(state, name);
-    let status = "not connected";
+    let status = "not listening (disconnected)";
     let statusIcon = "○";
     let failed = false;
 
     if (connection?.status === "connected") {
-      status = "connected";
+      status = connection.listenState === "active"
+        ? connection.listenCatalogStale
+          ? "connected; listen active; catalog may be stale"
+          : "connected; listen active"
+        : connection.listenState === "dropped"
+          ? "connected; catalog may be stale — will reconcile on next keep-alive or tool use"
+          : connection.listenState === "re-establishing"
+            ? "connected; re-establishing listen"
+            : connection.listenState === "legacy"
+              ? "connected; legacy notification path"
+              : "connected; not listening for catalog updates";
       statusIcon = "✓";
     } else if (connection?.status === "needs-auth") {
       status = "needs auth";
@@ -75,11 +85,15 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
       statusIcon = "✗";
       failed = true;
     } else if (metadata !== undefined) {
-      status = "cached";
+      status = "cached; not listening (disconnected)";
     }
 
-    const toolSuffix = failed ? "" : ` (${toolCount} tools${status === "cached" ? ", cached" : ""})`;
+    const toolSuffix = failed ? "" : ` (${toolCount} tools${status.startsWith("cached") ? ", cached" : ""})`;
     lines.push(`${statusIcon} ${name}: ${status}${toolSuffix}`);
+  }
+
+  if (state.config.settings?.freezeDirectTools === true) {
+    lines.push("", "Direct tools frozen; active registrations may differ from current metadata.");
   }
 
   if (Object.keys(state.config.mcpServers).length === 0) {

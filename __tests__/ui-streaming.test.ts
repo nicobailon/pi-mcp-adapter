@@ -201,9 +201,12 @@ describe("UI Streaming", () => {
           client: { setNotificationHandler: (...args: unknown[]) => void },
         ) => void;
       }).attachAdapterNotificationHandlers(serverName, client);
-      expect(setNotificationHandler).toHaveBeenCalledOnce();
-      expect(setNotificationHandler.mock.calls[0][0]).toBe(SERVER_STREAM_RESULT_PATCH_METHOD);
-      const handler = setNotificationHandler.mock.calls[0][2] as (params: {
+      expect(setNotificationHandler).toHaveBeenCalledTimes(2);
+      const streamRegistration = setNotificationHandler.mock.calls.find(
+        call => call[0] === SERVER_STREAM_RESULT_PATCH_METHOD,
+      );
+      expect(streamRegistration).toBeDefined();
+      const handler = streamRegistration?.[2] as (params: {
         streamToken: string;
         result: { content?: unknown[]; structuredContent?: Record<string, unknown> };
       }) => void;

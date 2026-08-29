@@ -315,11 +315,13 @@ export async function maybeStartUiSession(
     let active = true;
     let nextStreamSequence = 0;
     let handle: UiServerHandle;
+    const resourceListenerToken = randomUUID();
 
-    const cleanupStreamListener = () => {
+    const cleanupListeners = () => {
       if (streamToken) {
         state.manager.removeUiStreamListener(streamToken);
       }
+      state.manager.removeResourceUpdatedListener?.(resourceListenerToken);
     };
 
     handle = await startUiServer({
@@ -395,7 +397,7 @@ export async function maybeStartUiSession(
 
       onComplete: (reason: string) => {
         active = false;
-        cleanupStreamListener();
+        cleanupListeners();
 
         if (state.uiServer === handle) {
           const messages = handle.getSessionMessages();
@@ -454,6 +456,16 @@ export async function maybeStartUiSession(
         handle.sendResultPatch(withStreamEnvelope(notification.result as CallToolResult, streamId, nextStreamSequence));
       });
     }
+
+    state.manager.registerResourceUpdatedListener?.(
+      resourceListenerToken,
+      request.serverName,
+      request.uiResourceUri,
+      (_serverName, uri) => {
+        if (!active || state.uiServer !== handle) return;
+        handle.sendResourceUpdated(uri);
+      },
+    );
 
     state.uiServer = handle;
 
@@ -555,7 +567,7 @@ export async function maybeStartUiSession(
       },
       close: (reason?: string) => {
         active = false;
-        cleanupStreamListener();
+        cleanupListeners();
         handle.close(reason);
       },
     };

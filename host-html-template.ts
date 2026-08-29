@@ -340,6 +340,9 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
         showError("Failed to forward cancellation: " + String(error));
       }
     });
+    eventSource.addEventListener("resource-updated", () => {
+      setStatus("Resource updated on the server. Reopen this UI to load the latest version.");
+    });
     eventSource.addEventListener("result-patch", async (event) => {
       try {
         await bridge.notification({

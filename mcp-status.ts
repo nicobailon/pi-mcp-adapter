@@ -48,7 +48,9 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
     servers.push({
       name,
       status,
+      listenState: connection?.status === "connected" ? connection.listenState : "disconnected",
       toolCount,
+      ...(connection?.status === "connected" && connection.listenCatalogStale ? { catalogStale: true } : {}),
       ...(resourceCount !== undefined ? { resourceCount } : {}),
       ...(status === "failed" && failedAgoSeconds !== null ? { failedAgoSeconds } : {}),
       disabled,

@@ -590,7 +590,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       initPromise = null;
       if (earlyConfig.settings?.freezeDirectTools === true) {
         directToolsFrozen = true;
-        logger.info("MCP: direct tools frozen after initial sync — reconnects won't rebuild the system prompt; use mcp({ connect: \"server\" }) to rediscover");
+        logger.info("MCP: direct tools frozen after initial sync — metadata can refresh without rebuilding the active tool surface");
       }
     }).catch(async err => {
       if (!owner.isActive() || generation !== lifecycleGeneration) {
@@ -817,7 +817,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         case "reconnect":
           commandOwner?.throwIfInactive();
           await reconnectServers(state, commandCtx, targetServer);
-          if (directToolsFrozen) syncToolSurface(commandCtx);
           break;
         case "tools":
           await showTools(state, commandCtx);
@@ -1168,7 +1167,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         if (params.connect) {
           const result = await executeConnect(state, params.connect, signal);
-          syncToolSurface(_ctx as ExtensionContext);
+          if (!directToolsFrozen) syncToolSurface(_ctx as ExtensionContext);
           return result;
         }
         if (params.describe) {

@@ -42,6 +42,7 @@ describe("MCP status snapshots", () => {
       if (name === "connected") {
         return {
           status: "connected",
+          listenState: "active",
           tools: [{ name: "search" }],
           resources: [{ name: "doc", uri: "file://doc" }, { name: "other", uri: "file://other" }],
           client: { secret: true },
@@ -61,12 +62,12 @@ describe("MCP status snapshots", () => {
       disabledCount: 1,
     });
     expect(snapshot.servers).toEqual(expect.arrayContaining([
-      { name: "connected", status: "connected", toolCount: 1, resourceCount: 2, disabled: false },
-      { name: "cached", status: "cached", toolCount: 2, resourceCount: 1, disabled: false },
+      { name: "connected", status: "connected", listenState: "active", toolCount: 1, resourceCount: 2, disabled: false },
+      { name: "cached", status: "cached", listenState: "disconnected", toolCount: 2, resourceCount: 1, disabled: false },
       expect.objectContaining({ name: "failed", status: "failed", toolCount: 0, disabled: false }),
-      { name: "auth", status: "needs-auth", toolCount: 0, disabled: false },
-      { name: "idle", status: "cached", toolCount: 1, disabled: false },
-      { name: "disabled", status: "disabled", toolCount: 0, disabled: true },
+      { name: "auth", status: "needs-auth", listenState: "disconnected", toolCount: 0, disabled: false },
+      { name: "idle", status: "cached", listenState: "disconnected", toolCount: 1, disabled: false },
+      { name: "disabled", status: "disabled", listenState: "disconnected", toolCount: 0, disabled: true },
     ]));
     const failed = snapshot.servers.find(server => server.name === "failed");
     expect(failed?.failedAgoSeconds).toBeGreaterThanOrEqual(4);
@@ -91,6 +92,35 @@ describe("MCP status snapshots", () => {
       status: "needs-auth",
       toolCount: 0,
     });
+  });
+
+  it("reports a dropped listen separately from a connected transport", () => {
+    const state = createState();
+    state.manager.getConnection.mockImplementation((name: string) => name === "connected"
+      ? { status: "connected", listenState: "dropped", tools: [{ name: "search" }], resources: [] }
+      : undefined);
+
+    expect(createMcpStatusSnapshot(state).servers.find(server => server.name === "connected")).toMatchObject({
+      status: "connected",
+      listenState: "dropped",
+    });
+    expect(executeStatus(state).content[0]?.text).toContain(
+      "catalog may be stale; will reconcile on next keep-alive or tool use",
+    );
+  });
+
+  it("reports an active listen with unconfirmed catalog freshness", () => {
+    const state = createState();
+    state.manager.getConnection.mockImplementation((name: string) => name === "connected"
+      ? { status: "connected", listenState: "active", listenCatalogStale: true, tools: [{ name: "search" }], resources: [] }
+      : undefined);
+
+    expect(createMcpStatusSnapshot(state).servers.find(server => server.name === "connected")).toMatchObject({
+      status: "connected",
+      listenState: "active",
+      catalogStale: true,
+    });
+    expect(executeStatus(state).content[0]?.text).toContain("listen active, catalog may be stale");
   });
 
   it("keeps proxy status and shared snapshots in parity for cached failure states", () => {

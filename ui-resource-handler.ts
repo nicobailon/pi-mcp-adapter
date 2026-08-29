@@ -57,7 +57,14 @@ export class UiResourceHandler {
               ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
             },
             serverName,
-            (connection) => connection.client.readResource({ uri }, this.manager.getRequestOptions(serverName, options.signal)),
+            async (connection) => {
+              const refreshRead = await this.manager.prepareResourceUse?.(serverName, uri, connection);
+              const requestOptions = this.manager.getRequestOptions(serverName, options.signal);
+              return connection.client.readResource(
+                { uri },
+                refreshRead ? { ...requestOptions, cacheMode: "refresh" } : requestOptions,
+              );
+            },
           );
         } finally {
           this.manager.decrementInFlight(serverName);

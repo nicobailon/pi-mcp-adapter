@@ -498,9 +498,15 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
                   ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
                 },
                 options.serverName,
-                (conn) => conn.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName)),
+                async (conn) => {
+                  await options.manager.ensureListen?.(options.serverName, conn);
+                  return conn.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName));
+                },
               )
-            : await connection.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName));
+            : await (async () => {
+                await options.manager.ensureListen?.(options.serverName, connection);
+                return connection.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName));
+              })();
           sendJson(res, 200, { ok: true, result });
         } finally {
           options.manager.decrementInFlight(options.serverName);
@@ -724,6 +730,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         },
         sendToolCancelled: (reason: string) => {
           pushEvent("tool-cancelled", { reason });
+        },
+        sendResourceUpdated: (uri: string) => {
+          pushEvent("resource-updated", { uri });
         },
         sendHostContext: (context: UiHostContext) => {
           Object.assign(hostContext, context);

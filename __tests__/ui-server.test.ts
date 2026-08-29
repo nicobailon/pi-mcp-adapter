@@ -471,6 +471,23 @@ describe("UiServer", () => {
       expect(events.some((e) => e.name === "tool-result")).toBe(true);
     });
 
+    it("signals resource updates without reloading the open UI", async () => {
+      handle = await startUiServer(createServerOptions());
+      const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;
+      const events: Array<{ name: string; data: unknown }> = [];
+      const sse = await connectSSE(url, (name, data) => events.push({ name, data }));
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      handle.sendResourceUpdated("ui://fixture/app");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      sse.close();
+
+      expect(events.find(event => event.name === "resource-updated")?.data).toEqual({
+        uri: "ui://fixture/app",
+      });
+      expect(events.some(event => event.name === "session-complete")).toBe(false);
+    });
+
     it("receives result-patch events when sent", async () => {
       handle = await startUiServer(createServerOptions());
       const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;

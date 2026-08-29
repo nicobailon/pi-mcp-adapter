@@ -340,7 +340,7 @@ export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
 }
 
 export function executeStatus(state: McpExtensionState): ProxyToolResult {
-  const servers: Array<{ name: string; status: string; toolCount: number; failedAgo: number | null; disabled?: boolean }> = [];
+  const servers: Array<{ name: string; status: string; listenState: string; catalogStale?: boolean; toolCount: number; failedAgo: number | null; disabled?: boolean }> = [];
 
   for (const name of Object.keys(state.config.mcpServers)) {
     const definition = state.config.mcpServers[name];
@@ -361,7 +361,16 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
     const toolCount = status === "failed" ? 0 : metadata?.length ?? 0;
 
-    servers.push({ name, status, toolCount, failedAgo, ...(disabled ? { disabled: true } : {}) });
+    const listenState = connection?.status === "connected" ? connection.listenState : "disconnected";
+    servers.push({
+      name,
+      status,
+      listenState,
+      ...(connection?.status === "connected" && connection.listenCatalogStale ? { catalogStale: true } : {}),
+      toolCount,
+      failedAgo,
+      ...(disabled ? { disabled: true } : {}),
+    });
   }
 
   const disabledCount = servers.filter(s => s.disabled).length;
@@ -378,7 +387,18 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       continue;
     }
     if (server.status === "connected") {
-      text += `✓ ${server.name} (${server.toolCount} tools)\n`;
+      const listen = server.listenState === "active"
+        ? server.catalogStale
+          ? ", listen active, catalog may be stale"
+          : ", listen active"
+        : server.listenState === "dropped"
+          ? ", catalog may be stale; will reconcile on next keep-alive or tool use"
+          : server.listenState === "re-establishing"
+            ? ", re-establishing listen"
+            : server.listenState === "legacy"
+              ? ", legacy notification path"
+              : ", not listening for catalog updates";
+      text += `✓ ${server.name} (${server.toolCount} tools${listen})\n`;
       continue;
     }
     if (server.status === "needs-auth") {
@@ -386,14 +406,19 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       continue;
     }
     if (server.status === "cached") {
-      text += `○ ${server.name} (${server.toolCount} tools, cached)\n`;
+      text += `○ ${server.name} (${server.toolCount} tools, cached; not listening)\n`;
       continue;
     }
     if (server.status === "failed") {
       text += `✗ ${server.name} (failed ${server.failedAgo ?? 0}s ago)\n`;
       continue;
     }
-    text += `○ ${server.name} (not connected)\n`;
+    text += `○ ${server.name} (not listening; disconnected)\n`;
+  }
+
+  const directToolsFrozen = state.config.settings?.freezeDirectTools === true;
+  if (directToolsFrozen) {
+    text += "\nDirect tools frozen; active registrations may differ from current metadata.\n";
   }
 
   if (servers.length > 0) {
@@ -402,7 +427,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "status", servers, totalTools, connectedCount, disabledCount },
+    details: { mode: "status", servers, totalTools, connectedCount, disabledCount, directToolsFrozen },
   };
 }
 
@@ -1301,7 +1326,13 @@ export async function executeCall(
           onNeedsAuth: recoverAuthConnection,
         },
         serverName,
-        (conn) => conn.client.readResource({ uri: toolMeta.resourceUri! }, requestOptions),
+        async (conn) => {
+          const refreshRead = await state.manager.prepareResourceUse?.(serverName, toolMeta.resourceUri!, conn);
+          return conn.client.readResource(
+            { uri: toolMeta.resourceUri! },
+            refreshRead ? { ...requestOptions, cacheMode: "refresh" } : requestOptions,
+          );
+        },
       );
       const content = transformMcpResourceContents(result.contents ?? [], state.owner?.signal);
       const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
@@ -1331,11 +1362,14 @@ export async function executeCall(
         onNeedsAuth: recoverAuthConnection,
       },
       serverName,
-      (conn) => abortable(conn.client.callTool({
-        name: toolMeta.originalName,
-        arguments: normalizedArgs,
-        _meta: uiSession?.requestMeta,
-      }, requestOptions), ownedSignal),
+      async (conn) => {
+        await state.manager.ensureListen?.(serverName, conn);
+        return abortable(conn.client.callTool({
+          name: toolMeta.originalName,
+          arguments: normalizedArgs,
+          _meta: uiSession?.requestMeta,
+        }, requestOptions), ownedSignal);
+      },
     );
 
     if (toolMeta.uiResourceUri) {

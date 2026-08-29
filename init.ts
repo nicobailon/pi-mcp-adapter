@@ -215,6 +215,10 @@ export async function initializeMcp(
     notifyToolMetadataUpdated(state, serverName, reason);
     updateStatusBar(state);
   });
+  manager.setListenStateChangedListener?.(() => {
+    if (!owner.isActive()) return;
+    updateStatusBar(state);
+  });
   owner.addCleanup(() => lifecycle.gracefulShutdown());
   owner.addCleanup(() => {
     if (state.uiServer) {
@@ -641,6 +645,7 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
     return false;
   }
   if (connection?.status === "connected") {
+    await state.manager.ensureListen?.(serverName, connection);
     updateServerMetadata(state, serverName);
     markKeepAliveAfterConnect(state, serverName);
     return true;
