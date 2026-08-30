@@ -40,7 +40,7 @@ import { logger } from "./logger.ts";
 import { RESOURCE_MIME_TYPE } from "./ui-app-bridge-helpers.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
-import { invalidateAuthEntryCache, type AuthStorageOptions } from "./mcp-auth.ts";
+import { inspectAuthForUrl, invalidateAuthEntryCache, type AuthStorageOptions } from "./mcp-auth.ts";
 import { getBearerTokenForUrl } from "./mcp-bearer-store.ts";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
 import {
@@ -75,6 +75,7 @@ const abortCleanupPromises = new WeakMap<object, Promise<void>>();
 type HttpAuthProviderState =
   | { status: "disabled" }
   | { status: "implicit-deferred" }
+  | { status: "implicit-stored"; provider: McpOAuthProvider }
   | { status: "explicit"; provider: McpOAuthProvider }
   | { status: "implicit-challenged"; provider: McpOAuthProvider };
 
@@ -1228,11 +1229,26 @@ export class McpServerManager {
       this.oauthRuntime?.signal,
     );
 
-    // Explicit OAuth checks secure storage immediately. Implicit OAuth defers
-    // provider construction until the server proves authentication is needed.
+    // Explicit OAuth checks secure storage immediately. Implicit OAuth keeps
+    // anonymous servers provider-free unless URL-bound credentials are already
+    // stored, so an unavailable credential store does not break anonymous use.
+    let implicitStoredAuth: ReturnType<typeof inspectAuthForUrl> | undefined;
+    if (definition.auth === undefined && supportsOAuth(definition)) {
+      try {
+        implicitStoredAuth = inspectAuthForUrl(serverName, serverUrl, this.authStorageOptions);
+      } catch {
+        // Implicit preflight is opportunistic; malformed records must not block
+        // an otherwise anonymous-capable server from connecting.
+      }
+    }
+    const hasImplicitStoredTokens = implicitStoredAuth?.status === "present"
+      && implicitStoredAuth.entry.tokens !== undefined;
+    if (hasImplicitStoredTokens) invalidateAuthEntryCache(serverName);
     let authState: HttpAuthProviderState = supportsOAuth(definition)
       ? definition.auth === undefined
-        ? { status: "implicit-deferred" }
+        ? hasImplicitStoredTokens
+          ? { status: "implicit-stored", provider: createAuthProvider() }
+          : { status: "implicit-deferred" }
         : { status: "explicit", provider: createAuthProvider() }
       : { status: "disabled" };
 

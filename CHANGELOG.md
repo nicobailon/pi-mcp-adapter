@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Hardened MCP 2026 multi-round input flows across proxy, direct, resource, and UI-resource calls, with actionable no-UI errors and cancellation cleanup.
 - Hardened MCP 2026-07-28 catalog listens with visible drop/recovery state, bounded re-listen on activity, resource update signals for open UIs, and quiet metadata/cache refreshes. (#468)
+- Implicit OAuth now reuses URL-bound stored credentials while preserving anonymous fallback. Thanks to [@wilt00](https://github.com/wilt00) for #471.
 
 ## [2.31.0] - 2026-08-28
 
