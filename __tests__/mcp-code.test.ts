@@ -244,6 +244,26 @@ describe("runMcpScript", () => {
     expect(result.details).toMatchObject({ calls: [{ path: "fixture_echo", ok: true }] });
   });
 
+  it("chains structured tool output through data.structuredContent", async () => {
+    const result = await runMcpScript(
+      state,
+      `const first = await tools.call("fixture_echo", { value: "artifact-id" });
+if (!first.ok) return first;
+return await tools.call("fixture_echo", { value: first.data.structuredContent.echoed });`,
+    );
+
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+      ok: true,
+      data: { structuredContent: { echoed: "artifact-id" } },
+    });
+    expect(result.details).toMatchObject({
+      calls: [
+        { operation: "call", path: "fixture_echo", ok: true },
+        { operation: "call", path: "fixture_echo", ok: true },
+      ],
+    });
+  });
+
   it("records approval-gate outcomes in the call trace", async () => {
     const gatedState = {
       ...state,
