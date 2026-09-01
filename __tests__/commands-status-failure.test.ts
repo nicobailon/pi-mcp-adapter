@@ -27,7 +27,11 @@ describe("MCP status failure reasons", () => {
       expect.stringContaining("demo: failed 7s ago — stderr says server failed"),
       "info",
     );
-    expect(ui.notify.mock.calls[0][0]).not.toContain("https://secret.invalid/status");
+    const output = ui.notify.mock.calls[0][0];
+    expect(output).toContain(".mcp.json for this project/team");
+    expect(output).toContain("~/.config/mcp/mcp.json for all projects");
+    expect(output).toContain("Pi-owned files hold compatibility imports and adapter-specific overrides");
+    expect(output).not.toContain("https://secret.invalid/status");
   });
 
   it("uses known metadata during reconnect filtering", async () => {

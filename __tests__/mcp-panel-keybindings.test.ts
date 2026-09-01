@@ -79,13 +79,13 @@ function createSetupCallbacks(): SetupPanelCallbacks {
   const preview = { path: "/tmp/x", existed: false, changed: true, beforeText: "", afterText: "", diffText: "" };
   return {
     previewImports: () => preview,
-    previewStarterProject: () => preview,
+    previewStarterConfig: () => preview,
     previewRepoPrompt: () => null,
     previewKnownServer: () => preview,
     adoptImports: async () => ({ added: [], path: "/tmp/x" }),
-    scaffoldProjectConfig: vi.fn(async () => ({ path: "/tmp/x" })),
-    addRepoPrompt: async () => ({ path: "/tmp/x", serverName: "repoprompt" }),
-    addKnownServer: async (preset) => ({ path: "/tmp/x", serverName: preset.name }),
+    scaffoldConfig: vi.fn(async () => ({ path: "/tmp/x" })),
+    addRepoPrompt: vi.fn(async () => ({ path: "/tmp/x", serverName: "repoprompt" })),
+    addKnownServer: vi.fn(async (preset) => ({ path: "/tmp/x", serverName: preset.name })),
     openPath: async () => {},
     markSetupCompleted: () => {},
   };
@@ -258,12 +258,41 @@ describe("mcp-setup-panel custom keybindings", () => {
       () => {},
     );
 
-    // Actions for this discovery: view-example, scaffold-project, show-precedence, close.
+    // Select global target, then scaffold the selected normal config path.
     panel.handleInput(CTRL_N);
+    panel.handleInput(ENTER);
+    panel.handleInput(CTRL_N);
+    panel.handleInput(CTRL_N);
+    await Promise.resolve();
+    await Promise.resolve();
     panel.handleInput(ENTER);
     await Promise.resolve();
     await Promise.resolve();
-    expect(callbacks.scaffoldProjectConfig).toHaveBeenCalledTimes(1);
+    expect(callbacks.scaffoldConfig).toHaveBeenCalledWith("global");
+    panel.dispose();
+  });
+
+  it("adds known servers to the selected shared config target", async () => {
+    const callbacks = createSetupCallbacks();
+    const panel = createMcpSetupPanel(
+      createEmptyDiscovery(),
+      callbacks,
+      {
+        mode: "setup",
+        onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
+      },
+      { requestRender: () => {} },
+      () => {},
+    );
+
+    panel.handleInput(DOWN);
+    panel.handleInput(ENTER);
+    for (let i = 0; i < 4; i += 1) panel.handleInput(DOWN);
+    panel.handleInput(ENTER);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(callbacks.addKnownServer).toHaveBeenCalledWith(expect.objectContaining({ id: "deepwiki" }), "global");
     panel.dispose();
   });
 
@@ -279,7 +308,7 @@ describe("mcp-setup-panel custom keybindings", () => {
       () => {},
     );
 
-    // Actions for this discovery: view-example, scaffold-project, show-precedence, known presets, close.
+    // Actions include target selection, scaffold-selected, known presets, close.
     panel.handleInput(DOWN);
     panel.handleInput(DOWN);
     panel.handleInput(DOWN);
@@ -288,7 +317,7 @@ describe("mcp-setup-panel custom keybindings", () => {
 
     expect(Math.max(...lines.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(37);
     expect(output).toContain("DeepWiki");
-    expect(output).toContain("write preview");
+    expect(output).toContain("starter write");
     expect(output).toContain("Enter select");
     panel.dispose();
   });
@@ -305,11 +334,17 @@ describe("mcp-setup-panel custom keybindings", () => {
       () => {},
     );
 
-    // Actions for this discovery: view-example, scaffold-project, show-precedence, close.
+    // Actions include target selection, view-example, scaffold-selected, show-precedence, close.
+    panel.handleInput(DOWN);
+    panel.handleInput(DOWN);
     panel.handleInput(DOWN);
     panel.handleInput(DOWN);
     const output = panel.render(100).join("\n");
 
+    expect(output).toContain("Recommended shared config:");
+    expect(output).toContain("project/team: .mcp.json");
+    expect(output).toContain("all projects: ~/.config/mcp/mcp.json");
+    expect(output).toContain("Advanced compatibility and Pi-owned layers:");
     expect(output).toContain("Read order (later entries win):");
     expect(output).toContain("0. detected host configs (opt-in lowest-precedence fallback)");
     expect(output).toContain("2. ~/.agents/mcp.json");
@@ -336,6 +371,8 @@ describe("mcp-setup-panel custom keybindings", () => {
         () => {},
       );
 
+      panel.handleInput(DOWN);
+      panel.handleInput(DOWN);
       panel.handleInput(DOWN);
       panel.handleInput(DOWN);
       const output = panel.render(100).join("\n");

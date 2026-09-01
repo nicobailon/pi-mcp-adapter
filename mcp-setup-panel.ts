@@ -2,7 +2,7 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tu
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import type { ImportKind } from "./types.ts";
 import { getConfigDirName } from "./agent-dir.ts";
-import { KNOWN_SERVER_PRESETS, type ConfigWritePreview, type KnownServerPreset, type McpDiscoverySummary } from "./config.ts";
+import { KNOWN_SERVER_PRESETS, type ConfigWritePreview, type KnownServerPreset, type McpDiscoverySummary, type SharedConfigTarget } from "./config.ts";
 import type { McpOnboardingState } from "./onboarding-state.ts";
 
 interface SetupTheme {
@@ -54,13 +54,13 @@ function wrapText(text: string, width: number): string[] {
 
 export interface SetupPanelCallbacks {
   previewImports: (imports: ImportKind[]) => ConfigWritePreview;
-  previewStarterProject: () => ConfigWritePreview;
-  previewRepoPrompt: () => ConfigWritePreview | null;
-  previewKnownServer: (preset: KnownServerPreset) => ConfigWritePreview;
+  previewStarterConfig: (target: SharedConfigTarget) => ConfigWritePreview;
+  previewRepoPrompt: (target: SharedConfigTarget) => ConfigWritePreview | null;
+  previewKnownServer: (preset: KnownServerPreset, target: SharedConfigTarget) => ConfigWritePreview;
   adoptImports: (imports: ImportKind[]) => Promise<{ added: ImportKind[]; path: string }>;
-  scaffoldProjectConfig: () => Promise<{ path: string }>;
-  addRepoPrompt: () => Promise<{ path: string; serverName: string }>;
-  addKnownServer: (preset: KnownServerPreset) => Promise<{ path: string; serverName: string }>;
+  scaffoldConfig: (target: SharedConfigTarget) => Promise<{ path: string }>;
+  addRepoPrompt: (target: SharedConfigTarget) => Promise<{ path: string; serverName: string }>;
+  addKnownServer: (preset: KnownServerPreset, target: SharedConfigTarget) => Promise<{ path: string; serverName: string }>;
   openPath: (path: string) => Promise<void>;
   markSetupCompleted: () => void;
 }
@@ -75,13 +75,14 @@ type Screen = "empty" | "setup" | "imports" | "paths";
 
 type ActionId =
   | "run-setup"
+  | "select-shared-target"
   | "adopt-imports"
   | "view-example"
   | "show-precedence"
   | "open-paths"
   | "add-repoprompt"
   | "add-known-server"
-  | "scaffold-project"
+  | "scaffold-shared-config"
   | "close";
 
 interface Action {
@@ -89,6 +90,7 @@ interface Action {
   label: string;
   description: string;
   preset?: KnownServerPreset;
+  target?: SharedConfigTarget;
 }
 
 export class McpSetupPanel {
@@ -96,6 +98,7 @@ export class McpSetupPanel {
   private actionCursor = 0;
   private importCursor = 0;
   private pathCursor = 0;
+  private sharedConfigTarget: SharedConfigTarget = "project";
   private selectedImports = new Set<ImportKind>();
   private busy = false;
   private notice: { text: string; tone: "success" | "warning" | "muted" } | null = null;
@@ -144,9 +147,13 @@ export class McpSetupPanel {
     if (this.discovery.imports.length > 0) {
       actions.push({ id: "adopt-imports", label: "Adopt detected compatibility imports", description: `Choose which host-specific MCP configs Pi should import into its own override file. ${this.discovery.imports.length} source${this.discovery.imports.length === 1 ? "" : "s"} found.` });
     }
-    actions.push({ id: "view-example", label: "View example `.mcp.json`", description: "Preview a working shared MCP config you can paste or adapt." });
-    if (!this.discovery.sources.some((source) => source.id === "shared-project" && source.exists)) {
-      actions.push({ id: "scaffold-project", label: "Scaffold project `.mcp.json`", description: "Write a minimal project config using the standard shared MCP file path, then reload Pi." });
+    actions.push(
+      { id: "select-shared-target", label: `${this.sharedConfigTarget === "project" ? "●" : "○"} Add to this project (.mcp.json)`, description: "Write new shared MCP servers to the project/team config.", target: "project" },
+      { id: "select-shared-target", label: `${this.sharedConfigTarget === "global" ? "●" : "○"} Add globally (~/.config/mcp/mcp.json)`, description: "Write new shared MCP servers to your all-projects config.", target: "global" },
+    );
+    actions.push({ id: "view-example", label: "View example shared config", description: "Preview a working shared MCP config you can paste or adapt." });
+    if (!this.selectedSharedConfigExists()) {
+      actions.push({ id: "scaffold-shared-config", label: `Scaffold ${this.sharedTargetLabel()}`, description: "Write a minimal config at the selected normal MCP setup path, then reload Pi." });
     }
     actions.push({ id: "show-precedence", label: "Explain config precedence", description: "Show the read order and where Pi writes compatibility settings." });
     if (this.getDetectedPaths().length > 0) {
@@ -156,7 +163,7 @@ export class McpSetupPanel {
       actions.push({ id: "add-known-server", label: preset.name, description: preset.summary, preset });
     }
     if (!this.discovery.repoPrompt.configured && this.discovery.repoPrompt.executablePath && this.discovery.repoPrompt.targetPath && this.discovery.repoPrompt.entry && this.discovery.repoPrompt.serverName) {
-      actions.push({ id: "add-repoprompt", label: "Add RepoPrompt to shared MCP config", description: "Write a standard MCP entry for RepoPrompt to the recommended shared target, then reload MCP in-session." });
+      actions.push({ id: "add-repoprompt", label: "Add RepoPrompt to selected shared config", description: "Write a standard MCP entry for RepoPrompt to the selected normal setup path, then reload MCP in-session." });
     }
     actions.push({ id: "close", label: "Close", description: "Exit the onboarding flow." });
     return actions;
@@ -168,6 +175,15 @@ export class McpSetupPanel {
       ...this.discovery.imports.map((entry) => entry.path),
     ];
     return [...new Set(paths)];
+  }
+
+  private sharedTargetLabel(): string {
+    return this.sharedConfigTarget === "project" ? "project .mcp.json" : "global ~/.config/mcp/mcp.json";
+  }
+
+  private selectedSharedConfigExists(): boolean {
+    const sourceId = this.sharedConfigTarget === "project" ? "shared-project" : "shared-global";
+    return this.discovery.sources.some((source) => source.id === sourceId && source.exists);
   }
 
   private getSelectedAction(): Action | undefined {
@@ -293,9 +309,15 @@ export class McpSetupPanel {
       this.tui.requestRender();
       return;
     }
-    if (action.id === "scaffold-project") {
+    if (action.id === "select-shared-target" && action.target) {
+      this.sharedConfigTarget = action.target;
+      this.notice = { text: `New shared servers will be written to ${this.sharedTargetLabel()}.`, tone: "muted" };
+      this.tui.requestRender();
+      return;
+    }
+    if (action.id === "scaffold-shared-config") {
       await this.runBusy(async () => {
-        const result = await this.callbacks.scaffoldProjectConfig();
+        const result = await this.callbacks.scaffoldConfig(this.sharedConfigTarget);
         this.callbacks.markSetupCompleted();
         this.notice = { text: `Wrote starter config to ${result.path}. Pi will reload after this panel closes.`, tone: "success" };
       });
@@ -303,7 +325,7 @@ export class McpSetupPanel {
     }
     if (action.id === "add-repoprompt") {
       await this.runBusy(async () => {
-        const result = await this.callbacks.addRepoPrompt();
+        const result = await this.callbacks.addRepoPrompt(this.sharedConfigTarget);
         this.callbacks.markSetupCompleted();
         this.notice = { text: `Added ${result.serverName} to ${result.path}. Pi will reload after this panel closes.`, tone: "success" };
       });
@@ -312,7 +334,7 @@ export class McpSetupPanel {
     if (action.id === "add-known-server" && action.preset) {
       const preset = action.preset;
       await this.runBusy(async () => {
-        const result = await this.callbacks.addKnownServer(preset);
+        const result = await this.callbacks.addKnownServer(preset, this.sharedConfigTarget);
         this.callbacks.markSetupCompleted();
         this.notice = { text: `Added ${result.serverName} to ${result.path}. Pi will reload after this panel closes.`, tone: "success" };
       });
@@ -416,8 +438,11 @@ export class McpSetupPanel {
     for (let index = start; index < end; index++) {
       const action = actions[index];
       if (!action) continue;
+      if (action.id === "select-shared-target" && (index === start || actions[index - 1]?.id !== "select-shared-target")) {
+        lines.push(this.padLine(fg(this.t.title, "Choose where new shared servers go"), innerW));
+      }
       if (action.id === "add-known-server" && (index === start || actions[index - 1]?.id !== "add-known-server")) {
-        lines.push(this.padLine(fg(this.t.title, "Add a known server"), innerW));
+        lines.push(this.padLine(fg(this.t.title, `Add a known server to ${this.sharedTargetLabel()}`), innerW));
       }
       const selected = index === this.actionCursor;
       const cursor = selected ? fg(this.t.selected, "›") : " ";
@@ -495,12 +520,12 @@ export class McpSetupPanel {
       ? ` ${this.discovery.conflicts.length} same-name conflict${this.discovery.conflicts.length === 1 ? "" : "s"} reported.`
       : "";
     if (!this.discovery.hasAnyConfig) {
-      return `Create a shared .mcp.json, adopt host imports, or quick-add RepoPrompt from this screen.${hostNote}${conflictNote}`;
+      return `Add shared servers to .mcp.json for this project/team or ~/.config/mcp/mcp.json for all projects. Adopt host imports or quick-add RepoPrompt from this screen.${hostNote}${conflictNote}`;
     }
     if (this.discovery.totalServerCount === 0 && this.discovery.imports.length > 0) {
       return `Detected ${this.discovery.imports.length} compatibility import source${this.discovery.imports.length === 1 ? "" : "s"}. Adopt them into Pi or inspect the underlying files.${hostNote}${conflictNote}`;
     }
-    return `Shared MCP files are preferred. Pi-owned files are only for compatibility imports and adapter-specific overrides.${hostNote}${conflictNote}`;
+    return `Use .mcp.json for project/team servers or ~/.config/mcp/mcp.json for all projects. Pi-owned files are for compatibility imports and adapter-specific overrides, not another normal setup path.${hostNote}${conflictNote}`;
   }
 
   private visibleActionRange(total: number): { start: number; end: number } {
@@ -534,6 +559,12 @@ export class McpSetupPanel {
           ],
           previewW,
         );
+      case "select-shared-target":
+        return this.formatPreview([
+          action.target === "project" ? "Project target: .mcp.json" : "Global target: ~/.config/mcp/mcp.json",
+          "Known server presets and starter configs will be written to the selected normal MCP setup path.",
+          "Pi-owned mcp.json files remain compatibility and adapter-only override state.",
+        ], previewW);
       case "view-example":
         return this.formatPreview([
           "Example shared `.mcp.json`:",
@@ -546,10 +577,17 @@ export class McpSetupPanel {
           "  }",
           "}",
           "",
-          "Use Scaffold project `.mcp.json` when you want a safe empty shell instead of a live example server.",
+          "Use Scaffold selected config when you want a safe empty shell instead of a live example server.",
         ], previewW);
       case "show-precedence":
         return this.formatPreview([
+          "Recommended shared config:",
+          "  project/team: .mcp.json",
+          "  all projects: ~/.config/mcp/mcp.json",
+          "",
+          "Advanced compatibility and Pi-owned layers:",
+          "  host imports, .agents files, package MCP manifests, and Pi overrides",
+          "",
           "Read order (later entries win):",
           "0. detected host configs (opt-in lowest-precedence fallback)",
           "1. ~/.config/mcp/mcp.json",
@@ -570,7 +608,7 @@ export class McpSetupPanel {
           : ["No config paths were detected."], previewW);
       case "add-repoprompt": {
         const repoPrompt = this.discovery.repoPrompt;
-        const preview = this.callbacks.previewRepoPrompt();
+        const preview = this.callbacks.previewRepoPrompt(this.sharedConfigTarget);
         if (!preview) {
           return this.formatPreview(["RepoPrompt is not available to add from this setup screen."], previewW);
         }
@@ -579,7 +617,7 @@ export class McpSetupPanel {
           preview,
           [
             `Executable: ${repoPrompt.executablePath ?? "not found"}`,
-            `Target: ${repoPrompt.targetPath ?? "n/a"}`,
+            `Target: ${this.sharedTargetLabel()}`,
             `Server name: ${repoPrompt.serverName ?? "repoprompt"}`,
           ],
           previewW,
@@ -590,17 +628,17 @@ export class McpSetupPanel {
         if (!preset) return this.formatPreview(["Known server preset is unavailable."], previewW);
         return this.formatWritePreview(
           `${preset.name} write preview`,
-          this.callbacks.previewKnownServer(preset),
-          [preset.summary],
+          this.callbacks.previewKnownServer(preset, this.sharedConfigTarget),
+          [preset.summary, `Target: ${this.sharedTargetLabel()}`],
           previewW,
         );
       }
-      case "scaffold-project":
+      case "scaffold-shared-config":
         return this.formatWritePreview(
-          "Starter project `.mcp.json` write preview",
-          this.callbacks.previewStarterProject(),
+          `${this.sharedTargetLabel()} starter write preview`,
+          this.callbacks.previewStarterConfig(this.sharedConfigTarget),
           [
-            "This writes a minimal `.mcp.json` in the current project using the shared MCP layout.",
+            "This writes a minimal config at the selected normal MCP setup path.",
             "It intentionally avoids adding a fake placeholder server that would fail on first reload.",
           ],
           previewW,

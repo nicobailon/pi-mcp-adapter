@@ -175,6 +175,8 @@ export interface ConfigWritePreview {
   diffText: string;
 }
 
+export type SharedConfigTarget = "project" | "global";
+
 export function getPiGlobalConfigPath(overridePath?: string): string {
   return overridePath ? resolve(overridePath) : getAgentPath("mcp.json");
 }
@@ -189,6 +191,10 @@ export function getProjectConfigPath(cwd = process.cwd()): string {
 
 export function getProjectPiConfigPath(cwd = process.cwd()): string {
   return resolve(cwd, getConfigDirName(), PROJECT_PI_CONFIG_NAME);
+}
+
+export function getSharedConfigPath(target: SharedConfigTarget, cwd = process.cwd()): string {
+  return target === "project" ? getProjectConfigPath(cwd) : getGenericGlobalConfigPath();
 }
 
 export function getConfigDiscoveryPaths(overridePath?: string, cwd = process.cwd()): ConfigDiscoveryPath[] {
@@ -1159,17 +1165,25 @@ export function buildStarterProjectConfig(): McpConfig {
   };
 }
 
-export function previewStarterProjectConfig(cwd = process.cwd()): ConfigWritePreview {
-  const targetPath = getProjectConfigPath(cwd);
+export function previewStarterSharedConfig(target: SharedConfigTarget, cwd = process.cwd()): ConfigWritePreview {
+  const targetPath = getSharedConfigPath(target, cwd);
   const nextRaw = { mcpServers: buildStarterProjectConfig().mcpServers };
   return buildConfigWritePreview(targetPath, nextRaw);
 }
 
-export function writeStarterProjectConfig(cwd = process.cwd()): string {
-  const targetPath = getProjectConfigPath(cwd);
+export function writeStarterSharedConfig(target: SharedConfigTarget, cwd = process.cwd()): string {
+  const targetPath = getSharedConfigPath(target, cwd);
   const raw = { mcpServers: buildStarterProjectConfig().mcpServers };
   writeRawConfigObject(targetPath, raw);
   return targetPath;
+}
+
+export function previewStarterProjectConfig(cwd = process.cwd()): ConfigWritePreview {
+  return previewStarterSharedConfig("project", cwd);
+}
+
+export function writeStarterProjectConfig(cwd = process.cwd()): string {
+  return writeStarterSharedConfig("project", cwd);
 }
 
 export function previewSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): ConfigWritePreview {

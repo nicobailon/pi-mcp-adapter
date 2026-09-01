@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `/mcp setup` now lets users choose project `.mcp.json` or global `~/.config/mcp/mcp.json` as the write target for new shared MCP servers, while identifying Pi-owned files and compatibility inputs as advanced layers. The bundled `mcp-scripting` skill is manual-only by default. Thanks to [@w-winter](https://github.com/w-winter) for #477.
+
 ### Fixed
 - Hardened MCP 2026 multi-round input flows across proxy, direct, resource, and UI-resource calls, with actionable no-UI errors and cancellation cleanup.
 - Hardened MCP 2026-07-28 catalog listens with visible drop/recovery state, bounded re-listen on activity, resource update signals for open UIs, and quiet metadata/cache refreshes. (#468)

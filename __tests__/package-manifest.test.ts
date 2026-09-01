@@ -22,6 +22,11 @@ const hostPeerPackages = {
 };
 
 describe("package.json files", () => {
+  it("keeps the bundled MCP scripting skill available for manual use only", () => {
+    const skill = readFileSync(join(repoRoot, "skills", "mcp-scripting", "SKILL.md"), "utf-8");
+    expect(skill).toMatch(/^disable-model-invocation:\s*true\s*$/m);
+  });
+
   it("exports source entry points and plain Node host helpers", () => {
     expect(packageJson.types).toBe("./index.ts");
     expect(packageJson.exports).toMatchObject({
