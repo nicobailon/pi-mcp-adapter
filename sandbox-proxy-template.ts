@@ -1,5 +1,3 @@
-import type { UiResourceCsp, UiResourcePermissions } from "./types.ts";
-
 /**
  * The proxy is served from a different loopback origin than the trusted host.
  * `allow-same-origin` is safe here because this document never contains the
@@ -217,9 +215,3 @@ function safeInlineJSON(value: unknown): string {
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
 }
-
-// Keep the metadata shape visible to type-aware consumers of this helper.
-export type SandboxProxyResourceMetadata = {
-  csp?: UiResourceCsp;
-  permissions?: UiResourcePermissions;
-};
