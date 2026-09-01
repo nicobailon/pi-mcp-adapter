@@ -488,7 +488,7 @@ class McpPanel {
 
     if (matchesKey(data, "ctrl+d")) {
       const item = this.visibleItems[this.cursorIndex];
-      if (!item || this.authOnly) return;
+      if (!item || item.type !== "server" || this.authOnly) return;
       const server = this.servers[item.serverIndex];
       if (!server) return;
       server.disabled = !server.disabled;

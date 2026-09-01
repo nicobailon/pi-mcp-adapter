@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createMcpPanel } from "../mcp-panel.ts";
+import { computeServerHash, type MetadataCache } from "../metadata-cache.ts";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult } from "../types.ts";
 
 function stripAnsi(input: string): string {
@@ -22,9 +23,10 @@ const CTRL_S = "\x13";
 function openPanel(
   config: McpConfig,
   callbacks: McpPanelCallbacks = createCallbacks(),
+  cache: MetadataCache | null = null,
 ): { panel: ReturnType<typeof createMcpPanel>; results: McpPanelResult[] } {
   const results: McpPanelResult[] = [];
-  const panel = createMcpPanel(config, null, new Map(), callbacks, { requestRender: () => {} }, (r) => {
+  const panel = createMcpPanel(config, cache, new Map(), callbacks, { requestRender: () => {} }, (r) => {
     results.push(r);
   });
   return { panel, results };
@@ -81,6 +83,33 @@ describe("mcp-panel server disable toggle", () => {
     expect(results[0]?.cancelled).toBe(false);
     expect(results[0]?.disabledChanges.get("alpha")).toBe(true);
     expect(results[0]?.changes.size).toBe(0);
+    panel.dispose();
+  });
+
+  it("ctrl+d on a tool row does not toggle the server", () => {
+    const config: McpConfig = {
+      mcpServers: {
+        alpha: { command: "npx", args: ["-y", "alpha-mcp"] },
+      },
+    };
+    const cache = {
+      version: 1,
+      servers: {
+        alpha: {
+          configHash: computeServerHash(config.mcpServers.alpha),
+          cachedAt: Date.now(),
+          tools: [{ name: "do_thing", description: "Does a thing" }],
+          resources: [],
+        },
+      },
+    };
+    const { panel, results } = openPanel(config, undefined, cache as MetadataCache);
+    panel.handleInput("\r");
+    panel.handleInput("\x1b[B"); // down
+    panel.handleInput(CTRL_D);
+    panel.handleInput("\x13"); // ctrl+s
+
+    expect(results[0]?.disabledChanges.size).toBe(0);
     panel.dispose();
   });
 
