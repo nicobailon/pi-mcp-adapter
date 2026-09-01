@@ -246,6 +246,51 @@ describe("UiServer", () => {
         body: { token: handle.sessionToken, params: {} },
       })).status).toBe(404);
     });
+
+    it("does not resolve a handle after completion races sandbox proxy startup", async () => {
+      const tempServer = http.createServer();
+      await new Promise<void>((resolve) => tempServer.listen(0, "127.0.0.1", resolve));
+      const freePort = (tempServer.address() as { port: number }).port;
+      await new Promise<void>((resolve, reject) => tempServer.close((error) => error ? reject(error) : resolve()));
+
+      const realCreateServer = http.createServer.bind(http);
+      const createServerSpy = vi.spyOn(http, "createServer");
+      let createdServers = 0;
+      let finishProxyListen: (() => void) | undefined;
+      createServerSpy.mockImplementation(((...args: Parameters<typeof http.createServer>) => {
+        const created = realCreateServer(...args);
+        createdServers += 1;
+        if (createdServers === 2) {
+          const realListen = created.listen.bind(created);
+          vi.spyOn(created, "listen").mockImplementation(((...listenArgs: unknown[]) => {
+            const callback = typeof listenArgs.at(-1) === "function" ? listenArgs.pop() as () => void : undefined;
+            finishProxyListen = () => callback?.();
+            return realListen(...listenArgs as [number, string]);
+          }) as http.Server["listen"]);
+        }
+        return created;
+      }) as typeof http.createServer);
+
+      try {
+        const startup = startUiServer(createServerOptions({
+          port: freePort,
+          sessionToken: "startup-race-token",
+        }));
+
+        await vi.waitFor(() => expect(finishProxyListen).toBeTypeOf("function"));
+        const complete = await request(`http://localhost:${freePort}/proxy/ui/complete`, {
+          method: "POST",
+          body: { token: "startup-race-token", params: { reason: "done" } },
+        });
+
+        expect(complete.status).toBe(200);
+        finishProxyListen?.();
+        await expect(startup).rejects.toThrow("UI session completed before sandbox proxy was ready");
+      } finally {
+        createServerSpy.mockRestore();
+        handle = null;
+      }
+    });
   });
 
   describe("GET /", () => {

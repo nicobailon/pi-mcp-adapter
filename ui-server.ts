@@ -806,6 +806,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
 
       const parentOrigin = `http://localhost:${address.port}`;
       void startSandboxProxy(parentOrigin).then((proxyPort) => {
+        if (completed || listenersClosed) {
+          closeListeners();
+          reject(new ServerError("UI session completed before sandbox proxy was ready"));
+          return;
+        }
         sandboxProxyUrl = `http://localhost:${proxyPort}${SANDBOX_PROXY_PATH}`;
         log.debug("Servers started", { port: address.port, proxyPort });
         rememberMoshiDiscoveryPort(address.port);
