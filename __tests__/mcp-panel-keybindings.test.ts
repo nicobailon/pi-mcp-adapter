@@ -217,7 +217,7 @@ describe("mcp-panel custom keybindings", () => {
     panel.handleInput(CTRL_S);
     expect(done).not.toHaveBeenCalled();
     panel.handleInput(CTRL_P);
-    expect(done).toHaveBeenCalledWith({ changes: new Map(), cancelled: false });
+    expect(done).toHaveBeenCalledWith({ changes: new Map(), disabledChanges: new Map(), cancelled: false });
     panel.dispose();
   });
 

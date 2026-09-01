@@ -720,6 +720,8 @@ export interface McpPanelCallbacks {
 
 export interface McpPanelResult {
   changes: Map<string, true | string[] | false>;
+  /** Servers whose disabled flag changed during the panel session (name → new disabled state). */
+  disabledChanges: Map<string, boolean>;
   cancelled: boolean;
 }
 

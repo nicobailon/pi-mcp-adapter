@@ -14,6 +14,7 @@ import {
   previewSharedServerEntry,
   previewStarterSharedConfig,
   writeDirectToolsConfig,
+  writeProjectServerDisabledOverride,
   writeSharedServerEntry,
   writeStarterSharedConfig,
 } from "./config.ts";
@@ -672,6 +673,18 @@ export async function openMcpPanel(
       (tui, _theme, keybindings, done) => {
         return createMcpPanel(config, cache, provenanceMap, callbacks, tui, (result: McpPanelResult) => {
           void (async () => {
+            if (!result.cancelled && result.disabledChanges.size > 0) {
+              for (const [serverName, disabled] of result.disabledChanges) {
+                try {
+                  const override = writeProjectServerDisabledOverride(configPath, ctx.cwd, serverName, disabled);
+                  if (override.changed) {
+                    configChanged = true;
+                  }
+                } catch (error) {
+                  ctx.ui.notify(`Failed to ${disabled ? "disable" : "enable"} server "${serverName}": ${error instanceof Error ? error.message : String(error)}`, "error");
+                }
+              }
+            }
             if (!result.cancelled && result.changes.size > 0) {
               writeDirectToolsConfig(result.changes, provenanceMap, config);
               await onDirectToolsConfigChanged?.(result.changes);
