@@ -7,7 +7,7 @@ import type { TSchema } from "typebox";
 import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, authenticateServer, logoutServer, manageBearerToken, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
 import { cloneMcpConfig, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tools.ts";
-import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
+import { flushMetadataCache, initializeMcp, updateServerMetadata, updateStatusBar } from "./init.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
@@ -22,9 +22,30 @@ import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { runMcpScript } from "./mcp-code.ts";
 import { cleanupMaterializedBinaryResources } from "./tool-registrar.ts";
 import { syncNamespaceProxyTools } from "./namespace-tools.ts";
+import {
+  applyConfidentialToolFilters,
+  createConfidentialCallExecutor,
+  getConfidentialWorkflowSpec,
+  MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD,
+  MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD_TOOLS,
+  McpConfidentialError,
+  type McpConfidentialWorkflow,
+  type McpConfidentialWorkflowName,
+  type McpConfidentialWorkflowRegistrationResult,
+} from "./confidential-workflow.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
 export type { ServerEntry } from "./types.ts";
+export {
+  MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD,
+  MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD_TOOLS,
+  McpConfidentialError,
+  type McpConfidentialCallResult,
+  type McpConfidentialWorkflow,
+  type McpConfidentialWorkflowName,
+  type McpConfidentialWorkflowRegistrationResult,
+  type McpConfidentialErrorCode,
+} from "./confidential-workflow.ts";
 export {
   namespaceProxyName,
   parseMcpReference,
@@ -55,6 +76,16 @@ export interface McpServerRegistration {
 
 export const MCP_RUNTIME_REGISTER_EVENT = "pi-mcp-adapter:runtime-register:v1" as const;
 export const MCP_RUNTIME_REGISTER_VERSION = 1 as const;
+
+/** Versioned in-process bridge for the fixed trusted workflow allowlist. */
+export const MCP_CONFIDENTIAL_WORKFLOW_EVENT = "pi-mcp-adapter:confidential-workflow:v1" as const;
+export const MCP_CONFIDENTIAL_WORKFLOW_VERSION = 1 as const;
+
+export interface McpConfidentialWorkflowRequest {
+  version: typeof MCP_CONFIDENTIAL_WORKFLOW_VERSION;
+  workflow: string;
+  result?: McpConfidentialWorkflowRegistrationResult;
+}
 
 export const MCP_RUNTIME_SNAPSHOT_EVENT = "pi-mcp-adapter:runtime-snapshot:v1" as const;
 export const MCP_RUNTIME_SNAPSHOT_VERSION = 1 as const;
@@ -90,6 +121,7 @@ export interface McpRuntimeSnapshotRequest {
 // Fast path for callers that share the adapter's module and ExtensionAPI.
 const runtimeRegistrars = new WeakMap<ExtensionAPI, (name: string, definition: ServerEntry) => McpServerRegistration>();
 const runtimeSnapshotters = new WeakMap<ExtensionAPI, (name: string) => McpRuntimeServerSnapshot>();
+const confidentialWorkflowRegistrars = new WeakMap<ExtensionAPI, (workflow: string) => McpConfidentialWorkflow>();
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -236,6 +268,158 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
 
+  type ConfidentialRegistration = {
+    id: string;
+    workflow: McpConfidentialWorkflowName;
+    serverName: string;
+    tools: ReadonlySet<string>;
+  };
+  const confidentialRegistrations = new Map<string, ConfidentialRegistration>();
+  const confidentialTools = new Map<string, Set<string>>();
+  const confidentialManagedConfigs = new Map<McpConfig, Map<string, Set<string>>>();
+  let nextConfidentialWorkflowId = 1;
+
+  const baseConfidentialToolExclusions: Record<string, string[]> = {
+    "eproduct-catalog": [...MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD_TOOLS],
+  };
+
+  function confidentialToolsSnapshot(): Record<string, string[]> {
+    const snapshot = Object.fromEntries(
+      Object.entries(baseConfidentialToolExclusions).map(([serverName, tools]) => [serverName, [...tools]]),
+    ) as Record<string, string[]>;
+    for (const [serverName, tools] of confidentialTools) {
+      const merged = new Set(snapshot[serverName] ?? []);
+      for (const toolName of tools) merged.add(toolName);
+      snapshot[serverName] = [...merged];
+    }
+    return snapshot;
+  }
+
+  function addConfidentialFilters(config: McpConfig): void {
+    let additionsByServer = confidentialManagedConfigs.get(config);
+    if (!additionsByServer) {
+      additionsByServer = new Map();
+      confidentialManagedConfigs.set(config, additionsByServer);
+    }
+    for (const [serverName, tools] of confidentialTools) {
+      const definition = config.mcpServers[serverName];
+      if (!definition) continue;
+      const excluded = new Set(definition.excludeTools ?? []);
+      const additions = additionsByServer.get(serverName) ?? new Set<string>();
+      for (const toolName of tools) {
+        if (!excluded.has(toolName)) {
+          excluded.add(toolName);
+          additions.add(toolName);
+        }
+      }
+      additionsByServer.set(serverName, additions);
+      config.mcpServers[serverName] = {
+        ...definition,
+        excludeTools: [...excluded],
+      };
+    }
+  }
+
+  function removeConfidentialFilters(): void {
+    for (const [config, additionsByServer] of confidentialManagedConfigs) {
+      for (const [serverName, additions] of additionsByServer) {
+        if (confidentialTools.has(serverName)) continue;
+        const definition = config.mcpServers[serverName];
+        if (!definition) continue;
+        const excluded = new Set(definition.excludeTools ?? []);
+        for (const toolName of additions) excluded.delete(toolName);
+        config.mcpServers[serverName] = excluded.size > 0
+          ? { ...definition, excludeTools: [...excluded] }
+          : (() => {
+              const { excludeTools: _excludeTools, ...withoutExcludes } = definition;
+              return withoutExcludes;
+            })();
+        additionsByServer.delete(serverName);
+      }
+    }
+  }
+
+  function hideConfidentialMetadata(serverName: string): void {
+    if (!state) return;
+    const hidden = new Set(confidentialToolsSnapshot()[serverName] ?? []);
+    const metadata = state.toolMetadata.get(serverName);
+    if (hidden.size === 0 || !metadata) return;
+    state.toolMetadata.set(
+      serverName,
+      metadata.filter((tool) => !hidden.has(tool.originalName) && !hidden.has(tool.name)),
+    );
+  }
+
+  function refreshConfidentialSurface(serverName: string): void {
+    if (!state) return;
+    const connection = state.manager.getConnection(serverName);
+    if (connection?.status === "connected") updateServerMetadata(state, serverName);
+    hideConfidentialMetadata(serverName);
+    syncToolSurface();
+    updateStatusBar(state);
+  }
+
+  function applyConfidentialWorkflowRegistration(workflowName: string): McpConfidentialWorkflow {
+    const spec = getConfidentialWorkflowSpec(workflowName);
+    const registeredName = workflowName as McpConfidentialWorkflowName;
+    if (!spec) throw new McpConfidentialError("invalid_request");
+    const effectiveConfig = state?.config ?? earlyConfig;
+    if (!Object.hasOwn(effectiveConfig.mcpServers, spec.serverName) || !effectiveConfig.mcpServers[spec.serverName]) {
+      throw new McpConfidentialError("server_not_found");
+    }
+
+    const id = `confidential-${nextConfidentialWorkflowId++}`;
+    const registration: ConfidentialRegistration = {
+      id,
+      workflow: registeredName,
+      serverName: spec.serverName,
+      tools: new Set(spec.tools),
+    };
+    confidentialRegistrations.set(id, registration);
+    const hidden = confidentialTools.get(spec.serverName) ?? new Set<string>();
+    for (const toolName of spec.tools) hidden.add(toolName);
+    confidentialTools.set(spec.serverName, hidden);
+    addConfidentialFilters(earlyConfig);
+    if (sessionConfig) addConfidentialFilters(sessionConfig);
+    if (state) {
+      addConfidentialFilters(state.config);
+      refreshConfidentialSurface(spec.serverName);
+    }
+
+    const executor = createConfidentialCallExecutor(
+      () => state,
+      (candidateServer, toolName) => confidentialTools.get(candidateServer)?.has(toolName) === true
+        && confidentialRegistrations.has(id)
+        && confidentialRegistrations.get(id)?.tools.has(toolName) === true,
+    );
+    let disposed = false;
+    return {
+      name: registeredName,
+      serverName: spec.serverName,
+      call: async (toolName, args, signal) => {
+        if (disposed) throw new McpConfidentialError("workflow_not_registered");
+        if (typeof toolName !== "string" || !registration.tools.has(toolName)) {
+          throw new McpConfidentialError("tool_not_registered");
+        }
+        return executor.callTool(spec.serverName, toolName, args, signal);
+      },
+      dispose: async () => {
+        if (disposed) return;
+        disposed = true;
+        confidentialRegistrations.delete(id);
+        const remaining = new Set<string>();
+        for (const active of confidentialRegistrations.values()) {
+          if (active.serverName !== spec.serverName) continue;
+          for (const toolName of active.tools) remaining.add(toolName);
+        }
+        if (remaining.size > 0) confidentialTools.set(spec.serverName, remaining);
+        else confidentialTools.delete(spec.serverName);
+        removeConfidentialFilters();
+        refreshConfidentialSurface(spec.serverName);
+      },
+    };
+  }
+
   // Mirrors init's per-server lifecycle registration so runtime servers get
   // idle cleanup and keep-alive health recovery like configured servers.
   function attachRuntimeServerLifecycle(targetState: McpExtensionState, name: string, definition: ServerEntry): void {
@@ -378,6 +562,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function syncToolSurface(ctx?: ExtensionContext): void {
     const config = state?.config ?? earlyConfig;
+    applyConfidentialToolFilters(config, confidentialToolsSnapshot());
     const cache = loadMetadataCache();
     const result = syncDirectTools(config, cache);
     syncProxyTool(config, cache, result.specs);
@@ -503,6 +688,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   };
   runtimeRegistrars.set(pi, registerRuntimeServer);
   runtimeSnapshotters.set(pi, getRuntimeServerSnapshot);
+  confidentialWorkflowRegistrars.set(pi, applyConfidentialWorkflowRegistration);
   pi.events.on(MCP_RUNTIME_REGISTER_EVENT, (rawRequest: unknown) => {
     if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
     const request = rawRequest as McpRuntimeRegistrationRequest;
@@ -531,6 +717,28 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       request.result = { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
     }
   });
+  pi.events.on(MCP_CONFIDENTIAL_WORKFLOW_EVENT, (rawRequest: unknown) => {
+    if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
+    const request = rawRequest as McpConfidentialWorkflowRequest;
+    if (request.result !== undefined) return;
+    if (request.version !== MCP_CONFIDENTIAL_WORKFLOW_VERSION || typeof request.workflow !== "string") {
+      request.result = { ok: false, error: new McpConfidentialError("invalid_request") };
+      return;
+    }
+    try {
+      request.result = {
+        ok: true,
+        workflow: applyConfidentialWorkflowRegistration(request.workflow),
+      };
+    } catch (error) {
+      request.result = {
+        ok: false,
+        error: error instanceof McpConfidentialError
+          ? error
+          : new McpConfidentialError("invalid_request"),
+      };
+    }
+  });
 
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
 
@@ -541,6 +749,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function startInitialization(ctx: ExtensionContext, owner: McpRuntimeOwner, oauthRuntime: McpOAuthRuntime, generation: number, staleReason: string): Promise<void> {
     owner.addCleanup(() => cleanupMaterializedBinaryResources(owner.signal));
+    const hiddenTools = confidentialToolsSnapshot();
     const promise = initializeMcp(pi, ctx, owner, {
       ...(programmaticConfig || options.configPath !== undefined
         ? {
@@ -548,6 +757,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             ...(sessionConfig !== undefined ? { config: sessionConfig } : {}),
           }
         : {}),
+      ...(Object.keys(hiddenTools).length > 0 ? { confidentialToolExclusions: hiddenTools } : {}),
       oauthRuntime,
     });
     initPromise = promise;
@@ -563,6 +773,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
 
       state = nextState;
+      // A workflow may register while initialization is already in flight. The
+      // captured startup config can therefore predate the current exclusions;
+      // reapply them before any live metadata reaches a model-facing surface.
+      applyConfidentialToolFilters(nextState.config, confidentialToolsSnapshot());
       clearRetainedInitFailure();
       for (const [name, { entry }] of runtimeServers) {
         if (Object.hasOwn(nextState.config.mcpServers, name)) {
@@ -1222,6 +1436,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   }
 
+  applyConfidentialToolFilters(earlyConfig, baseConfidentialToolExclusions);
+  addConfidentialFilters(earlyConfig);
+  if (sessionConfig) {
+    applyConfidentialToolFilters(sessionConfig, baseConfidentialToolExclusions);
+    addConfidentialFilters(sessionConfig);
+  }
   const initialDirectResult = syncDirectTools(earlyConfig, earlyCache);
   syncProxyTool(earlyConfig, earlyCache, initialDirectResult.specs);
   // Register namespace-proxy tools eagerly so tool-groups/slow-mode can validate
@@ -1264,6 +1484,31 @@ export function registerMcpServer(options: { pi: ExtensionAPI; name: string; def
   }
   if (!request.result.ok) throw request.result.error;
   return request.result.registration;
+}
+
+/**
+ * Register one reviewed trusted workflow from the adapter's fixed allowlist.
+ * The returned handle is the only supported way for that extension to call
+ * the hidden MCP tools; raw results stay in process memory for safe projection.
+ */
+export function registerMcpConfidentialWorkflow(options: {
+  pi: ExtensionAPI;
+  workflow: McpConfidentialWorkflowName;
+}): McpConfidentialWorkflow {
+  const { pi, workflow } = options;
+  const register = confidentialWorkflowRegistrars.get(pi);
+  if (register) return register(workflow);
+  const request: McpConfidentialWorkflowRequest = {
+    version: MCP_CONFIDENTIAL_WORKFLOW_VERSION,
+    workflow,
+  };
+  pi.events.emit(MCP_CONFIDENTIAL_WORKFLOW_EVENT, request);
+  if (!request.result) {
+    throw new McpConfidentialError("workflow_not_registered");
+  }
+  const registrationResult = request.result;
+  if (!registrationResult.ok) throw registrationResult.error;
+  return registrationResult.workflow;
 }
 
 /**

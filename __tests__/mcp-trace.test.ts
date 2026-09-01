@@ -4,6 +4,7 @@ import {
   createMcpTraceEvent,
   isMcpTraceEnabled,
   McpTraceWriter,
+  runWithoutMcpTrace,
   wrapTransportWithMcpTrace,
 } from "../mcp-trace.ts";
 
@@ -136,6 +137,45 @@ describe("MCP protocol tracing", () => {
     underlying.onmessage?.({ jsonrpc: "2.0", method: "notifications/ping", params: {} });
     await wrapped.send({ jsonrpc: "2.0", id: 1, method: "ping", params: {} });
     expect(incoming).toHaveBeenCalledOnce();
+  });
+
+  it("suppresses all protocol events for confidential internal work", async () => {
+    const record = vi.fn();
+    const sent = vi.fn(async () => undefined);
+    const incoming = vi.fn();
+    const underlying = fakeTransport({ send: sent });
+    const wrapped = wrapTransportWithMcpTrace(underlying, "private", "stdio", { record });
+    wrapped.onmessage = incoming;
+
+    await runWithoutMcpTrace(async () => {
+      underlying.onmessage?.({ jsonrpc: "2.0", method: "notifications/ping", params: {} });
+      await wrapped.send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { secret: "never traced" } });
+    });
+
+    expect(incoming).toHaveBeenCalledOnce();
+    expect(sent).toHaveBeenCalledOnce();
+    expect(record).not.toHaveBeenCalled();
+
+    // A real transport may deliver a response from a socket callback after the
+    // AsyncLocalStorage scope has ended; its request id remains suppressed.
+    underlying.onmessage?.({ jsonrpc: "2.0", id: 1, result: { url: "https://private.example/signed" } });
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it("suppresses uncorrelated notifications while confidential work is pending", async () => {
+    const record = vi.fn();
+    const incoming = vi.fn();
+    const underlying = fakeTransport();
+    const wrapped = wrapTransportWithMcpTrace(underlying, "private", "stdio", { record });
+    wrapped.onmessage = incoming;
+    let release!: () => void;
+    const pending = runWithoutMcpTrace(() => new Promise<void>(resolve => { release = resolve; }));
+
+    underlying.onmessage?.({ jsonrpc: "2.0", method: "notifications/message", params: { text: "private" } });
+    expect(incoming).toHaveBeenCalledOnce();
+    expect(record).not.toHaveBeenCalled();
+    release();
+    await pending;
   });
 
   it("keeps transport behavior when onmessage cannot be redefined", async () => {

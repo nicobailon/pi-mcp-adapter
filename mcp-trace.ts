@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -7,6 +8,36 @@ import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/cli
 export const MCP_TRACE_SCHEMA_VERSION = 1;
 export const DEFAULT_MCP_TRACE_MAX_BYTES = 256 * 1024;
 export const DEFAULT_MCP_TRACE_MAX_EVENTS = 10_000;
+
+interface TraceSuppressionContext {
+  readonly suppress: true;
+}
+
+const traceSuppression = new AsyncLocalStorage<TraceSuppressionContext>();
+let activeSuppressedOperations = 0;
+
+/** Run trusted internal work without creating protocol trace events. */
+export function runWithoutMcpTrace<T>(operation: () => T): T {
+  activeSuppressedOperations += 1;
+  let result: T;
+  try {
+    result = traceSuppression.run({ suppress: true }, operation);
+  } catch (error) {
+    activeSuppressedOperations -= 1;
+    throw error;
+  }
+  if (result && typeof (result as { then?: unknown }).then === "function") {
+    return Promise.resolve(result).finally(() => {
+      activeSuppressedOperations -= 1;
+    }) as T;
+  }
+  activeSuppressedOperations -= 1;
+  return result;
+}
+
+function isMcpTraceSuppressed(): boolean {
+  return activeSuppressedOperations > 0 || traceSuppression.getStore()?.suppress === true;
+}
 
 export type McpTraceDirection = "outbound" | "inbound";
 export type McpTraceTransport = "stdio" | "unix-socket" | "sse" | "streamable-http" | "unknown";
@@ -242,6 +273,30 @@ export function wrapTransportWithMcpTrace(
   let messageHandler = transport.onmessage;
   let tracedMessageHandler: Transport["onmessage"];
   const originalSend = transport.send;
+  // AsyncLocalStorage follows the outbound send, but an SDK transport can
+  // deliver notifications or responses from socket callbacks created before
+  // that context. The global operation counter suppresses uncorrelated events
+  // while trusted work is pending; retain only request IDs after it settles so
+  // late responses remain absent without retaining payloads or URLs.
+  const suppressedRequestIds = new Set<string>();
+  const requestIdKey = (message: JSONRPCMessage): string | undefined => {
+    if (!("id" in message)) return undefined;
+    if (typeof message.id === "string") return `s:${message.id}`;
+    if (typeof message.id === "number" && Number.isFinite(message.id)) return `n:${message.id}`;
+    return undefined;
+  };
+  const shouldSuppressMessage = (message: JSONRPCMessage): boolean => {
+    const requestId = requestIdKey(message);
+    if (isMcpTraceSuppressed()) {
+      if (requestId !== undefined && "method" in message) suppressedRequestIds.add(requestId);
+      if (requestId !== undefined && !("method" in message)) suppressedRequestIds.delete(requestId);
+      return true;
+    }
+    if (requestId !== undefined && !("method" in message) && suppressedRequestIds.delete(requestId)) {
+      return true;
+    }
+    return false;
+  };
   const record = (event: McpTraceEvent): void => {
     try {
       observer.record(event);
@@ -261,7 +316,9 @@ export function wrapTransportWithMcpTrace(
         messageHandler = handler;
         tracedMessageHandler = handler
           ? ((message: JSONRPCMessage, extra?: MessageExtraInfo) => {
-              record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
+              if (!shouldSuppressMessage(message)) {
+                record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
+              }
               handler(message, extra);
             })
           : undefined;
@@ -276,18 +333,34 @@ export function wrapTransportWithMcpTrace(
   transport.send = async (message: JSONRPCMessage, options?: Parameters<Transport["send"]>[1]) => {
     const started = performance.now();
     const messages = Array.isArray(message) ? message : [message];
+    const suppressOutbound = isMcpTraceSuppressed();
+    if (suppressOutbound) {
+      for (const item of messages) {
+        const requestId = requestIdKey(item);
+        if (requestId !== undefined && "method" in item) suppressedRequestIds.add(requestId);
+      }
+    }
     try {
       await originalSend.call(transport, message, options);
       for (const item of messages) {
+        if (suppressOutbound || shouldSuppressMessage(item)) continue;
         record(createMcpTraceEvent("outbound", server, transportKind, item, "sent", {
           durationMs: performance.now() - started,
         }));
       }
     } catch (error) {
       for (const item of messages) {
-        record(createMcpTraceEvent("outbound", server, transportKind, item, "error", {
-          durationMs: performance.now() - started,
-        }));
+        const requestId = requestIdKey(item);
+        if (suppressOutbound) {
+          // Keep the id: a transport may reject locally after handing the
+          // request to a socket, which can still deliver a late response.
+          continue;
+        }
+        if (!shouldSuppressMessage(item)) {
+          record(createMcpTraceEvent("outbound", server, transportKind, item, "error", {
+            durationMs: performance.now() - started,
+          }));
+        }
       }
       throw error;
     }

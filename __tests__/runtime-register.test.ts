@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn(),
   updateStatusBar: vi.fn(),
+  updateServerMetadata: vi.fn(),
   flushMetadataCache: vi.fn(),
   notifyToolMetadataUpdated: vi.fn(),
   initializeOAuth: vi.fn().mockResolvedValue(undefined),
@@ -45,6 +46,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../init.ts", () => ({
   initializeMcp: mocks.initializeMcp,
   updateStatusBar: mocks.updateStatusBar,
+  updateServerMetadata: mocks.updateServerMetadata,
   flushMetadataCache: mocks.flushMetadataCache,
   notifyToolMetadataUpdated: mocks.notifyToolMetadataUpdated,
 }));
@@ -226,6 +228,61 @@ describe("runtime MCP server registration", () => {
       url: "https://event.test/mcp",
       directTools: false,
     });
+  });
+
+  it("registers only the allowlisted catalog workflow and hides its tools", async () => {
+    const state = createState();
+    state.config.mcpServers = {
+      "eproduct-catalog": {
+        url: "https://catalog.example/mcp",
+        excludeTools: ["presign_file_upload", "confirm_file_upload"],
+      },
+    };
+    state.manager.getConnection.mockReturnValue({ status: "connected" });
+    state.toolMetadata.set("eproduct-catalog", [
+      { originalName: "presign_file_upload", name: "catalog_presign", description: "private" },
+      { originalName: "confirm_file_upload", name: "catalog_confirm", description: "private" },
+      { originalName: "list_products", name: "catalog_list", description: "visible" },
+    ]);
+    mocks.loadMcpConfig.mockReturnValue({
+      mcpServers: { "eproduct-catalog": { url: "https://catalog.example/mcp" } },
+    });
+    mocks.initializeMcp.mockResolvedValue(state);
+    const {
+      default: mcpAdapter,
+      MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD,
+      registerMcpConfidentialWorkflow,
+    } = await import("../index.ts");
+    const events = createEventBus();
+    const { api: adapterApi, handlers } = createPi(events);
+    const { api: consumerApi } = createPi(events);
+    mcpAdapter(adapterApi);
+    await handlers.get("session_start")?.({}, {});
+    await settle();
+
+    const workflow = registerMcpConfidentialWorkflow({
+      pi: consumerApi,
+      workflow: MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD,
+    });
+
+    expect(state.config.mcpServers["eproduct-catalog"].excludeTools).toEqual([
+      "presign_file_upload",
+      "confirm_file_upload",
+    ]);
+    expect(mocks.updateServerMetadata).toHaveBeenCalledWith(state, "eproduct-catalog");
+    expect(state.toolMetadata.get("eproduct-catalog")).toEqual([
+      { originalName: "list_products", name: "catalog_list", description: "visible" },
+    ]);
+    await expect(workflow.call("list_products", {})).rejects.toMatchObject({ code: "tool_not_registered" });
+    expect(() => registerMcpConfidentialWorkflow({
+      pi: consumerApi,
+      workflow: "not-reviewed" as never,
+    })).toThrow(/invalid_request/);
+    await workflow.dispose();
+    expect(state.config.mcpServers["eproduct-catalog"].excludeTools).toEqual([
+      "presign_file_upload",
+      "confirm_file_upload",
+    ]);
   });
 
   it("returns event registration failures in the mutable result", async () => {

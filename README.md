@@ -185,6 +185,53 @@ Cross-extension registration uses Pi's shared event bus and does not require a r
 
 Runtime registrations are session scoped and never written to config files. Duplicate server names fail closed against configured servers and other registrations. Registered servers use the normal lazy connection, OAuth, approval, and shutdown behavior, but they are proxy-tool-only and their tools become visible at the next tool sync. To change a definition, dispose the registration and register again.
 
+### Confidential local-upload workflow
+
+The package exposes one reviewed, versioned in-process workflow for trusted Pi
+extensions that must handle a sensitive MCP response without putting it in a
+model-visible result or transcript:
+
+```ts
+import {
+  MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD,
+  registerMcpConfidentialWorkflow,
+} from "pi-mcp-adapter";
+
+const workflow = registerMcpConfidentialWorkflow({
+  pi,
+  workflow: MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD,
+});
+const result = await workflow.call("presign_file_upload", {
+  store_id: "lehrermaterial",
+  locale: "de",
+  filename: "lesson.pdf",
+  size_bytes: 1234,
+});
+```
+
+This allowlist is intentionally not a generic raw-MCP API: it binds to the
+configured `eproduct-catalog` server and only the `presign_file_upload` and
+`confirm_file_upload` tools. Those tools are added to `excludeTools` before
+metadata/direct/namespace surfaces are built and remain hidden across session
+restarts. The workflow handle is still required for any trusted call; disposing
+that handle never re-exposes the sensitive tools to the model. The adapter reuses the existing
+connection and OAuth state, suppresses protocol tracing for the call, and
+returns provider failures only as stable, non-sensitive error codes. The
+trusted extension owns the safe projection; the adapter never renders or emits
+the raw `CallToolResult`.
+
+`dps-catalog-local-upload` in `agus-skills` is the only current consumer. It
+accepts enumerated operator-owned roots and relative paths, streams a reopened
+read-only file to the presigned R2 URL, and projects only file/slot metadata.
+It must be installed only after an adapter release containing this API. The
+release/install order is: merge adapter PR, run its public build and tests,
+create the operator-approved `v*` release through deploy-control, update the
+Pi package, then link the `agus-skills` extension. Do not copy presigned URLs
+into commands, logs, traces, issues, or chat. Rollback is the inverse: stop
+using the local-upload extension, restore the previous Pi adapter package and
+remove the extension symlink; no catalog rows or already-confirmed files are
+deleted by rollback.
+
 ### SDK configuration
 
 Use `createMcpAdapter` when an SDK or server integration already owns its MCP configuration:

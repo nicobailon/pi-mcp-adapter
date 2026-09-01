@@ -38,6 +38,7 @@ import {
 } from "./runtime-owner.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 import { FAILURE_BACKOFF_MS, getFailureAgeSeconds } from "./failure-backoff.ts";
+import { applyConfidentialToolFilters } from "./confidential-workflow.ts";
 export { getFailureAgeSeconds, getFailureMessage, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
@@ -96,6 +97,8 @@ export function isTuiMode(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolea
 }
 
 type McpInitializationOptions = McpAdapterOptions & {
+  /** Adapter-internal exclusions retained across session initialization. */
+  confidentialToolExclusions?: Record<string, string[]>;
   oauthRuntime?: McpOAuthRuntime;
   statusEvents?: McpExtensionState["statusEvents"];
 };
@@ -122,6 +125,7 @@ export async function initializeMcp(
   const config = options.config !== undefined
     ? cloneMcpConfig(options.config)
     : loadMcpConfig(configPath, cwd);
+  applyConfidentialToolFilters(config, options.confidentialToolExclusions);
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
 
   const ownsOAuthRuntime = options.oauthRuntime === undefined;

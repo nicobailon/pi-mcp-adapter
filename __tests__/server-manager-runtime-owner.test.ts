@@ -26,6 +26,9 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     });
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
+    this.callTool = vi.fn(async (request: any) => ({
+      content: [{ type: "text", text: JSON.stringify({ tool: request.name }) }],
+    }));
     this.close = vi.fn(async () => undefined);
     mocks.clients.push(this);
   }),
@@ -132,6 +135,22 @@ describe("MCP manager owner races", () => {
 
     await expect(connecting).rejects.toThrow("MCP connection setup failed");
     expect(mocks.clients[0].close).toHaveBeenCalledTimes(1);
+  });
+
+  it("executes trusted calls through the connected client with request cancellation", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager("/tmp/session");
+    await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const signal = new AbortController().signal;
+
+    const result = await manager.callTool("demo", "private_tool", { value: "safe" }, signal);
+
+    expect(result).toMatchObject({ content: [{ type: "text" }] });
+    expect(mocks.clients[0].callTool).toHaveBeenCalledWith(
+      { name: "private_tool", arguments: { value: "safe" } },
+      expect.objectContaining({ signal }),
+    );
+    expect(manager.getConnection("demo")?.inFlight).toBe(0);
   });
 
   it("rejects connections after terminal manager shutdown", async () => {

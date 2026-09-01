@@ -96,6 +96,7 @@
     "direct-tools.ts",
     "namespace-tools.ts",
     "mcp-references.ts",
+    "confidential-workflow.ts",
     "commands.ts",
     "prompts.ts",
     "onboarding-state.ts",

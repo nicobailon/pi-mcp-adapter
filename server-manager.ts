@@ -8,6 +8,7 @@ import {
   SSEClientTransport,
   StreamableHTTPClientTransport,
   UnauthorizedError,
+  type CallToolResult,
   type GetPromptResult,
   type ListToolsResult,
   type ReadResourceResult,
@@ -1449,6 +1450,41 @@ export class McpServerManager {
 
   removeUiStreamListener(streamToken: string): void {
     this.uiStreamListeners.delete(streamToken);
+  }
+
+  /**
+   * Call a tool for trusted adapter code without exposing the result through
+   * the model-facing execution path. The caller owns authorization and safe
+   * projection; this method only manages the connection's activity counters
+   * and request-scoped cancellation.
+   */
+  async callTool(
+    name: string,
+    toolName: string,
+    args?: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<CallToolResult> {
+    const connection = this.connections.get(name);
+    if (!connection || connection.status !== "connected") {
+      throw new Error(`Server "${name}" is not connected`);
+    }
+
+    const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
+    throwIfAborted(ownedSignal);
+    try {
+      this.touch(name);
+      this.incrementInFlight(name);
+      return await abortable(
+        connection.client.callTool(
+          { name: toolName, ...(args ? { arguments: args } : {}) },
+          this.getRequestOptions(name, ownedSignal),
+        ),
+        ownedSignal,
+      ) as CallToolResult;
+    } finally {
+      this.decrementInFlight(name);
+      this.touch(name);
+    }
   }
 
   async getPrompt(
