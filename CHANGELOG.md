@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- The `/mcp` panel now supports enabling and disabling servers in place with `ctrl+d` on a server row. Saving persists the `disabled` flag to the project Pi layer and reloads the session, matching `/mcp disable` / `/mcp enable`.
+- The `/mcp` panel now supports enabling and disabling servers in place with `ctrl+d` on a server row. Saving persists the `disabled` flag to the project Pi layer and reloads the session, matching `/mcp disable` / `/mcp enable`. Thanks to [@ericykim](https://github.com/ericykim) for PR #479.
 
 ### Changed
 - `/mcp setup` now lets users choose project `.mcp.json` or global `~/.config/mcp/mcp.json` as the write target for new shared MCP servers, while identifying Pi-owned files and compatibility inputs as advanced layers. The bundled `mcp-scripting` skill is manual-only by default. Thanks to [@w-winter](https://github.com/w-winter) for #477.
