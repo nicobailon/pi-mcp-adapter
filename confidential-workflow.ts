@@ -3,7 +3,13 @@ import type { McpExtensionState } from "./state.ts";
 import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { runWithoutMcpTrace } from "./mcp-trace.ts";
-import { isServerDisabled } from "./types.ts";
+import {
+  formatToolName,
+  isServerDisabled,
+  resolveToolPrefix,
+  type ToolMetadata,
+} from "./types.ts";
+import { ensureToolCallApproved } from "./tool-approval.ts";
 
 /**
  * The confidential bridge is deliberately an allowlist, not a general-purpose
@@ -36,6 +42,87 @@ const CONFIDENTIAL_TOOL_ARGUMENT_KEYS: Readonly<Record<string, ReadonlySet<strin
   confirm_file_upload: new Set(["upload_id", "store_id", "filename", "locale"]),
 });
 
+const CONFIDENTIAL_STORE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,29}$/;
+const CONFIDENTIAL_LOCALE_PATTERN = /^[a-z]{2,3}(?:-[a-z]{2,4})?$/;
+const CONFIDENTIAL_FILENAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:pdf|xlsx)$/;
+const CONFIDENTIAL_UPLOAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CONFIDENTIAL_MAX_FILENAME_LENGTH = 256;
+const CONFIDENTIAL_MAX_FILE_SIZE = 100 * 1024 * 1024;
+const CONFIDENTIAL_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    const keys = Reflect.ownKeys(value);
+    return keys.every((key) => {
+      if (typeof key !== "string") return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return descriptor !== undefined &&
+        Object.hasOwn(descriptor, "value") &&
+        descriptor.enumerable === true;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: ReadonlySet<string>): boolean {
+  try {
+    const keys = Reflect.ownKeys(value);
+    return keys.length === expected.size &&
+      keys.every((key) => typeof key === "string" && expected.has(key));
+  } catch {
+    return false;
+  }
+}
+
+function isSafeBoundedString(value: unknown, pattern: RegExp, maximum: number): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maximum &&
+    !CONFIDENTIAL_CONTROL_CHARACTER_PATTERN.test(value) &&
+    pattern.test(value);
+}
+
+function validateConfidentialArguments(
+  toolName: string,
+  args: unknown,
+): Record<string, unknown> {
+  if (!isPlainRecord(args)) fail("invalid_request");
+  const expectedKeys = CONFIDENTIAL_TOOL_ARGUMENT_KEYS[toolName];
+  if (!expectedKeys || !hasExactKeys(args, expectedKeys)) fail("invalid_request");
+
+  const values = Object.fromEntries(Object.keys(args).map((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(args, key);
+    return [key, descriptor && "value" in descriptor ? descriptor.value : undefined];
+  }));
+  if (toolName === "presign_file_upload") {
+    if (!isSafeBoundedString(values.store_id, CONFIDENTIAL_STORE_PATTERN, 30) ||
+      !isSafeBoundedString(values.locale, CONFIDENTIAL_LOCALE_PATTERN, 8) ||
+      !isSafeBoundedString(values.filename, CONFIDENTIAL_FILENAME_PATTERN, CONFIDENTIAL_MAX_FILENAME_LENGTH) ||
+      Number.isSafeInteger(values.size_bytes) === false ||
+      (values.size_bytes as number) < 1 ||
+      (values.size_bytes as number) > CONFIDENTIAL_MAX_FILE_SIZE ||
+      /[\\/]/.test(values.filename)) {
+      fail("invalid_request");
+    }
+  } else if (
+    !isSafeBoundedString(values.upload_id, CONFIDENTIAL_UPLOAD_ID_PATTERN, 128) ||
+    !isSafeBoundedString(values.store_id, CONFIDENTIAL_STORE_PATTERN, 30) ||
+    !isSafeBoundedString(values.filename, CONFIDENTIAL_FILENAME_PATTERN, CONFIDENTIAL_MAX_FILENAME_LENGTH) ||
+    !isSafeBoundedString(values.locale, CONFIDENTIAL_LOCALE_PATTERN, 8) ||
+    /[\\/]/.test(values.filename)
+  ) {
+    fail("invalid_request");
+  }
+
+  // Approval handlers are other extensions. Keep their preview immutable so
+  // a handler cannot rewrite the validated payload before the MCP call.
+  return Object.freeze(values) as Record<string, unknown>;
+}
+
 /** Return the immutable allowlist entry for the one supported trusted workflow. */
 export function getConfidentialWorkflowSpec(
   name: string,
@@ -53,6 +140,8 @@ export type McpConfidentialErrorCode =
   | "server_disabled"
   | "server_not_connected"
   | "auth_required"
+  | "approval_denied"
+  | "approval_required"
   | "aborted"
   | "call_failed";
 
@@ -101,9 +190,10 @@ function isAbortLike(error: unknown, signal: AbortSignal | undefined): boolean {
 
 /**
  * Execute one registered confidential MCP operation without going through the
- * model-facing proxy/direct-tool execution path. No result guard, renderer,
- * approval event, UI session, metadata publication, normal MCP trace, or
- * provider error is returned by this function.
+ * model-facing proxy/direct-tool execution path. Approval is handled by the
+ * existing broker contract with validated arguments. No result guard, renderer,
+ * UI session, metadata publication, normal MCP trace, or provider error is
+ * returned by this function.
  */
 export async function executeConfidentialToolCall(
   state: McpExtensionState,
@@ -121,13 +211,6 @@ export async function executeConfidentialToolCall(
       toolName as typeof MCP_CONFIDENTIAL_WORKFLOW_CATALOG_LOCAL_UPLOAD_TOOLS[number],
     )
   ) fail("tool_not_registered");
-  if (args !== undefined && (
-    typeof args !== "object" ||
-    args === null ||
-    Array.isArray(args) ||
-    Object.keys(args).some(key => !CONFIDENTIAL_TOOL_ARGUMENT_KEYS[toolName]?.has(key))
-  )) fail("invalid_request");
-
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   try {
     throwIfAborted(ownedSignal);
@@ -135,9 +218,37 @@ export async function executeConfidentialToolCall(
     fail("aborted");
   }
 
+  const normalizedArgs = validateConfidentialArguments(toolName, args);
+
   const definition = state.config.mcpServers[serverName];
   if (!definition) fail("server_not_found");
   if (isServerDisabled(definition)) fail("server_disabled");
+
+  const toolMeta: ToolMetadata = {
+    name: formatToolName(toolName, serverName, resolveToolPrefix(definition, state.config.settings?.toolPrefix)),
+    originalName: toolName,
+    description: `Confidential workflow tool ${toolName}`,
+  };
+  let approval: Awaited<ReturnType<typeof ensureToolCallApproved>>;
+  try {
+    approval = await ensureToolCallApproved(
+      state,
+      serverName,
+      toolMeta,
+      normalizedArgs,
+      ownedSignal,
+      "proxy",
+      new Map([[serverName, [toolMeta]]]),
+    );
+  } catch (error) {
+    if (isAbortLike(error, ownedSignal)) fail("aborted");
+    // Approval handlers are extension-owned, but an unexpected handler/UI
+    // failure must not expose its error or accidentally authorize the call.
+    fail("call_failed");
+  }
+  if (!approval.ok) {
+    fail(approval.reason === "denied" ? "approval_denied" : "approval_required");
+  }
 
   let connection = state.manager.getConnection(serverName);
   try {
@@ -158,7 +269,7 @@ export async function executeConfidentialToolCall(
 
   try {
     return await runWithoutMcpTrace(() =>
-      state.manager.callTool(serverName, toolName, args, ownedSignal)
+      state.manager.callTool(serverName, toolName, normalizedArgs, ownedSignal)
     );
   } catch (error) {
     if (isAbortLike(error, ownedSignal)) throw new McpConfidentialError("aborted");

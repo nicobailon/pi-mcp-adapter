@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")) as {
+  version?: string;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   files?: string[];
@@ -22,6 +23,10 @@ const hostPeerPackages = {
 };
 
 describe("package.json files", () => {
+  it("reserves the next unpublished semver for the confidential workflow API", () => {
+    expect(packageJson.version).toBe("2.32.0");
+  });
+
   it("exports source entry points and plain Node host helpers", () => {
     expect(packageJson.types).toBe("./index.ts");
     expect(packageJson.exports).toMatchObject({

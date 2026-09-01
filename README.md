@@ -19,7 +19,7 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 ## Install
 
 ```bash
-pi install npm:pi-mcp-adapter
+pi install npm:pi-mcp-adapter@2.32.0
 ```
 
 Restart Pi after installation.
@@ -209,12 +209,22 @@ const result = await workflow.call("presign_file_upload", {
 });
 ```
 
+The broker accepts only the exact scalar fields shown above: bounded catalog
+identifiers/locales, a canonical basename ending in lowercase `.pdf` or
+`.xlsx`, and an integer `size_bytes` from 1 through 100 MiB. Confirmation accepts
+only its safe upload identifier plus the same store, filename, and locale;
+objects, arrays, byte buffers, paths, and extra/missing fields are rejected
+before any MCP connection or call.
+
 This allowlist is intentionally not a generic raw-MCP API: it binds to the
 configured `eproduct-catalog` server and only the `presign_file_upload` and
 `confirm_file_upload` tools. Those tools are added to `excludeTools` before
 metadata/direct/namespace surfaces are built and remain hidden across session
 restarts. The workflow handle is still required for any trusted call; disposing
-that handle never re-exposes the sensitive tools to the model. The adapter reuses the existing
+that handle never re-exposes the sensitive tools to the model. Calls reuse the
+normal approval broker (including broker denials and headless approval-required
+failures), validate the complete per-tool argument contract before connecting,
+and never invoke the MCP manager after a denial. The adapter reuses the existing
 connection and OAuth state, suppresses protocol tracing for the call, and
 returns provider failures only as stable, non-sensitive error codes. The
 trusted extension owns the safe projection; the adapter never renders or emits
@@ -225,8 +235,8 @@ accepts enumerated operator-owned roots and relative paths, streams a reopened
 read-only file to the presigned R2 URL, and projects only file/slot metadata.
 It must be installed only after an adapter release containing this API. The
 release/install order is: merge adapter PR, run its public build and tests,
-create the operator-approved `v*` release through deploy-control, update the
-Pi package, then link the `agus-skills` extension. Do not copy presigned URLs
+create the operator-approved `v2.32.0` release through deploy-control, update the
+Pi package to `npm:pi-mcp-adapter@2.32.0`, then link the `agus-skills` extension. Do not copy presigned URLs
 into commands, logs, traces, issues, or chat. Rollback is the inverse: stop
 using the local-upload extension, restore the previous Pi adapter package and
 remove the extension symlink; no catalog rows or already-confirmed files are
@@ -536,7 +546,7 @@ The bundled `mcp-scripting` skill is a separate Pi package resource. To hide tha
 ```json
 {
   "packages": [
-    { "source": "npm:pi-mcp-adapter", "skills": [] }
+    { "source": "npm:pi-mcp-adapter@2.32.0", "skills": [] }
   ]
 }
 ```
