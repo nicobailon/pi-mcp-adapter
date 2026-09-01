@@ -188,6 +188,8 @@ describe("UiServer", () => {
       expect(handle.port).toBeGreaterThanOrEqual(8377);
       expect(handle.port).toBeLessThanOrEqual(8396);
       expect(handle.url).toContain(`http://localhost:${handle.port}`);
+      expect(handle.proxyPort).not.toBe(handle.port);
+      expect(handle.proxyUrl).toBe(`http://localhost:${handle.proxyPort}/sandbox`);
       expect(handle.sessionToken).toBeTruthy();
     });
 
@@ -218,6 +220,31 @@ describe("UiServer", () => {
 
       expect(handle.serverName).toBe("my-server");
       expect(handle.toolName).toBe("my_tool");
+    });
+
+    it("serves a tokenless second-origin sandbox proxy", async () => {
+      handle = await startUiServer(createServerOptions());
+
+      const res = await request(handle.proxyUrl);
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(res.headers["content-security-policy"]).toContain(
+        "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads allow-same-origin",
+      );
+      expect(res.headers["content-security-policy"]).not.toContain("allow-popups-to-escape-sandbox");
+      expect(res.body).toContain(`const EXPECTED_PARENT_ORIGIN = "http://localhost:${handle.port}"`);
+      expect(res.body).toContain("ui/notifications/sandbox-proxy-ready");
+      expect(res.body).toContain("event.source === window.parent && event.origin === EXPECTED_PARENT_ORIGIN");
+      expect(res.body).toContain("event.source === innerFrame.contentWindow && event.origin === window.location.origin");
+      expect(res.body).not.toContain(handle.sessionToken);
+      expect(res.body).not.toContain("UI_RESOURCE_TOKEN");
+
+      expect((await request(`${handle.proxyUrl}/ui-app`)).status).toBe(404);
+      expect((await request(`${handle.proxyUrl}/proxy/ui/heartbeat`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params: {} },
+      })).status).toBe(404);
     });
   });
 
@@ -1515,6 +1542,18 @@ describe("UiServer", () => {
       handle.close();
 
       expect(onComplete).toHaveBeenCalledWith("closed");
+    });
+
+    it("closes both host and sandbox proxy listeners", async () => {
+      handle = await startUiServer(createServerOptions());
+      const hostUrl = handle.url;
+      const proxyUrl = handle.proxyUrl;
+
+      handle.close("manual-close");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      await expect(request(hostUrl)).rejects.toThrow();
+      await expect(request(proxyUrl)).rejects.toThrow();
     });
   });
 

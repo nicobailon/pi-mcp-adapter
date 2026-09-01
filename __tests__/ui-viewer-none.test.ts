@@ -98,6 +98,11 @@ describe("remote MCP UI viewers", () => {
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
     expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("This looks like a remote session"), "info");
     expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("SSH: run `ssh -L"), "info");
+    const handle = state.uiServer;
+    expect(state.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining(`-L ${handle.proxyPort}:127.0.0.1:${handle.proxyPort}`),
+      "info",
+    );
 
     runtime?.close("test-cleanup");
   });
@@ -172,6 +177,11 @@ describe("MCP_UI_VIEWER=none", () => {
     expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
     expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("MCP UI window suppressed"), "info");
+    const handle = state.uiServer;
+    expect(state.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining(`-L ${handle.proxyPort}:127.0.0.1:${handle.proxyPort}`),
+      "info",
+    );
     expect(state.ui.notify).toHaveBeenCalledWith(expect.not.stringContaining("Tool still ran"), "info");
 
     runtime?.close("test-cleanup");

@@ -183,6 +183,9 @@ export type UiDisplayMode = "inline" | "fullscreen" | "pip";
 export interface UiServerHandle {
   url: string;
   port: number;
+  /** URL of the second-origin MCP Apps sandbox proxy. */
+  proxyUrl: string;
+  proxyPort: number;
   sessionToken: string;
   serverName: string;
   toolName: string;

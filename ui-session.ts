@@ -173,7 +173,7 @@ function probeMoshiGateway(): Promise<boolean> {
   });
 }
 
-function remoteAccessHint(opts: { url: string; port: number; moshi: boolean; openError: string | null; openedOnHost?: boolean }): string {
+function remoteAccessHint(opts: { url: string; port: number; proxyPort: number; moshi: boolean; openError: string | null; openedOnHost?: boolean }): string {
   const lines = [
     opts.openError !== null
       ? "Couldn't open MCP UI here. Open it from your own device:"
@@ -186,10 +186,12 @@ function remoteAccessHint(opts: { url: string; port: number; moshi: boolean; ope
     lines.push(`Browser launch failed: ${opts.openError}`);
   }
   if (opts.moshi) {
-    lines.push("Moshi: tap the preview button in the terminal title bar and pick this MCP UI server.");
+    lines.push(
+      `Moshi: tap the preview button in the terminal title bar and pick this MCP UI server (it must reach ports ${opts.port} and ${opts.proxyPort}).`,
+    );
   }
   lines.push(
-    `SSH: run \`ssh -L ${opts.port}:127.0.0.1:${opts.port} <this-host>\` on your local machine, then open the URL above.`,
+    `SSH: run \`ssh -L ${opts.port}:127.0.0.1:${opts.port} -L ${opts.proxyPort}:127.0.0.1:${opts.proxyPort} <this-host>\` on your local machine, then open the URL above.`,
     "mosh can't forward ports - run that ssh command in a separate terminal.",
   );
   return lines.join("\n");
@@ -479,7 +481,11 @@ export async function maybeStartUiSession(
     if (uiSuppressed) {
       viewer = "suppressed";
       windowOpen = false;
-      state.ui?.notify(`MCP UI window suppressed (MCP_UI_VIEWER=${viewerPref}). Open manually: ${handle.url}`, "info");
+      state.ui?.notify(
+        `MCP UI window suppressed (MCP_UI_VIEWER=${viewerPref}). Open manually: ${handle.url}\n` +
+        `If this session is remote, run ssh -L ${handle.port}:127.0.0.1:${handle.port} -L ${handle.proxyPort}:127.0.0.1:${handle.proxyPort} <this-host> first.`,
+        "info",
+      );
       log.info("Suppressing MCP UI window (MCP_UI_VIEWER=" + viewerPref + ")", { url: handle.url });
     } else {
       const remoteLikely = remoteByEnv || await hasActiveRemoteLogin();
@@ -487,6 +493,7 @@ export async function maybeStartUiSession(
         state.ui?.notify(remoteAccessHint({
           url: handle.url,
           port: handle.port,
+          proxyPort: handle.proxyPort,
           moshi: await probeMoshiGateway(),
           openError,
           openedOnHost,

@@ -12,6 +12,11 @@ import type { ConsentManager } from "./consent-manager.ts";
 import { ServerError, wrapError } from "./errors.ts";
 import { formatAuthRequiredMessage, normalizeToolArguments } from "./utils.ts";
 import { buildHostHtmlTemplate, buildCspMetaContent } from "./host-html-template.ts";
+import {
+  buildSandboxProxyCsp,
+  buildSandboxProxyHtml,
+  SANDBOX_PROXY_PATH,
+} from "./sandbox-proxy-template.ts";
 import { logger } from "./logger.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { McpExtensionState } from "./state.ts";
@@ -99,6 +104,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   const eventLog: Array<{ id: number; name: string; payload: unknown }> = [];
   let latestCheckpointEventId: number | undefined;
   let streamSummary: UiStreamSummary | undefined;
+  let server: http.Server | null = null;
+  let sandboxProxyServer: http.Server | null = null;
+  let sandboxProxyUrl: string | null = null;
+  let closeTimer: NodeJS.Timeout | null = null;
+  let listenersClosed = false;
 
   // Track messages from UI for retrieval
   const sessionMessages: UiSessionMessages = {
@@ -266,6 +276,32 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     watchdog = null;
   };
 
+  const closeListeners = () => {
+    if (listenersClosed) return;
+    listenersClosed = true;
+    stopWatchdog();
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
+    try {
+      server?.close();
+    } catch {}
+    try {
+      sandboxProxyServer?.close();
+    } catch {}
+    closeSse();
+  };
+
+  const scheduleListenerClose = () => {
+    if (closeTimer || listenersClosed) return;
+    closeTimer = setTimeout(() => {
+      closeTimer = null;
+      closeListeners();
+    }, 20);
+    closeTimer.unref();
+  };
+
   const markCompleted = (reason: string) => {
     if (completed) return;
     log.debug("Session completed", { reason });
@@ -273,9 +309,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     completed = true;
     stopWatchdog();
     options.onComplete?.(reason);
+    scheduleListenerClose();
   };
 
-  const server = http.createServer(async (req, res) => {
+  const hostServer = http.createServer(async (req, res) => {
     try {
       const method = req.method || "GET";
       const hostHeader = req.headers.host;
@@ -302,6 +339,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         }
         if (!validateTokenQuery(url, sessionToken, res)) return;
         touchHeartbeat();
+        if (!sandboxProxyUrl) {
+          sendText(res, 503, "Sandbox proxy is not ready");
+          return;
+        }
 
         const html = buildHostHtmlTemplate({
           sessionToken,
@@ -314,6 +355,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           requireToolConsent: options.consentManager.requiresPrompt(options.serverName),
           cacheToolConsent: options.consentManager.shouldCacheConsent(),
           hostContext,
+          sandboxProxyUrl,
         });
 
         res.writeHead(200, {
@@ -620,12 +662,6 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           : "done";
         markCompleted(reason);
         sendJson(res, 200, { ok: true, result: {} });
-        setTimeout(() => {
-          try {
-            server.close();
-          } catch {}
-          closeSse();
-        }, 20).unref();
         return;
       }
 
@@ -647,6 +683,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       sendJson(res, status, { ok: false, error: wrapped.message });
     }
   });
+  server = hostServer;
 
   if (options.initialResultPromise) {
     options.initialResultPromise.then(
@@ -662,10 +699,6 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     if (completed) return;
     if (Date.now() - lastHeartbeatAt <= ABANDONED_GRACE_MS) return;
     markCompleted("stale");
-    try {
-      server.close();
-    } catch {}
-    closeSse();
   }, WATCHDOG_INTERVAL_MS);
   watchdog.unref();
 
@@ -673,13 +706,79 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     const candidates = resolvePortCandidates(options.port);
     let candidateIndex = 0;
 
+    const startSandboxProxy = (parentOrigin: string): Promise<number> => {
+      const proxy = http.createServer((req, res) => {
+        try {
+          const method = req.method || "GET";
+          const hostHeader = req.headers.host;
+          const url = new URL(req.url || "/", `http://${hostHeader || "127.0.0.1"}`);
+          if (hostHeader !== undefined && !isAllowedHost(url.hostname)) {
+            sendText(res, 403, "Invalid host");
+            return;
+          }
+
+          if (method === "HEAD" && url.pathname === SANDBOX_PROXY_PATH) {
+            res.writeHead(200, {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store",
+              "Content-Security-Policy": buildSandboxProxyCsp(),
+            });
+            res.end();
+            return;
+          }
+
+          if (method === "GET" && url.pathname === SANDBOX_PROXY_PATH) {
+            res.writeHead(200, {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store",
+              "Content-Security-Policy": buildSandboxProxyCsp(),
+              "Referrer-Policy": "no-referrer",
+              "X-Content-Type-Options": "nosniff",
+            });
+            res.end(buildSandboxProxyHtml({ parentOrigin }));
+            return;
+          }
+
+          sendJson(res, 404, { ok: false, error: "Not found" });
+        } catch (error) {
+          sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
+      });
+      sandboxProxyServer = proxy;
+
+      return new Promise((resolveProxy, rejectProxy) => {
+        const onError = (error: NodeJS.ErrnoException) => {
+          proxy.off("listening", onListening);
+          rejectProxy(error);
+        };
+        const onListening = () => {
+          proxy.off("error", onError);
+          const address = proxy.address();
+          if (!address || typeof address === "string") {
+            rejectProxy(new ServerError("invalid sandbox proxy address"));
+            return;
+          }
+          resolveProxy(address.port);
+        };
+        proxy.once("error", onError);
+        proxy.listen(0, "127.0.0.1", onListening);
+      });
+    };
+
     const listen = () => {
-      server.once("error", onError);
-      server.listen(candidates[candidateIndex], "127.0.0.1", onListening);
+      const candidate = candidates[candidateIndex];
+      if (candidate === undefined) {
+        const error = new ServerError("no UI server port candidates available");
+        closeListeners();
+        reject(error);
+        return;
+      }
+      hostServer.once("error", onError);
+      hostServer.listen(candidate, "127.0.0.1", onListening);
     };
 
     const onError = (error: NodeJS.ErrnoException) => {
-      server.off("listening", onListening);
+      hostServer.off("listening", onListening);
       if (error.code === "EADDRINUSE" && candidateIndex < candidates.length - 1) {
         candidateIndex += 1;
         listen();
@@ -687,6 +786,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
       log.error("Failed to start server", error);
       const port = candidates[candidateIndex];
+      closeListeners();
       reject(new ServerError(error.message, {
         ...(port !== undefined ? { port } : {}),
         cause: error,
@@ -694,55 +794,66 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     };
 
     const onListening = () => {
-      server.off("error", onError);
-      const address = server.address();
+      hostServer.off("error", onError);
+      const address = hostServer.address();
       if (!address || typeof address === "string") {
         const err = new ServerError("invalid address");
         log.error("Invalid server address", err);
+        closeListeners();
         reject(err);
         return;
       }
 
-      log.debug("Server started", { port: address.port });
-      rememberMoshiDiscoveryPort(address.port);
+      const parentOrigin = `http://localhost:${address.port}`;
+      void startSandboxProxy(parentOrigin).then((proxyPort) => {
+        sandboxProxyUrl = `http://localhost:${proxyPort}${SANDBOX_PROXY_PATH}`;
+        log.debug("Servers started", { port: address.port, proxyPort });
+        rememberMoshiDiscoveryPort(address.port);
 
-      const handle: UiServerHandle = {
-        url: `http://localhost:${address.port}/?session=${sessionToken}`,
-        port: address.port,
-        sessionToken,
-        serverName: options.serverName,
-        toolName: options.toolName,
-        close: (reason?: string) => {
-          markCompleted(reason ?? "closed");
-          try {
-            server.close();
-          } catch {}
-          closeSse();
-        },
-        sendToolInput: (args: Record<string, unknown>) => {
-          pushEvent("tool-input", { arguments: args });
-        },
-        sendToolResult: (result: CallToolResult) => {
-          pushEvent("tool-result", result);
-        },
-        sendResultPatch: (result: CallToolResult) => {
-          pushEvent("result-patch", result);
-        },
-        sendToolCancelled: (reason: string) => {
-          pushEvent("tool-cancelled", { reason });
-        },
-        sendResourceUpdated: (uri: string) => {
-          pushEvent("resource-updated", { uri });
-        },
-        sendHostContext: (context: UiHostContext) => {
-          Object.assign(hostContext, context);
-          pushEvent("host-context", context);
-        },
-        getSessionMessages: () => ({ ...sessionMessages }),
-        getStreamSummary: () => streamSummary ? { ...streamSummary, phases: [...streamSummary.phases] } : undefined,
-      };
+        const handle: UiServerHandle = {
+          url: `http://localhost:${address.port}/?session=${sessionToken}`,
+          port: address.port,
+          proxyUrl: sandboxProxyUrl,
+          proxyPort,
+          sessionToken,
+          serverName: options.serverName,
+          toolName: options.toolName,
+          close: (reason?: string) => {
+            markCompleted(reason ?? "closed");
+            closeListeners();
+          },
+          sendToolInput: (args: Record<string, unknown>) => {
+            pushEvent("tool-input", { arguments: args });
+          },
+          sendToolResult: (result: CallToolResult) => {
+            pushEvent("tool-result", result);
+          },
+          sendResultPatch: (result: CallToolResult) => {
+            pushEvent("result-patch", result);
+          },
+          sendToolCancelled: (reason: string) => {
+            pushEvent("tool-cancelled", { reason });
+          },
+          sendResourceUpdated: (uri: string) => {
+            pushEvent("resource-updated", { uri });
+          },
+          sendHostContext: (context: UiHostContext) => {
+            Object.assign(hostContext, context);
+            pushEvent("host-context", context);
+          },
+          getSessionMessages: () => ({ ...sessionMessages }),
+          getStreamSummary: () => streamSummary ? { ...streamSummary, phases: [...streamSummary.phases] } : undefined,
+        };
 
-      resolve(handle);
+        resolve(handle);
+      }).catch((error) => {
+        log.error("Failed to start sandbox proxy", error instanceof Error ? error : undefined);
+        closeListeners();
+        const wrapped = error instanceof ServerError
+          ? error
+          : new ServerError(error instanceof Error ? error.message : String(error), { cause: error });
+        reject(wrapped);
+      });
     };
 
     listen();
