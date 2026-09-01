@@ -189,11 +189,23 @@ describe("proxy discovery", () => {
     state.manager.getConnection = () => ({ status: "needs-auth" }) as any;
 
     expect(executeSearch(state, "demo").details).toMatchObject({ count: 2 });
-    expect(executeList(state, "demo").details).toMatchObject({ mode: "list", count: 2 });
+    const list = executeList(state, "demo");
+    expect(list.details).toMatchObject({ mode: "list", count: 2 });
+    expect(list.content[0].text).toContain(
+      'demo (2 tools (needs auth — run mcp({ action: "auth-start", server: "demo" }))):',
+    );
     expect(executeStatus(state).details).toMatchObject({
       totalTools: 2,
       servers: [expect.objectContaining({ name: "demo", status: "needs-auth", toolCount: 2 })],
     });
+  });
+
+  it("explains when a lazy server's tools come from cache", () => {
+    const result = executeList(createState(), "demo");
+
+    expect(result.content[0].text).toContain(
+      'demo (2 tools (lazy: tools from cache, not connected yet — mcp({ connect: "demo" }) to connect)):',
+    );
   });
 
   it("suggests the matching tool for a prefix-mangled describe name", () => {

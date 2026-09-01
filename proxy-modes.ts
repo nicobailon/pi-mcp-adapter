@@ -777,19 +777,15 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     };
   }
 
-  // Faithful per-server status note. "not connected" alone reads as an outage
-  // while the tools listed below are real and the connection is simply lazy
-  // (tools served from cache). Distinguish auth, failure and plain laziness so
-  // the caller knows which remedy applies.
+  // "not connected" alone reads as an outage while the tools listed below are
+  // real and the connection is simply lazy (tools served from cache).
+  // Distinguish auth from plain laziness so the caller knows which remedy applies.
   let cachedNote = "";
   if (connection?.status !== "connected") {
     if (connection?.status === "needs-auth") {
       cachedNote = ` (needs auth — run mcp({ action: "auth-start", server: "${server}" }))`;
     } else {
-      const failedAgo = getFailureAgeSeconds(state, server);
-      cachedNote = failedAgo !== null
-        ? ` (failing — last failure ${failedAgo}s ago; see mcp({}) status)`
-        : ` (lazy: tools from cache, not connected yet — mcp({ connect: "${server}" }) to connect)`;
+      cachedNote = ` (lazy: tools from cache, not connected yet — mcp({ connect: "${server}" }) to connect)`;
     }
   }
   let text = `${server} (${toolNames.length} tools${cachedNote}):\n\n`;
