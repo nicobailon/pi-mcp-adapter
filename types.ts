@@ -392,7 +392,7 @@ export interface OAuthConfig {
   scope?: string;
   /** Extra authorization URL parameters for provider-specific extensions. Flow-owned parameters cannot be overridden. */
   authorizationParams?: Record<string, string>;
-  /** Exact authorization-code redirect URI for pre-registered clients. HTTPS redirects use manual callback URL completion. */
+  /** Authorization-code redirect URI. Loopback URIs may use `{port}` for an OS-assigned port; HTTPS redirects use manual completion. */
   redirectUri?: string;
   /** Client display name for dynamic registration */
   clientName?: string;

@@ -12,7 +12,11 @@ import {
   type AuthOptions,
 } from "@modelcontextprotocol/client"
 import open from "open"
-import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
+import {
+  getOAuthCallbackPort,
+  McpOAuthProvider,
+  type McpOAuthConfig,
+} from "./mcp-oauth-provider.ts"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -310,13 +314,41 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
 }
 
 type OAuthRedirectTarget =
-  | { mode: "local"; port: number; callbackHost: string; callbackPath: string }
+  | {
+    mode: "local"
+    port?: number
+    callbackHost: string
+    callbackPath: string
+    dynamicPort: boolean
+    resolveRedirectUri: (port: number) => string
+  }
   | { mode: "manual" }
 
 function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
+  const dynamicPortPlaceholder = "{port}"
+  const placeholderCount = redirectUri.split(dynamicPortPlaceholder).length - 1
+  if (placeholderCount > 1) {
+    throw new Error("OAuth redirectUri may contain at most one {port} placeholder")
+  }
+
+  let parsedRedirectUri = redirectUri
+  const dynamicPort = placeholderCount === 1
+  if (dynamicPort) {
+    const authorityStart = redirectUri.indexOf("://") + 3
+    const pathStart = redirectUri.slice(authorityStart).search(/[/?#]/)
+    const authorityEnd = pathStart === -1 ? redirectUri.length : authorityStart + pathStart
+    const authority = redirectUri.slice(authorityStart, authorityEnd)
+    if (authorityStart < 3 || !authority.endsWith(`:${dynamicPortPlaceholder}`)) {
+      throw new Error("OAuth redirectUri {port} placeholder must be the loopback URI port")
+    }
+    // Parse with a real port, then replace the placeholder only after the OS
+    // assigns the callback listener's port.
+    parsedRedirectUri = redirectUri.replace(dynamicPortPlaceholder, "1")
+  }
+
   let url: URL
   try {
-    url = new URL(redirectUri)
+    url = new URL(parsedRedirectUri)
   } catch (error) {
     throw new Error(`Invalid OAuth redirectUri: ${redirectUri}`, { cause: error })
   }
@@ -331,6 +363,9 @@ function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
 
   const hostname = url.hostname.toLowerCase()
   const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1"
+  if (dynamicPort && (url.protocol !== "http:" || !isLocalhost)) {
+    throw new Error("OAuth redirectUri {port} placeholder is allowed only for an http:// localhost or loopback URI")
+  }
   if (url.port) {
     const parsedPort = Number.parseInt(url.port, 10)
     if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
@@ -354,7 +389,16 @@ function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
   }
 
   const callbackHost = hostname === "[::1]" ? "::1" : hostname
-  return { mode: "local", port, callbackHost, callbackPath: url.pathname }
+  return {
+    mode: "local",
+    ...(dynamicPort ? {} : { port }),
+    callbackHost,
+    callbackPath: url.pathname,
+    dynamicPort,
+    resolveRedirectUri: assignedPort => dynamicPort
+      ? redirectUri.replace(dynamicPortPlaceholder, String(assignedPort))
+      : redirectUri,
+  }
 }
 
 /**
@@ -415,14 +459,23 @@ export async function startAuth(
   if (!manualRedirect) {
     try {
       await ensureCallbackServer({
-        strictPort: Boolean(config.clientId) || config.redirectUri !== undefined,
+        strictPort: redirectTarget?.mode === "local"
+          ? !redirectTarget.dynamicPort
+          : Boolean(config.clientId),
         oauthState,
         reserveState: true,
         ...(redirectTarget?.mode === "local"
-          ? { port: redirectTarget.port, callbackHost: redirectTarget.callbackHost, callbackPath: redirectTarget.callbackPath }
+          ? {
+            ...(redirectTarget.port !== undefined ? { port: redirectTarget.port } : {}),
+            callbackHost: redirectTarget.callbackHost,
+            callbackPath: redirectTarget.callbackPath,
+          }
           : {}),
       })
       throwIfAborted(signal)
+      if (redirectTarget?.mode === "local" && redirectTarget.dynamicPort) {
+        config.redirectUri = redirectTarget.resolveRedirectUri(getOAuthCallbackPort())
+      }
     } catch (error) {
       releaseCallbackServer(oauthState)
       try {

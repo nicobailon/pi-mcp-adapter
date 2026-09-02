@@ -1152,6 +1152,46 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.open).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["IPv4", "http://127.0.0.1:{port}/callback", "127.0.0.1", "http://127.0.0.1:4338/callback"],
+    ["IPv6", "http://[::1]:{port}/callback", "::1", "http://[::1]:4338/callback"],
+    ["localhost", "http://localhost:{port}/callback", "localhost", "http://localhost:4338/callback"],
+  ])("uses an OS-assigned port for an RFC 8252 %s redirect", async (_label, redirectUri, callbackHost, resolvedRedirectUri) => {
+    const { getOAuthCallbackPort, setOAuthCallbackPort } = await import("../mcp-oauth-provider.ts");
+    const originalPort = getOAuthCallbackPort();
+    setOAuthCallbackPort(4338);
+    mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      expect(provider.redirectUrl).toBe(resolvedRedirectUri);
+      expect(provider.clientMetadata.redirect_uris).toEqual([resolvedRedirectUri]);
+      await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+      return "REDIRECT";
+    });
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    try {
+      const result = await startAuth(`dynamic-${_label}`, "https://api.example.com/mcp", {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: {
+          clientId: "registered-public-client",
+          redirectUri,
+        },
+      });
+
+      expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
+      expect(mocks.ensureCallbackServer).toHaveBeenCalledWith(expect.objectContaining({
+        strictPort: false,
+        callbackHost,
+        callbackPath: "/callback",
+        reserveState: true,
+        oauthState: expect.any(String),
+      }));
+      expect(mocks.ensureCallbackServer.mock.calls[0]?.[0]).not.toHaveProperty("port");
+    } finally {
+      setOAuthCallbackPort(originalPort);
+    }
+  });
+
   it("uses manual completion for a pre-registered HTTPS redirect URI", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       expect(provider.redirectUrl).toBe("https://claude.ai/api/mcp/auth_callback");

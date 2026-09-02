@@ -353,6 +353,17 @@ describe("mcp-auth-flow", () => {
       )
     })
 
+    it("should reject a dynamic port placeholder outside the loopback URI port", async () => {
+      await assert.rejects(
+        async () => await startAuth("bad-dynamic-redirect", "https://api.example.com/mcp", {
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { redirectUri: "http://127.0.0.1/callback/{port}" },
+        }),
+        /\{port\} placeholder must be the loopback URI port/
+      )
+    })
+
     it("should reject blank OAuth redirectUri values", async () => {
       await assert.rejects(
         async () => await startAuth("blank-redirect", "https://api.example.com/mcp", {
