@@ -252,6 +252,33 @@ describe("authenticateServer", () => {
     );
   });
 
+  it("passes session-scoped storage through manual authentication", async () => {
+    mocks.authenticate.mockResolvedValueOnce("authenticated");
+    const ui = { notify: vi.fn(), setStatus: vi.fn(), input: vi.fn() };
+    const { authenticateServer } = await import("../commands.ts");
+
+    const result = await authenticateServer("sentry", {
+      mcpServers: {
+        sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" },
+      },
+      settings: { oauthPersistence: "session" },
+    }, { hasUI: true, mode: "tui", ui } as any);
+
+    expect(result.ok).toBe(true);
+    expect(mocks.authenticate).toHaveBeenCalledWith(
+      "sentry",
+      "https://mcp.sentry.dev/mcp",
+      { url: "https://mcp.sentry.dev/mcp", auth: "oauth" },
+      expect.objectContaining({
+        authStorageOptions: expect.objectContaining({
+          persistence: "session",
+          sessionId: expect.any(String),
+          sessionEntries: expect.any(Map),
+        }),
+      }),
+    );
+  });
+
   it("does not open paste input when authorization was already cancelled", async () => {
     const inputController = new AbortController();
     inputController.abort();

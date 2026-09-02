@@ -108,9 +108,9 @@ export async function initializeMcp(
 ): Promise<McpExtensionState> {
   // Pi guards ExtensionContext getters after reload. Snapshot all values that
   // can be used by asynchronous work before the first await.
-  const configPath = options.config !== undefined
-    ? undefined
-    : options.configPath ?? (pi.getFlag("mcp-config") as string | undefined);
+  const configPath = options.config === undefined
+    ? options.configPath ?? (pi.getFlag("mcp-config") as string | undefined)
+    : undefined;
   const cwd = ctx.cwd;
   const hasUI = ctx.hasUI;
   const mode = ctx.mode;
@@ -119,10 +119,14 @@ export async function initializeMcp(
   const initialSignal = ctx.signal;
   const ui = rawUi ? createOwnedUi(rawUi, owner) : undefined;
   const runtimeSignal = combineAbortSignals(owner.signal, initialSignal);
-  const config = options.config !== undefined
-    ? cloneMcpConfig(options.config)
-    : loadMcpConfig(configPath, cwd);
-  const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
+  const config = options.config === undefined
+    ? loadMcpConfig(configPath, cwd)
+    : cloneMcpConfig(options.config);
+  const authStorageOptions = getAuthStorageOptions(
+    config.settings?.oauthDir,
+    cwd,
+    config.settings?.oauthPersistence,
+  );
 
   const ownsOAuthRuntime = options.oauthRuntime === undefined;
   const oauthRuntime = options.oauthRuntime ?? createOAuthRuntime(owner.signal);
@@ -136,7 +140,7 @@ export async function initializeMcp(
   if (config.settings?.sampling !== false && (hasUI || samplingAutoApprove)) {
     manager.setSamplingConfig({
       autoApprove: samplingAutoApprove,
-      ...(ui !== undefined ? { ui } : {}),
+      ...(ui === undefined ? {} : { ui }),
       modelRegistry,
       getCurrentModel: () => owner.isActive() ? ctx.model : undefined,
       getSignal: () => owner.isActive()
@@ -190,7 +194,7 @@ export async function initializeMcp(
       await openUrl(pi, url, process.env.BROWSER, owner.signal);
       owner.throwIfInactive();
     },
-    ...(ui !== undefined ? { ui } : {}),
+    ...(ui === undefined ? {} : { ui }),
     sendMessage: (message, options) => {
       const deliver = () => {
         if (!owner.isActive()) return;
@@ -207,7 +211,7 @@ export async function initializeMcp(
         deliver();
       });
     },
-    ...(options.statusEvents !== undefined ? { statusEvents: options.statusEvents } : {}),
+    ...(options.statusEvents === undefined ? {} : { statusEvents: options.statusEvents }),
   };
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
   manager.setMetadataListChangedListener?.((serverName, reason) => {
@@ -265,7 +269,7 @@ export async function initializeMcp(
     lifecycle.registerServer(
       name,
       definition,
-      idleOverride !== undefined ? { idleTimeout: idleOverride } : undefined
+      idleOverride === undefined ? undefined : { idleTimeout: idleOverride }
     );
     if (lifecycleMode === "keep-alive") {
       lifecycle.markKeepAlive(name, definition);
@@ -336,7 +340,7 @@ export async function initializeMcp(
         originalName: tool.name,
         description: tool.description ?? "",
       })),
-      ...(definition.exposeResources !== false ? connection.resources.filter(resource => resource?.name && resource?.uri).map(resource => {
+      ...(definition.exposeResources === false ? [] : connection.resources.filter(resource => resource?.name && resource?.uri).map(resource => {
         const originalName = `read_${resourceNameToToolName(resource.name)}`;
         return {
           name: formatToolName(originalName, name, effectivePrefix),
@@ -344,7 +348,7 @@ export async function initializeMcp(
           description: resource.description ?? `Read resource: ${resource.uri}`,
           resourceUri: resource.uri,
         };
-      }) : []),
+      })),
     ];
     startupKnownMetadata.set(name, metadata);
   }
@@ -566,10 +570,10 @@ export function updateMetadataCache(
     configHash,
     tools,
     resources,
-    ...(prompts !== undefined ? { prompts } : {}),
-    ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
-    ...(connection.toolListHints?.ttlMs !== undefined ? { ttlMs: connection.toolListHints.ttlMs } : {}),
-    ...(connection.toolListHints?.cacheScope !== undefined ? { cacheScope: connection.toolListHints.cacheScope } : {}),
+    ...(prompts === undefined ? {} : { prompts }),
+    ...(connection.instructions === undefined ? {} : { instructions: connection.instructions }),
+    ...(connection.toolListHints?.ttlMs === undefined ? {} : { ttlMs: connection.toolListHints.ttlMs }),
+    ...(connection.toolListHints?.cacheScope === undefined ? {} : { cacheScope: connection.toolListHints.cacheScope }),
     cachedAt: Date.now(),
   };
 

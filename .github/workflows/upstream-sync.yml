@@ -1,0 +1,85 @@
+name: Propose upstream sync
+
+on:
+  schedule:
+    - cron: "17 9 * * 1" # Monday 09:17 UTC
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    name: Propose upstream sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      UPSTREAM_REPOSITORY: nicobailon/pi-mcp-adapter
+      UPSTREAM_BRANCH: main
+      BASE_BRANCH: main
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Create pull request when upstream has new commits
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          upstream_owner="${UPSTREAM_REPOSITORY%%/*}"
+          compare_path="$(
+            printf 'repos/%s/compare/%s...%s:%s' \
+              "$GITHUB_REPOSITORY" \
+              "$BASE_BRANCH" \
+              "$upstream_owner" \
+              "$UPSTREAM_BRANCH"
+          )"
+          upstream_only="$(gh api "$compare_path" --jq '.ahead_by')"
+
+          if [[ "$upstream_only" -eq 0 ]]; then
+            echo "Fork already contains all upstream commits."
+            exit 0
+          fi
+
+          existing="$(
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=open \
+              -f base="${BASE_BRANCH}" \
+              -f head="${upstream_owner}:${UPSTREAM_BRANCH}" \
+              --jq 'length'
+          )"
+
+          if [[ "$existing" -gt 0 ]]; then
+            echo "An upstream-sync pull request is already open."
+            exit 0
+          fi
+
+          upstream_tip="$(
+            gh api \
+              "repos/${UPSTREAM_REPOSITORY}/commits/${UPSTREAM_BRANCH}" \
+              --jq '.sha'
+          )"
+          body="$(cat <<EOF
+          Sync this fork with:
+
+          - Repository: \`${UPSTREAM_REPOSITORY}\`
+          - Branch: \`${UPSTREAM_BRANCH}\`
+          - Commit: \`${upstream_tip:0:12}\`
+          - Upstream-only commits: ${upstream_only}
+
+          This pull request was created automatically.
+          It will not be merged automatically.
+          EOF
+          )"
+
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f title="chore: sync upstream updates" \
+            -f head="${upstream_owner}:${UPSTREAM_BRANCH}" \
+            -f base="${BASE_BRANCH}" \
+            -f body="$body" \
+            -F maintainer_can_modify=false \
+            --jq '.html_url'

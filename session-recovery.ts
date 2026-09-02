@@ -111,7 +111,12 @@ export async function withSessionRecovery<T>(
     const definition = deps.config.mcpServers[serverName];
     if (definition && supportsOAuth(definition)
       && (err instanceof UnauthorizedError || (err instanceof SdkHttpError && err.status === 401))) {
-      invalidateAuthEntryCache(serverName);
+      const authStorageOptions = deps.manager.getAuthStorageOptions?.();
+      if (authStorageOptions) {
+        invalidateAuthEntryCache(serverName, authStorageOptions);
+      } else {
+        invalidateAuthEntryCache(serverName);
+      }
     }
     if (!isTerminatedSession(err, hadSessionId)) {
       throw err;

@@ -20,6 +20,7 @@ import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } fro
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
+import { captureTaskManagerResult, getTaskManagerClaimVault, prepareTaskManagerArgs, validateTaskManagerArgs } from "./taskmanager-claim-vault.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -233,13 +234,11 @@ async function attemptAutoAuth(
           ? { authStorageOptions: state.authStorageOptions, signal, runtime: state.oauthRuntime }
           : { authStorageOptions: state.authStorageOptions, runtime: state.oauthRuntime },
       );
-    } else {
-      if (signal) {
+    } else if (signal) {
         await authenticate(serverName, serverUrl, definition, { signal, runtime: state.oauthRuntime });
       } else {
         await authenticate(serverName, serverUrl, definition, { runtime: state.oauthRuntime });
       }
-    }
     return { status: "success" };
   } catch (error) {
     if (isAbortError(error, signal)) throw error;
@@ -1119,9 +1118,9 @@ export async function executeCall(
   }
 
   if (!serverName || !toolMeta) {
-    const nativeTool = !serverOverride
-      ? getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp")
-      : undefined;
+    const nativeTool = serverOverride
+      ? undefined
+      : getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp");
     if (nativeTool) {
       return {
         content: [{ type: "text" as const, text: `"${toolName}" is a native Pi tool. Call ${toolName} directly instead of using mcp({ tool: "${toolName}" }).` }],
@@ -1263,7 +1262,10 @@ export async function executeCall(
     return disabledCallResult(serverName, toolMeta);
   }
 
-  const normalizedArgs = toolMeta.resourceUri ? args ?? {} : normalizeToolArguments(args);
+  let normalizedArgs = toolMeta.resourceUri ? args ?? {} : normalizeToolArguments(args);
+  const claimVault = getTaskManagerClaimVault(state, state.owner);
+  validateTaskManagerArgs(claimVault, serverName, toolMeta.originalName, normalizedArgs);
+  const modelVisibleArgs = normalizedArgs;
   const approval = await ensureToolCallApproved(
     state,
     serverName,
@@ -1287,6 +1289,8 @@ export async function executeCall(
       },
     };
   }
+
+  normalizedArgs = prepareTaskManagerArgs(claimVault, serverName, toolMeta.originalName, normalizedArgs) ?? {};
 
   let uiSession: UiSessionRuntime | null = null;
   const requestOptions = withUiProgressBridge(
@@ -1356,15 +1360,15 @@ export async function executeCall(
       ? await maybeStartUiSession(state, {
           serverName,
           toolName: toolMeta.originalName,
-          toolArgs: normalizedArgs,
+          toolArgs: modelVisibleArgs,
           uiResourceUri: toolMeta.uiResourceUri,
-          ...(toolMeta.uiStreamMode !== undefined ? { streamMode: toolMeta.uiStreamMode } : {}),
+          ...(toolMeta.uiStreamMode === undefined ? {} : { streamMode: toolMeta.uiStreamMode }),
           ...(signal ? { signal } : {}),
           onNeedsAuth: recoverAuthConnection,
         })
       : null;
 
-    const result = await withSessionRecovery<ClientCallToolResult>(
+    let result = await withSessionRecovery<ClientCallToolResult>(
       {
         manager: state.manager,
         config: state.config,
@@ -1381,6 +1385,7 @@ export async function executeCall(
         }, requestOptions), ownedSignal);
       },
     );
+    result = captureTaskManagerResult(getTaskManagerClaimVault(state, state.owner), serverName, toolMeta.originalName, result, normalizedArgs) as ClientCallToolResult;
 
     if (toolMeta.uiResourceUri) {
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);

@@ -35,7 +35,7 @@ import {
   clearCodeVerifier,
   getOAuthState,
   clearOAuthState,
-  getAuthBaseDir,
+  getAuthStorageIdentity,
   OAuthCredentialStoreError,
   type AuthStorageOptions,
   type StoredTokens,
@@ -69,7 +69,7 @@ type AuthDiscovery = Pick<AuthOptions, "resourceMetadataUrl" | "scope" | "skipIs
 function applyOAuthConfig(discovery: AuthDiscovery, config: McpOAuthConfig): AuthDiscovery {
   return {
     ...discovery,
-    ...(config.scope !== undefined ? { scope: config.scope } : {}),
+    ...(config.scope === undefined ? {} : { scope: config.scope }),
     ...(config.skipIssuerMetadataValidation === true ? { skipIssuerMetadataValidation: true } : {}),
   }
 }
@@ -133,7 +133,7 @@ function getRuntimeState(runtime: McpOAuthRuntime): RuntimeState {
 }
 
 function getPendingAuthKey(serverName: string, options: AuthStorageOptions): string {
-  return `${serverName}|${getAuthBaseDir(options)}`
+  return `${serverName}|${getAuthStorageIdentity(options)}`
 }
 
 export function hasPendingAuth(serverName: string, options?: AuthStorageOptions, runtime?: McpOAuthRuntime): boolean {
@@ -452,7 +452,7 @@ export async function startAuth(
     return { authorizationUrl: existingPendingAuth.authorizationUrl }
   }
 
-  const redirectTarget = config.redirectUri !== undefined ? parseOAuthRedirectUri(config.redirectUri) : undefined
+  const redirectTarget = config.redirectUri === undefined ? undefined : parseOAuthRedirectUri(config.redirectUri)
   const manualRedirect = redirectTarget?.mode === "manual"
   const oauthState = generateState()
 
@@ -466,7 +466,7 @@ export async function startAuth(
         reserveState: true,
         ...(redirectTarget?.mode === "local"
           ? {
-            ...(redirectTarget.port !== undefined ? { port: redirectTarget.port } : {}),
+            ...(redirectTarget.port === undefined ? {} : { port: redirectTarget.port }),
             callbackHost: redirectTarget.callbackHost,
             callbackPath: redirectTarget.callbackPath,
           }
@@ -497,11 +497,7 @@ export async function startAuth(
   try {
     const storedAuth = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
     if (storedAuth?.clientInfo && !config.clientId) {
-      if (!storedAuth.tokens) {
-        clearClientInfo(serverName, authStorageOptions)
-        clearCodeVerifier(serverName, authStorageOptions)
-        await clearOAuthState(serverName, authStorageOptions)
-      } else {
+      if (storedAuth.tokens) {
         const redirectUris = storedAuth.clientInfo.redirectUris
         if (!Array.isArray(redirectUris) || !redirectUris.includes(authProvider.redirectUrl ?? "")) {
           clearClientInfo(serverName, authStorageOptions)
@@ -509,6 +505,10 @@ export async function startAuth(
           clearCodeVerifier(serverName, authStorageOptions)
           await clearOAuthState(serverName, authStorageOptions)
         }
+      } else {
+        clearClientInfo(serverName, authStorageOptions)
+        clearCodeVerifier(serverName, authStorageOptions)
+        await clearOAuthState(serverName, authStorageOptions)
       }
     }
 
@@ -701,7 +701,7 @@ export function parseAuthorizationRedirectInput(input: string, expectedState?: s
     const code = params.get("code")
     if (code) {
       const iss = params.get("iss")
-      return { code, ...(iss !== null ? { iss } : {}) }
+      return { code, ...(iss === null ? {} : { iss }) }
     }
   }
 
@@ -852,7 +852,7 @@ export async function completeAuth(
     const result = await abortable(runSdkAuth(pendingAuth.authProvider, {
       serverUrl: pendingAuth.serverUrl,
       authorizationCode: code,
-      ...(iss !== undefined ? { iss } : {}),
+      ...(iss === undefined ? {} : { iss }),
       ...pendingAuth.discovery,
     }), signal)
     throwIfAborted(signal)
@@ -897,7 +897,7 @@ export async function authenticate(
   const authStorageOptions = options.authStorageOptions ?? {}
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
-  const authKey = `${serverName}|${serverUrl}|${getAuthBaseDir(authStorageOptions)}`
+  const authKey = `${serverName}|${serverUrl}|${getAuthStorageIdentity(authStorageOptions)}`
   const inFlight = runtimeState.pendingAuthentications.get(authKey)
   if (inFlight) {
     return inFlight

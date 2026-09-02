@@ -7,7 +7,7 @@ import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
-import { formatSchema } from "./tool-metadata.ts";
+import { formatSchema, projectTaskManagerMetadata } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
@@ -19,6 +19,7 @@ import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl } f
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
+import { captureTaskManagerResult, getTaskManagerClaimVault, prepareTaskManagerArgs, validateTaskManagerArgs } from "./taskmanager-claim-vault.ts";
 import { Check, Errors } from "typebox/value";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 
@@ -194,13 +195,11 @@ export function resolveDirectTools(
       } else if (envSelection.tools.has(serverName)) {
         toolFilter = [...envSelection.tools.get(serverName)!];
       }
-    } else {
-      if (definition.directTools !== undefined) {
+    } else if (definition.directTools !== undefined) {
         toolFilter = definition.directTools;
       } else if (globalDirect) {
         toolFilter = globalDirect;
       }
-    }
 
     if (!toolFilter) continue;
 
@@ -242,14 +241,15 @@ export function resolveDirectTools(
         continue;
       }
       seenNames.add(prefixedName);
+      const taskManagerProjection = projectTaskManagerMetadata(serverName, tool.name, tool.description ?? "", tool.inputSchema);
       specs.push({
         serverName,
         originalName: tool.name,
         prefixedName,
-        description: tool.description ?? "",
-        ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
-        ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
-        ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
+        description: taskManagerProjection.description,
+        ...(tool.inputSchema === undefined ? {} : { inputSchema: taskManagerProjection.inputSchema }),
+        ...(tool.uiResourceUri === undefined ? {} : { uiResourceUri: tool.uiResourceUri }),
+        ...(tool.uiStreamMode === undefined ? {} : { uiStreamMode: tool.uiStreamMode }),
       });
     }
 
@@ -408,7 +408,7 @@ export function createDirectToolExecutor(
       }
       const failedAgo = getFailureAgeSeconds(state, spec.serverName);
       return {
-        content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not available${failedAgo !== null ? ` (failed ${failedAgo}s ago)` : ""}` }],
+        content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not available${failedAgo === null ? "" : ` (failed ${failedAgo}s ago)`}` }],
         details: { error: "server_unavailable", server: spec.serverName },
       };
     }
@@ -421,15 +421,18 @@ export function createDirectToolExecutor(
       };
     }
 
-    const normalizedParams = spec.resourceUri ? params : normalizeToolArguments(params);
+    let normalizedParams = spec.resourceUri ? params : normalizeToolArguments(params);
+    const claimVault = getTaskManagerClaimVault(state, state.owner);
+    validateTaskManagerArgs(claimVault, spec.serverName, spec.originalName, normalizedParams);
+    const modelVisibleParams = normalizedParams;
     const approval = await ensureToolCallApproved(state, spec.serverName, {
       name: spec.prefixedName,
       originalName: spec.originalName,
       description: spec.description,
-      ...(spec.inputSchema !== undefined ? { inputSchema: spec.inputSchema } : {}),
-      ...(spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : {}),
-      ...(spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : {}),
-      ...(spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : {}),
+      ...(spec.inputSchema === undefined ? {} : { inputSchema: spec.inputSchema }),
+      ...(spec.resourceUri === undefined ? {} : { resourceUri: spec.resourceUri }),
+      ...(spec.uiResourceUri === undefined ? {} : { uiResourceUri: spec.uiResourceUri }),
+      ...(spec.uiStreamMode === undefined ? {} : { uiStreamMode: spec.uiStreamMode }),
     }, normalizedParams, ownedSignal, spec.resourceUri ? "resource" : "direct");
     if (approval.ok === false) {
       const denied = approval.reason === "denied";
@@ -445,6 +448,8 @@ export function createDirectToolExecutor(
         },
       };
     }
+
+    normalizedParams = prepareTaskManagerArgs(claimVault, spec.serverName, spec.originalName, normalizedParams) ?? {};
 
     let uiSession: UiSessionRuntime | null = null;
     const requestOptions = state.manager.getRequestOptions?.(spec.serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
@@ -511,15 +516,15 @@ export function createDirectToolExecutor(
         ? await maybeStartUiSession(state, {
             serverName: spec.serverName,
             toolName: spec.originalName,
-            toolArgs: normalizedParams,
+            toolArgs: modelVisibleParams,
             uiResourceUri: spec.uiResourceUri!,
-            ...(spec.uiStreamMode !== undefined ? { streamMode: spec.uiStreamMode } : {}),
+            ...(spec.uiStreamMode === undefined ? {} : { streamMode: spec.uiStreamMode }),
             ...(signal ? { signal } : {}),
             onNeedsAuth: recoverAuthConnection,
           })
         : null;
 
-      const result = await withSessionRecovery<ClientCallToolResult>(
+      let result = await withSessionRecovery<ClientCallToolResult>(
         {
           manager: state.manager,
           config: state.config,
@@ -536,6 +541,7 @@ export function createDirectToolExecutor(
           }, requestOptions), ownedSignal);
         },
       );
+      result = captureTaskManagerResult(getTaskManagerClaimVault(state, state.owner), spec.serverName, spec.originalName, result, normalizedParams) as ClientCallToolResult;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
 
       if (result.isError) {

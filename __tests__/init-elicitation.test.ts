@@ -94,6 +94,31 @@ describe("initializeMcp elicitation config", () => {
     });
   });
 
+  it("creates a distinct in-memory OAuth store for session persistence", async () => {
+    mocks.loadMcpConfig.mockReturnValue({
+      mcpServers: {},
+      settings: { oauthPersistence: "session" },
+    });
+    const { initializeMcp } = await import("../init.ts");
+
+    const first = await initializeMcp(extensionApi(), context());
+    const second = await initializeMcp(extensionApi(), context());
+
+    expect(first.authStorageOptions).toMatchObject({
+      persistence: "session",
+      sessionId: expect.any(String),
+      sessionEntries: expect.any(Map),
+    });
+    expect(second.authStorageOptions).toMatchObject({
+      persistence: "session",
+      sessionId: expect.any(String),
+      sessionEntries: expect.any(Map),
+    });
+    expect(first.authStorageOptions.sessionId).not.toBe(second.authStorageOptions.sessionId);
+    expect(mocks.managers[0].setAuthStorageOptions).toHaveBeenCalledWith(first.authStorageOptions);
+    expect(mocks.managers[1].setAuthStorageOptions).toHaveBeenCalledWith(second.authStorageOptions);
+  });
+
   it("keeps RPC elicitation form-only so the backend never opens a browser", async () => {
     const { initializeMcp } = await import("../init.ts");
     const ctx = context({ mode: "rpc" });

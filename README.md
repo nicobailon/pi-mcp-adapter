@@ -6,7 +6,7 @@
 
 Use MCP servers with [Pi](https://github.com/badlogic/pi-mono/) without burning your context window.
 
-https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a
+<https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a>
 
 ## Why This Exists
 
@@ -31,7 +31,7 @@ Restart Pi after installation.
 The adapter reads standard MCP files automatically. No extra setup needed if you already have them.
 
 | You already have... | What happens |
-|---------------------|--------------|
+| --------------------- | -------------- |
 | `.mcp.json` or `~/.config/mcp/mcp.json` | Pi uses it immediately. Use `.mcp.json` for project/team sharing and `~/.config/mcp/mcp.json` for all projects. The first time you open `/mcp`, you'll see a short heads-up explaining which file Pi detected and that Pi only writes adapter-specific overrides to its own files. |
 | Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
 | Nothing configured yet | Run `/mcp setup`, choose project `.mcp.json` or global `~/.config/mcp/mcp.json`, then scaffold a minimal config, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
@@ -78,6 +78,7 @@ Servers are **lazy by default** — they won't connect until you actually call o
 ```
 mcp({ search: "screenshot" })
 ```
+
 ```
 chrome_devtools_take_screenshot
   Take a screenshot of the page or element.
@@ -86,6 +87,7 @@ chrome_devtools_take_screenshot
     format (enum: "png", "jpeg", "webp") [default: "png"]
     fullPage (boolean) - Full page instead of viewport
 ```
+
 ```
 mcp({ tool: "chrome_devtools_take_screenshot", args: { format: "png" } })
 ```
@@ -101,7 +103,7 @@ Two calls instead of 26 tools cluttering the context.
 Use the shared MCP files when you want one setup to work across hosts, and Pi-owned files when you need Pi-specific overrides or settings.
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `~/.config/mcp/mcp.json` | User-global shared MCP config |
 | `~/.agents/mcp.json` | User-global tool-agnostic MCP config |
 | `~/.agents/mcp/mcp.json` | User-global tool-agnostic MCP config |
@@ -210,7 +212,7 @@ The package ships TypeScript source for Pi's source-loader and SDK integrations.
 
 A supplied `config` is a complete, isolated snapshot. It is not merged with files, imports, global config, project config, or `--mcp-config`, and it is never mutated. Each adapter factory and session receives its own clone, so separate integrations can use different servers and settings safely. In this mode, server status, reconnect, explicit `/mcp-auth <server>`, proxy calls, and direct tools continue to work; setup and no-argument auth/status panels report the limitation instead of discovering or writing ambient config.
 
-With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` and `MCP_OAUTH_DIR` are used only as legacy plaintext import locations for older `tokens.json` files, not as credential namespaces. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
+With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials use the operating system credential store by default and are keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. Set `settings.oauthPersistence` to `"session"` when each Pi session must authorize independently: tokens and dynamic client registration stay in that adapter session's memory and are discarded on session replacement or process exit. Session-scoped OAuth never reads, writes, or removes persistent or legacy credentials. `settings.oauthDir` and `MCP_OAUTH_DIR` are used only as legacy plaintext import locations for older `tokens.json` files, not as credential namespaces. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
 
 Cooperating Pi extensions can use `pi-mcp-adapter/oauth` to reuse URL-bound OAuth tokens without deep-importing private files:
 
@@ -258,7 +260,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 ```
 
 | Field | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `command` | Executable for stdio transport; mutually exclusive with `url` and `socket` |
 | `args` | Command arguments |
 | `socket` | Explicit `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url` |
@@ -381,6 +383,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
     "warnOnLargeDirectTools": true,
     "hostConfigDiscovery": "off",
     "approveTools": ["github_delete_*", "notion_update_*"],
+    "oauthPersistence": "persistent",
     "oauthDir": ".pi/mcp-oauth",
     "trace": {
       "enabled": true,
@@ -394,7 +397,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 ```
 
 | Setting | Description |
-|---------|-------------|
+| --------- | ------------- |
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
@@ -406,6 +409,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `hostConfigDiscovery` | Host-specific config policy: `"off"` (default), `"prompt"` (detect/report only), or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
 | `agentPluginPaths` | Agent Plugins package directories to load MCP servers from. Relative paths resolve from the active project cwd. |
 | `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
+| `oauthPersistence` | OAuth credential lifetime: `"persistent"` (default) uses the OS credential store; `"session"` keeps credentials in memory for one adapter session so concurrent Pi sessions authorize independently. Session credentials are discarded on session replacement or process exit and never import legacy credentials. |
 | `oauthDir` | Legacy OAuth `tokens.json` import directory for this MCP config. Relative paths resolve from the active project cwd. `MCP_OAUTH_DIR` still wins when set. Persistent OAuth credentials are stored in the OS credential store, not this directory. |
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
@@ -514,6 +518,8 @@ return result.data;
 
 See the bundled `mcp-scripting` skill for the complete workflow guide. The API is `await tools.search({ query, server?, limit?, offset? })`, `await tools.describe({ path })`, `tools.call(path, args)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each operation, its path or query, outcome, and duration. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds; each script runs in a worker thread that is terminated at the deadline, including for infinite loops.
 
+Successful calls expose the MCP result retained by the output guard as `data`. For structured results that fit its details limit, access output at `data.structuredContent`; larger results are summarized with `omitted: true` and may include `fullResultPath`, so do not use them as a follow-up tool input. A small staged artifact is passed to a follow-up call with `result.data.structuredContent.artifact_id`, not `result.data.artifact_id`.
+
 For a tool-restricted subagent, launch the child Pi with its tool allowlist set to `["mcpScript"]`. Have the parent discover MCP tool names with `mcp({ search: "..." })` and include the relevant prefixed names in the child's task; the child can then loop, filter, and chain those MCP calls without filesystem, shell, or edit tools. The adapter's ordinary lazy connection, authentication, output guard, abort handling, and approval gates still apply to every call.
 
 `mcpScript` is a trusted agent-authored MCP scripting layer, not an isolation boundary. If you need isolation, run Pi in an isolated environment. It is distinct from Pi's code-mode skill: Pi's skill batches general Pi tools, while `mcpScript` exposes MCP calls only and can be the child's sole tool.
@@ -564,7 +570,7 @@ Per-server:
 ```
 
 | Value | Behavior |
-|-------|----------|
+| ------- | ---------- |
 | `true` | Register all tools from this server as individual Pi tools |
 | `["tool_a", "tool_b"]` | Register only these tools (use original MCP names) |
 | Omitted or `false` | Proxy only (default) |
@@ -654,7 +660,7 @@ MCP servers can ship interactive UIs via the [MCP UI](https://github.com/MCP-UI-
 **Message types from UI:**
 
 | Type | Purpose |
-|------|---------|
+| ------ | --------- |
 | `prompt` | User message that triggers an agent response |
 | `intent` | Structured action with name + params |
 | `notify` | Fire-and-forget notification |
@@ -717,7 +723,7 @@ Prefer `.mcp.json` for project-local shared MCP config and `~/.config/mcp/mcp.js
 ## Usage
 
 | Mode | Example |
-|------|---------|
+| ------ | --------- |
 | Status | `mcp({ })` |
 | List server | `mcp({ server: "name" })` |
 | Search | `mcp({ search: "screenshot navigate", limit: 12, offset: 0 })` |
@@ -769,7 +775,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 ## Commands
 
 | Command | What it does |
-|---------|--------------|
+| --------- | -------------- |
 | `/mcp` | Interactive panel and first-run onboarding surface |
 | `/pi-mcp` | Alias for `/mcp` when the host reserves `/mcp` |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |

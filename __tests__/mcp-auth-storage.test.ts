@@ -7,6 +7,7 @@ import {
   formatOAuthCredentialStoreUnavailable,
   getAuthEntry,
   getAuthEntryFilePath,
+  getAuthStorageIdentity,
   getAuthStorageOptions,
   getTestAuthSecretStoreEntries,
   inspectAuthForUrl,
@@ -104,6 +105,55 @@ describe("mcp-auth storage paths", () => {
     expect(existsSync(filePath)).toBe(false);
     expect(getAuthEntry("configured", options)?.tokens?.accessToken).toBe("legacy-token");
     rmSync(project, { recursive: true, force: true });
+  });
+
+  it("isolates session-scoped credentials from persistent and concurrent session stores", () => {
+    const serverUrl = "https://example.com/mcp";
+    const sessionA = getAuthStorageOptions(undefined, process.cwd(), "session");
+    const sessionB = getAuthStorageOptions(undefined, process.cwd(), "session");
+
+    saveAuthEntry("same-server", { tokens: { accessToken: "persistent-token" } }, serverUrl);
+    saveAuthEntry("same-server", { tokens: { accessToken: "session-a-token" } }, serverUrl, sessionA);
+    saveAuthEntry("same-server", { tokens: { accessToken: "session-b-token" } }, serverUrl, sessionB);
+
+    expect(getAuthStorageIdentity(sessionA)).not.toBe(getAuthStorageIdentity(sessionB));
+    expect(getAuthEntry("same-server")?.tokens?.accessToken).toBe("persistent-token");
+    expect(getAuthEntry("same-server", sessionA)?.tokens?.accessToken).toBe("session-a-token");
+    expect(getAuthEntry("same-server", sessionB)?.tokens?.accessToken).toBe("session-b-token");
+    expect(getTestAuthSecretStoreEntries().some(([, payload]) => payload.includes("session-a-token"))).toBe(false);
+    expect(getTestAuthSecretStoreEntries().some(([, payload]) => payload.includes("session-b-token"))).toBe(false);
+
+    clearAllCredentials("same-server", sessionA);
+    expect(getAuthEntry("same-server", sessionA)).toBeUndefined();
+    expect(getAuthEntry("same-server", sessionB)?.tokens?.accessToken).toBe("session-b-token");
+    expect(getAuthEntry("same-server")?.tokens?.accessToken).toBe("persistent-token");
+  });
+
+  it("does not inspect or migrate legacy credentials in session mode", () => {
+    const filePath = getAuthEntryFilePath("session-legacy");
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, JSON.stringify({
+      tokens: { accessToken: "legacy-token" },
+      serverUrl: "https://example.com/mcp",
+    }), "utf-8");
+    const session = getAuthStorageOptions(undefined, process.cwd(), "session");
+
+    expect(getAuthEntry("session-legacy", session)).toBeUndefined();
+    expect(existsSync(filePath)).toBe(true);
+
+    saveAuthEntry(
+      "session-legacy",
+      { tokens: { accessToken: "session-token" } },
+      "https://example.com/mcp",
+      session,
+    );
+    clearAllCredentials("session-legacy", session);
+    expect(existsSync(filePath)).toBe(true);
+  });
+
+  it("rejects invalid OAuth persistence settings", () => {
+    expect(() => getAuthStorageOptions(undefined, process.cwd(), "shared"))
+      .toThrow(/settings\.oauthPersistence must be "persistent" or "session"/);
   });
 
   it("does not migrate legacy credentials during status-only inspection", () => {

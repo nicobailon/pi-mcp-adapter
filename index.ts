@@ -131,7 +131,7 @@ function resolveNamespaceEnvOverride(
 }
 
 function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
-  const sessionConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
+  const sessionConfig = options.config === undefined ? undefined : cloneMcpConfig(options.config);
   const programmaticConfig = sessionConfig !== undefined;
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
@@ -242,7 +242,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const lifecycleMode = definition.lifecycle ?? "lazy";
     const persistsAfterFirstSpawn = lifecycleMode === "eager" || lifecycleMode === "lazy-keep-alive";
     const idleOverride = definition.idleTimeout ?? (persistsAfterFirstSpawn ? 0 : undefined);
-    targetState.lifecycle.registerServer(name, definition, idleOverride !== undefined ? { idleTimeout: idleOverride } : undefined);
+    targetState.lifecycle.registerServer(name, definition, idleOverride === undefined ? undefined : { idleTimeout: idleOverride });
     if (lifecycleMode === "keep-alive") targetState.lifecycle.markKeepAlive(name, definition);
   }
 
@@ -552,8 +552,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const promise = initializeMcp(pi, ctx, owner, {
       ...(programmaticConfig || options.configPath !== undefined
         ? {
-            ...(earlyConfigPath !== undefined ? { configPath: earlyConfigPath } : {}),
-            ...(sessionConfig !== undefined ? { config: sessionConfig } : {}),
+            ...(earlyConfigPath === undefined ? {} : { configPath: earlyConfigPath }),
+            ...(sessionConfig === undefined ? {} : { config: sessionConfig }),
           }
         : {}),
       oauthRuntime,
@@ -968,7 +968,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         return;
       }
 
-      const result = await authenticateServer(serverName, state.config, commandCtx, commandCtx.signal, state.oauthRuntime);
+      const result = await authenticateServer(
+        serverName,
+        state.config,
+        commandCtx,
+        commandCtx.signal,
+        state.oauthRuntime,
+        state.authStorageOptions,
+      );
       if (result.ok) {
         commandOwner?.throwIfInactive();
         await reconnectServer(state, commandCtx, serverName);
@@ -980,7 +987,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     (pi.registerTool as (tool: unknown) => unknown)({
       name: "mcpScript",
       label: "MCP Script",
-      description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } } — or use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
+      description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } }; structured output that fits the details limit is at data.structuredContent. Use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
       parameters: Type.Object({
         code: Type.String({ description: "Trusted JavaScript MCP script. Use tools.<prefixedToolName>(args) and emit(value)." }),
@@ -1241,11 +1248,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 }
 
 export function createMcpAdapter(options: McpAdapterOptions = {}) {
-  const factoryConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
+  const factoryConfig = options.config === undefined ? undefined : cloneMcpConfig(options.config);
   return function mcpAdapter(pi: ExtensionAPI) {
     installMcpAdapter(pi, {
-      ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
-      ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
+      ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+      ...(factoryConfig === undefined ? {} : { config: cloneMcpConfig(factoryConfig) }),
     });
   };
 }
