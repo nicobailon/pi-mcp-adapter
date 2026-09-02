@@ -12,7 +12,11 @@ import {
   type AuthOptions,
 } from "@modelcontextprotocol/client"
 import open from "open"
-import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
+import {
+  getOAuthCallbackPort,
+  McpOAuthProvider,
+  type McpOAuthConfig,
+} from "./mcp-oauth-provider.ts"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -65,7 +69,7 @@ type AuthDiscovery = Pick<AuthOptions, "resourceMetadataUrl" | "scope" | "skipIs
 function applyOAuthConfig(discovery: AuthDiscovery, config: McpOAuthConfig): AuthDiscovery {
   return {
     ...discovery,
-    ...(config.scope !== undefined ? { scope: config.scope } : {}),
+    ...(config.scope === undefined ? {} : { scope: config.scope }),
     ...(config.skipIssuerMetadataValidation === true ? { skipIssuerMetadataValidation: true } : {}),
   }
 }
@@ -75,6 +79,8 @@ type PendingAuth = {
   authProvider: McpOAuthProvider
   serverUrl: string
   authorizationUrl: string
+  manualRedirect: boolean
+  manualCompletionController?: AbortController
   discovery: AuthDiscovery
   authStorageOptions: AuthStorageOptions
 }
@@ -238,6 +244,25 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     }
     config.logoUri = logoUri
   }
+  if (definition.oauth?.authServerMetadataUrl !== undefined) {
+    if (typeof definition.oauth.authServerMetadataUrl !== "string") {
+      throw new Error("OAuth authServerMetadataUrl must be a string")
+    }
+    const authServerMetadataUrl = interpolateEnvVars(definition.oauth.authServerMetadataUrl).trim()
+    if (!authServerMetadataUrl) {
+      throw new Error("OAuth authServerMetadataUrl must not be empty")
+    }
+    let parsed: URL
+    try {
+      parsed = new URL(authServerMetadataUrl)
+    } catch {
+      throw new Error("OAuth authServerMetadataUrl must be an absolute https:// URL")
+    }
+    if (parsed.protocol !== "https:") {
+      throw new Error("OAuth authServerMetadataUrl must be an absolute https:// URL")
+    }
+    config.authServerMetadataUrl = authServerMetadataUrl
+  }
   if (definition.oauth?.skipIssuerMetadataValidation !== undefined) {
     if (typeof definition.oauth.skipIssuerMetadataValidation !== "boolean") {
       throw new Error("OAuth skipIssuerMetadataValidation must be a boolean")
@@ -288,18 +313,44 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
   }
 }
 
-function parseOAuthRedirectUri(redirectUri: string): { port: number; callbackHost: string; callbackPath: string } {
-  let url: URL
-  try {
-    url = new URL(redirectUri)
-  } catch (error) {
-    throw new Error(`Invalid OAuth redirectUri: ${redirectUri}`, { cause: error })
+type OAuthRedirectTarget =
+  | {
+    mode: "local"
+    port?: number
+    callbackHost: string
+    callbackPath: string
+    dynamicPort: boolean
+    resolveRedirectUri: (port: number) => string
+  }
+  | { mode: "manual" }
+
+function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
+  const dynamicPortPlaceholder = "{port}"
+  const placeholderCount = redirectUri.split(dynamicPortPlaceholder).length - 1
+  if (placeholderCount > 1) {
+    throw new Error("OAuth redirectUri may contain at most one {port} placeholder")
   }
 
-  const hostname = url.hostname.toLowerCase()
-  const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1"
-  if (url.protocol !== "http:" || !isLocalhost) {
-    throw new Error("OAuth redirectUri must be an http:// localhost or loopback URI")
+  let parsedRedirectUri = redirectUri
+  const dynamicPort = placeholderCount === 1
+  if (dynamicPort) {
+    const authorityStart = redirectUri.indexOf("://") + 3
+    const pathStart = redirectUri.slice(authorityStart).search(/[/?#]/)
+    const authorityEnd = pathStart === -1 ? redirectUri.length : authorityStart + pathStart
+    const authority = redirectUri.slice(authorityStart, authorityEnd)
+    if (authorityStart < 3 || !authority.endsWith(`:${dynamicPortPlaceholder}`)) {
+      throw new Error("OAuth redirectUri {port} placeholder must be the loopback URI port")
+    }
+    // Parse with a real port, then replace the placeholder only after the OS
+    // assigns the callback listener's port.
+    parsedRedirectUri = redirectUri.replace(dynamicPortPlaceholder, "1")
+  }
+
+  let url: URL
+  try {
+    url = new URL(parsedRedirectUri)
+  } catch (error) {
+    throw new Error(`Invalid OAuth redirectUri: ${redirectUri}`, { cause: error })
   }
 
   if (url.username || url.password) {
@@ -310,17 +361,44 @@ function parseOAuthRedirectUri(redirectUri: string): { port: number; callbackHos
     throw new Error("OAuth redirectUri must not include a fragment")
   }
 
+  const hostname = url.hostname.toLowerCase()
+  const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1"
+  if (dynamicPort && (url.protocol !== "http:" || !isLocalhost)) {
+    throw new Error("OAuth redirectUri {port} placeholder is allowed only for an http:// localhost or loopback URI")
+  }
+  if (url.port) {
+    const parsedPort = Number.parseInt(url.port, 10)
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+      throw new Error("OAuth redirectUri port must be a positive numeric port")
+    }
+  }
+  if (url.protocol === "https:" && !isLocalhost) {
+    return { mode: "manual" }
+  }
+  if (url.protocol !== "http:" || !isLocalhost) {
+    throw new Error("OAuth redirectUri must be an https:// URI or an http:// localhost or loopback URI")
+  }
+
   if (!url.port) {
-    throw new Error("OAuth redirectUri must include an explicit numeric port")
+    throw new Error("OAuth localhost redirectUri must include an explicit numeric port")
   }
 
   const port = Number.parseInt(url.port, 10)
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw new Error("OAuth redirectUri must include an explicit numeric port")
+    throw new Error("OAuth localhost redirectUri must include an explicit numeric port")
   }
 
   const callbackHost = hostname === "[::1]" ? "::1" : hostname
-  return { port, callbackHost, callbackPath: url.pathname }
+  return {
+    mode: "local",
+    ...(dynamicPort ? {} : { port }),
+    callbackHost,
+    callbackPath: url.pathname,
+    dynamicPort,
+    resolveRedirectUri: assignedPort => dynamicPort
+      ? redirectUri.replace(dynamicPortPlaceholder, String(assignedPort))
+      : redirectUri,
+  }
 }
 
 /**
@@ -374,25 +452,39 @@ export async function startAuth(
     return { authorizationUrl: existingPendingAuth.authorizationUrl }
   }
 
-  const redirectCallback = config.redirectUri !== undefined ? parseOAuthRedirectUri(config.redirectUri) : undefined
+  const redirectTarget = config.redirectUri === undefined ? undefined : parseOAuthRedirectUri(config.redirectUri)
+  const manualRedirect = redirectTarget?.mode === "manual"
   const oauthState = generateState()
 
-  try {
-    await ensureCallbackServer({
-      strictPort: Boolean(config.clientId) || config.redirectUri !== undefined,
-      oauthState,
-      reserveState: true,
-      ...(redirectCallback ? { port: redirectCallback.port, callbackHost: redirectCallback.callbackHost, callbackPath: redirectCallback.callbackPath } : {}),
-    })
-    throwIfAborted(signal)
-  } catch (error) {
-    releaseCallbackServer(oauthState)
+  if (!manualRedirect) {
     try {
-      await cleanupAndReleaseCallbackServerIfIdle(() => clearOAuthState(serverName, authStorageOptions))
-    } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed")
+      await ensureCallbackServer({
+        strictPort: redirectTarget?.mode === "local"
+          ? !redirectTarget.dynamicPort
+          : Boolean(config.clientId),
+        oauthState,
+        reserveState: true,
+        ...(redirectTarget?.mode === "local"
+          ? {
+            ...(redirectTarget.port === undefined ? {} : { port: redirectTarget.port }),
+            callbackHost: redirectTarget.callbackHost,
+            callbackPath: redirectTarget.callbackPath,
+          }
+          : {}),
+      })
+      throwIfAborted(signal)
+      if (redirectTarget?.mode === "local" && redirectTarget.dynamicPort) {
+        config.redirectUri = redirectTarget.resolveRedirectUri(getOAuthCallbackPort())
+      }
+    } catch (error) {
+      releaseCallbackServer(oauthState)
+      try {
+        await cleanupAndReleaseCallbackServerIfIdle(() => clearOAuthState(serverName, authStorageOptions))
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed")
+      }
+      throw error
     }
-    throw error
   }
 
   let capturedUrl: URL | undefined
@@ -405,11 +497,7 @@ export async function startAuth(
   try {
     const storedAuth = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
     if (storedAuth?.clientInfo && !config.clientId) {
-      if (!storedAuth.tokens) {
-        clearClientInfo(serverName, authStorageOptions)
-        clearCodeVerifier(serverName, authStorageOptions)
-        await clearOAuthState(serverName, authStorageOptions)
-      } else {
+      if (storedAuth.tokens) {
         const redirectUris = storedAuth.clientInfo.redirectUris
         if (!Array.isArray(redirectUris) || !redirectUris.includes(authProvider.redirectUrl ?? "")) {
           clearClientInfo(serverName, authStorageOptions)
@@ -417,6 +505,10 @@ export async function startAuth(
           clearCodeVerifier(serverName, authStorageOptions)
           await clearOAuthState(serverName, authStorageOptions)
         }
+      } else {
+        clearClientInfo(serverName, authStorageOptions)
+        clearCodeVerifier(serverName, authStorageOptions)
+        await clearOAuthState(serverName, authStorageOptions)
       }
     }
 
@@ -436,7 +528,16 @@ export async function startAuth(
     if (!capturedUrl) {
       throw new UnauthorizedError("OAuth authorization URL was not provided")
     }
-    await setPendingAuth(runtime, serverName, { serverName, authProvider, serverUrl, authorizationUrl: capturedUrl.toString(), discovery, authStorageOptions }, oauthState, signal, generation)
+    await setPendingAuth(runtime, serverName, {
+      serverName,
+      authProvider,
+      serverUrl,
+      authorizationUrl: capturedUrl.toString(),
+      manualRedirect,
+      ...(manualRedirect ? { manualCompletionController: new AbortController() } : {}),
+      discovery,
+      authStorageOptions,
+    }, oauthState, signal, generation)
     return { authorizationUrl: capturedUrl.toString() }
   } catch (error) {
     authProvider.deactivate()
@@ -465,7 +566,13 @@ async function setPendingAuth(
   state.pendingAuths.set(key, pendingAuth)
   state.pendingAuthStates.set(key, oauthState)
   const cleanupTimer = setTimeout(() => {
-    void clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, pendingAuth.authStorageOptions).catch(error => {
+    void clearPendingAuthAndReleaseIfIdle(
+      runtime,
+      serverName,
+      oauthState,
+      pendingAuth.authStorageOptions,
+      new Error("OAuth authorization timeout - authorization took too long"),
+    ).catch(error => {
       console.error(`MCP Auth: Timed-out flow cleanup failed: ${formatTerminalError(error)}`)
     })
   }, MANUAL_AUTH_TIMEOUT_MS)
@@ -473,7 +580,13 @@ async function setPendingAuth(
   state.pendingAuthCleanupTimers.set(key, cleanupTimer)
 }
 
-async function clearPendingAuth(runtime: McpOAuthRuntime, serverName: string, oauthState?: string, fallbackStorageOptions: AuthStorageOptions = {}): Promise<void> {
+async function clearPendingAuth(
+  runtime: McpOAuthRuntime,
+  serverName: string,
+  oauthState?: string,
+  fallbackStorageOptions: AuthStorageOptions = {},
+  reason: Error = new Error("Authorization cancelled"),
+): Promise<void> {
   const state = getRuntimeState(runtime)
   const key = getPendingAuthKey(serverName, fallbackStorageOptions)
   const pendingAuth = state.pendingAuths.get(key)
@@ -487,6 +600,7 @@ async function clearPendingAuth(runtime: McpOAuthRuntime, serverName: string, oa
     state.pendingAuthCleanupTimers.delete(key)
   }
 
+  pendingAuth?.manualCompletionController?.abort(reason)
   pendingAuth?.authProvider.deactivate()
   state.pendingAuths.delete(key)
   state.pendingAuthStates.delete(key)
@@ -505,9 +619,10 @@ async function clearPendingAuthAndReleaseIfIdle(
   serverName: string,
   oauthState: string | undefined,
   fallbackStorageOptions: AuthStorageOptions = {},
+  reason?: Error,
 ): Promise<void> {
   await cleanupAndReleaseCallbackServerIfIdle(
-    () => clearPendingAuth(runtime, serverName, oauthState, fallbackStorageOptions),
+    () => clearPendingAuth(runtime, serverName, oauthState, fallbackStorageOptions, reason),
   )
 }
 
@@ -586,7 +701,7 @@ export function parseAuthorizationRedirectInput(input: string, expectedState?: s
     const code = params.get("code")
     if (code) {
       const iss = params.get("iss")
-      return { code, ...(iss !== null ? { iss } : {}) }
+      return { code, ...(iss === null ? {} : { iss }) }
     }
   }
 
@@ -608,6 +723,19 @@ export function parseAuthorizationCodeInput(input: string, expectedState?: strin
 type AuthorizationResponse = {
   input: AuthorizationCodeInput
   source: "callback" | "manual"
+}
+
+function waitForManualCompletionCancellation(signal: AbortSignal): Promise<AuthorizationCodeInput> {
+  return new Promise((_, reject) => {
+    const rejectFromSignal = () => {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("Authorization cancelled"))
+    }
+    if (signal.aborted) {
+      rejectFromSignal()
+      return
+    }
+    signal.addEventListener("abort", rejectFromSignal, { once: true })
+  })
 }
 
 /**
@@ -667,7 +795,11 @@ export async function completeAuthFromInput(
   throwIfAborted(signal)
   const key = getPendingAuthKey(serverName, fallbackAuthStorageOptions)
   const oauthState = runtimeState.pendingAuthStates.get(key)
+  const pendingAuth = runtimeState.pendingAuths.get(key)
   throwIfAborted(signal)
+  if (pendingAuth?.manualRedirect && !getSearchParamsFromInput(input.trim())) {
+    throw new Error("Paste the full OAuth callback URL, including its code and state parameters")
+  }
   const parsed = parseAuthorizationRedirectInput(input, oauthState)
   return completeAuth(serverName, parsed, options)
 }
@@ -720,7 +852,7 @@ export async function completeAuth(
     const result = await abortable(runSdkAuth(pendingAuth.authProvider, {
       serverUrl: pendingAuth.serverUrl,
       authorizationCode: code,
-      ...(iss !== undefined ? { iss } : {}),
+      ...(iss === undefined ? {} : { iss }),
       ...pendingAuth.discovery,
     }), signal)
     throwIfAborted(signal)
@@ -786,15 +918,28 @@ export async function authenticate(
     try {
       // Get the state that was already generated and stored in startAuth().
       // Keep this lookup and its abort check inside the cleanup boundary because
-      // startAuth has already reserved callback state at this point.
+      // startAuth already owns the pending flow at this point.
       oauthState = runtimeState.pendingAuthStates.get(getPendingAuthKey(serverName, authStorageOptions))
       throwIfAborted(signal)
       if (!oauthState) {
         throw new Error("OAuth state not found - this should not happen")
       }
 
-      // Register the callback BEFORE opening the browser.
-      const callbackPromise = waitForCallback(oauthState)
+      const pendingAuth = runtimeState.pendingAuths.get(getPendingAuthKey(serverName, authStorageOptions))
+      if (!pendingAuth) {
+        throw new Error(`No pending OAuth flow for server: ${serverName}`)
+      }
+      if (pendingAuth.manualRedirect && !options.onAuthorizationInput) {
+        throw new Error(
+          `OAuth for ${serverName} uses a remote redirect URI. Complete it with auth-start/auth-complete or /mcp-auth.`,
+        )
+      }
+
+      // Register the localhost callback before opening the browser. Remote
+      // pre-registered callbacks are completed by pasting their full URL.
+      const callbackPromise: Promise<AuthorizationCodeInput> = pendingAuth.manualRedirect
+        ? waitForManualCompletionCancellation(pendingAuth.manualCompletionController!.signal)
+        : waitForCallback(oauthState)
       void callbackPromise.catch(() => {})
 
       // Open browser. Always surface the URL first so remote/headless users can copy it

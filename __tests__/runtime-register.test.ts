@@ -133,7 +133,22 @@ function createState() {
   } as any;
 }
 
-function createPi() {
+function createEventBus() {
+  const listeners = new Map<string, Set<(data: unknown) => void>>();
+  return {
+    emit(channel: string, data: unknown) {
+      for (const listener of listeners.get(channel) ?? []) listener(data);
+    },
+    on(channel: string, listener: (data: unknown) => void) {
+      const channelListeners = listeners.get(channel) ?? new Set();
+      channelListeners.add(listener);
+      listeners.set(channel, channelListeners);
+      return () => channelListeners.delete(listener);
+    },
+  };
+}
+
+function createPi(events = createEventBus()) {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let activeTools = ["bash", "mcp"];
   return {
@@ -146,6 +161,7 @@ function createPi() {
       on: vi.fn((event: string, handler: (...args: any[]) => unknown) => {
         handlers.set(event, handler);
       }),
+      events,
       getAllTools: vi.fn(() => []),
       getActiveTools: vi.fn(() => activeTools),
       setActiveTools: vi.fn((nextActiveTools: string[]) => {
@@ -182,8 +198,155 @@ describe("runtime MCP server registration", () => {
 
   it("throws when no adapter is installed for the Pi instance", async () => {
     const { registerMcpServer } = await import("../index.ts");
-    expect(() => registerMcpServer({ pi: {} as any, name: "plugin", definition: { url: "https://example.test/mcp" } }))
+    const { api } = createPi();
+    expect(() => registerMcpServer({ pi: api, name: "plugin", definition: { url: "https://example.test/mcp" } }))
       .toThrow("pi-mcp-adapter is not installed for this Pi instance");
+  });
+
+  it("registers from a distinct extension wrapper over the shared event bus", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter, MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
+    const events = createEventBus();
+    const { api: adapterApi, handlers } = createPi(events);
+    const { api: consumerApi } = createPi(events);
+    mcpAdapter(adapterApi);
+    await handlers.get("session_start")?.({}, {});
+    await settle();
+
+    const request = {
+      version: 1 as const,
+      name: "plugin-event",
+      definition: { url: "https://event.test/mcp" },
+    } as any;
+    consumerApi.events.emit(MCP_RUNTIME_REGISTER_EVENT, request);
+
+    expect(request.result).toMatchObject({ ok: true });
+    expect(state.config.mcpServers["plugin-event"]).toMatchObject({
+      url: "https://event.test/mcp",
+      directTools: false,
+    });
+  });
+
+  it("returns event registration failures in the mutable result", async () => {
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: { configured: { url: "https://configured.test/mcp" } } });
+    const state = createState();
+    state.config.mcpServers = { configured: { url: "https://configured.test/mcp" } };
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter, MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
+    const events = createEventBus();
+    const { api, handlers } = createPi(events);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await settle();
+
+    const request = { version: 1, name: "configured", definition: { url: "https://other.test/mcp" } } as any;
+    expect(() => events.emit(MCP_RUNTIME_REGISTER_EVENT, request)).not.toThrow();
+    expect(request.result).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ message: 'MCP server "configured" is already registered' }),
+    });
+  });
+
+  it("leaves a prefilled event result untouched", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter, MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
+    const events = createEventBus();
+    const { api, handlers } = createPi(events);
+    mcpAdapter(api);
+    const registration = { dispose: vi.fn().mockResolvedValue(undefined) };
+    const request = {
+      version: 1,
+      name: "ignored",
+      definition: { url: "https://ignored.test/mcp" },
+      result: { ok: true, registration },
+    } as any;
+
+    events.emit(MCP_RUNTIME_REGISTER_EVENT, request);
+    await handlers.get("session_start")?.({}, {});
+    await settle();
+
+    expect(request.result.registration).toBe(registration);
+    expect(state.config.mcpServers["ignored"]).toBeUndefined();
+  });
+
+  it("falls back to the shared event bus for a distinct extension wrapper", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
+    const events = createEventBus();
+    const { api: adapterApi, handlers } = createPi(events);
+    const { api: consumerApi } = createPi(events);
+    mcpAdapter(adapterApi);
+    await handlers.get("session_start")?.({}, {});
+    await settle();
+
+    registerMcpServer({ pi: consumerApi, name: "plugin-helper", definition: { url: "https://helper.test/mcp" } });
+
+    expect(state.config.mcpServers["plugin-helper"]).toMatchObject({
+      url: "https://helper.test/mcp",
+      directTools: false,
+    });
+  });
+
+  it("returns an isolated snapshot with the original direct-tool definition", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter, registerMcpServer, getRuntimeMcpServerSnapshot } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await settle();
+
+    const definition = {
+      url: "https://snapshot.test/mcp",
+      directTools: ["search"],
+      headers: { Authorization: "Bearer test" },
+    };
+    registerMcpServer({ pi: api, name: "snapshot", definition });
+
+    const first = getRuntimeMcpServerSnapshot({ pi: api, name: "snapshot" });
+    expect(first).toEqual({ name: "snapshot", definition, runtime: true, persisted: false });
+    expect(state.config.mcpServers["snapshot"]).toMatchObject({ directTools: false });
+    expect(first.definition).not.toBe(definition);
+    first.definition.headers!.Authorization = "Bearer changed";
+
+    expect(getRuntimeMcpServerSnapshot({ pi: api, name: "snapshot" }).definition).toEqual(definition);
+  });
+
+  it("snapshots through a distinct extension wrapper and fails after disposal", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter, registerMcpServer, getRuntimeMcpServerSnapshot, MCP_RUNTIME_SNAPSHOT_EVENT } = await import("../index.ts");
+    const events = createEventBus();
+    const { api: adapterApi, handlers } = createPi(events);
+    const { api: consumerApi } = createPi(events);
+    mcpAdapter(adapterApi);
+    await handlers.get("session_start")?.({}, {});
+    await settle();
+
+    expect(() => getRuntimeMcpServerSnapshot({ pi: consumerApi, name: "missing" }))
+      .toThrow('MCP runtime server "missing" is not registered or has been disposed');
+
+    const registration = registerMcpServer({ pi: consumerApi, name: "event-snapshot", definition: { url: "https://event-snapshot.test/mcp" } });
+    expect(getRuntimeMcpServerSnapshot({ pi: consumerApi, name: "event-snapshot" })).toMatchObject({
+      name: "event-snapshot",
+      definition: { url: "https://event-snapshot.test/mcp" },
+      runtime: true,
+      persisted: false,
+    });
+
+    const unsupported = { version: 99, name: "event-snapshot" } as any;
+    events.emit(MCP_RUNTIME_SNAPSHOT_EVENT, unsupported);
+    expect(unsupported.result).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({ message: "Unsupported MCP runtime snapshot version: 99" }),
+    });
+
+    await registration.dispose();
+    expect(() => getRuntimeMcpServerSnapshot({ pi: consumerApi, name: "event-snapshot" }))
+      .toThrow('MCP runtime server "event-snapshot" is not registered or has been disposed');
   });
 
   it("registers after init, exposes the server in state, and disposes cleanly", async () => {
@@ -239,17 +402,26 @@ describe("runtime MCP server registration", () => {
   it("queues pre-init registrations and drains them when init completes", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
+    const { default: mcpAdapter, registerMcpServer, getRuntimeMcpServerSnapshot } = await import("../index.ts");
     const { api, handlers } = createPi();
     mcpAdapter(api);
 
     registerMcpServer({ pi: api, name: "early-plugin", definition: { url: "https://early.test/mcp" } });
+    expect(() => getRuntimeMcpServerSnapshot({ pi: api, name: "early-plugin" }))
+      .toThrow('MCP runtime server "early-plugin" is unavailable because the adapter has no active state');
+
     await handlers.get("session_start")?.({}, {});
     await settle();
 
     expect(state.config.mcpServers["early-plugin"]).toMatchObject({
       url: "https://early.test/mcp",
       directTools: false,
+    });
+    expect(getRuntimeMcpServerSnapshot({ pi: api, name: "early-plugin" })).toMatchObject({
+      name: "early-plugin",
+      definition: { url: "https://early.test/mcp" },
+      runtime: true,
+      persisted: false,
     });
   });
 
@@ -258,7 +430,7 @@ describe("runtime MCP server registration", () => {
     const secondState = createState();
     secondState.config.mcpServers = { "plugin-a": { url: "https://now-configured.test/mcp" } };
     mocks.initializeMcp.mockResolvedValueOnce(firstState).mockResolvedValueOnce(secondState);
-    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
+    const { default: mcpAdapter, registerMcpServer, getRuntimeMcpServerSnapshot } = await import("../index.ts");
     const { api, handlers } = createPi();
     mcpAdapter(api);
     await handlers.get("session_start")?.({}, {});
@@ -273,5 +445,12 @@ describe("runtime MCP server registration", () => {
     // Collision after restart: the configured server wins, fail closed.
     expect(secondState.config.mcpServers["plugin-a"]).toMatchObject({ url: "https://now-configured.test/mcp" });
     expect(secondState.config.mcpServers["plugin-b"]).toMatchObject({ url: "https://plugin-b.test/mcp" });
+    expect(() => getRuntimeMcpServerSnapshot({ pi: api, name: "plugin-a" }))
+      .toThrow('MCP runtime server "plugin-a" is shadowed by a configured server');
+    expect(getRuntimeMcpServerSnapshot({ pi: api, name: "plugin-b" })).toMatchObject({
+      name: "plugin-b",
+      runtime: true,
+      persisted: false,
+    });
   });
 });

@@ -32,9 +32,17 @@ type DirectNameEntry = { name: string; originalName: string };
 type CachedServer = { serverName: string; definition: ServerEntry; entry: ServerCacheEntry; prefix: ToolPrefix };
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
+const ENCODED_NAMESPACE_MARKER = "_mcpns_";
+
+function namespaceServerPart(serverName: string): string {
+  const normalized = serverName.replace(/-/g, "_");
+  if (normalized === "" || (/^[A-Za-z0-9_]+$/.test(normalized) && !normalized.startsWith(ENCODED_NAMESPACE_MARKER))) return normalized;
+  const codePoints = Array.from(normalized, char => char.codePointAt(0)!.toString(16)).join("_");
+  return `${ENCODED_NAMESPACE_MARKER}${codePoints}`;
+}
 
 export function namespaceProxyName(serverName: string): string {
-  return `mcp__${serverName.replace(/-/g, "_")}`;
+  return `mcp__${namespaceServerPart(serverName)}`;
 }
 
 export function parseMcpReference(raw: string): ParsedMcpReference {

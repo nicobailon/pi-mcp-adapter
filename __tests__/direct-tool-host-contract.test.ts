@@ -66,6 +66,7 @@ describe("direct tool host contracts", () => {
         mcpServers: { demo: { command: "demo" } },
       },
       manager: {
+        ensureListen: vi.fn().mockResolvedValue(undefined),
         getConnection: vi.fn(() => connection),
         getRequestOptions: vi.fn(() => undefined),
         touch: vi.fn(),
@@ -90,6 +91,7 @@ describe("direct tool host contracts", () => {
       tool: "commit",
       mcpResult: rawResult,
     });
+    expect(state.manager.ensureListen).toHaveBeenCalledWith("demo", connection);
   });
 
   it("invalidates a connected transport after a direct tool call fails", async () => {
@@ -144,6 +146,7 @@ describe("direct tool host contracts", () => {
         mcpServers: { demo: { command: "demo" } },
       },
       manager: {
+        prepareResourceUse: vi.fn().mockResolvedValue(undefined),
         getConnection: vi.fn(() => connection),
         getRequestOptions: vi.fn(() => undefined),
         touch: vi.fn(),
@@ -170,5 +173,6 @@ describe("direct tool host contracts", () => {
       mcpResult: rawResult,
     });
     expect(connection.client.readResource).toHaveBeenCalledWith({ uri: "docs://handbook" }, undefined);
+    expect(state.manager.prepareResourceUse).toHaveBeenCalledWith("demo", "docs://handbook", connection);
   });
 });

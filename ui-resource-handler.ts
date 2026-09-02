@@ -1,6 +1,11 @@
 import { RESOURCE_MIME_TYPE } from "./ui-app-bridge-helpers.ts";
 import { UrlElicitationRequiredError, type ReadResourceResult } from "@modelcontextprotocol/client";
-import { ResourceFetchError, ResourceParseError } from "./errors.ts";
+import {
+  getInputRequiredNeedsUiDetails,
+  InputRequiredNeedsUiError,
+  ResourceFetchError,
+  ResourceParseError,
+} from "./errors.ts";
 import { logger } from "./logger.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import type { McpServerManager } from "./server-manager.ts";
@@ -52,7 +57,14 @@ export class UiResourceHandler {
               ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
             },
             serverName,
-            (connection) => connection.client.readResource({ uri }, this.manager.getRequestOptions(serverName, options.signal)),
+            async (connection) => {
+              const refreshRead = await this.manager.prepareResourceUse?.(serverName, uri, connection);
+              const requestOptions = this.manager.getRequestOptions(serverName, options.signal);
+              return connection.client.readResource(
+                { uri },
+                refreshRead ? { ...requestOptions, cacheMode: "refresh" } : requestOptions,
+              );
+            },
           );
         } finally {
           this.manager.decrementInFlight(serverName);
@@ -63,6 +75,10 @@ export class UiResourceHandler {
       }
     } catch (error) {
       if (error instanceof UrlElicitationRequiredError || error instanceof SessionRecoveryAuthRequiredError) throw error;
+      const inputRequired = getInputRequiredNeedsUiDetails(error, { server: serverName, resourceUri: uri });
+      if (inputRequired) {
+        throw new InputRequiredNeedsUiError(inputRequired, error instanceof Error ? error : undefined);
+      }
       const message = error instanceof Error ? error.message : String(error);
       log.error("Failed to read resource", error instanceof Error ? error : undefined);
       throw new ResourceFetchError(uri, message, {

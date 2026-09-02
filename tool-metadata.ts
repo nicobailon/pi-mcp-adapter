@@ -175,10 +175,10 @@ export function buildToolMetadata(
       name,
       originalName: tool.name,
       description: taskManagerProjection.description,
-      ...(tool.inputSchema !== undefined ? { inputSchema: taskManagerProjection.inputSchema } : {}),
-      ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
-      ...(uiVisibility !== undefined ? { uiVisibility } : {}),
-      ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
+      ...(tool.inputSchema === undefined ? {} : { inputSchema: taskManagerProjection.inputSchema }),
+      ...(uiResourceUri === undefined ? {} : { uiResourceUri }),
+      ...(uiVisibility === undefined ? {} : { uiVisibility }),
+      ...(uiStreamMode === undefined ? {} : { uiStreamMode }),
     });
   }
 

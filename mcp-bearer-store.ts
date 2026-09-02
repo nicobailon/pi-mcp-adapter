@@ -43,8 +43,6 @@ export class BearerCredentialStoreError extends Error {
   readonly code = "BEARER_CREDENTIAL_STORE_UNAVAILABLE";
   readonly operation: "read" | "write" | "remove";
 
-  // No parameter properties: cli.js loads this module under plain Node
-  // type stripping, which rejects non-erasable TypeScript syntax.
   constructor(message: string, operation: "read" | "write" | "remove", cause: unknown) {
     super(message, { cause });
     this.name = "BearerCredentialStoreError";

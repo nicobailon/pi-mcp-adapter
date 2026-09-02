@@ -1554,7 +1554,12 @@ describe("config discovery", () => {
           type: "remote",
           url: "https://global.test/mcp",
           headers: { "X-Global": "global", "X-Shared": "global" },
-          oauth: { clientId: "global-client", scope: "global-scope", skipIssuerMetadataValidation: false },
+          oauth: {
+            clientId: "global-client",
+            scope: "global-scope",
+            authServerMetadataUrl: "https://auth.global.test/.well-known/openid-configuration",
+            skipIssuerMetadataValidation: false,
+          },
         },
         globalOnly: { type: "local", command: ["global"] },
       },
@@ -1585,6 +1590,7 @@ describe("config discovery", () => {
           clientId: "global-client",
           scope: "project-scope",
           clientSecret: "project-secret",
+          authServerMetadataUrl: "https://auth.global.test/.well-known/openid-configuration",
           skipIssuerMetadataValidation: true,
         },
       },
@@ -1682,6 +1688,11 @@ describe("config discovery", () => {
     for (const preset of KNOWN_SERVER_PRESETS.filter(({ entry }) => entry.url)) {
       expect(preset.entry.protocolVersion).toBe("auto");
     }
+    expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "parallel-search")?.entry).toEqual({
+      url: "https://search.parallel.ai/mcp",
+      protocolVersion: "auto",
+      directTools: true,
+    });
     expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "chrome-devtools")?.entry.protocolVersion).toBeUndefined();
   });
 });

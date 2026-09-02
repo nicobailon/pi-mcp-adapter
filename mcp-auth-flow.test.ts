@@ -320,14 +320,25 @@ describe("mcp-auth-flow", () => {
       )
     })
 
-    it("should reject non-local OAuth redirectUri values", async () => {
+    it("should reject insecure non-local OAuth redirectUri values", async () => {
       await assert.rejects(
         async () => await startAuth("remote-redirect", "https://api.example.com/mcp", {
           url: "https://api.example.com/mcp",
           auth: "oauth",
-          oauth: { redirectUri: "https://example.com:3118/callback" },
+          oauth: { redirectUri: "http://example.com:3118/callback" },
         }),
-        /localhost or loopback/
+        /https:\/\/ URI or an http:\/\/ localhost or loopback URI/
+      )
+    })
+
+    it("should reject non-local OAuth redirectUri values with invalid ports", async () => {
+      await assert.rejects(
+        async () => await startAuth("bad-remote-port", "https://api.example.com/mcp", {
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { redirectUri: "https://example.com:0/callback" },
+        }),
+        /positive numeric port/
       )
     })
 
@@ -339,6 +350,17 @@ describe("mcp-auth-flow", () => {
           oauth: { redirectUri: "http://localhost/callback" },
         }),
         /explicit numeric port/
+      )
+    })
+
+    it("should reject a dynamic port placeholder outside the loopback URI port", async () => {
+      await assert.rejects(
+        async () => await startAuth("bad-dynamic-redirect", "https://api.example.com/mcp", {
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { redirectUri: "http://127.0.0.1/callback/{port}" },
+        }),
+        /\{port\} placeholder must be the loopback URI port/
       )
     })
 
@@ -453,6 +475,36 @@ describe("mcp-auth-flow", () => {
           oauth: { authorizationParams: { prompt: 123 as unknown as string } },
         }),
         /authorizationParams\.prompt must be a string/
+      )
+    })
+
+    it("should accept and trim an absolute https OAuth authServerMetadataUrl", () => {
+      const config = extractOAuthConfig({
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: { authServerMetadataUrl: "  https://auth.example.com/.well-known/openid-configuration  " },
+      })
+      assert.strictEqual(config.authServerMetadataUrl, "https://auth.example.com/.well-known/openid-configuration")
+    })
+
+    it("should reject malformed OAuth authServerMetadataUrl values", () => {
+      for (const authServerMetadataUrl of ["", "  ", "http://auth.example.com/metadata", "not a url"]) {
+        assert.throws(
+          () => extractOAuthConfig({
+            url: "https://api.example.com/mcp",
+            auth: "oauth",
+            oauth: { authServerMetadataUrl },
+          }),
+          /authServerMetadataUrl must (not be empty|be an absolute https:\/\/ URL)/,
+        )
+      }
+      assert.throws(
+        () => extractOAuthConfig({
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { authServerMetadataUrl: 123 as unknown as string },
+        }),
+        /authServerMetadataUrl must be a string/,
       )
     })
 

@@ -134,6 +134,8 @@ interface ServerState {
   includeTools?: string[];
   excludeTools?: string[];
   exposeResources: boolean;
+  disabled: boolean;
+  wasDisabled: boolean;
   connectionStatus: ConnectionStatus;
   failureMessage?: string | null;
   tools: ToolState[];
@@ -243,6 +245,7 @@ class McpPanel {
 
       const status = callbacks.getConnectionStatus(serverName);
       const failureMessage = callbacks.getFailureMessage?.(serverName) ?? null;
+      const serverDisabled = isServerDisabled(definition);
       let directCount = 0;
       let directTokens = 0;
       for (const tool of tools) {
@@ -258,6 +261,8 @@ class McpPanel {
         ...(definition.includeTools !== undefined ? { includeTools: definition.includeTools } : {}),
         ...(definition.excludeTools !== undefined ? { excludeTools: definition.excludeTools } : {}),
         exposeResources: definition.exposeResources !== false,
+        disabled: serverDisabled,
+        wasDisabled: serverDisabled,
         connectionStatus: status,
         failureMessage,
         tools,
@@ -275,7 +280,7 @@ class McpPanel {
     if (this.inactivityTimeout) clearTimeout(this.inactivityTimeout);
     this.inactivityTimeout = setTimeout(() => {
       this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.done({ cancelled: true, changes: new Map(), disabledChanges: new Map() });
     }, McpPanel.INACTIVITY_MS);
   }
 
@@ -334,12 +339,16 @@ class McpPanel {
   }
 
   private updateDirty(): void {
-    this.dirty = this.servers.some((s) => s.tools.some((t) => t.isDirect !== t.wasDirect));
+    this.dirty = this.servers.some((s) => s.disabled !== s.wasDisabled || s.tools.some((t) => t.isDirect !== t.wasDirect));
   }
 
   private buildResult(): McpPanelResult {
     const changes = new Map<string, true | string[] | false>();
+    const disabledChanges = new Map<string, boolean>();
     for (const server of this.servers) {
+      if (server.disabled !== server.wasDisabled) {
+        disabledChanges.set(server.name, server.disabled);
+      }
       const changed = server.tools.some((t) => t.isDirect !== t.wasDirect);
       if (!changed) continue;
       const directTools = server.tools.filter((t) => t.isDirect);
@@ -351,7 +360,7 @@ class McpPanel {
         changes.set(server.name, directTools.map((t) => t.name));
       }
     }
-    return { changes, cancelled: false };
+    return { changes, disabledChanges, cancelled: false };
   }
 
   handleInput(data: string): void {
@@ -367,7 +376,7 @@ class McpPanel {
     // Global shortcuts — always work, even during desc search
     if (matchesKey(data, "ctrl+c")) {
       this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.done({ cancelled: true, changes: new Map(), disabledChanges: new Map() });
       return;
     }
 
@@ -424,7 +433,7 @@ class McpPanel {
         return;
       }
       this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.done({ cancelled: true, changes: new Map(), disabledChanges: new Map() });
       return;
     }
 
@@ -474,6 +483,17 @@ class McpPanel {
       if (!item) return;
       const server = this.servers[item.serverIndex];
       if (server) this.reconnectServer(server);
+      return;
+    }
+
+    if (matchesKey(data, "ctrl+d")) {
+      const item = this.visibleItems[this.cursorIndex];
+      if (!item || item.type !== "server" || this.authOnly) return;
+      const server = this.servers[item.serverIndex];
+      if (!server) return;
+      server.disabled = !server.disabled;
+      this.updateDirty();
+      this.tui.requestRender();
       return;
     }
 
@@ -632,7 +652,7 @@ class McpPanel {
   private handleDiscardInput(data: string): void {
     if (matchesKey(data, "ctrl+c")) {
       this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.done({ cancelled: true, changes: new Map(), disabledChanges: new Map() });
       return;
     }
     if (matchesKey(data, "escape") || data === "n" || data === "N") {
@@ -642,7 +662,7 @@ class McpPanel {
     if (this.keys.selectConfirm(data)) {
       this.cleanup();
       if (this.discardSelected === 0) {
-        this.done({ cancelled: true, changes: new Map() });
+        this.done({ cancelled: true, changes: new Map(), disabledChanges: new Map() });
       } else {
         this.done(this.buildResult());
       }
@@ -650,7 +670,7 @@ class McpPanel {
     }
     if (data === "y" || data === "Y") {
       this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.done({ cancelled: true, changes: new Map(), disabledChanges: new Map() });
       return;
     }
     if (matchesKey(data, "left") || matchesKey(data, "right") || matchesKey(data, "tab")) {
@@ -883,6 +903,7 @@ class McpPanel {
           italic("⏎") + " expand/auth",
           italic("ctrl+a") + " auth",
           italic("ctrl+r") + " reconnect",
+          italic("ctrl+d") + " disable/enable",
           ...(this.selectedServerHasFailureMessage() ? [italic("ctrl+y") + " copy error"] : []),
           italic("?") + " desc search",
           ...(saveLabel ? [italic(saveLabel) + " save"] : []),
@@ -995,7 +1016,7 @@ class McpPanel {
   private renderConnectionStatus(server: ServerState): string {
     const t = this.t;
     if (this.authInFlight === server.name) return `  ${fg(t.needsAuth, "authenticating")}`;
-    if (server.connectionStatus === "disabled") return `  ${fg(t.description, "disabled")}`;
+    if (server.disabled) return `  ${fg(t.description, "disabled")}`;
     if (server.connectionStatus === "needs-auth") return `  ${fg(t.needsAuth, "needs auth")}`;
     if (server.connectionStatus === "connecting") return `  ${fg(t.needsAuth, "connecting")}`;
     if (server.connectionStatus === "failed") return `  ${fg(t.cancel, "failed")}`;

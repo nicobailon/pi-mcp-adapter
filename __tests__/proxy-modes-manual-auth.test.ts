@@ -84,6 +84,21 @@ describe("manual OAuth proxy actions", () => {
     expect(result.details).toMatchObject({ mode: "auth-start", server: "demo" });
   });
 
+  it("explains manual completion for pre-registered HTTPS callbacks", async () => {
+    mocks.startAuth.mockResolvedValueOnce({
+      authorizationUrl: "https://auth.example.com/authorize?redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fauth_callback",
+    });
+    const { executeAuthStart } = await import("../proxy-modes.ts");
+
+    const result = await executeAuthStart(createState(), "demo");
+
+    expect(result.content[0].text).toContain("pre-registered HTTPS callback");
+    expect(result.content[0].text).toContain("even if the destination page reports an error");
+    expect(result.content[0].text).toContain("Remote HTTPS callbacks must include the full callback URL");
+    expect(result.content[0].text).not.toContain('args: { code: "PASTE_CODE_HERE" }');
+    expect(result.content[0].text).not.toContain("redirected localhost URL");
+  });
+
   it("rejects auth-start for non-OAuth servers", async () => {
     const { executeAuthStart } = await import("../proxy-modes.ts");
 

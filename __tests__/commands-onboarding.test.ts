@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -100,6 +100,84 @@ describe("commands onboarding", () => {
     const options = mocks.createMcpPanel.mock.calls[0]?.[6];
     expect(options.noticeLines[0]).toContain("Using standard MCP config");
     expect(loadOnboardingState().sharedConfigHintShown).toBe(true);
+  });
+
+  it("does not present an .agents-only config as canonical shared MCP config", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-commands-agents-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-commands-agents-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(home, ".agents", "mcp.json"), {
+      mcpServers: {
+        compatibilityServer: { command: "compatibility" },
+      },
+    });
+
+    const ui = createUi();
+    const { loadMcpConfig } = await import("../config.ts");
+    const { openMcpPanel } = await import("../commands.ts");
+
+    await openMcpPanel({
+      config: loadMcpConfig(),
+      manager: { getConnection: () => null },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+    } as any, { getFlag: () => undefined } as any, { hasUI: true, mode: "tui", ui, cwd: process.cwd() } as any);
+
+    expect(mocks.createMcpPanel).toHaveBeenCalled();
+    const options = mocks.createMcpPanel.mock.calls[0]?.[6];
+    expect(options.noticeLines).toEqual([]);
+  });
+
+  it("writes known-server setup choices to the selected global shared config", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-commands-global-target-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-commands-global-target-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    mocks.createMcpSetupPanel.mockImplementationOnce((_discovery, callbacks, _options, _tui, done) => {
+      void callbacks.addKnownServer({ id: "demo", name: "Demo", summary: "Demo server", entry: { command: "demo" } }, "global")
+        .then(() => done());
+      return { dispose() {} };
+    });
+
+    const ui = createUi();
+    const { openMcpSetup } = await import("../commands.ts");
+
+    const result = await openMcpSetup({ config: { mcpServers: {} } } as any, {} as any, { hasUI: true, mode: "tui", ui, cwd: process.cwd() } as any);
+
+    expect(result.configChanged).toBe(true);
+    expect(JSON.parse(readFileSync(join(home, ".config", "mcp", "mcp.json"), "utf-8"))).toEqual({
+      mcpServers: {
+        demo: { command: "demo" },
+      },
+    });
+  });
+
+  it("writes RepoPrompt setup choices to the selected global shared config", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-commands-repoprompt-global-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-commands-repoprompt-global-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeFileSync(join(project, "package.json"), "{}\n", "utf-8");
+    writeJson(join(home, "RepoPrompt", "repoprompt_cli"), {});
+    mocks.createMcpSetupPanel.mockImplementationOnce((_discovery, callbacks, _options, _tui, done) => {
+      void callbacks.addRepoPrompt("global").then(() => done());
+      return { dispose() {} };
+    });
+
+    const ui = createUi();
+    const { openMcpSetup } = await import("../commands.ts");
+
+    const result = await openMcpSetup({ config: { mcpServers: {} } } as any, {} as any, { hasUI: true, mode: "tui", ui, cwd: process.cwd() } as any);
+
+    expect(result.configChanged).toBe(true);
+    expect(existsSync(join(project, ".mcp.json"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(home, ".config", "mcp", "mcp.json"), "utf-8"))).toEqual({
+      mcpServers: {
+        repoprompt: { command: join(home, "RepoPrompt", "repoprompt_cli"), args: [], lifecycle: "lazy" },
+      },
+    });
   });
 
   it("does not inspect host-specific configs when opening the MCP panel", async () => {

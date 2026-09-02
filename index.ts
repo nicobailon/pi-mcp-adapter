@@ -53,9 +53,43 @@ export interface McpServerRegistration {
   dispose(): Promise<void>;
 }
 
-// Routes runtime registrations to the adapter installed for a specific Pi
-// instance, so a process with several adapters cannot cross-register.
+export const MCP_RUNTIME_REGISTER_EVENT = "pi-mcp-adapter:runtime-register:v1" as const;
+export const MCP_RUNTIME_REGISTER_VERSION = 1 as const;
+
+export const MCP_RUNTIME_SNAPSHOT_EVENT = "pi-mcp-adapter:runtime-snapshot:v1" as const;
+export const MCP_RUNTIME_SNAPSHOT_VERSION = 1 as const;
+
+export type McpRuntimeRegistrationResult =
+  | { ok: true; registration: McpServerRegistration }
+  | { ok: false; error: Error };
+
+export interface McpRuntimeRegistrationRequest {
+  version: typeof MCP_RUNTIME_REGISTER_VERSION;
+  name: string;
+  definition: ServerEntry;
+  result?: McpRuntimeRegistrationResult;
+}
+
+export interface McpRuntimeServerSnapshot {
+  readonly name: string;
+  readonly definition: ServerEntry;
+  readonly runtime: true;
+  readonly persisted: false;
+}
+
+export type McpRuntimeSnapshotResult =
+  | { ok: true; snapshot: McpRuntimeServerSnapshot }
+  | { ok: false; error: Error };
+
+export interface McpRuntimeSnapshotRequest {
+  version: typeof MCP_RUNTIME_SNAPSHOT_VERSION;
+  name: string;
+  result?: McpRuntimeSnapshotResult;
+}
+
+// Fast path for callers that share the adapter's module and ExtensionAPI.
 const runtimeRegistrars = new WeakMap<ExtensionAPI, (name: string, definition: ServerEntry) => McpServerRegistration>();
+const runtimeSnapshotters = new WeakMap<ExtensionAPI, (name: string) => McpRuntimeServerSnapshot>();
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -97,7 +131,7 @@ function resolveNamespaceEnvOverride(
 }
 
 function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
-  const sessionConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
+  const sessionConfig = options.config === undefined ? undefined : cloneMcpConfig(options.config);
   const programmaticConfig = sessionConfig !== undefined;
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
@@ -200,7 +234,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let directToolsFrozen = false;
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
-  const runtimeServers = new Map<string, ServerEntry>();
+  const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
 
   // Mirrors init's per-server lifecycle registration so runtime servers get
   // idle cleanup and keep-alive health recovery like configured servers.
@@ -208,7 +242,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const lifecycleMode = definition.lifecycle ?? "lazy";
     const persistsAfterFirstSpawn = lifecycleMode === "eager" || lifecycleMode === "lazy-keep-alive";
     const idleOverride = definition.idleTimeout ?? (persistsAfterFirstSpawn ? 0 : undefined);
-    targetState.lifecycle.registerServer(name, definition, idleOverride !== undefined ? { idleTimeout: idleOverride } : undefined);
+    targetState.lifecycle.registerServer(name, definition, idleOverride === undefined ? undefined : { idleTimeout: idleOverride });
     if (lifecycleMode === "keep-alive") targetState.lifecycle.markKeepAlive(name, definition);
   }
 
@@ -346,6 +380,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const config = state?.config ?? earlyConfig;
     const cache = loadMetadataCache();
     const result = syncDirectTools(config, cache);
+    if (state) {
+      const directToolCounts = state.directToolCounts ?? new Map<string, number>();
+      directToolCounts.clear();
+      for (const spec of result.specs) {
+        directToolCounts.set(spec.serverName, (directToolCounts.get(spec.serverName) ?? 0) + 1);
+      }
+      state.directToolCounts = directToolCounts;
+    }
     syncProxyTool(config, cache, result.specs);
     syncNamespaceTools(config, cache, result.reservedDirectNames, result.activeDirectNames);
     const changed = result.added.length + result.updated.length + result.deactivated.length;
@@ -402,7 +444,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   registerPromptCommands(resolveCachedPrompts(earlyConfig));
 
-  runtimeRegistrars.set(pi, (name: string, definition: ServerEntry): McpServerRegistration => {
+  const registerRuntimeServer = (name: string, definition: ServerEntry): McpServerRegistration => {
     if (typeof name !== "string" || name.trim() === "") {
       throw new Error("MCP server name must be a non-empty string");
     }
@@ -415,8 +457,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     // Runtime-registered servers are proxy-tool-only: direct tools are frozen
     // at startup and must not be rebuilt for late registrations.
-    const entry: ServerEntry = { ...structuredClone(definition), directTools: false };
-    runtimeServers.set(name, entry);
+    const snapshotDefinition = structuredClone(definition);
+    const entry: ServerEntry = { ...structuredClone(snapshotDefinition), directTools: false };
+    runtimeServers.set(name, { definition: snapshotDefinition, entry });
     const registeredState = state;
     if (registeredState) {
       registeredState.config.mcpServers[name] = entry;
@@ -439,6 +482,62 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         updateStatusBar(currentState);
       },
     };
+  };
+  const getRuntimeServerSnapshot = (name: string): McpRuntimeServerSnapshot => {
+    if (typeof name !== "string" || name.trim() === "") {
+      throw new Error("MCP runtime server name must be a non-empty string");
+    }
+    const runtimeServer = runtimeServers.get(name);
+    if (!runtimeServer) {
+      throw new Error(`MCP runtime server "${name}" is not registered or has been disposed`);
+    }
+    const activeState = state;
+    if (!activeState) {
+      throw new Error(`MCP runtime server "${name}" is unavailable because the adapter has no active state`);
+    }
+    const activeEntry = activeState.config.mcpServers[name];
+    if (Object.hasOwn(activeState.config.mcpServers, name) && activeEntry !== runtimeServer.entry) {
+      throw new Error(`MCP runtime server "${name}" is shadowed by a configured server`);
+    }
+    if (activeEntry !== runtimeServer.entry) {
+      throw new Error(`MCP runtime server "${name}" is unavailable in the active adapter state`);
+    }
+    return {
+      name,
+      definition: structuredClone(runtimeServer.definition),
+      runtime: true,
+      persisted: false,
+    };
+  };
+  runtimeRegistrars.set(pi, registerRuntimeServer);
+  runtimeSnapshotters.set(pi, getRuntimeServerSnapshot);
+  pi.events.on(MCP_RUNTIME_REGISTER_EVENT, (rawRequest: unknown) => {
+    if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
+    const request = rawRequest as McpRuntimeRegistrationRequest;
+    if (request.result !== undefined) return;
+    if (request.version !== MCP_RUNTIME_REGISTER_VERSION) {
+      request.result = { ok: false, error: new Error(`Unsupported MCP runtime registration version: ${String(request.version)}`) };
+      return;
+    }
+    try {
+      request.result = { ok: true, registration: registerRuntimeServer(request.name, request.definition) };
+    } catch (error) {
+      request.result = { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  });
+  pi.events.on(MCP_RUNTIME_SNAPSHOT_EVENT, (rawRequest: unknown) => {
+    if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
+    const request = rawRequest as McpRuntimeSnapshotRequest;
+    if (request.result !== undefined) return;
+    if (request.version !== MCP_RUNTIME_SNAPSHOT_VERSION) {
+      request.result = { ok: false, error: new Error(`Unsupported MCP runtime snapshot version: ${String(request.version)}`) };
+      return;
+    }
+    try {
+      request.result = { ok: true, snapshot: getRuntimeServerSnapshot(request.name) };
+    } catch (error) {
+      request.result = { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+    }
   });
 
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
@@ -453,8 +552,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const promise = initializeMcp(pi, ctx, owner, {
       ...(programmaticConfig || options.configPath !== undefined
         ? {
-            ...(earlyConfigPath !== undefined ? { configPath: earlyConfigPath } : {}),
-            ...(sessionConfig !== undefined ? { config: sessionConfig } : {}),
+            ...(earlyConfigPath === undefined ? {} : { configPath: earlyConfigPath }),
+            ...(sessionConfig === undefined ? {} : { config: sessionConfig }),
           }
         : {}),
       oauthRuntime,
@@ -473,13 +572,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
       state = nextState;
       clearRetainedInitFailure();
-      for (const [name, definition] of runtimeServers) {
+      for (const [name, { entry }] of runtimeServers) {
         if (Object.hasOwn(nextState.config.mcpServers, name)) {
           console.error(`MCP: runtime-registered server "${name}" now collides with a configured server; keeping the configured server`);
           continue;
         }
-        nextState.config.mcpServers[name] = definition;
-        attachRuntimeServerLifecycle(nextState, name, definition);
+        nextState.config.mcpServers[name] = entry;
+        attachRuntimeServerLifecycle(nextState, name, entry);
       }
       nextState.onToolMetadataUpdated = (_serverName, _reason) => {
         if (state !== nextState || !owner.isActive()) return;
@@ -499,7 +598,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       initPromise = null;
       if (earlyConfig.settings?.freezeDirectTools === true) {
         directToolsFrozen = true;
-        logger.info("MCP: direct tools frozen after initial sync — reconnects won't rebuild the system prompt; use mcp({ connect: \"server\" }) to rediscover");
+        logger.info("MCP: direct tools frozen after initial sync — metadata can refresh without rebuilding the active tool surface");
       }
     }).catch(async err => {
       if (!owner.isActive() || generation !== lifecycleGeneration) {
@@ -726,7 +825,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         case "reconnect":
           commandOwner?.throwIfInactive();
           await reconnectServers(state, commandCtx, targetServer);
-          if (directToolsFrozen) syncToolSurface(commandCtx);
           break;
         case "tools":
           await showTools(state, commandCtx);
@@ -1084,7 +1182,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         if (params.connect) {
           const result = await executeConnect(state, params.connect, signal);
-          syncToolSurface(_ctx as ExtensionContext);
+          if (!directToolsFrozen) syncToolSurface(_ctx as ExtensionContext);
           return result;
         }
         if (params.describe) {
@@ -1150,11 +1248,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 }
 
 export function createMcpAdapter(options: McpAdapterOptions = {}) {
-  const factoryConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
+  const factoryConfig = options.config === undefined ? undefined : cloneMcpConfig(options.config);
   return function mcpAdapter(pi: ExtensionAPI) {
     installMcpAdapter(pi, {
-      ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
-      ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
+      ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+      ...(factoryConfig === undefined ? {} : { config: cloneMcpConfig(factoryConfig) }),
     });
   };
 }
@@ -1169,10 +1267,39 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
 export function registerMcpServer(options: { pi: ExtensionAPI; name: string; definition: ServerEntry }): McpServerRegistration {
   const { pi, name, definition } = options;
   const register = runtimeRegistrars.get(pi);
-  if (!register) {
+  if (register) return register(name, definition);
+  const request: McpRuntimeRegistrationRequest = {
+    version: MCP_RUNTIME_REGISTER_VERSION,
+    name,
+    definition,
+  };
+  pi.events.emit(MCP_RUNTIME_REGISTER_EVENT, request);
+  if (!request.result) {
     throw new Error("pi-mcp-adapter is not installed for this Pi instance");
   }
-  return register(name, definition);
+  if (!request.result.ok) throw request.result.error;
+  return request.result.registration;
+}
+
+/**
+ * Return a detached, non-persisted snapshot of one runtime-registered MCP
+ * server. Configured servers and runtime registrations shadowed by config are
+ * never exported through this API.
+ */
+export function getRuntimeMcpServerSnapshot(options: { pi: ExtensionAPI; name: string }): McpRuntimeServerSnapshot {
+  const { pi, name } = options;
+  const getSnapshot = runtimeSnapshotters.get(pi);
+  if (getSnapshot) return getSnapshot(name);
+  const request: McpRuntimeSnapshotRequest = {
+    version: MCP_RUNTIME_SNAPSHOT_VERSION,
+    name,
+  };
+  pi.events.emit(MCP_RUNTIME_SNAPSHOT_EVENT, request);
+  if (!request.result) {
+    throw new Error("pi-mcp-adapter is not installed for this Pi instance");
+  }
+  if (!request.result.ok) throw request.result.error;
+  return request.result.snapshot;
 }
 
 export default createMcpAdapter();

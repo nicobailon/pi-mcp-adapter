@@ -138,6 +138,20 @@ describe("resolveMcpToolReferences", () => {
     expect(result.diagnostics).toHaveLength(2);
   });
 
+  it("keeps Unicode namespace references distinct from literal encoded-form names", () => {
+    const unicode: ServerEntry = { command: "unicode" };
+    const encoded: ServerEntry = { command: "encoded" };
+    const config = configFor({ "数": unicode, _6570_: encoded });
+    const cache = cacheFor([
+      ["数", { definition: unicode, tools: [{ name: "search" }] }],
+      ["_6570_", { definition: encoded, tools: [{ name: "search" }] }],
+    ]);
+
+    const result = resolveMcpToolReferences(["mcp:数", "mcp:_6570_"], config, cache);
+
+    expect(result).toEqual({ names: ["mcp___mcpns_6570", "mcp___6570_"], diagnostics: [] });
+  });
+
   it("skips namespace proxies that collide with direct tool names", () => {
     const proxy: ServerEntry = { command: "proxy" };
     const direct: ServerEntry = { command: "direct", directTools: true, toolPrefix: "none" };

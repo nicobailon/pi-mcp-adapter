@@ -1,6 +1,7 @@
 ---
 name: mcp-scripting
 description: Write mcpScript JavaScript for discovering, inspecting, and calling MCP tools.
+disable-model-invocation: true
 ---
 
 # MCP scripting

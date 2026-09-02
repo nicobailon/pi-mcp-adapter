@@ -6,7 +6,7 @@
 
 Use MCP servers with [Pi](https://github.com/badlogic/pi-mono/) without burning your context window.
 
-https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a
+<https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a>
 
 ## Why This Exists
 
@@ -24,15 +24,17 @@ pi install npm:pi-mcp-adapter
 
 Restart Pi after installation.
 
+> **DeepSeek Harness (third-party bridge):** Run the unmodified adapter in DSH via [pi2dsh](https://github.com/weijiafu14/pi2dsh); see the [verified dsh-TUI and Web MCP guide](https://github.com/weijiafu14/pi2dsh/tree/main/examples/tui-mcp).
+
 ## What happens on first run
 
 The adapter reads standard MCP files automatically. No extra setup needed if you already have them.
 
 | You already have... | What happens |
-|---------------------|--------------|
-| `.mcp.json` or `~/.config/mcp/mcp.json` | Pi uses it immediately. The first time you open `/mcp`, you'll see a short heads-up explaining which file Pi detected and that Pi only writes adapter-specific overrides to its own files. |
+| --------------------- | -------------- |
+| `.mcp.json` or `~/.config/mcp/mcp.json` | Pi uses it immediately. Use `.mcp.json` for project/team sharing and `~/.config/mcp/mcp.json` for all projects. The first time you open `/mcp`, you'll see a short heads-up explaining which file Pi detected and that Pi only writes adapter-specific overrides to its own files. |
 | Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
-| Nothing configured yet | Run `/mcp setup` to scaffold a minimal `.mcp.json`, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
+| Nothing configured yet | Run `/mcp setup`, choose project `.mcp.json` or global `~/.config/mcp/mcp.json`, then scaffold a minimal config, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
 
 If you prefer the terminal, you can also run `pi-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to the Pi agent dir (`~/.pi/agent/mcp.json` by default, or `$PI_CODING_AGENT_DIR/mcp.json` when set).
 
@@ -51,16 +53,16 @@ Preferred project config: `.mcp.json`
 }
 ```
 
-Preferred user-global shared config: `~/.config/mcp/mcp.json`. Pi also reads the tool-agnostic global paths `~/.agents/mcp.json` and `~/.agents/mcp/mcp.json`.
+Preferred user-global shared config: `~/.config/mcp/mcp.json` (for all projects). Pi also reads the tool-agnostic global paths `~/.agents/mcp.json` and `~/.agents/mcp/mcp.json` as compatibility inputs.
 
-Pi also reads Pi-owned override files for settings and host-specific compatibility:
+Pi-owned files are not additional normal setup choices. They hold Pi-specific settings, compatibility imports, and adapter-only overrides:
 
 - `<Pi agent dir>/mcp.json` — Pi global override (`~/.pi/agent/mcp.json` by default)
 - `.pi/mcp.json` — Pi project override
 
-Host-specific configs are detected and shown by `/mcp setup` and `pi-mcp-adapter init`, but they are not loaded automatically. The normal `/mcp` panel does not scan host-specific files when `settings.hostConfigDiscovery` is `"off"`. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `pi-mcp-adapter init --discover-host-configs`. The default is `"off"`; `"prompt"` is available for integrations that want detection without activation. Host configs are lower precedence than every shared and Pi-owned source, and `/mcp setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
+Host-specific configs are detected and shown by `/mcp setup` and `pi-mcp-adapter init`, but they are compatibility inputs rather than normal setup paths and are not loaded automatically. The normal `/mcp` panel does not scan host-specific files when `settings.hostConfigDiscovery` is `"off"`. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `pi-mcp-adapter init --discover-host-configs`. The default is `"off"`; `"prompt"` is available for integrations that want detection without activation. Host configs are lower precedence than every shared and Pi-owned source, and `/mcp setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
 
-Precedence is:
+Precedence is (later entries win):
 
 1. `~/.config/mcp/mcp.json`
 2. `~/.agents/mcp.json`
@@ -76,6 +78,7 @@ Servers are **lazy by default** — they won't connect until you actually call o
 ```
 mcp({ search: "screenshot" })
 ```
+
 ```
 chrome_devtools_take_screenshot
   Take a screenshot of the page or element.
@@ -84,6 +87,7 @@ chrome_devtools_take_screenshot
     format (enum: "png", "jpeg", "webp") [default: "png"]
     fullPage (boolean) - Full page instead of viewport
 ```
+
 ```
 mcp({ tool: "chrome_devtools_take_screenshot", args: { format: "png" } })
 ```
@@ -99,7 +103,7 @@ Two calls instead of 26 tools cluttering the context.
 Use the shared MCP files when you want one setup to work across hosts, and Pi-owned files when you need Pi-specific overrides or settings.
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `~/.config/mcp/mcp.json` | User-global shared MCP config |
 | `~/.agents/mcp.json` | User-global tool-agnostic MCP config |
 | `~/.agents/mcp/mcp.json` | User-global tool-agnostic MCP config |
@@ -145,22 +149,43 @@ A Pi package can ship MCP servers for the installed adapter without requiring a 
 An extension can register MCP servers with the installed adapter at runtime, for example a plugin host that discovers plugins after load:
 
 ```ts
-import { registerMcpServer } from "pi-mcp-adapter";
+const MCP_RUNTIME_REGISTER_EVENT = "pi-mcp-adapter:runtime-register:v1";
+type RuntimeRegistrationRequest = {
+  version: 1;
+  name: string;
+  definition: { url: string };
+  result?:
+    | { ok: true; registration: { dispose(): Promise<void> } }
+    | { ok: false; error: Error };
+};
 
 export default function pluginHost(pi) {
-  const registration = registerMcpServer({
-    pi,
-    name: "acme__docs",
-    definition: {
-      url: "https://mcp.example.com/mcp",
-    },
+  let registration: { dispose(): Promise<void> } | undefined;
+
+  pi.on("session_start", () => {
+    if (registration) return;
+    const request: RuntimeRegistrationRequest = {
+      version: 1,
+      name: "acme__docs",
+      definition: { url: "https://mcp.example.com/mcp" },
+    };
+    pi.events.emit(MCP_RUNTIME_REGISTER_EVENT, request);
+    if (!request.result) throw new Error("pi-mcp-adapter is not installed");
+    if (!request.result.ok) throw request.result.error;
+    registration = request.result.registration;
   });
-  // Later, when the plugin is uninstalled:
-  await registration.dispose();
+
+  pi.on("session_shutdown", async () => {
+    const current = registration;
+    registration = undefined;
+    await current?.dispose();
+  });
 }
 ```
 
-Runtime registrations are session scoped and never written to config files. Duplicate server names fail closed against configured servers and other registrations. Registered servers use the normal lazy connection, OAuth, approval, and shutdown behavior, but they are proxy-tool-only and their tools become visible at the next tool sync. To change a definition, dispose the registration and register again. Registration throws when no adapter is installed for the given Pi instance.
+Cross-extension registration uses Pi's shared event bus and does not require a runtime import from `pi-mcp-adapter`. Emit during `session_start` or later so the adapter listener is installed. The adapter writes `request.result` synchronously; the first adapter listener to respond wins.
+
+Runtime registrations are session scoped and never written to config files. Duplicate server names fail closed against configured servers and other registrations. Registered servers use the normal lazy connection, OAuth, approval, and shutdown behavior, but they are proxy-tool-only and their tools become visible at the next tool sync. To change a definition, dispose the registration and register again.
 
 ### SDK configuration
 
@@ -214,7 +239,7 @@ pi.events.on(MCP_STATUS_EVENT, (snapshot) => {
 });
 ```
 
-The snapshot is read-only machine-readable data with copied per-server entries. It includes `totalTools`, `totalResources`, `connectedCount`, and `disabledCount`; each server includes `name`, `status`, `toolCount`, and `disabled`, with `resourceCount` when known and `failedAgoSeconds` only for an active failure. Reading status never connects a lazy server, starts authentication, or exposes SDK clients, transports, credentials, or server definitions. An initial snapshot is emitted after initialization, updates are emitted for status and metadata changes, and an empty snapshot is emitted when the session shuts down. Initialization withholds that first snapshot until authoritative metadata has been reconciled into Pi's active direct-tool registry. A `connected` snapshot therefore follows model-facing tool-surface synchronization, including removal of stale cached tools when the authoritative catalog is empty.
+The snapshot is read-only machine-readable data with copied per-server entries. It includes `totalTools`, `totalResources`, `connectedCount`, and `disabledCount`; each server includes `name`, `status`, `toolCount`, `directToolCount` (the number of tools currently registered directly with Pi, including direct resource tools), and `disabled`, with `resourceCount` when known and `failedAgoSeconds` only for an active failure. Reading status never connects a lazy server, starts authentication, or exposes SDK clients, transports, credentials, or server definitions. An initial snapshot is emitted after initialization, updates are emitted for status and metadata changes, and an empty snapshot is emitted when the session shuts down. Initialization withholds that first snapshot until authoritative metadata has been reconciled into Pi's active direct-tool registry. A `connected` snapshot therefore follows model-facing tool-surface synchronization, including removal of stale cached tools when the authoritative catalog is empty.
 
 In the configuration examples below, `30000` is illustrative only. If `requestTimeoutMs` is omitted or set to `<= 0`, the MCP SDK default timeout is used.
 
@@ -235,7 +260,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 ```
 
 | Field | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `command` | Executable for stdio transport; mutually exclusive with `url` and `socket` |
 | `args` | Command arguments |
 | `socket` | Explicit `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url` |
@@ -249,10 +274,11 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `oauth.clientId` | Pre-registered OAuth client ID. MCP 2026 prefers pre-registered clients or Client ID Metadata Documents; this adapter falls back to Dynamic Client Registration when the ID is omitted and the server supports it. |
 | `oauth.clientSecret` | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!` |
 | `oauth.scope` | Requested OAuth scopes |
-| `oauth.redirectUri` | Exact localhost redirect URI for browser OAuth, including port and path, for providers that pre-register callbacks |
+| `oauth.redirectUri` | Redirect URI for browser OAuth. Local `http://` loopback URIs accept an explicit port or `{port}` for an OS-assigned port (for example, `http://127.0.0.1:{port}/callback`). Pre-registered `https://` callbacks use manual completion by pasting the full callback URL. |
 | `oauth.clientName` | Client display name advertised during Dynamic Client Registration fallback |
 | `oauth.clientUri` | Client homepage URI advertised during Dynamic Client Registration fallback. Defaults to `piConfig.clientUri` from the host's manifest when set, and is omitted rather than guessed under a rebranded host |
 | `oauth.logoUri` | Client logo URL advertised during Dynamic Client Registration fallback (RFC 7591 `logo_uri`). Must be an absolute `http(s)` URL — consent screens fetch it server-side, so local paths render nothing. Omitted from the registration request when unset |
+| `oauth.authServerMetadataUrl` | HTTPS URL of an OAuth/OIDC authorization-server metadata document. When set, this document is authoritative instead of MCP protected-resource discovery; its issuer remains validated by default |
 | `oauth.skipIssuerMetadataValidation` | `true` disables the OAuth authorization-server metadata issuer check for this server. This weakens OAuth mix-up protection and should only be used for known-misconfigured internal servers while their metadata is being fixed. |
 | `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation. A leading `!` in `bearerToken` runs a command when the HTTP server connects; use `!!` for a literal leading `!`. |
 | `bearerTokenStore` | Set to `true` to read a static bearer token from the adapter-owned OS credential store when `auth` is `"bearer"` and no `bearerToken` or `bearerTokenEnv` is configured. Stored records are keyed only by the server name, bind to the resolved server URL, and are never named by config. Store a token with `pi-mcp-adapter token set <server>`, which reads it from a masked prompt or stdin pipe and never from an argument. `/mcp token status <server>` and `/mcp token remove <server>` manage non-secret state inside Pi; `/mcp token set` stays disabled until Pi exposes masked secret input. |
@@ -278,11 +304,13 @@ Use `"auto"` to probe for MCP 2026-07-28 and conservatively fall back to the cla
 
 Use `"2026-07-28"` to pin that revision. Pinning has no legacy or SSE fallback and fails if the server does not offer the requested version.
 
-The stable SDK handles era-specific request envelopes, result decoding, list-changed subscriptions, cancellation, and multi-round-trip sampling/elicitation. The adapter keeps strict OAuth issuer validation in every mode. Adapter-level roots support, standard MCP logging presentation, and configuration/UI for protocol cache hints are not yet implemented.
+The stable SDK handles era-specific request envelopes, result decoding, list-changed subscriptions, cancellation, and multi-round-trip sampling/elicitation. The SDK's embedded-input progress callback does not expose the originating tool or resource identity, so the adapter cannot maintain a durable per-tool waiting status row; interactive sessions keep the existing input dialog visible, and proxy calls show request progress when UI is available. The adapter keeps strict OAuth issuer validation in every mode. Adapter-level roots support, standard MCP logging presentation, and configuration/UI for protocol cache hints are not yet implemented.
 
-For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
+For pre-registered browser OAuth clients, set `oauth.redirectUri` to the callback registered with the provider, for example `"http://localhost:3118/callback"`. Providers that permit RFC 8252 dynamic loopback ports can use `"http://127.0.0.1:{port}/callback"`, `"http://[::1]:{port}/callback"`, or the equivalent `localhost` URI; the adapter binds that host on an OS-assigned port and sends the resolved URI in the authorization and token requests. Dynamic clients normally omit `redirectUri` and use a lazy OS-assigned `localhost` callback port. A configured `https://` callback runs in manual mode because the adapter cannot receive a callback on another host. After authorization, copy the full callback URL from the browser address bar and paste it into `/mcp-auth` or `mcp({ action: "auth-complete", ... })`.
 
 If an internal authorization server publishes mismatched OAuth metadata and cannot be fixed immediately, set `oauth.skipIssuerMetadataValidation: true` on that server only. This is security-weakening. It disables the RFC 8414 issuer echo check and should not be used for public or untrusted servers.
+
+If an MCP server does not publish usable protected-resource metadata, set `oauth.authServerMetadataUrl` to its HTTPS OAuth/OIDC authorization-server metadata document. The configured document is used authoritatively, while issuer validation remains enabled by default. This is trusted configuration; use it only for a metadata endpoint you control or explicitly trust.
 
 Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, and stdio `env` may use a leading `!command` to obtain their value at connection or authentication time. The command runs with stdin and stderr suppressed, stdout is limited to 1 MiB and trimmed, and it must finish within 10 seconds with non-empty output; failures stop the connection or authentication flow. Commands are not run during OAuth discovery or while reading, merging, previewing, hashing, or rendering configuration. Use `!!` to escape a literal leading `!`; ordinary and escaped values retain environment interpolation.
 
@@ -369,7 +397,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 ```
 
 | Setting | Description |
-|---------|-------------|
+| --------- | ------------- |
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
@@ -388,7 +416,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `strictDirectToolArguments` | Validate direct-tool inputs against their advertised schemas and recover one JSON string layer for object and array properties (default: false). |
 | `directToolResultDetails` | Direct-tool result details: `"lean"` (default) or `"bounded"` to retain the guarded raw MCP result. |
 | `warnOnLargeDirectTools` | Show the advisory when 75 or more direct tools resolve (default: `true`). Set to `false` to suppress only this advisory. |
-| `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ connect: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false. |
+| `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so metadata updates and explicit reconnects do not rebuild the system prompt. Proxy/search/cache metadata still refreshes. Default: false. |
 | `scriptMode` | Register the MCP-only `mcpScript` plain-JavaScript tool (default: true). Set to `false` to hide it. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
@@ -460,7 +488,7 @@ Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — t
 
 For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. Run that code with the default-on `mcpScript` tool. For a single MCP call, search, describe, status check, or auth action, use `mcp` instead. Set `settings.scriptMode` to `false` to hide the scripting tool.
 
-The bundled `mcp-scripting` skill is a separate Pi package resource. To hide that skill while keeping the adapter extension installed, replace the package entry in Pi settings with the object form and disable package skills:
+The bundled `mcp-scripting` skill is a separate Pi package resource and is manual-only by default, so its description is not added to the model's automatic skill context. Use `/skill:mcp-scripting` when you want its detailed workflow. To remove the manual skill command as well while keeping the adapter extension and `mcpScript` tool installed, replace the package entry in Pi settings with the object form and disable package skills:
 
 ```json
 {
@@ -542,7 +570,7 @@ Per-server:
 ```
 
 | Value | Behavior |
-|-------|----------|
+| ------- | ---------- |
 | `true` | Register all tools from this server as individual Pi tools |
 | `["tool_a", "tool_b"]` | Register only these tools (use original MCP names) |
 | Omitted or `false` | Proxy only (default) |
@@ -602,13 +630,13 @@ Models sometimes encode an object or array argument as a JSON string. Set `setti
 
 Set `settings.directToolResultDetails` to `"bounded"` when an extension needs structured MCP result fields in Pi's direct-tool result details. The same output guard limits apply. Small leading structured fields stay available, while large fields receive bounded summaries and the complete guarded result follows the output guard's spill-file policy. The default `"lean"` mode keeps the existing server and tool metadata only.
 
-If prompt-cache stability matters more than automatic direct-tool hot-loading, set `settings.freezeDirectTools` to `true`. The initial direct-tool sync still runs, but later automatic reconnects, lazy-connects, and list-change notifications keep the registered tool surface unchanged. Deliberate refreshes through `mcp({ connect: "server" })` or `/mcp reconnect <server>` still update direct tools.
+If prompt-cache stability matters more than direct-tool hot-loading, set `settings.freezeDirectTools` to `true`. The initial direct-tool sync still runs, but later metadata updates and explicit reconnects keep the registered tool surface unchanged while proxy/search/cache metadata refreshes normally.
 
 When you change direct-tool toggles in `/mcp`, the extension updates direct tool registration in the current session. Broader setup writes from `/mcp setup` still use Pi's normal reload flow because they can add or restructure MCP config files.
 
-**Interactive configuration:** Run `/mcp` to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. You can reconnect servers and toggle tools between direct and proxy from the same overlay. For OAuth, press Enter on a server that needs auth or `ctrl+a` on any OAuth server. The Save action defaults to `ctrl+s` and can be remapped with the `mcp.panel.save` keybinding.
+**Interactive configuration:** Run `/mcp` to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. You can reconnect servers, toggle tools between direct and proxy, and enable or disable servers (`ctrl+d`) from the same overlay. For OAuth, press Enter on a server that needs auth or `ctrl+a` on any OAuth server. The Save action defaults to `ctrl+s` and can be remapped with the `mcp.panel.save` keybinding.
 
-**Guided first-run setup:** Run `/mcp setup` to inspect detected shared MCP files, adopt compatibility imports from other hosts, open discovered config paths, preview exact before/after file diffs for writes, scaffold a minimal project `.mcp.json`, add a curated known server (DeepWiki, Context7, Notion, GitHub, or Chrome DevTools), or quick-add RepoPrompt into a standard/shared MCP file.
+**Guided first-run setup:** Run `/mcp setup` to choose the normal write target for new shared servers — project `.mcp.json` or global `~/.config/mcp/mcp.json` — inspect detected shared MCP files, adopt compatibility imports from other hosts, open discovered config paths, preview exact before/after file diffs for writes, scaffold a minimal selected config, add a curated known server (DeepWiki, Context7, Notion, GitHub, or Chrome DevTools), or quick-add RepoPrompt into a standard/shared MCP file.
 
 **Subagent integration:** If you use the subagent extension, agents can request direct MCP tools in their frontmatter with `mcp:server-name` syntax. See the subagent README for details.
 
@@ -632,7 +660,7 @@ MCP servers can ship interactive UIs via the [MCP UI](https://github.com/MCP-UI-
 **Message types from UI:**
 
 | Type | Purpose |
-|------|---------|
+| ------ | --------- |
 | `prompt` | User message that triggers an agent response |
 | `intent` | Structured action with name + params |
 | `notify` | Fire-and-forget notification |
@@ -690,12 +718,12 @@ Supported compatibility imports: `cursor`, `claude-code`, `claude-desktop`, `ope
 
 ### Project Config
 
-Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/mcp.json` only when you need a Pi-specific project override. Project files override both user-global shared MCP config and Pi global overrides.
+Prefer `.mcp.json` for project-local shared MCP config and `~/.config/mcp/mcp.json` for user-global shared MCP config. Use `.pi/mcp.json` only when you need a Pi-specific project override. Project files override both user-global shared MCP config and Pi global overrides.
 
 ## Usage
 
 | Mode | Example |
-|------|---------|
+| ------ | --------- |
 | Status | `mcp({ })` |
 | List server | `mcp({ server: "name" })` |
 | Search | `mcp({ search: "screenshot navigate", limit: 12, offset: 0 })` |
@@ -747,7 +775,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 ## Commands
 
 | Command | What it does |
-|---------|--------------|
+| --------- | -------------- |
 | `/mcp` | Interactive panel and first-run onboarding surface |
 | `/pi-mcp` | Alias for `/mcp` when the host reserves `/mcp` |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |

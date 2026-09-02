@@ -21,6 +21,7 @@ import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
 import { captureTaskManagerResult, getTaskManagerClaimVault, prepareTaskManagerArgs, validateTaskManagerArgs } from "./taskmanager-claim-vault.ts";
 import { Check, Errors } from "typebox/value";
+import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
@@ -194,13 +195,11 @@ export function resolveDirectTools(
       } else if (envSelection.tools.has(serverName)) {
         toolFilter = [...envSelection.tools.get(serverName)!];
       }
-    } else {
-      if (definition.directTools !== undefined) {
+    } else if (definition.directTools !== undefined) {
         toolFilter = definition.directTools;
       } else if (globalDirect) {
         toolFilter = globalDirect;
       }
-    }
 
     if (!toolFilter) continue;
 
@@ -248,9 +247,9 @@ export function resolveDirectTools(
         originalName: tool.name,
         prefixedName,
         description: taskManagerProjection.description,
-        ...(tool.inputSchema !== undefined ? { inputSchema: taskManagerProjection.inputSchema } : {}),
-        ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
-        ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
+        ...(tool.inputSchema === undefined ? {} : { inputSchema: taskManagerProjection.inputSchema }),
+        ...(tool.uiResourceUri === undefined ? {} : { uiResourceUri: tool.uiResourceUri }),
+        ...(tool.uiStreamMode === undefined ? {} : { uiStreamMode: tool.uiStreamMode }),
       });
     }
 
@@ -409,7 +408,7 @@ export function createDirectToolExecutor(
       }
       const failedAgo = getFailureAgeSeconds(state, spec.serverName);
       return {
-        content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not available${failedAgo !== null ? ` (failed ${failedAgo}s ago)` : ""}` }],
+        content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not available${failedAgo === null ? "" : ` (failed ${failedAgo}s ago)`}` }],
         details: { error: "server_unavailable", server: spec.serverName },
       };
     }
@@ -430,10 +429,10 @@ export function createDirectToolExecutor(
       name: spec.prefixedName,
       originalName: spec.originalName,
       description: spec.description,
-      ...(spec.inputSchema !== undefined ? { inputSchema: spec.inputSchema } : {}),
-      ...(spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : {}),
-      ...(spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : {}),
-      ...(spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : {}),
+      ...(spec.inputSchema === undefined ? {} : { inputSchema: spec.inputSchema }),
+      ...(spec.resourceUri === undefined ? {} : { resourceUri: spec.resourceUri }),
+      ...(spec.uiResourceUri === undefined ? {} : { uiResourceUri: spec.uiResourceUri }),
+      ...(spec.uiStreamMode === undefined ? {} : { uiStreamMode: spec.uiStreamMode }),
     }, normalizedParams, ownedSignal, spec.resourceUri ? "resource" : "direct");
     if (approval.ok === false) {
       const denied = approval.reason === "denied";
@@ -493,7 +492,13 @@ export function createDirectToolExecutor(
             onNeedsAuth: recoverAuthConnection,
           },
           spec.serverName,
-          (conn) => conn.client.readResource({ uri: spec.resourceUri! }, requestOptions),
+          async (conn) => {
+            const refreshRead = await state.manager.prepareResourceUse?.(spec.serverName, spec.resourceUri!, conn);
+            return conn.client.readResource(
+              { uri: spec.resourceUri! },
+              refreshRead ? { ...requestOptions, cacheMode: "refresh" } : requestOptions,
+            );
+          },
         );
         const content = transformMcpResourceContents(result.contents ?? [], state.owner?.signal);
         const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], {
@@ -513,7 +518,7 @@ export function createDirectToolExecutor(
             toolName: spec.originalName,
             toolArgs: modelVisibleParams,
             uiResourceUri: spec.uiResourceUri!,
-            ...(spec.uiStreamMode !== undefined ? { streamMode: spec.uiStreamMode } : {}),
+            ...(spec.uiStreamMode === undefined ? {} : { streamMode: spec.uiStreamMode }),
             ...(signal ? { signal } : {}),
             onNeedsAuth: recoverAuthConnection,
           })
@@ -527,11 +532,14 @@ export function createDirectToolExecutor(
           onNeedsAuth: recoverAuthConnection,
         },
         spec.serverName,
-        (conn) => abortable(conn.client.callTool({
-          name: spec.originalName,
-          arguments: normalizedParams,
-          _meta: uiSession?.requestMeta,
-        }, requestOptions), ownedSignal),
+        async (conn) => {
+          await state.manager.ensureListen?.(spec.serverName, conn);
+          return abortable(conn.client.callTool({
+            name: spec.originalName,
+            arguments: normalizedParams,
+            _meta: uiSession?.requestMeta,
+          }, requestOptions), ownedSignal);
+        },
       );
       result = captureTaskManagerResult(getTaskManagerClaimVault(state, state.owner), spec.serverName, spec.originalName, result, normalizedParams) as ClientCallToolResult;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
@@ -602,6 +610,16 @@ export function createDirectToolExecutor(
         return {
           content: [{ type: "text" as const, text: message }],
           details: { error: "url_elicitation_required", server: spec.serverName, action },
+        };
+      }
+      const inputRequired = getInputRequiredNeedsUiDetails(error, spec.resourceUri
+        ? { server: spec.serverName, resourceUri: spec.resourceUri }
+        : { server: spec.serverName, tool: spec.originalName });
+      if (inputRequired) {
+        uiSession?.sendToolCancelled(inputRequired.message);
+        return {
+          content: [{ type: "text" as const, text: inputRequired.message }],
+          details: { ...inputRequired },
         };
       }
       const message = error instanceof Error ? error.message : String(error);

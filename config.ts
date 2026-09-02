@@ -43,6 +43,16 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
     entry: { url: "https://mcp.context7.com/mcp", protocolVersion: "auto" },
   },
   {
+    id: "parallel-search",
+    name: "Parallel Search",
+    summary: "Search the web and fetch pages without an API key.",
+    entry: {
+      url: "https://search.parallel.ai/mcp",
+      protocolVersion: "auto",
+      directTools: true,
+    },
+  },
+  {
     id: "notion",
     name: "Notion",
     summary: "Search and work with your Notion workspace.",
@@ -165,6 +175,8 @@ export interface ConfigWritePreview {
   diffText: string;
 }
 
+export type SharedConfigTarget = "project" | "global";
+
 export function getPiGlobalConfigPath(overridePath?: string): string {
   return overridePath ? resolve(overridePath) : getAgentPath("mcp.json");
 }
@@ -179,6 +191,10 @@ export function getProjectConfigPath(cwd = process.cwd()): string {
 
 export function getProjectPiConfigPath(cwd = process.cwd()): string {
   return resolve(cwd, getConfigDirName(), PROJECT_PI_CONFIG_NAME);
+}
+
+export function getSharedConfigPath(target: SharedConfigTarget, cwd = process.cwd()): string {
+  return target === "project" ? getProjectConfigPath(cwd) : getGenericGlobalConfigPath();
 }
 
 export function getConfigDiscoveryPaths(overridePath?: string, cwd = process.cwd()): ConfigDiscoveryPath[] {
@@ -835,6 +851,7 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
             ...(typeof oauth.clientId === "string" ? { clientId: oauth.clientId } : {}),
             ...(typeof oauth.clientSecret === "string" ? { clientSecret: oauth.clientSecret } : {}),
             ...(typeof oauth.scope === "string" ? { scope: oauth.scope } : {}),
+            ...(typeof oauth.authServerMetadataUrl === "string" ? { authServerMetadataUrl: oauth.authServerMetadataUrl } : {}),
             ...(typeof oauth.skipIssuerMetadataValidation === "boolean"
               ? { skipIssuerMetadataValidation: oauth.skipIssuerMetadataValidation }
               : {}),
@@ -1148,17 +1165,25 @@ export function buildStarterProjectConfig(): McpConfig {
   };
 }
 
-export function previewStarterProjectConfig(cwd = process.cwd()): ConfigWritePreview {
-  const targetPath = getProjectConfigPath(cwd);
+export function previewStarterSharedConfig(target: SharedConfigTarget, cwd = process.cwd()): ConfigWritePreview {
+  const targetPath = getSharedConfigPath(target, cwd);
   const nextRaw = { mcpServers: buildStarterProjectConfig().mcpServers };
   return buildConfigWritePreview(targetPath, nextRaw);
 }
 
-export function writeStarterProjectConfig(cwd = process.cwd()): string {
-  const targetPath = getProjectConfigPath(cwd);
+export function writeStarterSharedConfig(target: SharedConfigTarget, cwd = process.cwd()): string {
+  const targetPath = getSharedConfigPath(target, cwd);
   const raw = { mcpServers: buildStarterProjectConfig().mcpServers };
   writeRawConfigObject(targetPath, raw);
   return targetPath;
+}
+
+export function previewStarterProjectConfig(cwd = process.cwd()): ConfigWritePreview {
+  return previewStarterSharedConfig("project", cwd);
+}
+
+export function writeStarterProjectConfig(cwd = process.cwd()): string {
+  return writeStarterSharedConfig("project", cwd);
 }
 
 export function previewSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): ConfigWritePreview {

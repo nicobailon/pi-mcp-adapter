@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
-import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/client";
+import { UrlElicitationRequiredError, type Client, type Progress, type RequestOptions } from "@modelcontextprotocol/client";
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
@@ -19,6 +19,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 import { captureTaskManagerResult, getTaskManagerClaimVault, prepareTaskManagerArgs, validateTaskManagerArgs } from "./taskmanager-claim-vault.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
@@ -38,6 +39,30 @@ type AutoAuthResult =
   | { status: "skipped" }
   | { status: "success" }
   | { status: "failed"; message: string };
+
+let nextProgressInvocationId = 1;
+
+/**
+ * Bridges SDK request-local progress callbacks to the interactive UI notify
+ * path (#437 item 3). The SDK owns `_meta.progressToken` injection when
+ * `onprogress` is set; this never writes the token manually.
+ */
+function withUiProgressBridge(
+  options: RequestOptions | undefined,
+  ui: McpExtensionState["ui"],
+  serverName: string,
+  toolName: string,
+): RequestOptions | undefined {
+  if (!ui) return options;
+  const label = `MCP ${serverName}/${toolName}#${nextProgressInvocationId++}`;
+  return {
+    ...options,
+    onprogress: (progress: Progress) => {
+      const ratio = `${progress.progress}${progress.total === undefined ? "" : `/${progress.total}`}`;
+      ui.notify(progress.message ? `${label}: ${progress.message} (${ratio})` : `${label}: ${ratio}`, "info");
+    },
+  };
+}
 
 function getToolMatches(metadata: ToolMetadata[] | undefined, toolName: string, exact: boolean): ToolMetadata[] {
   if (!metadata) return [];
@@ -68,6 +93,24 @@ function getSingleToolMatch(metadata: ToolMetadata[] | undefined, toolName: stri
   const exactMatches = getToolMatches(metadata, toolName, true);
   const matches = exactMatches.length > 0 ? exactMatches : getToolMatches(metadata, toolName, false);
   return matches.length > 1 ? "ambiguous" : matches[0];
+}
+
+type ServerScopedToolMatch = { tool: ToolMetadata; precedence: number } | "ambiguous";
+
+function getServerScopedToolMatch(metadata: ToolMetadata[] | undefined, toolName: string): ServerScopedToolMatch | undefined {
+  if (!metadata) return undefined;
+  const normalizedName = toolName.replace(/-/g, "_");
+  const matchesByPrecedence = [
+    metadata.filter((tool) => tool.name === toolName),
+    metadata.filter((tool) => tool.originalName === toolName),
+    metadata.filter((tool) => tool.name.replace(/-/g, "_") === normalizedName),
+    metadata.filter((tool) => tool.originalName.replace(/-/g, "_") === normalizedName),
+  ];
+  for (const [precedence, matches] of matchesByPrecedence.entries()) {
+    if (matches.length > 1) return "ambiguous";
+    if (matches.length === 1) return { tool: matches[0]!, precedence };
+  }
+  return undefined;
 }
 
 function ambiguousToolResult(mode: "call" | "describe", toolName: string): ProxyToolResult {
@@ -102,22 +145,30 @@ function getAuthFailedMessage(state: McpExtensionState, serverName: string, mess
   return `OAuth authentication failed for "${serverName}": ${message}. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
 }
 
-function getRedirectPort(authorizationUrl: string): number | undefined {
+function getRedirectDetails(authorizationUrl: string): { port?: number; remote: boolean } {
   try {
     const redirectUri = new URL(authorizationUrl).searchParams.get("redirect_uri");
-    if (!redirectUri) return undefined;
-    const port = Number.parseInt(new URL(redirectUri).port, 10);
-    return Number.isInteger(port) ? port : undefined;
+    if (!redirectUri) return { remote: false };
+    const redirect = new URL(redirectUri);
+    const hostname = redirect.hostname.toLowerCase();
+    const local = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+    const port = Number.parseInt(redirect.port, 10);
+    return {
+      ...(Number.isInteger(port) ? { port } : {}),
+      remote: !local,
+    };
   } catch {
-    return undefined;
+    return { remote: false };
   }
 }
 
 function formatManualAuthInstructions(serverName: string, authorizationUrl: string): string {
-  const port = getRedirectPort(authorizationUrl);
-  const portNote = port
-    ? `\nThe redirect URL will use local port ${port}. On a remote server it is expected for that localhost page to fail locally; copy the address bar URL anyway.`
-    : "";
+  const redirect = getRedirectDetails(authorizationUrl);
+  const redirectNote = redirect.remote
+    ? "The provider uses a pre-registered HTTPS callback. Copy its full URL from the browser address bar, even if the destination page reports an error."
+    : redirect.port
+      ? `The redirect URL will use local port ${redirect.port}. On a remote server it is expected for that localhost page to fail locally; copy the address bar URL anyway.`
+      : "";
 
   return [
     `MCP OAuth required for "${serverName}".`,
@@ -126,11 +177,13 @@ function formatManualAuthInstructions(serverName: string, authorizationUrl: stri
     "",
     authorizationUrl,
     "",
-    "After approving, copy the full redirected localhost URL from your browser address bar and send it back with:",
+    "After approving, copy the full callback URL from your browser address bar and send it back with:",
     `mcp({ action: "auth-complete", server: "${serverName}", args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" } })`,
     "",
-    'You can also pass just the `code` query parameter as `args: { code: "PASTE_CODE_HERE" }`. JSON-string args remain supported.',
-    portNote.trimEnd(),
+    redirect.remote
+      ? "Remote HTTPS callbacks must include the full callback URL so the OAuth state can be checked. JSON-string args remain supported."
+      : 'You can also pass just the `code` query parameter as `args: { code: "PASTE_CODE_HERE" }`. JSON-string args remain supported.',
+    redirectNote,
   ].filter(Boolean).join("\n");
 }
 
@@ -181,13 +234,11 @@ async function attemptAutoAuth(
           ? { authStorageOptions: state.authStorageOptions, signal, runtime: state.oauthRuntime }
           : { authStorageOptions: state.authStorageOptions, runtime: state.oauthRuntime },
       );
-    } else {
-      if (signal) {
+    } else if (signal) {
         await authenticate(serverName, serverUrl, definition, { signal, runtime: state.oauthRuntime });
       } else {
         await authenticate(serverName, serverUrl, definition, { runtime: state.oauthRuntime });
       }
-    }
     return { status: "success" };
   } catch (error) {
     if (isAbortError(error, signal)) throw error;
@@ -288,7 +339,7 @@ export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
 }
 
 export function executeStatus(state: McpExtensionState): ProxyToolResult {
-  const servers: Array<{ name: string; status: string; toolCount: number; failedAgo: number | null; disabled?: boolean }> = [];
+  const servers: Array<{ name: string; status: string; listenState: string; catalogStale?: boolean; toolCount: number; failedAgo: number | null; disabled?: boolean }> = [];
 
   for (const name of Object.keys(state.config.mcpServers)) {
     const definition = state.config.mcpServers[name];
@@ -309,7 +360,16 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
     const toolCount = status === "failed" ? 0 : metadata?.length ?? 0;
 
-    servers.push({ name, status, toolCount, failedAgo, ...(disabled ? { disabled: true } : {}) });
+    const listenState = connection?.status === "connected" ? connection.listenState : "disconnected";
+    servers.push({
+      name,
+      status,
+      listenState,
+      ...(connection?.status === "connected" && connection.listenCatalogStale ? { catalogStale: true } : {}),
+      toolCount,
+      failedAgo,
+      ...(disabled ? { disabled: true } : {}),
+    });
   }
 
   const disabledCount = servers.filter(s => s.disabled).length;
@@ -326,7 +386,18 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       continue;
     }
     if (server.status === "connected") {
-      text += `✓ ${server.name} (${server.toolCount} tools)\n`;
+      const listen = server.listenState === "active"
+        ? server.catalogStale
+          ? ", listen active, catalog may be stale"
+          : ", listen active"
+        : server.listenState === "dropped"
+          ? ", catalog may be stale; will reconcile on next keep-alive or tool use"
+          : server.listenState === "re-establishing"
+            ? ", re-establishing listen"
+            : server.listenState === "legacy"
+              ? ", legacy notification path"
+              : ", not listening for catalog updates";
+      text += `✓ ${server.name} (${server.toolCount} tools${listen})\n`;
       continue;
     }
     if (server.status === "needs-auth") {
@@ -334,14 +405,19 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       continue;
     }
     if (server.status === "cached") {
-      text += `○ ${server.name} (${server.toolCount} tools, cached)\n`;
+      text += `○ ${server.name} (${server.toolCount} tools, cached; not listening)\n`;
       continue;
     }
     if (server.status === "failed") {
       text += `✗ ${server.name} (failed ${server.failedAgo ?? 0}s ago)\n`;
       continue;
     }
-    text += `○ ${server.name} (not connected)\n`;
+    text += `○ ${server.name} (not listening; disconnected)\n`;
+  }
+
+  const directToolsFrozen = state.config.settings?.freezeDirectTools === true;
+  if (directToolsFrozen) {
+    text += "\nDirect tools frozen; active registrations may differ from current metadata.\n";
   }
 
   if (servers.length > 0) {
@@ -350,7 +426,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "status", servers, totalTools, connectedCount, disabledCount },
+    details: { mode: "status", servers, totalTools, connectedCount, disabledCount, directToolsFrozen },
   };
 }
 
@@ -700,7 +776,17 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     };
   }
 
-  const cachedNote = connection?.status === "connected" ? "" : " (not connected, cached)";
+  // "not connected" alone reads as an outage while the tools listed below are
+  // real and the connection is simply lazy (tools served from cache).
+  // Distinguish auth from plain laziness so the caller knows which remedy applies.
+  let cachedNote = "";
+  if (connection?.status !== "connected") {
+    if (connection?.status === "needs-auth") {
+      cachedNote = ` (needs auth — run mcp({ action: "auth-start", server: "${server}" }))`;
+    } else {
+      cachedNote = ` (lazy: tools from cache, not connected yet — mcp({ connect: "${server}" }) to connect)`;
+    }
+  }
   let text = `${server} (${toolNames.length} tools${cachedNote}):\n\n`;
 
   const descMap = new Map<string, string>();
@@ -871,9 +957,9 @@ export async function executeCall(
     };
   }
   if (serverName) {
-    const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
+    const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
     if (match === "ambiguous") return ambiguousToolResult("call", toolName);
-    toolMeta = match;
+    toolMeta = match?.tool;
     if (isServerDisabled(state.config.mcpServers[serverName])) {
       return disabledCallResult(serverName, toolMeta);
     }
@@ -915,9 +1001,15 @@ export async function executeCall(
   if (serverName && !toolMeta) {
     const connected = await lazyConnect(state, serverName, ownedSignal);
     if (connected) {
-      const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
-      if (match === "ambiguous") return ambiguousToolResult("call", toolName);
-      toolMeta = match;
+      if (serverOverride) {
+        const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
+        if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+        toolMeta = match?.tool;
+      } else {
+        const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
+        if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+        toolMeta = match;
+      }
     } else {
       const needsAuthConnection = state.manager.getConnection(serverName);
       if (needsAuthConnection?.status === "needs-auth") {
@@ -935,9 +1027,9 @@ export async function executeCall(
             clearFailure(state, serverName);
             const connectedAfterAuth = await lazyConnect(state, serverName, ownedSignal);
             if (connectedAfterAuth) {
-              const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
+              const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
               if (match === "ambiguous") return ambiguousToolResult("call", toolName);
-              toolMeta = match;
+              toolMeta = match?.tool;
               if (!toolMeta) {
                 const suggestions = rankSuggestions(state, toolName, 5);
                 const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
@@ -1026,9 +1118,9 @@ export async function executeCall(
   }
 
   if (!serverName || !toolMeta) {
-    const nativeTool = !serverOverride
-      ? getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp")
-      : undefined;
+    const nativeTool = serverOverride
+      ? undefined
+      : getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp");
     if (nativeTool) {
       return {
         content: [{ type: "text" as const, text: `"${toolName}" is a native Pi tool. Call ${toolName} directly instead of using mcp({ tool: "${toolName}" }).` }],
@@ -1134,9 +1226,15 @@ export async function executeCall(
       if (!restored) notifyToolMetadataUpdated(state, serverName, "proxy-call-reconnect");
       markKeepAliveAfterConnect(state, serverName);
       updateStatusBar(state);
-      const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
-      if (match === "ambiguous") return ambiguousToolResult("call", toolName);
-      toolMeta = match;
+      if (serverOverride) {
+        const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
+        if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+        toolMeta = match?.tool;
+      } else {
+        const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
+        if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+        toolMeta = match;
+      }
       if (!toolMeta) {
         const available = getToolNames(state, serverName);
         const hint = available.length > 0
@@ -1195,7 +1293,12 @@ export async function executeCall(
   normalizedArgs = prepareTaskManagerArgs(claimVault, serverName, toolMeta.originalName, normalizedArgs) ?? {};
 
   let uiSession: UiSessionRuntime | null = null;
-  const requestOptions = state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
+  const requestOptions = withUiProgressBridge(
+    state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined),
+    state.ui,
+    serverName,
+    toolMeta.originalName,
+  );
 
   const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
   const recoverAuthConnection = async () => {
@@ -1237,7 +1340,13 @@ export async function executeCall(
           onNeedsAuth: recoverAuthConnection,
         },
         serverName,
-        (conn) => conn.client.readResource({ uri: toolMeta.resourceUri! }, requestOptions),
+        async (conn) => {
+          const refreshRead = await state.manager.prepareResourceUse?.(serverName, toolMeta.resourceUri!, conn);
+          return conn.client.readResource(
+            { uri: toolMeta.resourceUri! },
+            refreshRead ? { ...requestOptions, cacheMode: "refresh" } : requestOptions,
+          );
+        },
       );
       const content = transformMcpResourceContents(result.contents ?? [], state.owner?.signal);
       const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
@@ -1253,7 +1362,7 @@ export async function executeCall(
           toolName: toolMeta.originalName,
           toolArgs: modelVisibleArgs,
           uiResourceUri: toolMeta.uiResourceUri,
-          ...(toolMeta.uiStreamMode !== undefined ? { streamMode: toolMeta.uiStreamMode } : {}),
+          ...(toolMeta.uiStreamMode === undefined ? {} : { streamMode: toolMeta.uiStreamMode }),
           ...(signal ? { signal } : {}),
           onNeedsAuth: recoverAuthConnection,
         })
@@ -1267,11 +1376,14 @@ export async function executeCall(
         onNeedsAuth: recoverAuthConnection,
       },
       serverName,
-      (conn) => abortable(conn.client.callTool({
-        name: toolMeta.originalName,
-        arguments: normalizedArgs,
-        _meta: uiSession?.requestMeta,
-      }, requestOptions), ownedSignal),
+      async (conn) => {
+        await state.manager.ensureListen?.(serverName, conn);
+        return abortable(conn.client.callTool({
+          name: toolMeta.originalName,
+          arguments: normalizedArgs,
+          _meta: uiSession?.requestMeta,
+        }, requestOptions), ownedSignal);
+      },
     );
     result = captureTaskManagerResult(getTaskManagerClaimVault(state, state.owner), serverName, toolMeta.originalName, result, normalizedArgs) as ClientCallToolResult;
 
@@ -1344,6 +1456,14 @@ export async function executeCall(
       return {
         content: [{ type: "text" as const, text: message }],
         details: { mode: "call", error: "url_elicitation_required", ...callIdentity, action },
+      };
+    }
+    const inputRequired = getInputRequiredNeedsUiDetails(error, callIdentity);
+    if (inputRequired) {
+      uiSession?.sendToolCancelled(inputRequired.message);
+      return {
+        content: [{ type: "text" as const, text: inputRequired.message }],
+        details: { mode: "call", ...inputRequired },
       };
     }
     const message = error instanceof Error ? error.message : String(error);

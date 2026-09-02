@@ -4,17 +4,19 @@ import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type McpAuthResult, type McpConfig, type McpPanelCallbacks, type McpPanelResult, type ImportKind } from "./types.ts";
 import {
   ensureCompatibilityImports,
+  getSharedConfigPath,
   getMcpDiscoverySummary,
   getMcpStandardConfigSummary,
-  getProjectConfigPath,
   type KnownServerPreset,
+  type SharedConfigTarget,
   getServerProvenance,
   previewCompatibilityImports,
   previewSharedServerEntry,
-  previewStarterProjectConfig,
+  previewStarterSharedConfig,
   writeDirectToolsConfig,
+  writeProjectServerDisabledOverride,
   writeSharedServerEntry,
-  writeStarterProjectConfig,
+  writeStarterSharedConfig,
 } from "./config.ts";
 import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -48,6 +50,13 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
   if (!ctx.hasUI) return;
 
   const lines: string[] = ["MCP Server Status:", ""];
+  if (!state.programmaticConfig) {
+    lines.push(
+      "Shared MCP config: .mcp.json for this project/team or ~/.config/mcp/mcp.json for all projects.",
+      "Pi-owned files hold compatibility imports and adapter-specific overrides.",
+      "",
+    );
+  }
 
   for (const name of Object.keys(state.config.mcpServers)) {
     const definition = state.config.mcpServers[name];
@@ -59,12 +68,22 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     const metadata = state.toolMetadata.get(name);
     const toolCount = metadata?.length ?? 0;
     const failedAgo = getFailureAgeSeconds(state, name);
-    let status = "not connected";
+    let status = "not listening (disconnected)";
     let statusIcon = "○";
     let failed = false;
 
     if (connection?.status === "connected") {
-      status = "connected";
+      status = connection.listenState === "active"
+        ? connection.listenCatalogStale
+          ? "connected; listen active; catalog may be stale"
+          : "connected; listen active"
+        : connection.listenState === "dropped"
+          ? "connected; catalog may be stale — will reconcile on next keep-alive or tool use"
+          : connection.listenState === "re-establishing"
+            ? "connected; re-establishing listen"
+            : connection.listenState === "legacy"
+              ? "connected; legacy notification path"
+              : "connected; not listening for catalog updates";
       statusIcon = "✓";
     } else if (connection?.status === "needs-auth") {
       status = "needs auth";
@@ -75,16 +94,20 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
       statusIcon = "✗";
       failed = true;
     } else if (metadata !== undefined) {
-      status = "cached";
+      status = "cached; not listening (disconnected)";
     }
 
-    const toolSuffix = failed ? "" : ` (${toolCount} tools${status === "cached" ? ", cached" : ""})`;
+    const toolSuffix = failed ? "" : ` (${toolCount} tools${status.startsWith("cached") ? ", cached" : ""})`;
     lines.push(`${statusIcon} ${name}: ${status}${toolSuffix}`);
+  }
+
+  if (state.config.settings?.freezeDirectTools === true) {
+    lines.push("", "Direct tools frozen; active registrations may differ from current metadata.");
   }
 
   if (Object.keys(state.config.mcpServers).length === 0) {
     lines.push("No MCP servers configured");
-    lines.push("Run /mcp setup to adopt imports or scaffold a starter .mcp.json");
+    lines.push("Run /mcp setup to add a server to .mcp.json or ~/.config/mcp/mcp.json");
   }
 
   ctx.ui.notify(lines.join("\n"), "info");
@@ -302,7 +325,7 @@ export async function authenticateServer(
         return ui.input(
           `Complete ${serverName} OAuth\n\n` +
             `${terminalHyperlink("Open authorization page", authorizationUrl)}\n${authorizationUrl}\n\n` +
-            "Approve access, then paste the full localhost callback URL below.",
+            "Approve access, then paste the full callback URL from the browser address bar below.",
           undefined,
           { signal: inputSignal },
         );
@@ -455,16 +478,18 @@ export interface PanelFlowResult {
 function buildSharedConfigNoticeLines(configOverridePath: string | undefined, cwd: string): { lines: string[]; fingerprint: string | null } {
   const discovery = getMcpStandardConfigSummary(configOverridePath, cwd);
   const onboardingState = loadOnboardingState();
-  if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
+  const sharedSources = discovery.sources.filter((source) =>
+    (source.id === "shared-project" || source.id === "shared-global") && source.serverCount > 0,
+  );
+  if (sharedSources.length === 0 || onboardingState.sharedConfigHintShown) {
     return { lines: [], fingerprint: null };
   }
 
-  const sharedSources = discovery.sources.filter((source) => source.kind === "shared" && source.serverCount > 0);
   const sourceList = sharedSources.map((source) => source.path).join(", ");
   return {
     lines: [
       `Using standard MCP config from ${sourceList}.`,
-      "Pi only writes compatibility imports and adapter-specific overrides into Pi-owned files when needed.",
+      "Use .mcp.json for project/team config or ~/.config/mcp/mcp.json for all projects. Pi only writes compatibility imports and adapter-specific overrides into Pi-owned files when needed.",
     ],
     fingerprint: discovery.fingerprint,
   };
@@ -495,34 +520,34 @@ export async function openMcpSetup(
 
   const callbacks = {
     previewImports: (imports: ImportKind[]) => previewCompatibilityImports(imports, configOverridePath),
-    previewStarterProject: () => previewStarterProjectConfig(ctx.cwd),
-    previewRepoPrompt: () => {
+    previewStarterConfig: (target: SharedConfigTarget) => previewStarterSharedConfig(target, ctx.cwd),
+    previewRepoPrompt: (target: SharedConfigTarget) => {
       const repoPrompt = getMcpDiscoverySummary(configOverridePath, ctx.cwd, options).repoPrompt;
       if (!repoPrompt.entry || !repoPrompt.targetPath || !repoPrompt.serverName) return null;
-      return previewSharedServerEntry(repoPrompt.targetPath, repoPrompt.serverName, repoPrompt.entry);
+      return previewSharedServerEntry(getSharedConfigPath(target, ctx.cwd), repoPrompt.serverName, repoPrompt.entry);
     },
-    previewKnownServer: (preset: KnownServerPreset) => previewSharedServerEntry(getProjectConfigPath(ctx.cwd), preset.id, preset.entry),
+    previewKnownServer: (preset: KnownServerPreset, target: SharedConfigTarget) => previewSharedServerEntry(getSharedConfigPath(target, ctx.cwd), preset.id, preset.entry),
     adoptImports: async (imports: ImportKind[]) => {
       const result = ensureCompatibilityImports(imports, configOverridePath);
       if (result.added.length > 0) configChanged = true;
       return result;
     },
-    scaffoldProjectConfig: async () => {
-      const path = writeStarterProjectConfig(ctx.cwd);
+    scaffoldConfig: async (target: SharedConfigTarget) => {
+      const path = writeStarterSharedConfig(target, ctx.cwd);
       configChanged = true;
       return { path };
     },
-    addRepoPrompt: async () => {
+    addRepoPrompt: async (target: SharedConfigTarget) => {
       const repoPrompt = getMcpDiscoverySummary(configOverridePath, ctx.cwd, options).repoPrompt;
       if (!repoPrompt.entry || !repoPrompt.targetPath || !repoPrompt.serverName) {
         throw new Error("RepoPrompt is not available to add from this setup screen.");
       }
-      const path = writeSharedServerEntry(repoPrompt.targetPath, repoPrompt.serverName, repoPrompt.entry);
+      const path = writeSharedServerEntry(getSharedConfigPath(target, ctx.cwd), repoPrompt.serverName, repoPrompt.entry);
       configChanged = true;
       return { path, serverName: repoPrompt.serverName };
     },
-    addKnownServer: async (preset: KnownServerPreset) => {
-      const path = writeSharedServerEntry(getProjectConfigPath(ctx.cwd), preset.id, preset.entry);
+    addKnownServer: async (preset: KnownServerPreset, target: SharedConfigTarget) => {
+      const path = writeSharedServerEntry(getSharedConfigPath(target, ctx.cwd), preset.id, preset.entry);
       configChanged = true;
       return { path, serverName: preset.name };
     },
@@ -660,6 +685,18 @@ export async function openMcpPanel(
       (tui, _theme, keybindings, done) => {
         return createMcpPanel(config, cache, provenanceMap, callbacks, tui, (result: McpPanelResult) => {
           void (async () => {
+            if (!result.cancelled && result.disabledChanges.size > 0) {
+              for (const [serverName, disabled] of result.disabledChanges) {
+                try {
+                  const override = writeProjectServerDisabledOverride(configPath, ctx.cwd, serverName, disabled);
+                  if (override.changed) {
+                    configChanged = true;
+                  }
+                } catch (error) {
+                  ctx.ui.notify(`Failed to ${disabled ? "disable" : "enable"} server "${serverName}": ${error instanceof Error ? error.message : String(error)}`, "error");
+                }
+              }
+            }
             if (!result.cancelled && result.changes.size > 0) {
               writeDirectToolsConfig(result.changes, provenanceMap, config);
               await onDirectToolsConfigChanged?.(result.changes);

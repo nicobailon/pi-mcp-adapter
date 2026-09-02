@@ -29,6 +29,7 @@ import {
   type StoredTokens,
   type StoredClientInfo,
 } from "./mcp-auth.ts"
+import { OAuthMetadataSchema, OpenIdProviderDiscoveryMetadataSchema } from "@modelcontextprotocol/core"
 import { resolveCommandSecret } from "./utils.ts"
 import { getAppClientUri, getAppName } from "./agent-dir.ts"
 
@@ -130,6 +131,7 @@ export interface McpOAuthConfig {
   clientName?: string
   clientUri?: string
   logoUri?: string
+  authServerMetadataUrl?: string
   skipIssuerMetadataValidation?: boolean
 }
 
@@ -159,6 +161,85 @@ function addAuthorizationParams(authorizationUrl: URL, params: Record<string, st
 /** Callbacks for OAuth flow interactions */
 export interface McpOAuthCallbacks {
   onRedirect: (url: URL) => void | Promise<void>
+}
+
+function inferIssuerFromMetadataUrl(metadataUrl: string): string | undefined {
+  const url = new URL(metadataUrl)
+  const pathname = url.pathname.replace(/\/+$/, "") || "/"
+  const oauthPrefix = "/.well-known/oauth-authorization-server"
+  if (pathname === oauthPrefix || pathname.startsWith(`${oauthPrefix}/`)) {
+    const issuerPath = pathname.slice(oauthPrefix.length) || "/"
+    return new URL(issuerPath, url.origin).toString()
+  }
+
+  const oidcPath = "/.well-known/openid-configuration"
+  if (pathname === oidcPath || pathname.startsWith(`${oidcPath}/`)) {
+    const issuerPath = pathname.slice(oidcPath.length) || "/"
+    return new URL(issuerPath, url.origin).toString()
+  }
+  if (pathname.endsWith(oidcPath)) {
+    const issuerPath = pathname.slice(0, -oidcPath.length) || "/"
+    return new URL(issuerPath, url.origin).toString()
+  }
+  return undefined
+}
+
+function validateConfiguredIssuer(metadataUrl: string, issuer: string, skipIssuerValidation: boolean): void {
+  let parsedIssuer: URL
+  try {
+    parsedIssuer = new URL(issuer)
+  } catch (error) {
+    throw new Error("OAuth authorization-server metadata issuer must be an absolute URL", { cause: error })
+  }
+  if (parsedIssuer.protocol !== "http:" && parsedIssuer.protocol !== "https:") {
+    throw new Error("OAuth authorization-server metadata issuer must use http:// or https://")
+  }
+
+  const expectedIssuer = inferIssuerFromMetadataUrl(metadataUrl)
+  if (skipIssuerValidation) return
+  if (expectedIssuer !== undefined && !issuersMatch(expectedIssuer, issuer)) {
+    throw new Error(
+      `OAuth authorization-server metadata issuer does not match authServerMetadataUrl: expected ${expectedIssuer}`,
+    )
+  }
+  if (expectedIssuer === undefined && !issuersMatch(new URL(metadataUrl).origin, issuer)) {
+    throw new Error(
+      `OAuth authorization-server metadata issuer does not match authServerMetadataUrl origin: expected ${new URL(metadataUrl).origin}`,
+    )
+  }
+}
+
+async function loadConfiguredDiscoveryState(
+  metadataUrl: string,
+  serverUrl: string,
+  skipIssuerValidation: boolean,
+  signal?: AbortSignal,
+): Promise<OAuthDiscoveryState> {
+  const response = await fetch(metadataUrl, {
+    headers: { accept: "application/json" },
+    ...(signal === undefined ? {} : { signal }),
+  })
+  if (!response.ok) {
+    await response.text().catch(() => {})
+    throw new Error(`OAuth authServerMetadataUrl request failed with HTTP ${response.status}`)
+  }
+
+  const payload = await response.json()
+  const oauthResult = OAuthMetadataSchema.safeParse(payload)
+  const metadata = oauthResult.success
+    ? oauthResult.data
+    : OpenIdProviderDiscoveryMetadataSchema.parse(payload)
+  validateConfiguredIssuer(metadataUrl, metadata.issuer, skipIssuerValidation)
+
+  const resource = new URL(serverUrl)
+  resource.hash = ""
+  return {
+    authorizationServerUrl: metadata.issuer,
+    authorizationServerMetadata: metadata,
+    // The configured AS document is authoritative, so avoid a second PRM
+    // lookup while still binding the token request to the configured resource.
+    resourceMetadata: { resource: resource.toString() },
+  }
 }
 
 /**
@@ -256,8 +337,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (this.usesClientCredentials) {
       return {
         client_name: this.config.clientName ?? defaultClientName(),
-        ...(this.clientUri !== undefined ? { client_uri: this.clientUri } : {}),
-        ...(this.config.logoUri !== undefined ? { logo_uri: this.config.logoUri } : {}),
+        ...(this.clientUri === undefined ? {} : { client_uri: this.clientUri }),
+        ...(this.config.logoUri === undefined ? {} : { logo_uri: this.config.logoUri }),
         redirect_uris: [],
         grant_types: ["client_credentials"],
         token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
@@ -272,12 +353,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return {
       redirect_uris: [redirectUrl],
       client_name: this.config.clientName ?? defaultClientName(),
-      ...(this.clientUri !== undefined ? { client_uri: this.clientUri } : {}),
-      ...(this.config.logoUri !== undefined ? { logo_uri: this.config.logoUri } : {}),
+      ...(this.clientUri === undefined ? {} : { client_uri: this.clientUri }),
+      ...(this.config.logoUri === undefined ? {} : { logo_uri: this.config.logoUri }),
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
-      ...(this.config.scope !== undefined ? { scope: this.config.scope } : {}),
+      ...(this.config.scope === undefined ? {} : { scope: this.config.scope }),
     }
   }
 
@@ -316,7 +397,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       return {
         client_id: this.config.clientId,
         client_secret: clientSecret,
-        ...(issuer !== undefined ? { issuer } : {}),
+        ...(issuer === undefined ? {} : { issuer }),
       } as IssuerBoundClientInformation
     }
 
@@ -360,16 +441,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
       return {
         client_id: clientInfo.clientId,
         client_secret: clientInfo.clientSecret,
-        ...(clientInfo.clientIdIssuedAt !== undefined
-          ? { client_id_issued_at: clientInfo.clientIdIssuedAt }
-          : {}),
-        ...(clientInfo.clientSecretExpiresAt !== undefined
-          ? { client_secret_expires_at: clientInfo.clientSecretExpiresAt }
-          : {}),
-        ...(clientInfo.redirectUris !== undefined
-          ? { redirect_uris: clientInfo.redirectUris }
-          : {}),
-        ...(clientInfo.issuer !== undefined ? { issuer: clientInfo.issuer } : {}),
+        ...(clientInfo.clientIdIssuedAt === undefined
+          ? {}
+          : { client_id_issued_at: clientInfo.clientIdIssuedAt }),
+        ...(clientInfo.clientSecretExpiresAt === undefined
+          ? {}
+          : { client_secret_expires_at: clientInfo.clientSecretExpiresAt }),
+        ...(clientInfo.redirectUris === undefined
+          ? {}
+          : { redirect_uris: clientInfo.redirectUris }),
+        ...(clientInfo.issuer === undefined ? {} : { issuer: clientInfo.issuer }),
       } as IssuerBoundClientInformation
     }
 
@@ -388,7 +469,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.serverName,
         {
           clientId: info.client_id,
-          ...(issuer !== undefined ? { issuer } : {}),
+          ...(issuer === undefined ? {} : { issuer }),
           configPreRegistered: true,
         },
         this.serverUrl,
@@ -401,11 +482,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
       ?? (this.redirectUrl ? [this.redirectUrl] : undefined)
     const clientInfo: StoredClientInfo = {
       clientId: info.client_id,
-      ...(info.client_secret !== undefined ? { clientSecret: info.client_secret } : {}),
-      ...(info.client_id_issued_at !== undefined ? { clientIdIssuedAt: info.client_id_issued_at } : {}),
-      ...(info.client_secret_expires_at !== undefined ? { clientSecretExpiresAt: info.client_secret_expires_at } : {}),
-      ...(redirectUris !== undefined ? { redirectUris } : {}),
-      ...(issuer !== undefined ? { issuer } : {}),
+      ...(info.client_secret === undefined ? {} : { clientSecret: info.client_secret }),
+      ...(info.client_id_issued_at === undefined ? {} : { clientIdIssuedAt: info.client_id_issued_at }),
+      ...(info.client_secret_expires_at === undefined ? {} : { clientSecretExpiresAt: info.client_secret_expires_at }),
+      ...(redirectUris === undefined ? {} : { redirectUris }),
+      ...(issuer === undefined ? {} : { issuer }),
     }
     this.flowClientInfo = clientInfo
     this.invalidatedClientId = undefined
@@ -448,13 +529,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
     const issuer = this.discoveredIssuer ?? (tokens as IssuerBoundTokens).issuer
     const storedTokens: StoredTokens = {
       accessToken: tokens.access_token,
-      ...(tokens.refresh_token !== undefined ? { refreshToken: tokens.refresh_token } : {}),
+      ...(tokens.refresh_token === undefined ? {} : { refreshToken: tokens.refresh_token }),
       // Preserve expiry even when expires_in is 0 (e.g. the SDK re-saving an
       // already-expired token) so expired tokens stay expired instead of
       // being persisted as never-expiring.
-      ...(tokens.expires_in !== undefined ? { expiresAt: Date.now() / 1000 + tokens.expires_in } : {}),
-      ...(tokens.scope !== undefined ? { scope: tokens.scope } : {}),
-      ...(issuer !== undefined ? { issuer } : {}),
+      ...(tokens.expires_in === undefined ? {} : { expiresAt: Date.now() / 1000 + tokens.expires_in }),
+      ...(tokens.scope === undefined ? {} : { scope: tokens.scope }),
+      ...(issuer === undefined ? {} : { issuer }),
     }
     this.throwIfInactive()
     updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
@@ -525,6 +606,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
     this.throwIfInactive()
+    if (!this.flowDiscoveryState && this.config.authServerMetadataUrl !== undefined) {
+      this.flowDiscoveryState = await loadConfiguredDiscoveryState(
+        this.config.authServerMetadataUrl,
+        this.serverUrl,
+        this.config.skipIssuerMetadataValidation === true,
+        this.runtimeSignal,
+      )
+    }
     return this.flowDiscoveryState ? structuredClone(this.flowDiscoveryState) : undefined
   }
 

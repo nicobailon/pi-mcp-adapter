@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { homedir } from "node:os";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { RESOURCE_MIME_TYPE } from "../ui-app-bridge-helpers.ts";
 
 const mocks = vi.hoisted(() => ({
   clients: [] as any[],
@@ -42,6 +43,7 @@ vi.mock("../npx-resolver.ts", () => ({
 
 describe("McpServerManager sampling", () => {
   const originalMcpTestCwd = process.env.MCP_TEST_CWD;
+  const originalHome = process.env.HOME;
 
   beforeEach(() => {
     mocks.clients.length = 0;
@@ -55,6 +57,15 @@ describe("McpServerManager sampling", () => {
     } else {
       process.env.MCP_TEST_CWD = originalMcpTestCwd;
     }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync("/tmp/pi-mcp-cwd", { recursive: true, force: true });
+    rmSync("/tmp/pi-mcp-home", { recursive: true, force: true });
+    rmSync("/tmp/pi-session-cwd", { recursive: true, force: true });
+    rmSync("/tmp/server-cwd", { recursive: true, force: true });
   });
 
   it("advertises sampling and registers the handler before connecting", async () => {
@@ -206,10 +217,45 @@ describe("McpServerManager sampling", () => {
     await manager.connect("demo", { command: "node", args: ["server.js"] });
 
     const client = mocks.clients[0];
-    expect(client.options).not.toHaveProperty("capabilities");
+    expect(client.options.capabilities).not.toHaveProperty("sampling");
     expect(client.options.listChanged.tools.onChanged).toBeTypeOf("function");
     expect(client.options.listChanged.resources.onChanged).toBeTypeOf("function");
     expect(client.setRequestHandler).not.toHaveBeenCalled();
+  });
+
+  it("passes the MCP Apps capability through legacy and modern client paths", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+
+    await manager.connect("legacy", { command: "node", args: ["server.js"] });
+    await manager.connect("auto", {
+      command: "node",
+      args: ["server.js"],
+      protocolVersion: "auto",
+    });
+    await manager.connect("pinned", {
+      command: "node",
+      args: ["server.js"],
+      protocolVersion: "2026-07-28",
+    });
+
+    const expectedCapabilities = {
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: [RESOURCE_MIME_TYPE],
+        },
+      },
+    };
+    expect(mocks.clients.map(client => client.options.capabilities)).toEqual([
+      expectedCapabilities,
+      expectedCapabilities,
+      expectedCapabilities,
+    ]);
+    expect(mocks.clients.map(client => client.options.versionNegotiation)).toEqual([
+      undefined,
+      { mode: "auto" },
+      { mode: { pin: "2026-07-28" } },
+    ]);
   });
 
   it("refreshes cached lists and ignores notifications from replaced clients", async () => {
@@ -238,6 +284,19 @@ describe("McpServerManager sampling", () => {
     expect(manager.getConnection("demo")?.resources).toEqual(freshResources);
     expect(metadataChanged).toHaveBeenCalledWith("demo", "tools-list-changed");
     expect(metadataChanged).toHaveBeenCalledWith("demo", "resources-list-changed");
+  });
+
+  it("preserves tools list cache hints across list-changed refreshes", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const client = mocks.clients[0];
+    connection.toolListHints = { ttlMs: 0, cacheScope: "private" };
+
+    client.options.listChanged.tools.onChanged(null, [{ name: "fresh_tool" }]);
+
+    expect(connection.tools).toEqual([{ name: "fresh_tool" }]);
+    expect(connection.toolListHints).toEqual({ ttlMs: 0, cacheScope: "private" });
   });
 
   it("forces an authoritative tool refresh and publishes catalog changes", async () => {
@@ -416,6 +475,9 @@ describe("McpServerManager sampling", () => {
   it("expands environment variables and tilde in stdio cwd", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     process.env.MCP_TEST_CWD = "/tmp/pi-mcp-cwd";
+    process.env.HOME = "/tmp/pi-mcp-home";
+    mkdirSync("/tmp/pi-mcp-cwd/nested", { recursive: true });
+    mkdirSync("/tmp/pi-mcp-home/nested", { recursive: true });
 
     const envManager = new McpServerManager();
     await envManager.connect("env-cwd", {
@@ -432,11 +494,12 @@ describe("McpServerManager sampling", () => {
     });
 
     expect(mocks.transports[0].options).toMatchObject({ cwd: "/tmp/pi-mcp-cwd/nested" });
-    expect(mocks.transports[1].options).toMatchObject({ cwd: join(homedir(), "nested") });
+    expect(mocks.transports[1].options).toMatchObject({ cwd: "/tmp/pi-mcp-home/nested" });
   });
 
   it("uses the session cwd for stdio servers without an explicit cwd", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
+    mkdirSync("/tmp/pi-session-cwd", { recursive: true });
     const manager = new McpServerManager("/tmp/pi-session-cwd");
 
     await manager.connect("session-cwd", { command: "node", args: ["server.js"] });
@@ -446,6 +509,8 @@ describe("McpServerManager sampling", () => {
 
   it("prefers an explicit stdio cwd over the session cwd", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
+    mkdirSync("/tmp/pi-session-cwd", { recursive: true });
+    mkdirSync("/tmp/server-cwd", { recursive: true });
     const manager = new McpServerManager("/tmp/pi-session-cwd");
 
     await manager.connect("explicit-cwd", {
