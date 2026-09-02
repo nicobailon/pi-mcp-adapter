@@ -132,6 +132,7 @@ function createState() {
       ensureConverged: vi.fn().mockResolvedValue(undefined),
     },
     toolMetadata: new Map(),
+    directToolCounts: new Map(),
     config: { mcpServers: {} },
     oauthRuntime: { signal: new AbortController().signal },
     failureTracker: new Map(),
@@ -659,6 +660,13 @@ describe("mcpAdapter session lifecycle", () => {
           prefixedName: "demo_search",
           description: "Search demo",
         },
+        {
+          serverName: "demo",
+          originalName: "read_doc",
+          prefixedName: "demo_read_doc",
+          description: "Read demo document",
+          resourceUri: "mcp://demo/doc",
+        },
       ]);
     mocks.initializeMcp.mockResolvedValue(state);
 
@@ -674,6 +682,7 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.resolve();
 
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
+    expect(state.directToolCounts).toEqual(new Map([["demo", 2]]));
   });
 
   it("does not refresh frozen direct tools on failure-backoff metadata updates", async () => {
@@ -793,6 +802,7 @@ describe("mcpAdapter session lifecycle", () => {
     state.failureTracker.set("failed", Date.now());
     state.onToolMetadataUpdated?.("failed", "failure-backoff-started");
 
+    expect(state.directToolCounts).toEqual(new Map());
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({
       name: "mcp__foo",
       description: expect.stringContaining("Namespace-proxy"),

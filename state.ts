@@ -32,6 +32,8 @@ export interface McpExtensionState {
   manager: McpServerManager;
   lifecycle: McpLifecycleManager;
   toolMetadata: Map<string, ToolMetadata[]>;
+  /** Number of tools currently registered directly with Pi, by server. */
+  directToolCounts: Map<string, number>;
   /** Resource counts retained separately because tool metadata includes resource tools. */
   resourceCounts: Map<string, number>;
   promptMetadata: Map<string, PromptMetadata[]>;

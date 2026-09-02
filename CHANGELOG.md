@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - OAuth loopback redirects can use `{port}` with `localhost`, `127.0.0.1`, or `::1` when a provider permits RFC 8252 dynamic ports. Thanks to [@nrutman](https://github.com/nrutman) for PR #483.
+- Runtime MCP status snapshots now include each server's `directToolCount`, the number of direct tools currently registered with Pi, including resource tools. Thanks to [@FischLu](https://github.com/FischLu) for #482.
 
 ## [2.32.1] - 2026-09-01
 

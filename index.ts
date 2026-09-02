@@ -380,6 +380,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const config = state?.config ?? earlyConfig;
     const cache = loadMetadataCache();
     const result = syncDirectTools(config, cache);
+    if (state) {
+      const directToolCounts = state.directToolCounts ?? new Map<string, number>();
+      directToolCounts.clear();
+      for (const spec of result.specs) {
+        directToolCounts.set(spec.serverName, (directToolCounts.get(spec.serverName) ?? 0) + 1);
+      }
+      state.directToolCounts = directToolCounts;
+    }
     syncProxyTool(config, cache, result.specs);
     syncNamespaceTools(config, cache, result.reservedDirectNames, result.activeDirectNames);
     const changed = result.added.length + result.updated.length + result.deactivated.length;

@@ -153,6 +153,7 @@ export async function initializeMcp(
   }
   const lifecycle = new McpLifecycleManager(manager, (serverName) => hasPendingAuth(serverName, undefined, oauthRuntime));
   const toolMetadata = new Map<string, ToolMetadata[]>();
+  const directToolCounts = new Map<string, number>();
   const resourceCounts = new Map<string, number>();
   const promptMetadata = new Map<string, PromptMetadata[]>();
   const promptMetadataLive = new Set<string>();
@@ -167,6 +168,7 @@ export async function initializeMcp(
     manager,
     lifecycle,
     toolMetadata,
+    directToolCounts,
     resourceCounts,
     promptMetadata,
     promptMetadataLive,

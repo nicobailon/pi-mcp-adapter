@@ -12,6 +12,7 @@ export interface McpServerStatusSnapshot {
     readonly name: string;
     readonly status: McpServerRuntimeStatus;
     readonly toolCount: number;
+    readonly directToolCount: number;
     readonly resourceCount?: number;
     readonly failedAgoSeconds?: number;
     readonly disabled: boolean;

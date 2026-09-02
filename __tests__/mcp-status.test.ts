@@ -29,6 +29,13 @@ function createState() {
       ["failed", [{ name: "failed_search" }, { name: "failed_read" }]],
       ["idle", [{ name: "old_search" }]],
     ]),
+    directToolCounts: new Map([
+      ["connected", 1],
+      ["cached", 2],
+      ["failed", 0],
+      ["idle", 1],
+      ["disabled", 3],
+    ]),
     resourceCounts: new Map([["connected", 2], ["cached", 1]]),
     failureTracker: new Map([["failed", Date.now() - 4_000]]),
     statusEvents: undefined,
@@ -62,12 +69,12 @@ describe("MCP status snapshots", () => {
       disabledCount: 1,
     });
     expect(snapshot.servers).toEqual(expect.arrayContaining([
-      { name: "connected", status: "connected", listenState: "active", toolCount: 1, resourceCount: 2, disabled: false },
-      { name: "cached", status: "cached", listenState: "disconnected", toolCount: 2, resourceCount: 1, disabled: false },
-      expect.objectContaining({ name: "failed", status: "failed", toolCount: 0, disabled: false }),
-      { name: "auth", status: "needs-auth", listenState: "disconnected", toolCount: 0, disabled: false },
-      { name: "idle", status: "cached", listenState: "disconnected", toolCount: 1, disabled: false },
-      { name: "disabled", status: "disabled", listenState: "disconnected", toolCount: 0, disabled: true },
+      { name: "connected", status: "connected", listenState: "active", toolCount: 1, directToolCount: 1, resourceCount: 2, disabled: false },
+      { name: "cached", status: "cached", listenState: "disconnected", toolCount: 2, directToolCount: 2, resourceCount: 1, disabled: false },
+      expect.objectContaining({ name: "failed", status: "failed", toolCount: 0, directToolCount: 0, disabled: false }),
+      { name: "auth", status: "needs-auth", listenState: "disconnected", toolCount: 0, directToolCount: 0, disabled: false },
+      { name: "idle", status: "cached", listenState: "disconnected", toolCount: 1, directToolCount: 1, disabled: false },
+      { name: "disabled", status: "disabled", listenState: "disconnected", toolCount: 0, directToolCount: 0, disabled: true },
     ]));
     const failed = snapshot.servers.find(server => server.name === "failed");
     expect(failed?.failedAgoSeconds).toBeGreaterThanOrEqual(4);
@@ -91,6 +98,19 @@ describe("MCP status snapshots", () => {
       name: "auth",
       status: "needs-auth",
       toolCount: 0,
+      directToolCount: 0,
+    });
+  });
+
+  it("reports retained direct registrations during frozen failure backoff", () => {
+    const state = createState();
+    state.directToolCounts.set("failed", 2);
+
+    const snapshot = createMcpStatusSnapshot(state);
+
+    expect(snapshot.servers.find(server => server.name === "failed")).toMatchObject({
+      status: "failed",
+      directToolCount: 2,
     });
   });
 
