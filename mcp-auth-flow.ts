@@ -313,6 +313,29 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
   }
 }
 
+/** Default timeout for each outbound HTTP request the SDK issues during OAuth. */
+const DEFAULT_OAUTH_REQUEST_TIMEOUT_MS = 30_000
+
+function resolveOAuthRequestTimeoutMs(): number {
+  const raw = process.env.PI_MCP_OAUTH_REQUEST_TIMEOUT_MS
+  const parsed = raw === undefined ? Number.NaN : Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_OAUTH_REQUEST_TIMEOUT_MS
+}
+
+/**
+ * fetch bound to both the owning runtime/options signal and a per-request
+ * timeout. The MCP SDK issues discovery, dynamic client registration,
+ * token-exchange, and refresh requests through this during OAuth; without a
+ * bound timeout a stalled endpoint hangs until the OS TCP timeout (~2 minutes).
+ */
+function authFetch(signal: AbortSignal | undefined): (url: string | URL, init?: RequestInit) => Promise<Response> {
+  return (url, init) => {
+    const timeoutSignal = AbortSignal.timeout(resolveOAuthRequestTimeoutMs())
+    const combined = combineAbortSignals(signal, timeoutSignal, init?.signal ?? undefined)
+    return fetch(url, { ...init, ...(combined ? { signal: combined } : {}) })
+  }
+}
+
 type OAuthRedirectTarget =
   | {
     mode: "local"
@@ -436,7 +459,7 @@ export async function startAuth(
     try {
       const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
       throwIfAborted(signal)
-      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery }), signal)
+      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn: authFetch(signal) }), signal)
       throwIfAborted(signal)
       if (result !== "AUTHORIZED") {
         throw new UnauthorizedError("Failed to authorize")
@@ -516,7 +539,7 @@ export async function startAuth(
 
     const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
     throwIfAborted(signal)
-    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery }), signal)
+    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn: authFetch(signal) }), signal)
     throwIfAborted(signal)
     if (result === "AUTHORIZED") {
       authProvider.deactivate()
@@ -854,6 +877,7 @@ export async function completeAuth(
       authorizationCode: code,
       ...(iss !== undefined ? { iss } : {}),
       ...pendingAuth.discovery,
+      fetchFn: authFetch(signal),
     }), signal)
     throwIfAborted(signal)
     if (result !== "AUTHORIZED") {
@@ -1047,6 +1071,7 @@ export async function getValidToken(
           serverUrl,
           ...discovery,
           ...(options.skipIssuerMetadataValidation === true ? { skipIssuerMetadataValidation: true } : {}),
+          fetchFn: authFetch(signal),
         }), signal)
         throwIfAborted(signal)
         if (result !== "AUTHORIZED") {

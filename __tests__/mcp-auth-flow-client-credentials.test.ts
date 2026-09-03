@@ -782,6 +782,7 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.sdkAuth).toHaveBeenNthCalledWith(2, expect.anything(), {
       serverUrl: "https://api.example.com/mcp",
       authorizationCode: "manual-code",
+      fetchFn: expect.any(Function),
     });
     expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(mocks.waitForCallback.mock.calls[0][0]);
     expect(getOAuthState("browser-fail")).toBeUndefined();
@@ -799,6 +800,7 @@ describe("mcp-auth-flow explicit auth", () => {
         expect(options).toEqual({
           serverUrl: "https://api.example.com/mcp",
           authorizationCode: "pasted-code",
+          fetchFn: expect.any(Function),
         });
         return "AUTHORIZED";
       });
@@ -1080,12 +1082,14 @@ describe("mcp-auth-flow explicit auth", () => {
       serverUrl: "https://api.example.com/mcp",
       resourceMetadataUrl: new URL(resourceMetadataUrl),
       scope: "mcp:read",
+      fetchFn: expect.any(Function),
     });
     expect(mocks.sdkAuth).toHaveBeenNthCalledWith(2, expect.anything(), {
       serverUrl: "https://api.example.com/mcp",
       authorizationCode: "auth-code",
       resourceMetadataUrl: new URL(resourceMetadataUrl),
       scope: "mcp:read",
+      fetchFn: expect.any(Function),
     });
     expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(oauthState);
     expect(getOAuthState("direct-complete")).toBeUndefined();
@@ -1111,11 +1115,13 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.sdkAuth).toHaveBeenNthCalledWith(1, expect.anything(), {
       serverUrl: "https://api.example.com/mcp",
       scope: "session:role:MCP_ROLE",
+      fetchFn: expect.any(Function),
     });
     expect(mocks.sdkAuth).toHaveBeenNthCalledWith(2, expect.anything(), {
       serverUrl: "https://api.example.com/mcp",
       authorizationCode: "auth-code",
       scope: "session:role:MCP_ROLE",
+      fetchFn: expect.any(Function),
     });
   });
 
