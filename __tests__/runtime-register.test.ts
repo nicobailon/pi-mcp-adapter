@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   shutdownOAuth: vi.fn().mockResolvedValue(undefined),
   loadMcpConfig: vi.fn(() => ({ mcpServers: {} })),
   cloneMcpConfig: vi.fn((config: unknown) => structuredClone(config)),
+  discoverConfiguredClaudePluginSkills: vi.fn(() => []),
+  resolveConfiguredClaudePluginMcp: vi.fn((config: unknown) => structuredClone(config)),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
   createDirectToolExecutor: vi.fn(() => vi.fn()),
@@ -58,6 +60,8 @@ vi.mock("../mcp-auth-flow.ts", () => ({
 vi.mock("../config.ts", () => ({
   loadMcpConfig: mocks.loadMcpConfig,
   cloneMcpConfig: mocks.cloneMcpConfig,
+  discoverConfiguredClaudePluginSkills: mocks.discoverConfiguredClaudePluginSkills,
+  resolveConfiguredClaudePluginMcp: mocks.resolveConfiguredClaudePluginMcp,
   writeProjectServerDisabledOverride: mocks.writeProjectServerDisabledOverride,
 }));
 

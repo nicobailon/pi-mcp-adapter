@@ -69,6 +69,15 @@ export function createUiModelContextUpdate(params, maxChars = 12_000) {
 export function isServerDisabled(definition) {
     return definition?.disabled === true;
 }
+const ENCODED_SERVER_NAMESPACE_MARKER = "_mcpns_";
+export function formatServerNamespace(serverName) {
+    const normalized = serverName.replace(/-/g, "_");
+    if (normalized === "" || (/^[A-Za-z0-9_]+$/.test(normalized) && !normalized.startsWith(ENCODED_SERVER_NAMESPACE_MARKER))) {
+        return normalized;
+    }
+    const codePoints = Array.from(normalized, character => character.codePointAt(0).toString(16)).join("_");
+    return `${ENCODED_SERVER_NAMESPACE_MARKER}${codePoints}`;
+}
 export const MCP_TOOL_APPROVAL_REQUEST_EVENT = "pi-mcp-adapter:tool-approval-request";
 /**
  * Get server prefix based on tool prefix mode.

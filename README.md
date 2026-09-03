@@ -128,6 +128,25 @@ Each directory must contain a valid Agent Plugins 1.0 `plugin.json`. If it also 
 
 Agent Plugins is a portable package format. Native Pi MCP config remains `.mcp.json`, `~/.config/mcp/mcp.json`, and Pi-owned overrides.
 
+### Local Claude plugin bundles
+
+The adapter can opt into MCP servers and Pi skills from explicitly configured local [Claude plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) directories:
+
+```json
+{
+  "claudePlugins": [
+    { "path": "./plugins/acme-tools", "mcp": true, "skills": true }
+  ],
+  "mcpServers": {}
+}
+```
+
+Each entry needs a non-empty `path` and must enable `mcp`, `skills`, or both. The root-level field can be set in any normal adapter config source; normal config-source precedence applies, and a higher-precedence `claudePlugins` array replaces a lower one. Relative paths resolve from the active project cwd. `mcp: true` reads only the plugin's root `.mcp.json`; `skills: true` discovers `skills/**/SKILL.md` inside the plugin and passes those files through Pi's normal resource discovery, including startup and `/reload`. A `.claude-plugin/plugin.json` manifest is optional, matching Claude's plugin format, but when present it must be valid JSON with a kebab-case `name` and valid standard field types. Manifest path overrides are intentionally not followed.
+
+Claude plugin MCP server names are used as written. The first explicitly listed plugin wins same-name conflicts between plugin bundles, while every normal Pi MCP config source overrides these plugin defaults. `${CLAUDE_PLUGIN_ROOT}` is expanded in plugin MCP server fields, and stdio servers receive it in their environment. Skills use Pi's existing skill parsing and conflict handling.
+
+This is an explicit local trust boundary: the adapter does not discover, download, install, or update plugins; execute plugin hooks; or fetch skills from MCP instructions. It resolves plugin components inside each configured directory and rejects component symlinks that escape it. Config and skills are read during discovery, but MCP commands are still lazy and run only when normal adapter lifecycle/tool use connects that server. Enable `mcp` only for plugin directories whose commands and configuration you trust.
+
 ### Pi package manifests
 
 A Pi package can ship MCP servers for the installed adapter without requiring a separate MCP config file. Declare a package-relative config in its `package.json`:
@@ -208,7 +227,7 @@ const extension = createMcpAdapter({
 
 The package ships TypeScript source for Pi's source-loader and SDK integrations. Use a TypeScript-capable loader/toolchain (for example `node --import tsx`) when importing the package from a standalone Node process; raw Node ESM does not execute the `.ts` entry directly.
 
-A supplied `config` is a complete, isolated snapshot. It is not merged with files, imports, global config, project config, or `--mcp-config`, and it is never mutated. Each adapter factory and session receives its own clone, so separate integrations can use different servers and settings safely. In this mode, server status, reconnect, explicit `/mcp-auth <server>`, proxy calls, and direct tools continue to work; setup and no-argument auth/status panels report the limitation instead of discovering or writing ambient config.
+A supplied `config` is a complete, isolated snapshot. It is not merged with files, imports, global config, project config, or `--mcp-config`, and it is never mutated. Explicit `claudePlugins` entries are the sole exception to file isolation: their configured local directories are read because they are part of that supplied snapshot. Each adapter factory and session receives its own clone, so separate integrations can use different servers and settings safely. In this mode, server status, reconnect, explicit `/mcp-auth <server>`, proxy calls, and direct tools continue to work; setup and no-argument auth/status panels report the limitation instead of discovering or writing ambient config.
 
 With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` and `MCP_OAUTH_DIR` are used only as legacy plaintext import locations for older `tokens.json` files, not as credential namespaces. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
 

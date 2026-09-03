@@ -336,6 +336,7 @@ export interface McpOutputGuardSettings {
     detailsMaxBytes?: number;
 }
 export type ToolPrefix = "server" | "none" | "short" | "mcp";
+export declare function formatServerNamespace(serverName: string): string;
 export type HostConfigDiscovery = "off" | "prompt" | "on";
 export type McpFooterStatus = "full" | "compact" | "off";
 export interface McpTraceSettings {
@@ -436,10 +437,19 @@ export interface McpSettings {
      */
     oauthDir?: string;
 }
+export interface ClaudePluginConfig {
+    /** Explicit local Claude plugin directory. Relative paths resolve from the active project cwd. */
+    path: string;
+    /** Load the plugin's root .mcp.json as low-precedence MCP defaults. */
+    mcp?: boolean;
+    /** Expose the plugin's root skills/ directory to Pi resource discovery. */
+    skills?: boolean;
+}
 export interface McpConfig {
     mcpServers: Record<string, ServerEntry>;
     imports?: ImportKind[];
     settings?: McpSettings;
+    claudePlugins?: ClaudePluginConfig[];
 }
 export interface McpAdapterOptions {
     config?: McpConfig;
