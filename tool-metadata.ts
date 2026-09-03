@@ -15,6 +15,7 @@ const TASK_MANAGER_CLAIM_FENCED = new Set([
   "set_agent_status",
   "add_task_comment",
   "update_task",
+  "create_task_blocker",
 ]);
 
 function isTaskManagerServer(serverName: string): boolean {

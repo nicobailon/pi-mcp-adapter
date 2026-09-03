@@ -422,7 +422,7 @@ export function createDirectToolExecutor(
     }
 
     let normalizedParams = spec.resourceUri ? params : normalizeToolArguments(params);
-    const claimVault = getTaskManagerClaimVault(state, state.owner);
+    const claimVault = getTaskManagerClaimVault(state.approvalEvents ?? state, state.owner);
     validateTaskManagerArgs(claimVault, spec.serverName, spec.originalName, normalizedParams);
     const modelVisibleParams = normalizedParams;
     const approval = await ensureToolCallApproved(state, spec.serverName, {
@@ -541,7 +541,7 @@ export function createDirectToolExecutor(
           }, requestOptions), ownedSignal);
         },
       );
-      result = captureTaskManagerResult(getTaskManagerClaimVault(state, state.owner), spec.serverName, spec.originalName, result, normalizedParams) as ClientCallToolResult;
+      result = captureTaskManagerResult(getTaskManagerClaimVault(state.approvalEvents ?? state, state.owner), spec.serverName, spec.originalName, result, normalizedParams) as ClientCallToolResult;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
 
       if (result.isError) {

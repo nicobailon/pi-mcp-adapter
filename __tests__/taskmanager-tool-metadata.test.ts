@@ -30,6 +30,31 @@ describe("TaskManager model-facing metadata", () => {
     expect(schema.required).toEqual(["claim_handle"]);
   });
 
+  it("projects blocker creation through the claim vault", () => {
+    const { metadata } = buildToolMetadata([{
+      name: "create_task_blocker",
+      description: "Create a blocker using claim_token.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task_id: { type: "string" },
+          kind: { type: "string" },
+          claim_token: { type: "string" },
+        },
+        required: ["task_id", "kind", "claim_token"],
+      },
+    }] as any, [], {}, "taskmanager", "server");
+
+    const tool = metadata[0]!;
+    const schema = tool.inputSchema as any;
+    expect(tool.description).toContain("claim_handle");
+    expect(schema.properties).toEqual({
+      kind: { type: "string" },
+      claim_handle: { type: "string" },
+    });
+    expect(schema.required).toEqual(["kind", "claim_handle"]);
+  });
+
   it("does not mutate the upstream schema and classifies every capability-producing operation", () => {
     const schema = { type: "object", properties: { claim_token: { type: "string" } } };
     const { metadata } = buildToolMetadata([
