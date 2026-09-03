@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - MCP sampling requests now route through Pi's `ModelRegistry.complete`, leaving provider authentication, environment, and base URL handling to the host.
+- `mcp({ connect })` now reports the direct tools it discovers on the tool result via `addedToolNames`, Pi's result-scoped tool activation surface, so they load from that transcript point instead of through an active-tool list rewrite. (#490)
 
 ### Fixed
 - The `/mcp` panel no longer marks reconnects as cached when cache reload returns no entry, while preserving explicit zero-TTL behavior. Thanks to [@fyq163](https://github.com/fyq163) for #497.

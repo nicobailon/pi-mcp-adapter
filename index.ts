@@ -1174,9 +1174,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal);
         }
         if (params.connect) {
+          // Direct tools discovered by this connect are registered by the
+          // metadata-update hook inside executeConnect or by the sync below.
+          // Report them on the result so Pi treats this transcript point as
+          // their load point instead of relying on an active-tool rewrite.
+          const directToolsBefore = new Set(registeredDirectTools.keys());
           const result = await executeConnect(state, params.connect, signal);
           if (!directToolsFrozen) syncToolSurface(_ctx as ExtensionContext);
-          return result;
+          const addedToolNames = [...registeredDirectTools.keys()].filter((name) => !directToolsBefore.has(name));
+          return addedToolNames.length > 0 ? { ...result, addedToolNames } : result;
         }
         if (params.describe) {
           return executeDescribe(state, params.describe);
