@@ -315,11 +315,12 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
 
 /** Default timeout for each outbound HTTP request the SDK issues during OAuth. */
 const DEFAULT_OAUTH_REQUEST_TIMEOUT_MS = 30_000
+const MAX_OAUTH_REQUEST_TIMEOUT_MS = 2_147_483_647
 
 function resolveOAuthRequestTimeoutMs(): number {
   const raw = process.env.PI_MCP_OAUTH_REQUEST_TIMEOUT_MS
-  const parsed = raw === undefined ? Number.NaN : Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_OAUTH_REQUEST_TIMEOUT_MS
+  const parsed = raw === undefined ? Number.NaN : Number(raw)
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_OAUTH_REQUEST_TIMEOUT_MS ? parsed : DEFAULT_OAUTH_REQUEST_TIMEOUT_MS
 }
 
 /**

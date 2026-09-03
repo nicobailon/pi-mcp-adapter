@@ -93,4 +93,31 @@ describe("OAuth flow request timeout", () => {
       `startAuth should have rejected at the request timeout, took ${elapsedMs}ms`,
     )
   })
+
+  it("ignores malformed numeric-looking timeout overrides", async () => {
+    process.env.PI_MCP_OAUTH_REQUEST_TIMEOUT_MS = "1e999"
+    const originalTimeout = AbortSignal.timeout
+    const observedTimeouts: number[] = []
+    Object.defineProperty(AbortSignal, "timeout", {
+      configurable: true,
+      value(milliseconds: number) {
+        observedTimeouts.push(milliseconds)
+        return originalTimeout.call(AbortSignal, 50)
+      },
+    })
+
+    try {
+      await assert.rejects(
+        () => startAuth(`${serverName}-malformed`, serverUrl, { url: serverUrl, auth: "oauth" }),
+      )
+    } finally {
+      Object.defineProperty(AbortSignal, "timeout", {
+        configurable: true,
+        value: originalTimeout,
+      })
+      process.env.PI_MCP_OAUTH_REQUEST_TIMEOUT_MS = "200"
+    }
+
+    assert.equal(observedTimeouts[0], 30_000)
+  })
 })
