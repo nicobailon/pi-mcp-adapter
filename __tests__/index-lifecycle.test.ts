@@ -852,6 +852,47 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.setActiveTools).not.toHaveBeenCalled();
   });
 
+  it("attributes only the connected server's direct tools when another server registers during the connect", async () => {
+    const config = {
+      mcpServers: {
+        demo: { command: "demo", directTools: true },
+        other: { command: "other", directTools: true },
+      },
+    };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([])
+      .mockReturnValue([
+        { serverName: "demo", originalName: "search", prefixedName: "demo_search", description: "Search demo" },
+        { serverName: "other", originalName: "list", prefixedName: "other_list", description: "List other" },
+      ]);
+    mocks.initializeMcp.mockResolvedValue(state);
+    const connectResult = { content: [{ type: "text", text: "connected" }], details: { mode: "connect" } };
+    mocks.executeConnect.mockImplementation(async (currentState: any) => {
+      // Another server's metadata refresh lands while this connect is in flight.
+      currentState.onToolMetadataUpdated?.("other", "list-changed");
+      currentState.onToolMetadataUpdated?.("demo", "proxy-connect");
+      return connectResult;
+    });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+
+    const result = await proxyTool.execute("call-1", { connect: "demo" });
+
+    expect(result.addedToolNames).toEqual(["demo_search"]);
+    expect(api.setActiveTools).not.toHaveBeenCalled();
+  });
+
   it("keeps stale direct tools out of addedToolNames and deactivates them explicitly without unregisterTool", async () => {
     const config = {
       mcpServers: {

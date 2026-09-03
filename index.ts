@@ -224,6 +224,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const envDirectToolOverride = parseEnvDirectToolOverride(envRaw);
   const namespaceEnvOverride = resolveNamespaceEnvOverride(envRaw, envDirectToolOverride);
   const registeredDirectTools = new Map<string, string>();
+  const registeredDirectToolServers = new Map<string, string>();
   const registeredNamespaceProxyTools = new Set<string>();
   const fallbackDeactivatedTools = new Set<string>();
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
@@ -347,6 +348,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (previous !== fingerprint) {
         registerDirectTool(spec, config);
         registeredDirectTools.set(spec.prefixedName, fingerprint);
+        registeredDirectToolServers.set(spec.prefixedName, spec.serverName);
         if (fallbackDeactivatedTools.delete(spec.prefixedName)) {
           const activeTools = getActiveToolsIfReady();
           if (activeTools && !activeTools.includes(spec.prefixedName)) {
@@ -360,6 +362,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     for (const toolName of [...registeredDirectTools.keys()]) {
       if (nextNames.has(toolName)) continue;
       registeredDirectTools.delete(toolName);
+      registeredDirectToolServers.delete(toolName);
       deactivated.push(toolName);
     }
 
@@ -1178,10 +1181,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           // metadata-update hook inside executeConnect or by the sync below.
           // Report them on the result so Pi treats this transcript point as
           // their load point instead of relying on an active-tool rewrite.
+          // Only this server's tools are attributed: another server's refresh
+          // or a concurrent connect can register tools while this one awaits.
           const directToolsBefore = new Set(registeredDirectTools.keys());
           const result = await executeConnect(state, params.connect, signal);
           if (!directToolsFrozen) syncToolSurface(_ctx as ExtensionContext);
-          const addedToolNames = [...registeredDirectTools.keys()].filter((name) => !directToolsBefore.has(name));
+          const addedToolNames = [...registeredDirectTools.keys()].filter(
+            (name) => !directToolsBefore.has(name) && registeredDirectToolServers.get(name) === params.connect,
+          );
           return addedToolNames.length > 0 ? { ...result, addedToolNames } : result;
         }
         if (params.describe) {
