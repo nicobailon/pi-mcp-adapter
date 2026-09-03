@@ -1263,7 +1263,7 @@ export async function executeCall(
   }
 
   let normalizedArgs = toolMeta.resourceUri ? args ?? {} : normalizeToolArguments(args);
-  const claimVault = getTaskManagerClaimVault(state, state.owner);
+  const claimVault = getTaskManagerClaimVault(state.approvalEvents ?? state, state.owner);
   validateTaskManagerArgs(claimVault, serverName, toolMeta.originalName, normalizedArgs);
   const modelVisibleArgs = normalizedArgs;
   const approval = await ensureToolCallApproved(
@@ -1385,7 +1385,7 @@ export async function executeCall(
         }, requestOptions), ownedSignal);
       },
     );
-    result = captureTaskManagerResult(getTaskManagerClaimVault(state, state.owner), serverName, toolMeta.originalName, result, normalizedArgs) as ClientCallToolResult;
+    result = captureTaskManagerResult(getTaskManagerClaimVault(state.approvalEvents ?? state, state.owner), serverName, toolMeta.originalName, result, normalizedArgs) as ClientCallToolResult;
 
     if (toolMeta.uiResourceUri) {
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
