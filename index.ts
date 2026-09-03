@@ -5,7 +5,7 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, authenticateServer, logoutServer, manageBearerToken, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
-import { cloneMcpConfig, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
+import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, loadMcpConfig, resolveConfiguredClaudePluginMcp, writeProjectServerDisabledOverride } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tools.ts";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -232,7 +232,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     ? undefined
     : options.configPath ?? getConfigPathFromArgv();
   const earlyConfig = programmaticConfig
-    ? cloneMcpConfig(sessionConfig)
+    ? resolveConfiguredClaudePluginMcp(cloneMcpConfig(sessionConfig), process.cwd())
     : loadMcpConfig(earlyConfigPath);
   const earlyCache = loadMetadataCache();
   const envRaw = process.env.MCP_DIRECT_TOOLS;
@@ -686,6 +686,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       } as unknown as ExtensionContext, owner, oauthRuntime, generation, "stale_load_time_initialization");
     });
   }
+
+  pi.on("resources_discover", (event) => {
+    const resourceConfig = programmaticConfig
+      ? cloneMcpConfig(sessionConfig)
+      : loadMcpConfig(earlyConfigPath, event.cwd);
+    const skillPaths = discoverConfiguredClaudePluginSkills(resourceConfig, event.cwd);
+    return skillPaths.length > 0 ? { skillPaths } : undefined;
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     const generation = ++lifecycleGeneration;

@@ -106,6 +106,7 @@
     "ui-tool-visibility.ts",
     "ui-app-bridge-helpers.ts",
     "config.ts",
+    "claude-plugin-loader.ts",
     "package-mcp-loader.ts",
     "server-manager.ts",
     "request-headers-command.ts",

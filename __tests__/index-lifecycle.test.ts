@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   shutdownOAuth: vi.fn().mockResolvedValue(undefined),
   loadMcpConfig: vi.fn(() => ({ mcpServers: {} })),
   cloneMcpConfig: vi.fn((config: unknown) => structuredClone(config)),
+  discoverConfiguredClaudePluginSkills: vi.fn(() => []),
+  resolveConfiguredClaudePluginMcp: vi.fn((config: unknown) => structuredClone(config)),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
   createDirectToolExecutor: vi.fn(() => vi.fn()),
@@ -62,6 +64,8 @@ vi.mock("../mcp-auth-flow.ts", () => ({
 vi.mock("../config.ts", () => ({
   loadMcpConfig: mocks.loadMcpConfig,
   cloneMcpConfig: mocks.cloneMcpConfig,
+  discoverConfiguredClaudePluginSkills: mocks.discoverConfiguredClaudePluginSkills,
+  resolveConfiguredClaudePluginMcp: mocks.resolveConfiguredClaudePluginMcp,
   writeProjectServerDisabledOverride: mocks.writeProjectServerDisabledOverride,
 }));
 
@@ -260,6 +264,8 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.shutdownOAuth.mockResolvedValue(undefined);
     mocks.loadMcpConfig.mockReturnValue({ mcpServers: {} });
     mocks.cloneMcpConfig.mockImplementation((config: unknown) => structuredClone(config));
+    mocks.discoverConfiguredClaudePluginSkills.mockReturnValue([]);
+    mocks.resolveConfiguredClaudePluginMcp.mockImplementation((config: unknown) => structuredClone(config));
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway");
     mocks.createDirectToolExecutor.mockReturnValue(vi.fn());
@@ -295,6 +301,25 @@ describe("mcpAdapter session lifecycle", () => {
     expect(commandNames.filter((name: string) => name === "mcp")).toHaveLength(1);
     expect(commandNames.filter((name: string) => name === "pi-mcp")).toHaveLength(1);
     expect(commandNames.filter((name: string) => name === "mcp-auth")).toHaveLength(1);
+  });
+
+  it("discovers configured Claude plugin skills on startup and reload", async () => {
+    let generation = 0;
+    mocks.loadMcpConfig.mockImplementation(() => ({
+      mcpServers: {},
+      claudePlugins: [{ path: `plugin-${++generation}`, skills: true }],
+    }));
+    mocks.discoverConfiguredClaudePluginSkills.mockImplementation((config: { claudePlugins?: Array<{ path: string }> }) =>
+      config.claudePlugins?.map(plugin => `/skills/${plugin.path}`) ?? []);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    const discover = handlers.get("resources_discover")!;
+
+    expect(discover({ cwd: "/project", reason: "initial" })).toEqual({ skillPaths: ["/skills/plugin-2"] });
+    expect(discover({ cwd: "/project", reason: "reload" })).toEqual({ skillPaths: ["/skills/plugin-3"] });
+    expect(mocks.discoverConfiguredClaudePluginSkills).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the proxy tool when direct tools are still missing from cache", async () => {

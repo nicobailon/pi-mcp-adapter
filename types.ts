@@ -511,6 +511,17 @@ export interface McpOutputGuardSettings {
 
 // Settings
 export type ToolPrefix = "server" | "none" | "short" | "mcp";
+
+const ENCODED_SERVER_NAMESPACE_MARKER = "_mcpns_";
+
+export function formatServerNamespace(serverName: string): string {
+  const normalized = serverName.replace(/-/g, "_");
+  if (normalized === "" || (/^[A-Za-z0-9_]+$/.test(normalized) && !normalized.startsWith(ENCODED_SERVER_NAMESPACE_MARKER))) {
+    return normalized;
+  }
+  const codePoints = Array.from(normalized, character => character.codePointAt(0)!.toString(16)).join("_");
+  return `${ENCODED_SERVER_NAMESPACE_MARKER}${codePoints}`;
+}
 export type HostConfigDiscovery = "off" | "prompt" | "on";
 export type McpFooterStatus = "full" | "compact" | "off";
 
@@ -617,11 +628,21 @@ export interface McpSettings {
   oauthDir?: string;
 }
 
+export interface ClaudePluginConfig {
+  /** Explicit local Claude plugin directory. Relative paths resolve from the active project cwd. */
+  path: string;
+  /** Load the plugin's root .mcp.json as low-precedence MCP defaults. */
+  mcp?: boolean;
+  /** Expose the plugin's root skills/ directory to Pi resource discovery. */
+  skills?: boolean;
+}
+
 // Root config
 export interface McpConfig {
   mcpServers: Record<string, ServerEntry>;
   imports?: ImportKind[];
   settings?: McpSettings;
+  claudePlugins?: ClaudePluginConfig[];
 }
 
 export interface McpAdapterOptions {

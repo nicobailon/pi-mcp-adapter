@@ -99,6 +99,8 @@ export declare function getMcpDiscoverySummary(overridePath?: string, cwd?: stri
 }): McpDiscoverySummary;
 export declare function cloneMcpConfig(config: McpConfig): McpConfig;
 export declare function loadMcpConfig(overridePath?: string, cwd?: string): McpConfig;
+export declare function resolveConfiguredClaudePluginMcp(config: McpConfig, cwd?: string): McpConfig;
+export declare function discoverConfiguredClaudePluginSkills(config: McpConfig, cwd?: string): string[];
 export interface ServerDisabledOverrideResult {
     path: string;
     changed: boolean;
