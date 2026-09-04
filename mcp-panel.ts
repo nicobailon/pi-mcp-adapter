@@ -1,7 +1,7 @@
 import { Container, Text, matchesKey, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
-import { copyToClipboard, DynamicBorder, type Theme } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard, type Theme } from "@earendil-works/pi-coding-agent";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
-import { createMcpPanelTheme, type McpPanelTheme } from "./mcp-panel-theme.ts";
+import { createMcpPanelTheme, McpPanelFrame, type McpPanelTheme } from "./mcp-panel-theme.ts";
 import { getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance, ToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
@@ -118,55 +118,6 @@ interface McpPanelViewState {
   saveLabel: string | null;
 }
 
-/** A panel-specific rule that delegates horizontal sizing to Pi's border component. */
-class McpPanelRule implements Component {
-  private readonly border: DynamicBorder;
-
-  constructor(
-    private readonly theme: McpPanelTheme,
-    private readonly left: string,
-    private readonly right: string,
-    private readonly title?: string,
-  ) {
-    this.border = new DynamicBorder((text: string) => this.theme.border(text));
-  }
-
-  render(width: number): string[] {
-    if (width <= 0) return [];
-    if (width === 1) return [truncateToWidth(this.theme.border(this.left), width, "", false)];
-
-    const innerWidth = width - 2;
-    if (this.title !== undefined) {
-      const titleText = truncateToWidth(` ${this.title} `, innerWidth, "", false);
-      const borderLength = Math.max(0, innerWidth - visibleWidth(titleText));
-      const leftLength = Math.floor(borderLength / 2);
-      const rightLength = borderLength - leftLength;
-      return [
-        this.theme.border(this.left) +
-          this.renderBorderSegment(leftLength) +
-          this.theme.title(titleText) +
-          this.renderBorderSegment(rightLength) +
-          this.theme.border(this.right),
-      ];
-    }
-
-    return [
-      this.theme.border(this.left) +
-        this.renderBorderSegment(innerWidth) +
-        this.theme.border(this.right),
-    ];
-  }
-
-  invalidate(): void {
-    this.border.invalidate();
-  }
-
-  private renderBorderSegment(width: number): string {
-    if (width <= 0) return "";
-    return this.border.render(width)[0] ?? "";
-  }
-}
-
 /**
  * The themed MCP view. It owns only component composition and formatting;
  * input routing and callbacks remain on McpPanel.
@@ -186,7 +137,7 @@ class McpPanelView implements Component {
     this.container.clear();
 
     const title = state.authOnly ? "MCP OAuth" : "MCP Servers";
-    this.container.addChild(new McpPanelRule(this.theme, "╭", "╮", title));
+    this.container.addChild(new McpPanelFrame(this.theme, "╭", "╮", title));
     this.addRow("", innerWidth);
 
     const cursor = this.theme.selected("│");
@@ -354,7 +305,7 @@ class McpPanelView implements Component {
   }
 
   private addRule(left: string, right: string): void {
-    this.container.addChild(new McpPanelRule(this.theme, left, right));
+    this.container.addChild(new McpPanelFrame(this.theme, left, right));
   }
 
   private addText(content: string): void {
@@ -501,7 +452,6 @@ class McpPanel {
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private visibleItems: VisibleItem[] = [];
   private tui: { requestRender(): void };
-  private readonly theme: McpPanelTheme;
   private readonly view: McpPanelView;
   private authOnly: boolean;
   private keys: PanelKeys;
@@ -522,8 +472,7 @@ class McpPanel {
     this.noticeLines = options.noticeLines ?? [];
     this.authOnly = options.authOnly === true;
     this.keys = createPanelKeys(options.keybindings);
-    this.theme = createMcpPanelTheme(options.theme);
-    this.view = new McpPanelView(() => this.getViewState(), this.theme);
+    this.view = new McpPanelView(() => this.getViewState(), createMcpPanelTheme(options.theme));
     this.prefix = config.settings?.toolPrefix ?? "server";
 
     for (const [serverName, definition] of Object.entries(config.mcpServers)) {

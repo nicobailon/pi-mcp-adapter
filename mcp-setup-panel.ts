@@ -67,7 +67,6 @@ type ActionId =
 interface Action {
   id: ActionId;
   label: string;
-  description: string;
   preset?: KnownServerPreset;
   target?: SharedConfigTarget;
 }
@@ -79,7 +78,6 @@ interface McpSetupPanelViewState {
   pathCursor: number;
   sharedConfigTarget: SharedConfigTarget;
   selectedImports: ReadonlySet<ImportKind>;
-  busy: boolean;
   notice: { text: string; tone: "success" | "warning" | "muted" } | null;
   onboardingState: McpOnboardingState;
   discovery: McpDiscoverySummary;
@@ -423,7 +421,6 @@ export class McpSetupPanel {
   private busy = false;
   private notice: { text: string; tone: "success" | "warning" | "muted" } | null = null;
   private tui: { requestRender(): void };
-  private readonly theme: McpPanelTheme;
   private readonly view: McpSetupPanelView;
   private keys: PanelKeys;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -438,8 +435,7 @@ export class McpSetupPanel {
   ) {
     this.tui = tui;
     this.keys = createPanelKeys(options.keybindings);
-    this.theme = createMcpPanelTheme(options.theme);
-    this.view = new McpSetupPanelView(() => this.getViewState(), callbacks, this.theme);
+    this.view = new McpSetupPanelView(() => this.getViewState(), callbacks, createMcpPanelTheme(options.theme));
     this.screen = options.mode;
     for (const entry of discovery.imports) {
       this.selectedImports.add(entry.kind);
@@ -465,30 +461,30 @@ export class McpSetupPanel {
   private getActions(): Action[] {
     const actions: Action[] = [];
     if (this.screen === "empty") {
-      actions.push({ id: "run-setup", label: "Run setup", description: "Inspect detected configs, adopt imports, and scaffold a minimal `.mcp.json`." });
+      actions.push({ id: "run-setup", label: "Run setup" });
     }
     if (this.discovery.imports.length > 0) {
-      actions.push({ id: "adopt-imports", label: "Adopt detected compatibility imports", description: `Choose which host-specific MCP configs Pi should import into its own override file. ${this.discovery.imports.length} source${this.discovery.imports.length === 1 ? "" : "s"} found.` });
+      actions.push({ id: "adopt-imports", label: "Adopt detected compatibility imports" });
     }
     actions.push(
-      { id: "select-shared-target", label: `${this.sharedConfigTarget === "project" ? "●" : "○"} Add to this project (.mcp.json)`, description: "Write new shared MCP servers to the project/team config.", target: "project" },
-      { id: "select-shared-target", label: `${this.sharedConfigTarget === "global" ? "●" : "○"} Add globally (~/.config/mcp/mcp.json)`, description: "Write new shared MCP servers to your all-projects config.", target: "global" },
+      { id: "select-shared-target", label: `${this.sharedConfigTarget === "project" ? "●" : "○"} Add to this project (.mcp.json)`, target: "project" },
+      { id: "select-shared-target", label: `${this.sharedConfigTarget === "global" ? "●" : "○"} Add globally (~/.config/mcp/mcp.json)`, target: "global" },
     );
-    actions.push({ id: "view-example", label: "View example shared config", description: "Preview a working shared MCP config you can paste or adapt." });
+    actions.push({ id: "view-example", label: "View example shared config" });
     if (!this.selectedSharedConfigExists()) {
-      actions.push({ id: "scaffold-shared-config", label: `Scaffold ${this.sharedTargetLabel()}`, description: "Write a minimal config at the selected normal MCP setup path, then reload Pi." });
+      actions.push({ id: "scaffold-shared-config", label: `Scaffold ${this.sharedTargetLabel()}` });
     }
-    actions.push({ id: "show-precedence", label: "Explain config precedence", description: "Show the read order and where Pi writes compatibility settings." });
+    actions.push({ id: "show-precedence", label: "Explain config precedence" });
     if (this.getDetectedPaths().length > 0) {
-      actions.push({ id: "open-paths", label: "Open detected config paths", description: "Browse the actual config files that Pi discovered on this machine." });
+      actions.push({ id: "open-paths", label: "Open detected config paths" });
     }
     for (const preset of KNOWN_SERVER_PRESETS) {
-      actions.push({ id: "add-known-server", label: preset.name, description: preset.summary, preset });
+      actions.push({ id: "add-known-server", label: preset.name, preset });
     }
     if (!this.discovery.repoPrompt.configured && this.discovery.repoPrompt.executablePath && this.discovery.repoPrompt.targetPath && this.discovery.repoPrompt.entry && this.discovery.repoPrompt.serverName) {
-      actions.push({ id: "add-repoprompt", label: "Add RepoPrompt to selected shared config", description: "Write a standard MCP entry for RepoPrompt to the selected normal setup path, then reload MCP in-session." });
+      actions.push({ id: "add-repoprompt", label: "Add RepoPrompt to selected shared config" });
     }
-    actions.push({ id: "close", label: "Close", description: "Exit the onboarding flow." });
+    actions.push({ id: "close", label: "Close" });
     return actions;
   }
 
@@ -507,11 +503,6 @@ export class McpSetupPanel {
   private selectedSharedConfigExists(): boolean {
     const sourceId = this.sharedConfigTarget === "project" ? "shared-project" : "shared-global";
     return this.discovery.sources.some((source) => source.id === sourceId && source.exists);
-  }
-
-  private getSelectedAction(): Action | undefined {
-    const actions = this.getActions();
-    return actions[this.actionCursor];
   }
 
   handleInput(data: string): void {
@@ -558,7 +549,7 @@ export class McpSetupPanel {
       return;
     }
     if (this.keys.selectConfirm(data)) {
-      const selected = this.getSelectedAction();
+      const selected = actions[this.actionCursor];
       if (selected) void this.runAction(selected);
     }
   }
@@ -717,7 +708,6 @@ export class McpSetupPanel {
       pathCursor: this.pathCursor,
       sharedConfigTarget: this.sharedConfigTarget,
       selectedImports: this.selectedImports,
-      busy: this.busy,
       notice: this.notice,
       onboardingState: this.options.onboardingState,
       discovery: this.discovery,
