@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The `/mcp` panel no longer marks reconnects as cached when cache reload returns no entry, while preserving explicit zero-TTL behavior. Thanks to [@fyq163](https://github.com/fyq163) for #497.
+- MCP output truncation now uses Pi host truncation semantics and formatting while preserving MCP artifact spill behavior.
 - OAuth discovery, dynamic registration, token exchange, and token refresh requests now have a timeout and honor cancellation instead of hanging the agent on stalled providers. Thanks to [@west-david](https://github.com/west-david) for #485 and PR #486.
 
 ## [2.32.1] - 2026-09-01

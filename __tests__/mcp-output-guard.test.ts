@@ -44,12 +44,12 @@ describe("guardMcpOutput", () => {
   });
 
   it("truncates large text output and saves the full output to a file", async () => {
-    const text = Array.from({ length: 20 }, (_, i) => `line-${i} ${"x".repeat(40)}`).join("\n");
+    const text = Array.from({ length: 20 }, (_, i) => `line-${i} ${"x".repeat(100)}`).join("\n");
     const guarded = await guardMcpOutput(
       [{ type: "text", text }],
       {
-        maxBytes: 300,
-        maxLines: 8,
+        maxBytes: 1500,
+        maxLines: 100,
         detailsMaxBytes: 1200,
         rawMcpResult: { content: [{ type: "text", text }], isError: false, structuredContent: { rows: [text] } },
       },
@@ -58,7 +58,15 @@ describe("guardMcpOutput", () => {
     expect(guarded.outputGuard).toMatchObject({
       truncated: true,
       originalLines: 20,
+      totalLines: 20,
+      totalBytes: Buffer.byteLength(text, "utf8"),
+      truncatedBy: "bytes",
+      maxLines: 100,
+      maxBytes: 1500,
+      firstLineExceedsLimit: false,
     });
+    expect(guarded.outputGuard?.outputLines).toBeGreaterThan(0);
+    expect(guarded.outputGuard?.outputBytes).toBeLessThanOrEqual(1500);
     expect(guarded.outputGuard?.fullOutputPath).toBeTruthy();
     expect(guarded.content).toHaveLength(1);
     expect(guarded.content[0]).toMatchObject({ type: "text" });
@@ -304,14 +312,83 @@ describe("guardMcpOutput", () => {
     expect(saved).toBe(text);
   });
 
-  it("truncates on line count alone", async () => {
+  it("reports the delivered preview in the line truncation notice and details", async () => {
     const text = Array.from({ length: 30 }, (_, i) => `entry-${i}`).join("\n");
     const guarded = await guardMcpOutput([{ type: "text", text }], { maxBytes: 10_000, maxLines: 10 });
 
-    expect(guarded.outputGuard).toMatchObject({ truncated: true, originalLines: 30 });
     const returnedText = guarded.content[0].type === "text" ? guarded.content[0].text : "";
+    const noticeStart = returnedText.indexOf("\n\n[MCP text output truncated:");
+    expect(noticeStart).toBeGreaterThan(0);
+    const deliveredPreview = returnedText.slice(0, noticeStart);
+
+    expect(guarded.outputGuard).toMatchObject({
+      truncated: true,
+      originalLines: 30,
+      totalLines: 30,
+      totalBytes: Buffer.byteLength(text, "utf8"),
+      truncatedBy: "lines",
+      outputLines: 7,
+      outputBytes: Buffer.byteLength(deliveredPreview, "utf8"),
+      maxLines: 10,
+      maxBytes: 10_000,
+      firstLineExceedsLimit: false,
+    });
+    expect(deliveredPreview.split("\n")).toHaveLength(guarded.outputGuard!.outputLines);
     expect(returnedText).toContain("entry-0");
+    expect(returnedText).not.toContain("entry-7");
     expect(returnedText).not.toContain("entry-29");
+    expect(returnedText).toContain("Truncated: showing 7 of 30 lines (10 line limit)");
+  });
+
+  it("does not count a trailing newline as an additional line", async () => {
+    const text = "a\nb\n";
+    const guarded = await guardMcpOutput([{ type: "text", text }], { maxBytes: 100, maxLines: 2 });
+
+    expect(guarded.content).toEqual([{ type: "text", text }]);
+    expect(guarded.outputGuard).toBeUndefined();
+  });
+
+  it("does not return a partial first line when it exceeds the byte limit", async () => {
+    const text = `${"x".repeat(10)}\nsmall`;
+    const guarded = await guardMcpOutput([{ type: "text", text }], { maxBytes: 5, maxLines: 10 });
+
+    expect(guarded.outputGuard).toMatchObject({
+      truncated: true,
+      truncatedBy: "bytes",
+      totalLines: 2,
+      totalBytes: Buffer.byteLength(text, "utf8"),
+      outputLines: 0,
+      outputBytes: 0,
+      firstLineExceedsLimit: true,
+      maxLines: 10,
+      maxBytes: 5,
+    });
+    expect(guarded.outputGuard?.fullOutputPath).toBeTruthy();
+    const returnedText = guarded.content[0].type === "text" ? guarded.content[0].text : "";
+    expect(returnedText).not.toContain("xxxxxxxxxx");
+    expect(returnedText).toContain("First line exceeds 5B limit");
+    expect(await readFile(guarded.outputGuard!.fullOutputPath!, "utf8")).toBe(text);
+  });
+
+  it("omits an oversized multibyte line without returning a partial line", async () => {
+    const text = `first-line\n${"😀".repeat(300)}\nend`;
+    const guarded = await guardMcpOutput([{ type: "text", text }], { maxBytes: 1024, maxLines: 10 });
+
+    expect(guarded.outputGuard).toMatchObject({
+      truncated: true,
+      truncatedBy: "bytes",
+      totalLines: 3,
+      totalBytes: Buffer.byteLength(text, "utf8"),
+      outputLines: 1,
+      outputBytes: Buffer.byteLength("first-line", "utf8"),
+      firstLineExceedsLimit: false,
+      maxLines: 10,
+      maxBytes: 1024,
+    });
+    const returnedText = guarded.content[0].type === "text" ? guarded.content[0].text : "";
+    expect(returnedText).toContain("first-line");
+    expect(returnedText).not.toContain("😀");
+    expect(await readFile(guarded.outputGuard!.fullOutputPath!, "utf8")).toBe(text);
   });
 
   it("keeps prefixes and suffixes inside the saved full output", async () => {

@@ -2,10 +2,17 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+  formatSize,
+  truncateHead,
+  type TruncationResult,
+} from "@earendil-works/pi-coding-agent";
 import type { ContentBlock, McpSettings } from "./types.ts";
 
-export const DEFAULT_MCP_OUTPUT_MAX_BYTES = 50 * 1024;
-export const DEFAULT_MCP_OUTPUT_MAX_LINES = 2000;
+export const DEFAULT_MCP_OUTPUT_MAX_BYTES = DEFAULT_MAX_BYTES;
+export const DEFAULT_MCP_OUTPUT_MAX_LINES = DEFAULT_MAX_LINES;
 export const DEFAULT_MCP_DETAILS_MAX_BYTES = 16 * 1024;
 
 const CONTENT_SUMMARY_LIMIT = 20;
@@ -22,6 +29,16 @@ export interface McpOutputGuardDetails {
   returnedBytes: number;
   originalLines: number;
   returnedLines: number;
+  /** Host truncation classification and preview counts for the composed text before the MCP notice is added. */
+  truncatedBy: TruncationResult["truncatedBy"];
+  totalLines: number;
+  totalBytes: number;
+  outputLines: number;
+  outputBytes: number;
+  lastLinePartial: boolean;
+  firstLineExceedsLimit: boolean;
+  maxLines: number;
+  maxBytes: number;
   /** Number of image content blocks returned untouched alongside the truncated text. */
   imageBlocksPassedThrough?: number;
   fullOutputPath?: string;
@@ -119,26 +136,43 @@ export async function guardMcpOutput(
     .map((block) => (block as { text: string }).text)
     .join("\n");
   const composedOutput = `${prefix}${textOutput}${suffix}`;
-  const stats = textStats(composedOutput);
+  const truncation = truncateHead(composedOutput, { maxBytes, maxLines });
 
   let guardedContent: ContentBlock[] = addAffixes(normalizedContent, prefix, suffix);
   let outputGuard: McpOutputGuardDetails | undefined;
 
-  if (stats.bytes > maxBytes || stats.lines > maxLines) {
+  if (truncation.truncated) {
     const { path: fullOutputPath, error: writeError } = await saveArtifact("output", composedOutput);
-    const notice = formatTruncationNotice(stats, fullOutputPath, writeError);
-    const previewBudget = reserveBudget(maxBytes, maxLines, notice);
-    const preview = truncateHead(composedOutput, previewBudget.maxBytes, previewBudget.maxLines);
+    const initialNotice = formatTruncationNotice(truncation, fullOutputPath, writeError);
+    const previewBudget = reserveBudget(maxBytes, maxLines, initialNotice);
+    const preview = truncateHead(composedOutput, {
+      maxBytes: previewBudget.maxBytes,
+      maxLines: previewBudget.maxLines,
+    });
+    const notice = formatTruncationNotice(
+      { ...truncation, outputLines: preview.outputLines, outputBytes: preview.outputBytes },
+      fullOutputPath,
+      writeError,
+    );
     const finalText = `${preview.content}\n\n${notice}`;
     const finalStats = textStats(finalText);
 
     guardedContent = [{ type: "text" as const, text: finalText }, ...imageBlocks];
     outputGuard = {
       truncated: true,
-      originalBytes: stats.bytes,
+      originalBytes: truncation.totalBytes,
       returnedBytes: finalStats.bytes,
-      originalLines: stats.lines,
+      originalLines: truncation.totalLines,
       returnedLines: finalStats.lines,
+      truncatedBy: truncation.truncatedBy,
+      totalLines: truncation.totalLines,
+      totalBytes: truncation.totalBytes,
+      outputLines: preview.outputLines,
+      outputBytes: preview.outputBytes,
+      lastLinePartial: truncation.lastLinePartial,
+      firstLineExceedsLimit: truncation.firstLineExceedsLimit,
+      maxLines: truncation.maxLines,
+      maxBytes: truncation.maxBytes,
       ...(imageBlocks.length > 0 ? { imageBlocksPassedThrough: imageBlocks.length } : {}),
       ...(fullOutputPath !== undefined ? { fullOutputPath } : {}),
       ...(writeError !== undefined ? { writeError } : {}),
@@ -217,31 +251,6 @@ function reserveBudget(maxBytes: number, maxLines: number, notice: string): { ma
   };
 }
 
-function truncateHead(text: string, maxBytes: number, maxLines: number): { content: string; bytes: number; lines: number } {
-  const lines = text.split("\n");
-  const output: string[] = [];
-  let bytes = 0;
-
-  for (const line of lines) {
-    if (output.length >= maxLines) break;
-    const separatorBytes = output.length > 0 ? 1 : 0;
-    const lineBytes = byteLength(line);
-    if (bytes + separatorBytes + lineBytes > maxBytes) {
-      const remaining = maxBytes - bytes - separatorBytes;
-      if (remaining > 0) {
-        output.push(truncateStringToBytes(line, remaining));
-      }
-      break;
-    }
-    output.push(line);
-    bytes += separatorBytes + lineBytes;
-  }
-
-  const content = output.join("\n");
-  const stats = textStats(content);
-  return { content, bytes: stats.bytes, lines: stats.lines };
-}
-
 function truncateStringToBytes(value: string, maxBytes: number): string {
   if (byteLength(value) <= maxBytes) return value;
   const buffer = Buffer.from(value, "utf8");
@@ -251,11 +260,19 @@ function truncateStringToBytes(value: string, maxBytes: number): string {
 }
 
 function formatTruncationNotice(
-  stats: { bytes: number; lines: number },
+  truncation: TruncationResult,
   fullOutputPath: string | undefined,
   writeError: string | undefined,
 ): string {
-  const base = `[MCP text output truncated: original ${stats.lines.toLocaleString()} lines / ${formatSize(stats.bytes)}.`;
+  let reason: string;
+  if (truncation.firstLineExceedsLimit) {
+    reason = `First line exceeds ${formatSize(truncation.maxBytes)} limit`;
+  } else if (truncation.truncatedBy === "lines") {
+    reason = `Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines (${truncation.maxLines} line limit)`;
+  } else {
+    reason = `Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes)} limit)`;
+  }
+  const base = `[MCP text output truncated: original ${truncation.totalLines.toLocaleString()} lines / ${formatSize(truncation.totalBytes)}. ${reason}.`;
   if (fullOutputPath) {
     return `${base} Full text saved to: ${fullOutputPath} — use read with offset/limit or grep to inspect.]`;
   }
@@ -487,10 +504,4 @@ function envKillSwitch(name: string): boolean | undefined {
   if (["0", "false", "no", "off"].includes(value)) return false;
   if (["1", "true", "yes", "on"].includes(value)) return true;
   return undefined;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
