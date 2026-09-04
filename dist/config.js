@@ -142,7 +142,7 @@ export function getMcpDiscoverySummary(overridePath, cwd = process.cwd(), option
     const sources = getConfigSourceSummaries(sourceSpecs);
     const includeHostConfigs = options.includeHostConfigs !== false;
     const importKinds = isExclusiveConfigMode()
-        ? (readValidatedConfig(getEffectivePiGlobalConfigPath(overridePath), "MCP exclusive config")?.imports ?? [])
+        ? (readValidatedConfig(getPiGlobalConfigPath(overridePath), "MCP exclusive config")?.imports ?? [])
         : Object.keys(IMPORT_PATHS);
     const imports = includeHostConfigs
         ? importKinds
@@ -296,7 +296,7 @@ function getConfigConflicts(sourceSpecs, imports, cwd) {
         .sort((left, right) => left.serverName.localeCompare(right.serverName));
 }
 function getConfigSources(overridePath, cwd = process.cwd()) {
-    const userPath = getEffectivePiGlobalConfigPath(overridePath);
+    const userPath = getPiGlobalConfigPath(overridePath);
     const projectPath = getProjectConfigPath(cwd);
     const projectPiPath = getProjectPiConfigPath(cwd);
     const sources = [];
@@ -372,9 +372,6 @@ function getConfigSources(overridePath, cwd = process.cwd()) {
 }
 function isExclusiveConfigMode() {
     return process.env.PI_MCP_CONFIG_MODE?.trim().toLowerCase() === "exclusive";
-}
-function getEffectivePiGlobalConfigPath(overridePath) {
-    return getPiGlobalConfigPath(isExclusiveConfigMode() ? undefined : overridePath);
 }
 function mergeConfigs(base, next) {
     const imports = mergeImports(base.imports, next.imports);

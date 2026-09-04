@@ -253,7 +253,7 @@ export function getMcpDiscoverySummary(
   const includeHostConfigs = options.includeHostConfigs !== false;
 
   const importKinds = isExclusiveConfigMode()
-    ? (readValidatedConfig(getEffectivePiGlobalConfigPath(overridePath), "MCP exclusive config")?.imports ?? [])
+    ? (readValidatedConfig(getPiGlobalConfigPath(overridePath), "MCP exclusive config")?.imports ?? [])
     : (Object.keys(IMPORT_PATHS) as ImportKind[]);
   const imports = includeHostConfigs
     ? importKinds
@@ -418,7 +418,7 @@ function getConfigConflicts(
 }
 
 function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
-  const userPath = getEffectivePiGlobalConfigPath(overridePath);
+  const userPath = getPiGlobalConfigPath(overridePath);
   const projectPath = getProjectConfigPath(cwd);
   const projectPiPath = getProjectPiConfigPath(cwd);
   const sources: ConfigSourceSpec[] = [];
@@ -501,10 +501,6 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
 
 function isExclusiveConfigMode(): boolean {
   return process.env.PI_MCP_CONFIG_MODE?.trim().toLowerCase() === "exclusive";
-}
-
-function getEffectivePiGlobalConfigPath(overridePath?: string): string {
-  return getPiGlobalConfigPath(isExclusiveConfigMode() ? undefined : overridePath);
 }
 
 function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
