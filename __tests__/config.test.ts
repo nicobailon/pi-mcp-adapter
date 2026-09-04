@@ -242,7 +242,7 @@ describe("config discovery", () => {
     warning.mockRestore();
   });
 
-  it("keeps unspecified Agent Plugin fields when normal config overrides a plugin server", async () => {
+  it("keeps Agent Plugin fields and adapter-specific Pi overrides when normal config overrides a plugin server", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-plugin-override-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-plugin-override-project-"));
     process.env.HOME = home;
@@ -259,12 +259,13 @@ describe("config discovery", () => {
     });
     writeJson(join(project, ".mcp.json"), {
       settings: { agentPluginPaths: ["./plugins/acme-tools"] },
-      mcpServers: { acme_tools__local: { command: "override-node" } },
+      mcpServers: { acme_tools__local: { command: "override-node", inheritEnv: false } },
     });
 
     const { loadMcpConfig } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers.acme_tools__local).toMatchObject({
       command: "override-node",
+      inheritEnv: false,
       args: ["plugin.js"],
       cwd: realpathSync(plugin),
       env: { PLUGIN_ROOT: realpathSync(plugin) },

@@ -267,6 +267,8 @@ export interface ServerEntry {
     /** Explicit rmcp-mux Unix-domain socket path. Mutually exclusive with command and url. */
     socket?: string;
     env?: Record<string, string>;
+    /** Inherit the adapter process environment for stdio servers. Defaults to true; false keeps SDK platform defaults plus explicit env overlays. */
+    inheritEnv?: boolean;
     cwd?: string;
     url?: string;
     headers?: Record<string, string>;

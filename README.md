@@ -126,6 +126,16 @@ The adapter can load MCP servers from [Agent Plugins](https://agent-plugins.org/
 
 Each directory must contain a valid Agent Plugins 1.0 `plugin.json`. If it also has a root `mcp.json`, the adapter loads its `mcpServers` entries and prefixes them as `<plugin>__<server>`. The loader uses the Agent Plugins transport declared by each server `type` and skips invalid entries without blocking other servers. For stdio plugin servers, `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded only in `args`, `env`, and `cwd`; the adapter sets both variables for the child process and stores plugin data under the Pi agent directory.
 
+`inheritEnv` is an adapter-specific Pi field, not an Agent Plugins or OpenCode schema field. Do not add it to a plugin's strict `mcp.json`; to opt a plugin stdio server out of host-environment inheritance, set `inheritEnv: false` in a normal Pi override using the translated `<plugin>__<server>` name:
+
+```json
+{
+  "mcpServers": {
+    "acme_tools__local": { "inheritEnv": false }
+  }
+}
+```
+
 Agent Plugins is a portable package format. Native Pi MCP config remains `.mcp.json`, `~/.config/mcp/mcp.json`, and Pi-owned overrides.
 
 ### Local Claude plugin bundles
@@ -282,6 +292,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `args` | Command arguments |
 | `socket` | Explicit `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url` |
 | `env` | Environment variables; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the stdio server connects; use `!!` for a literal leading `!`. |
+| `inheritEnv` | Stdio only; defaults to `true` and preserves full host-environment inheritance. Set to `false` to exclude arbitrary host variables from the MCP child and SDK negotiation sibling while retaining SDK platform defaults and explicit `env` overlays. This is not an empty environment or an OS sandbox. |
 | `cwd` | Working directory; supports `${VAR}`, `$env:VAR`, and `~` expansion |
 | `url` | HTTP endpoint (StreamableHTTP with SSE fallback); supports raw `${VAR}` and `$env:VAR` interpolation, and missing URL variables fail before any request is sent |
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the HTTP server connects or OAuth authenticates; use `!!` for a literal leading `!`. |
@@ -328,6 +339,18 @@ For pre-registered browser OAuth clients, set `oauth.redirectUri` to the callbac
 If an internal authorization server publishes mismatched OAuth metadata and cannot be fixed immediately, set `oauth.skipIssuerMetadataValidation: true` on that server only. This is security-weakening. It disables the RFC 8414 issuer echo check and should not be used for public or untrusted servers.
 
 If an MCP server does not publish usable protected-resource metadata, set `oauth.authServerMetadataUrl` to its HTTPS OAuth/OIDC authorization-server metadata document. The configured document is used authoritatively, while issuer validation remains enabled by default. This is trusted configuration; use it only for a metadata endpoint you control or explicitly trust.
+
+#### Stdio environment boundaries
+
+`inheritEnv: false` applies only to the actual MCP stdio server process and, for `protocolVersion: "auto"` or `"2026-07-28"`, its disposable SDK negotiation sibling. It does not change the default for other servers: omitting the field or setting it to `true` preserves the existing full host-environment inheritance. With `false`, the SDK still supplies its platform defaults and configured `env` values remain explicit overlays; the result is not a literally empty environment and is not an OS sandbox.
+
+Environment interpolation remains intentional. `${VAR}`, `$env:VAR`, and `{env:VAR}` values still read selected host variables and can place those values in the child. `literalEnv: true` keeps its existing behavior by treating configured stdio `env` values as literals. The following helper boundaries are unchanged and still retain the full host environment even when a server uses `inheritEnv: false`:
+
+- npm/npx cache resolution and cache-population subprocesses;
+- `!command` secret helpers used by stdio `env` (and other secret fields); and
+- the HTTP `requestHeadersCommand` helper.
+
+For tighter use, configure a direct executable instead of npm/npx and avoid `!command` secret helpers. This option limits stdio child inheritance only; it does not provide complete multi-agent or helper-process isolation.
 
 Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, and stdio `env` may use a leading `!command` to obtain their value at connection or authentication time. The command runs with stdin and stderr suppressed, stdout is limited to 1 MiB and trimmed, and it must finish within 10 seconds with non-empty output; failures stop the connection or authentication flow. Commands are not run during OAuth discovery or while reading, merging, previewing, hashing, or rendering configuration. Use `!!` to escape a literal leading `!`; ordinary and escaped values retain environment interpolation.
 
