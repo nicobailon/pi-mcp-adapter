@@ -546,24 +546,29 @@ describe("config discovery", () => {
 
     writeJson(join(home, ".config", "mcp", "mcp.json"), {
       mcpServers: {
-        toSocket: { command: "old", args: ["--old"], env: { OLD: "1" }, cwd: "/old" },
+        toSocket: { command: "old", args: ["--old"], env: { OLD: "1" }, cwd: "/old", inheritEnv: false },
         toCommand: { socket: "/old.sock" },
-        toUrl: { socket: "/old.sock" },
+        toUrl: { command: "old", inheritEnv: false },
       },
     });
     writeJson(join(home, ".pi", "agent", "mcp.json"), {
       mcpServers: {
         toSocket: { socket: "/shared.sock" },
-        toCommand: { command: "new" },
+        toCommand: { command: "new", inheritEnv: false },
         toUrl: { url: "https://example.test/mcp" },
+      },
+    });
+    writeJson(join(project, ".pi", "mcp.json"), {
+      mcpServers: {
+        toUrl: { command: "new-after-http" },
       },
     });
 
     const { loadMcpConfig } = await import("../config.ts");
     const servers = loadMcpConfig().mcpServers;
     expect(servers.toSocket).toEqual({ socket: "/shared.sock" });
-    expect(servers.toCommand).toEqual({ command: "new" });
-    expect(servers.toUrl).toEqual({ url: "https://example.test/mcp" });
+    expect(servers.toCommand).toEqual({ command: "new", inheritEnv: false });
+    expect(servers.toUrl).toEqual({ command: "new-after-http" });
   });
 
   it("loads tool-agnostic .agents global MCP files before Pi overrides", async () => {

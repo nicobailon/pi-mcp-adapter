@@ -437,7 +437,7 @@ function mergeServerMaps(base, next) {
         else if (existing && typeof definition.url === "string") {
             baseEntry = { ...existing };
             for (const field of [
-                "command", "args", "env", "cwd", "pluginDataDir", "literalEnv", "socket",
+                "command", "args", "env", "cwd", "pluginDataDir", "literalEnv", "inheritEnv", "socket",
             ]) {
                 delete baseEntry[field];
             }
@@ -445,7 +445,7 @@ function mergeServerMaps(base, next) {
         else if (existing && typeof definition.socket === "string") {
             baseEntry = { ...existing };
             for (const field of [
-                "command", "args", "env", "cwd", "pluginDataDir", "literalEnv", "url",
+                "command", "args", "env", "cwd", "pluginDataDir", "literalEnv", "inheritEnv", "url",
                 "headers", "requestHeadersCommand", "auth", "bearerToken", "bearerTokenEnv",
                 "oauth", "httpTransport",
             ]) {
