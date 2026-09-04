@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MCP_STATUS_EVENT } from "../types.ts";
+import { ConsentManager } from "../consent-manager.ts";
+import { MCP_APPROVAL_CUSTOM_TYPE, getToolApprovalIdentity, makeToolApprovalKey } from "../session-approvals.ts";
 
 const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn(),
@@ -515,6 +517,75 @@ describe("mcpAdapter session lifecycle", () => {
     await sessionStart;
 
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
+  });
+
+  it("restores approval state from the active session branch on session_tree", async () => {
+    const sessionManager = {
+      getBranch: vi.fn(),
+    };
+    const state = createState();
+    const tool = {
+      originalName: "search",
+      inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      uiResourceUri: "ui://demo/search",
+    };
+    const identity = getToolApprovalIdentity("demo", tool, { query: "safe" });
+    const branch = [{
+      type: "custom",
+      customType: MCP_APPROVAL_CUSTOM_TYPE,
+      data: {
+        version: 1,
+        kind: "tool",
+        decision: "allow_for_session",
+        serverName: "demo",
+        originalToolName: "search",
+        definitionHash: identity.definitionHash,
+        argsHash: identity.argsHash,
+      },
+    }];
+    sessionManager.getBranch.mockReturnValue(branch);
+    state.sessionManager = sessionManager;
+    state.approvedToolCalls = new Map([["stale", true]]);
+    state.consentManager = new ConsentManager();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    const context = { hasUI: false, sessionManager };
+    await handlers.get("session_start")?.({}, context);
+    await handlers.get("session_tree")?.({}, context);
+
+    expect(state.approvedToolCalls).toEqual(new Map([
+      [makeToolApprovalKey("demo", "search", identity.definitionHash, identity.argsHash), true],
+    ]));
+  });
+
+  it("ignores session_tree events from a stale session manager", async () => {
+    const activeSessionManager = { getBranch: vi.fn().mockReturnValue([]) };
+    const staleSessionManager = { getBranch: vi.fn().mockReturnValue([{
+      type: "custom",
+      customType: MCP_APPROVAL_CUSTOM_TYPE,
+      data: {
+        version: 1,
+        kind: "iframe",
+        decision: "allow",
+        serverName: "stale",
+      },
+    }]) };
+    const state = createState();
+    state.sessionManager = activeSessionManager;
+    state.consentManager = new ConsentManager();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, { hasUI: false, sessionManager: activeSessionManager });
+    await handlers.get("session_tree")?.({}, { hasUI: false, sessionManager: staleSessionManager });
+
+    expect(staleSessionManager.getBranch).not.toHaveBeenCalled();
+    expect(state.consentManager.requiresPrompt("stale")).toBe(true);
   });
 
   it("waits for keep-alive convergence before Pi processes the next input", async () => {

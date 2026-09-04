@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ConsentManager, type ToolConsentMode } from "../consent-manager.ts";
 
 describe("ConsentManager", () => {
@@ -146,6 +146,26 @@ describe("ConsentManager", () => {
       // Neither approved nor denied
       expect(() => manager.ensureApproved("server-a")).toThrow(/approval required/);
       expect(() => manager.ensureApproved("server-b")).toThrow(/approval required/);
+    });
+  });
+
+  describe("session persistence", () => {
+    it("writes tagged iframe decisions and restores without re-emitting", () => {
+      const persist = vi.fn();
+      const manager = new ConsentManager("once-per-server", persist);
+
+      manager.registerDecision("server-a", true);
+      manager.registerDecision("server-a", false);
+      expect(persist.mock.calls.map(([record]) => record)).toEqual([
+        { version: 1, kind: "iframe", decision: "allow", serverName: "server-a" },
+        { version: 1, kind: "iframe", decision: "deny", serverName: "server-a" },
+      ]);
+
+      persist.mockClear();
+      manager.restoreDecision("server-a", true);
+      expect(persist).not.toHaveBeenCalled();
+      expect(manager.requiresPrompt("server-a")).toBe(false);
+      expect(() => manager.ensureApproved("server-a")).not.toThrow();
     });
   });
 });

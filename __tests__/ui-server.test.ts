@@ -5,6 +5,7 @@ import type { McpServerManager } from "../server-manager.ts";
 import type { ConsentManager } from "../consent-manager.ts";
 import type { McpConfig, UiResourceContent } from "../types.ts";
 import type { McpExtensionState } from "../state.ts";
+import { getToolApprovalIdentity, makeToolApprovalKey } from "../session-approvals.ts";
 
 // Helper to make HTTP requests to the server
 async function request(
@@ -976,6 +977,51 @@ describe("UiServer", () => {
         },
       });
       expect(mockClient.callTool).not.toHaveBeenCalled();
+    });
+
+    it("keeps iframe consent separate while hashing the app tool definition", async () => {
+      const inputSchema = { type: "object", properties: { query: { type: "string" } } };
+      const callTool = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "called" }] });
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool },
+          tools: [{
+            name: "some_tool",
+            inputSchema,
+            _meta: { ui: { visibility: ["app"], resourceUri: "ui://demo/app" } },
+          }],
+          resources: [],
+        }),
+      });
+      const config: McpConfig = {
+        mcpServers: { "test-server": { command: "demo", approveTools: true } },
+      };
+      const state = {
+        config,
+        approvedToolCalls: new Map(),
+        toolMetadata: new Map(),
+        ui: { select: vi.fn().mockResolvedValue("Allow for session") },
+      } as unknown as McpExtensionState;
+      handle = await startUiServer(createServerOptions({ manager, config, state }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: { query: "safe" } },
+        },
+      });
+
+      expect(res.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "called" }] } });
+      const identity = getToolApprovalIdentity("test-server", {
+        originalName: "some_tool",
+        inputSchema,
+        uiResourceUri: "ui://demo/app",
+      }, { query: "safe" });
+      expect(state.approvedToolCalls).toEqual(new Map([
+        [makeToolApprovalKey("test-server", "some_tool", identity.definitionHash, identity.argsHash), true],
+      ]));
     });
 
     it("checks consent before calling tool", async () => {

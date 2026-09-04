@@ -9,6 +9,7 @@ import {
   type McpToolApprovalRequest,
   type ToolMetadata,
 } from "../types.ts";
+import type { SessionApprovalEntry } from "../session-approvals.ts";
 
 const tool: ToolMetadata = {
   name: "demo_search-records",
@@ -21,6 +22,7 @@ function createState(options: {
   decision?: "Allow once" | "Allow for session" | "Deny";
   interactive?: boolean;
   broker?: (request: McpToolApprovalRequest) => void;
+  persist?: (record: SessionApprovalEntry) => void;
 } = {}) {
   const callTool = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "called" }] });
   const select = vi.fn().mockResolvedValue(options.decision ?? "Allow once");
@@ -46,6 +48,7 @@ function createState(options: {
     promptMetadataLive: new Set(),
     serverInstructions: new Map(),
     approvedToolCalls: new Map<string, true>(),
+    ...(options.persist ? { persistSessionApproval: options.persist } : {}),
     ...(options.broker
       ? { approvalEvents: { emit: vi.fn((channel: string, data: unknown) => {
           expect(channel).toBe(MCP_TOOL_APPROVAL_REQUEST_EVENT);
@@ -161,7 +164,8 @@ describe("tool approval", () => {
   });
 
   it("fails closed headlessly with a structured approval_required result", async () => {
-    const { state, callTool } = createState({ approveTools: true, interactive: false });
+    const persist = vi.fn();
+    const { state, callTool } = createState({ approveTools: true, interactive: false, persist });
 
     const result = await executeCall(state, tool.name, { query: "private" });
 
@@ -173,14 +177,17 @@ describe("tool approval", () => {
     });
     expect(result.content[0].text).toContain("approval-gated");
     expect(callTool).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it("returns approval_denied without throwing or invoking proxy or direct tools", async () => {
-    const proxy = createState({ approveTools: true, decision: "Deny" });
+    const persist = vi.fn();
+    const proxy = createState({ approveTools: true, decision: "Deny", persist });
     await expect(executeCall(proxy.state, tool.name, {})).resolves.toMatchObject({
       details: { error: "approval_denied", server: "demo", tool: "search-records" },
     });
     expect(proxy.callTool).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
 
     const direct = createState({ approveTools: true, decision: "Deny" });
     const execute = createDirectToolExecutor(() => direct.state, () => null, {
@@ -196,18 +203,46 @@ describe("tool approval", () => {
   });
 
   it("caches only Allow for session decisions", async () => {
-    const session = createState({ approveTools: true, decision: "Allow for session" });
+    const persist = vi.fn();
+    const session = createState({ approveTools: true, decision: "Allow for session", persist });
     await ensureToolCallApproved(session.state, "demo", tool, { record: { id: "safe", type: "demo" } }, undefined);
     await ensureToolCallApproved(session.state, "demo", tool, { record: { type: "demo", id: "safe" } }, undefined);
     await ensureToolCallApproved(session.state, "demo", tool, { record: { id: "other", type: "demo" } }, undefined);
     expect(session.select).toHaveBeenCalledTimes(2);
     expect(session.state.approvedToolCalls.size).toBe(2);
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist.mock.calls[0]?.[0]).toMatchObject({
+      version: 1,
+      kind: "tool",
+      decision: "allow_for_session",
+      serverName: "demo",
+      originalToolName: "search-records",
+      definitionHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      argsHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    expect(persist.mock.calls[0]?.[0]).not.toHaveProperty("args");
 
-    const once = createState({ approveTools: true, decision: "Allow once" });
+    const oncePersist = vi.fn();
+    const once = createState({ approveTools: true, decision: "Allow once", persist: oncePersist });
     await ensureToolCallApproved(once.state, "demo", tool, {}, undefined);
     await ensureToolCallApproved(once.state, "demo", tool, {}, undefined);
     expect(once.select).toHaveBeenCalledTimes(2);
     expect(once.state.approvedToolCalls.size).toBe(0);
+    expect(oncePersist).not.toHaveBeenCalled();
+  });
+
+  it("invalidates persisted grants when the tool definition changes", async () => {
+    const persist = vi.fn();
+    const session = createState({ approveTools: true, decision: "Allow for session", persist });
+    const args = { query: "safe" };
+
+    await ensureToolCallApproved(session.state, "demo", tool, args, undefined);
+    await ensureToolCallApproved(session.state, "demo", { ...tool, inputSchema: { type: "number" } }, args, undefined);
+    await ensureToolCallApproved(session.state, "demo", { ...tool, inputSchema: tool.inputSchema, uiResourceUri: "ui://demo/other" }, args, undefined);
+
+    expect(session.select).toHaveBeenCalledTimes(3);
+    expect(persist).toHaveBeenCalledTimes(3);
+    expect(new Set(persist.mock.calls.map(([record]) => record.definitionHash)).size).toBe(3);
   });
 
   it("lets a broker allow a gated call without showing the built-in prompt", async () => {
@@ -316,7 +351,8 @@ describe("tool approval", () => {
     const broker = vi.fn((request: McpToolApprovalRequest) => {
       expect(request.claim(() => "allow_for_session")).toBe(true);
     });
-    const { state } = createState({ approveTools: true, broker });
+    const persist = vi.fn();
+    const { state } = createState({ approveTools: true, broker, persist });
 
     await ensureToolCallApproved(state, "demo", tool, {}, undefined);
     await ensureToolCallApproved(state, "demo", tool, {}, undefined);
@@ -324,6 +360,7 @@ describe("tool approval", () => {
 
     expect(broker).toHaveBeenCalledTimes(2);
     expect(state.approvedToolCalls.size).toBe(2);
+    expect(persist).toHaveBeenCalledTimes(2);
   });
 
   it("requires brokers to claim synchronously", async () => {

@@ -22,6 +22,7 @@ import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { runMcpScript } from "./mcp-code.ts";
 import { cleanupMaterializedBinaryResources } from "./tool-registrar.ts";
 import { syncNamespaceProxyTools } from "./namespace-tools.ts";
+import { restoreSessionApprovalState } from "./session-approvals.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
 export type { ServerEntry } from "./types.ts";
@@ -211,6 +212,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (flushError) {
       throw flushError;
     }
+  }
+
+  function restoreCurrentSessionApprovals(targetState: McpExtensionState): void {
+    const sessionManager = targetState.sessionManager;
+    if (!sessionManager) return;
+
+    let branch: readonly unknown[] = [];
+    try {
+      branch = sessionManager.getBranch();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.debug(`MCP: could not read the active session branch for approval restore: ${detail}`);
+    }
+    restoreSessionApprovalState(targetState, branch);
   }
 
   const earlyConfigPath = programmaticConfig
@@ -593,6 +608,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
 
       state = nextState;
+      // Re-read after asynchronous startup so navigation during initialization
+      // cannot restore a stale branch.
+      restoreCurrentSessionApprovals(nextState);
       clearRetainedInitFailure();
       for (const [name, { entry }] of runtimeServers) {
         if (Object.hasOwn(nextState.config.mcpServers, name)) {
@@ -708,6 +726,22 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         await initialization;
       }
     }
+  });
+
+  pi.on("session_tree", (_event, ctx) => {
+    const currentState = state;
+    const owner = currentOwner;
+    if (!currentState || !owner?.isActive() || !currentState.sessionManager) return;
+
+    let sessionManager: ExtensionContext["sessionManager"] | undefined;
+    try {
+      sessionManager = ctx.sessionManager;
+    } catch {
+      return;
+    }
+    if (!sessionManager || sessionManager !== currentState.sessionManager) return;
+
+    restoreCurrentSessionApprovals(currentState);
   });
 
   pi.on("input", async () => {

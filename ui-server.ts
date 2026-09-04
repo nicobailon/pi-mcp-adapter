@@ -2,7 +2,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { buildAllowAttribute } from "./ui-app-bridge-helpers.ts";
+import { buildAllowAttribute, getToolUiResourceUri } from "./ui-app-bridge-helpers.ts";
 import {
   type CallToolRequest,
   type CallToolResult,
@@ -473,11 +473,18 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           name: callParams.name,
           arguments: normalizedArguments,
         };
+        let uiResourceUri: string | undefined;
+        try {
+          uiResourceUri = getToolUiResourceUri({ _meta: toolDefinition._meta });
+        } catch {
+          // Preserve the endpoint's existing behavior for malformed declarations.
+        }
         const toolMeta = {
           name: callParams.name,
           originalName: callParams.name,
           description: toolDefinition?.description ?? "",
           ...(toolDefinition?.inputSchema !== undefined ? { inputSchema: toolDefinition.inputSchema } : {}),
+          ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
           ...(uiVisibility !== undefined ? { uiVisibility } : {}),
         };
         const approvalMetadata = new Map(options.state?.toolMetadata);

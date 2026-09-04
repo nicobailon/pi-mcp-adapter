@@ -440,7 +440,7 @@ Use `approveTools` when a tool should stay visible but not run without confirmat
 }
 ```
 
-When a matching tool is called from the proxy tool, a direct MCP tool, a resource call, or an MCP UI iframe, Pi asks: **Allow once**, **Allow for session**, or **Deny**. Session approvals are kept in memory only. In headless sessions, matching calls fail closed with an `approval_required` result instead of running. `excludeTools` still removes tools entirely; `approveTools` only gates visible tools at call time.
+When a matching tool is called from the proxy tool, a direct MCP tool, a resource call, or an MCP UI iframe, Pi asks: **Allow once**, **Allow for session**, or **Deny**. **Allow for session** tool grants and MCP UI iframe consent decisions (including denials) persist as non-LLM custom entries on the active Pi session branch and restore on resume or branch navigation. Entries store only server/tool names and deterministic definition/argument hashes; raw arguments, results, and secrets never persist. Tool grants and iframe consent remain separate gates. In headless sessions, matching calls fail closed with an `approval_required` result; denials, abstentions, **Allow once**, and approval-required paths do not create tool grant records. `excludeTools` still removes tools entirely; `approveTools` only gates visible tools at call time.
 
 Permission extensions can broker these decisions by listening on `pi-mcp-adapter:tool-approval-request` and claiming the request synchronously:
 
@@ -457,7 +457,7 @@ pi.events.on(MCP_TOOL_APPROVAL_REQUEST_EVENT, (request: McpToolApprovalRequest) 
 });
 ```
 
-The request includes `serverName`, `originalToolName`, `prefixedToolName`, `args`, `origin`, and optional `signal`. The first synchronous claim wins. `allow_for_session` updates the same in-memory approval cache as the built-in dialog; `deny` blocks the MCP call; `abstain` or no claim preserves the fallback behavior above. Brokered approval runs for every uncached MCP call regardless of `approveTools` configuration, across proxy, direct, `mcpScript`, resource, and iframe origins.
+The request includes `serverName`, `originalToolName`, `prefixedToolName`, `args`, `origin`, and optional `signal`. The first synchronous claim wins. `allow_for_session` updates the same session-scoped approval cache and persistence path as the built-in dialog; `deny` blocks the MCP call; `abstain` or no claim preserves the fallback behavior above. Brokered approval runs for every uncached MCP call regardless of `approveTools` configuration, across proxy, direct, `mcpScript`, resource, and iframe origins.
 
 ### Output Guard
 

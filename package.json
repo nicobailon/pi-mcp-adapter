@@ -89,6 +89,7 @@
     "ts-shape.ts",
     "search-ranking.ts",
     "tool-approval.ts",
+    "session-approvals.ts",
     "init.ts",
     "failure-backoff.ts",
     "ui-session.ts",

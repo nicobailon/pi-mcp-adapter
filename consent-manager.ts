@@ -1,5 +1,6 @@
 import { ConsentError } from "./errors.ts";
 import { logger } from "./logger.ts";
+import type { SessionApprovalWriter } from "./session-approvals.ts";
 
 export type ToolConsentMode = "never" | "once-per-server" | "always";
 
@@ -8,7 +9,10 @@ export class ConsentManager {
   private deniedServers = new Set<string>();
   private log = logger.child({ component: "ConsentManager" });
 
-  constructor(private mode: ToolConsentMode = "once-per-server") {
+  constructor(
+    private mode: ToolConsentMode = "once-per-server",
+    private persistDecision?: SessionApprovalWriter,
+  ) {
     this.log.debug("Initialized", { mode });
   }
 
@@ -24,17 +28,30 @@ export class ConsentManager {
   }
 
   registerDecision(serverName: string, approved: boolean): void {
-    this.deniedServers.delete(serverName);
-    this.approvedServers.delete(serverName);
+    this.applyDecision(serverName, approved);
+    try {
+      this.persistDecision?.({
+        version: 1,
+        kind: "iframe",
+        decision: approved ? "allow" : "deny",
+        serverName,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.log.debug("Failed to persist consent decision", { server: serverName, error: detail });
+    }
+  }
 
-    if (approved) {
-      this.approvedServers.add(serverName);
-      this.log.debug("Consent granted", { server: serverName });
+  /** Apply a persisted decision without writing it back to the session. */
+  restoreDecision(serverName: string, approved: boolean): void {
+    if (this.mode === "always" && approved) {
+      // Restored "always" grants cannot be reused. A later grant still
+      // overrides an earlier denial.
+      this.approvedServers.delete(serverName);
+      this.deniedServers.delete(serverName);
       return;
     }
-
-    this.deniedServers.add(serverName);
-    this.log.debug("Consent denied", { server: serverName });
+    this.applyDecision(serverName, approved);
   }
 
   ensureApproved(serverName: string): void {
@@ -60,5 +77,19 @@ export class ConsentManager {
     this.approvedServers.clear();
     this.deniedServers.clear();
     this.log.debug("Cleared all consent records");
+  }
+
+  private applyDecision(serverName: string, approved: boolean): void {
+    this.deniedServers.delete(serverName);
+    this.approvedServers.delete(serverName);
+
+    if (approved) {
+      this.approvedServers.add(serverName);
+      this.log.debug("Consent granted", { server: serverName });
+      return;
+    }
+
+    this.deniedServers.add(serverName);
+    this.log.debug("Consent denied", { server: serverName });
   }
 }
