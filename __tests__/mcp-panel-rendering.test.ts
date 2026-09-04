@@ -226,6 +226,71 @@ describe("mcp-panel rendering", () => {
     panel.dispose();
   });
 
+  it("does not report cached data when reconnect returns no cache entry", async () => {
+    const config: McpConfig = {
+      mcpServers: {
+        example: { command: "mock" },
+      },
+    };
+    let connectionStatus: "idle" | "connected" = "idle";
+    const callbacks: McpPanelCallbacks = {
+      ...createCallbacks(),
+      reconnect: async () => {
+        connectionStatus = "connected";
+        return true;
+      },
+      getConnectionStatus: () => connectionStatus,
+      refreshCacheAfterReconnect: () => null,
+    };
+    const panel = createMcpPanel(config, null, new Map(), callbacks, { requestRender: () => {} }, () => {});
+
+    panel.handleInput("\x12");
+    await Promise.resolve();
+
+    expect(stripAnsi(panel.render(100).join("\n"))).toContain("example  (not cached)");
+    panel.dispose();
+  });
+
+  it("shows zero-TTL metadata after reconnect but not when the panel is reopened", async () => {
+    const config: McpConfig = {
+      mcpServers: {
+        example: { command: "mock" },
+      },
+    };
+    const cache: MetadataCache = { version: 1, servers: {} };
+    const refreshedEntry = {
+      configHash: computeServerHash(config.mcpServers.example),
+      cachedAt: Date.now(),
+      ttlMs: 0,
+      tools: [{ name: "search" }],
+      resources: [],
+    };
+    let connectionStatus: "idle" | "connected" = "idle";
+    const callbacks: McpPanelCallbacks = {
+      ...createCallbacks(),
+      reconnect: async () => {
+        connectionStatus = "connected";
+        return true;
+      },
+      getConnectionStatus: () => connectionStatus,
+      refreshCacheAfterReconnect: () => refreshedEntry,
+    };
+    const panel = createMcpPanel(config, cache, new Map(), callbacks, { requestRender: () => {} }, () => {});
+
+    panel.handleInput("\x12");
+    await Promise.resolve();
+
+    const currentOutput = stripAnsi(panel.render(100).join("\n"));
+    expect(currentOutput).toContain("example  0/1");
+    expect(currentOutput).not.toContain("(not cached)");
+    panel.dispose();
+
+    const reopenedPanel = createMcpPanel(config, cache, new Map(), callbacks, { requestRender: () => {} }, () => {});
+    const reopenedOutput = stripAnsi(reopenedPanel.render(100).join("\n"));
+    expect(reopenedOutput).toContain("example  (not cached)");
+    reopenedPanel.dispose();
+  });
+
   it("keeps dirty changes and closes when Keep & Close is confirmed", () => {
     const config = createConfig();
     const done = vi.fn<(result: McpPanelResult) => void>();
