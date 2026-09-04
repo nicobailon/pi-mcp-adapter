@@ -523,5 +523,61 @@ describe("mcp-auth-flow", () => {
       assert.strictEqual(config.clientName, "Custom MCP")
       assert.strictEqual(config.clientUri, "https://example.com/custom")
     })
+
+    it("should preserve tokens on a stale redirect URI when a refresh token exists", async () => {
+      const serverName = "redirect-mismatch-refresh-test"
+      const serverUrl = "https://redirect-mismatch-refresh.example.com/mcp"
+      // A client registered against an older ephemeral loopback port.
+      await updateClientInfo(serverName, {
+        clientId: "registered-client",
+        redirectUris: ["http://localhost:1/callback"],
+      }, serverUrl)
+      await updateTokens(serverName, {
+        accessToken: "expired-access",
+        refreshToken: "stored-refresh",
+        expiresAt: Date.now() / 1000 - 3600,
+      }, serverUrl)
+
+      // startAuth binds a fresh ephemeral port, so the stored redirect URI does
+      // not match. The flow then proceeds to discovery, which fails for this
+      // fake server — but the mismatch decision has already been made.
+      await assert.rejects(async () => await startAuth(serverName, serverUrl, {
+        url: serverUrl,
+        auth: "oauth",
+      }))
+
+      const entry = await getAuthForUrl(serverName, serverUrl)
+      assert.strictEqual(entry?.tokens?.refreshToken, "stored-refresh")
+      assert.strictEqual(entry?.tokens?.accessToken, "expired-access")
+      assert.strictEqual(entry?.clientInfo?.clientId, "registered-client")
+
+      clearAllCredentials(serverName)
+    })
+
+    it("should re-register the client on a stale redirect URI when no refresh token exists", async () => {
+      const serverName = "redirect-mismatch-interactive-test"
+      const serverUrl = "https://redirect-mismatch-interactive.example.com/mcp"
+      await updateClientInfo(serverName, {
+        clientId: "registered-client",
+        redirectUris: ["http://localhost:1/callback"],
+      }, serverUrl)
+      await updateTokens(serverName, {
+        accessToken: "expired-access",
+        expiresAt: Date.now() / 1000 - 3600,
+      }, serverUrl)
+
+      await assert.rejects(async () => await startAuth(serverName, serverUrl, {
+        url: serverUrl,
+        auth: "oauth",
+      }))
+
+      // With no refresh token the interactive leg is unavoidable, so the stale
+      // client registration is dropped to force re-registration on the new port.
+      const entry = await getAuthForUrl(serverName, serverUrl)
+      assert.strictEqual(entry?.clientInfo, undefined)
+
+      clearAllCredentials(serverName)
+    })
+
   })
 })
