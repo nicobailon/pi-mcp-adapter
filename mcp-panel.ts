@@ -301,15 +301,11 @@ class McpPanelView implements Component {
   }
 
   private addRow(content: string, innerWidth: number): void {
-    this.addText(this.row(content, innerWidth));
+    this.container.addChild(new Text(this.row(content, innerWidth), 0, 0));
   }
 
   private addRule(left: string, right: string): void {
     this.container.addChild(new McpPanelFrame(this.theme, left, right));
-  }
-
-  private addText(content: string): void {
-    this.container.addChild(new Text(content, 0, 0));
   }
 
   private row(content: string, innerWidth: number): string {

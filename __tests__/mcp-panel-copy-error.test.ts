@@ -3,14 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   copyToClipboard: vi.fn(async (_text: string) => undefined),
   DynamicBorder: class {
-    private readonly color: (text: string) => string;
-
-    constructor(color: (text: string) => string = (text) => text) {
-      this.color = color;
-    }
-
     render(width: number): string[] {
-      return [this.color("─".repeat(Math.max(1, width)))];
+      return ["─".repeat(Math.max(1, width))];
     }
 
     invalidate(): void {}

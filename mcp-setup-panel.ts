@@ -116,11 +116,12 @@ class McpSetupPanelView implements Component {
     this.addRow("", innerWidth);
 
     if (state.notice) {
-      const tone = state.notice.tone === "success"
-        ? this.theme.confirm
-        : state.notice.tone === "warning"
-          ? this.theme.needsAuth
-          : this.theme.hint;
+      let tone = this.theme.hint;
+      if (state.notice.tone === "success") {
+        tone = this.theme.confirm;
+      } else if (state.notice.tone === "warning") {
+        tone = this.theme.needsAuth;
+      }
       for (const line of wrapText(tone(state.notice.text), contentWidth)) {
         this.addRow(line, innerWidth);
       }
