@@ -86,16 +86,16 @@ describe("McpServerManager protocol negotiation", () => {
 
     await manager.connect("default", {
       command: process.execPath,
-      args: [legacyExitsOnDiscoverFixture, reportPath, "default"],
+      args: [legacyExitsOnDiscoverFixture, reportPath],
     });
     await manager.connect("true", {
       command: process.execPath,
-      args: [legacyExitsOnDiscoverFixture, reportPath, "true"],
+      args: [legacyExitsOnDiscoverFixture, reportPath],
       inheritEnv: true,
     });
     await manager.connect("false", {
       command: process.execPath,
-      args: [legacyExitsOnDiscoverFixture, reportPath, "false"],
+      args: [legacyExitsOnDiscoverFixture, reportPath],
       inheritEnv: false,
       env: {
         PI_MCP_ENV_AUDIT_SELECTED_X9: "selected-value",
@@ -104,7 +104,7 @@ describe("McpServerManager protocol negotiation", () => {
     });
     await manager.connect("literal", {
       command: process.execPath,
-      args: [legacyExitsOnDiscoverFixture, reportPath, "literal"],
+      args: [legacyExitsOnDiscoverFixture, reportPath],
       inheritEnv: false,
       literalEnv: true,
       env: {
@@ -113,10 +113,10 @@ describe("McpServerManager protocol negotiation", () => {
     });
 
     expect(readEnvironmentReports(reportPath)).toEqual([
-      { label: "default", inherited: "present", selected: "absent", interpolated: "absent", literal: "absent" },
-      { label: "true", inherited: "present", selected: "absent", interpolated: "absent", literal: "absent" },
-      { label: "false", inherited: "absent", selected: "selected", interpolated: "interpolated", literal: "absent" },
-      { label: "literal", inherited: "absent", selected: "absent", interpolated: "absent", literal: "literal" },
+      { inherited: "present", selected: "absent", interpolated: "absent", literal: "absent" },
+      { inherited: "present", selected: "absent", interpolated: "absent", literal: "absent" },
+      { inherited: "absent", selected: "selected", interpolated: "interpolated", literal: "absent" },
+      { inherited: "absent", selected: "absent", interpolated: "absent", literal: "literal" },
     ]);
   }, 5_000);
 
@@ -135,15 +135,15 @@ describe("McpServerManager protocol negotiation", () => {
 
     await manager.connect("auto", {
       command: process.execPath,
-      args: [legacyExitsOnDiscoverFixture, reportPath, "auto"],
+      args: [legacyExitsOnDiscoverFixture, reportPath],
       protocolVersion: "auto",
       inheritEnv: false,
       env: { PI_MCP_ENV_AUDIT_SELECTED_X9: "selected-value" },
     });
 
     expect(readEnvironmentReports(reportPath)).toEqual([
-      { label: "auto", inherited: "absent", selected: "selected", interpolated: "absent", literal: "absent" },
-      { label: "auto", inherited: "absent", selected: "selected", interpolated: "absent", literal: "absent" },
+      { inherited: "absent", selected: "selected", interpolated: "absent", literal: "absent" },
+      { inherited: "absent", selected: "selected", interpolated: "absent", literal: "absent" },
     ]);
   }, 5_000);
 
