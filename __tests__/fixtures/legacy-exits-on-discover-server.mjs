@@ -1,4 +1,17 @@
+import { appendFileSync } from "node:fs";
 import readline from "node:readline";
+
+const environmentReportPath = process.argv[2];
+const environmentReportLabel = process.argv[3] ?? "unknown";
+if (environmentReportPath) {
+  appendFileSync(environmentReportPath, `${JSON.stringify({
+    label: environmentReportLabel,
+    inherited: process.env.PI_MCP_ENV_AUDIT_SENTINEL_X9 === "host-sentinel" ? "present" : "absent",
+    selected: process.env.PI_MCP_ENV_AUDIT_SELECTED_X9 === "selected-value" ? "selected" : "absent",
+    interpolated: process.env.PI_MCP_ENV_AUDIT_INTERPOLATED_X9 === "host-sentinel" ? "interpolated" : "absent",
+    literal: process.env.PI_MCP_ENV_AUDIT_LITERAL_X9 === "${PI_MCP_ENV_AUDIT_SENTINEL_X9}" ? "literal" : "absent",
+  })}\n`);
+}
 
 const lines = readline.createInterface({ input: process.stdin });
 

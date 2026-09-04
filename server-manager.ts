@@ -817,7 +817,12 @@ export class McpServerManager {
       const stdioTransport = new StdioClientTransport({
         command,
         args,
-        env: resolveEnv(definition.env, name, definition.literalEnv === true),
+        env: resolveEnv(
+          definition.env,
+          name,
+          definition.literalEnv === true,
+          definition.inheritEnv !== false,
+        ),
         ...(cwd !== undefined ? { cwd } : {}),
         stderr: definition.debug ? "inherit" : "pipe",
       });
@@ -1634,10 +1639,17 @@ export class McpServerManager {
 /**
  * Resolve environment variables with interpolation.
  */
-function resolveEnv(env: Record<string, string> | undefined, serverName: string, literalEnv = false): Record<string, string> {
+function resolveEnv(
+  env: Record<string, string> | undefined,
+  serverName: string,
+  literalEnv = false,
+  inheritEnv = true,
+): Record<string, string> {
   const resolved: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) resolved[key] = value;
+  if (inheritEnv) {
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) resolved[key] = value;
+    }
   }
   if (literalEnv) return env ? { ...resolved, ...env } : resolved;
 
