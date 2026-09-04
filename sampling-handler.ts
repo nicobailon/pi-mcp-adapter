@@ -1,5 +1,4 @@
-import { complete } from "@earendil-works/pi-ai/compat";
-import type { Api, AssistantMessage, Message, Model, ProviderHeaders, TextContent } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Message, Model, TextContent } from "@earendil-works/pi-ai";
 import { truncateAtWord } from "./utils.ts";
 import { throwIfAborted } from "./abort.ts";
 import type { ExtensionUIContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
@@ -13,7 +12,7 @@ import {
 } from "@modelcontextprotocol/client";
 
 export type SamplingUIContext = Pick<ExtensionUIContext, "confirm">;
-export type SamplingModelRegistry = Pick<ModelRegistry, "getAvailable" | "getApiKeyAndHeaders">;
+export type SamplingModelRegistry = Pick<ModelRegistry, "getAvailable" | "complete">;
 
 export interface SamplingHandlerOptions {
   serverName: string;
@@ -57,7 +56,7 @@ export async function handleSamplingRequest(
   }
 
   const messages = params.messages.map(convertSamplingMessage);
-  const { model, apiKey, headers } = await resolveSamplingModel(options, params.modelPreferences);
+  const model = resolveSamplingModel(options, params.modelPreferences);
   throwIfAborted(signal);
   await confirmSampling(
     options,
@@ -66,15 +65,13 @@ export async function handleSamplingRequest(
   );
   throwIfAborted(signal);
 
-  const result = await complete(
+  const result = await options.modelRegistry.complete(
     model,
     {
       ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
       messages,
     },
     {
-      ...(apiKey !== undefined ? { apiKey } : {}),
-      ...(headers !== undefined ? { headers } : {}),
       maxTokens: params.maxTokens,
       ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
       ...(params.metadata !== undefined ? { metadata: params.metadata as Record<string, unknown> } : {}),
@@ -124,14 +121,10 @@ function messageText(message: Message): string {
   }).join("\n");
 }
 
-async function resolveSamplingModel(
+function resolveSamplingModel(
   options: SamplingHandlerOptions,
   modelPreferences: ModelPreferences | undefined,
-): Promise<{
-  model: Model<Api>;
-  apiKey?: string;
-  headers?: ProviderHeaders;
-}> {
+): Model<Api> {
   const candidates: Model<Api>[] = [];
   const availableModels = options.modelRegistry.getAvailable();
 
@@ -153,26 +146,10 @@ async function resolveSamplingModel(
     addSamplingCandidate(candidates, model);
   }
 
-  const errors: string[] = [];
   const signal = options.getSignal();
-  for (const model of candidates) {
-    throwIfAborted(signal);
-    const auth = await options.modelRegistry.getApiKeyAndHeaders(model);
-    throwIfAborted(signal);
-    if (auth.ok === false) {
-      errors.push(`${model.provider}/${model.id}: ${auth.error}`);
-      continue;
-    }
-    return {
-      model,
-      ...(auth.apiKey !== undefined ? { apiKey: auth.apiKey } : {}),
-      ...(auth.headers !== undefined ? { headers: auth.headers } : {}),
-    };
-  }
-
-  if (errors.length > 0) {
-    throw new Error(`No configured auth for MCP sampling model. ${errors.join("; ")}`);
-  }
+  throwIfAborted(signal);
+  const model = candidates[0];
+  if (model) return model;
   throw new Error("No Pi model is available for MCP sampling");
 }
 
