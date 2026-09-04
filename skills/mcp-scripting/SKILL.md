@@ -32,7 +32,7 @@ return result.data;
 
 Calls resolve to `{ ok: true, data }` or `{ ok: false, error }`; handle failed calls instead of expecting them to stop the script. `emit(value)` adds user-visible output before the final `return` value. `console` output is captured too.
 
-On success, `data` may still be the raw MCP `CallToolResult` envelope rather than the domain payload. Prefer `data.structuredContent` when available; otherwise inspect text blocks in `data.content` (some servers emit newline-delimited JSON). If the shape is unfamiliar, return or emit it for inspection instead of coercing it to `[]` or `{}`.
+On success, `data` may still be the raw MCP `CallToolResult` envelope rather than the domain payload. Check `data.structuredContent` for the fields your script expects; if they are absent, inspect text blocks in `data.content` too (some servers emit newline-delimited JSON). If neither shape is understood, return or emit the envelope for inspection instead of coercing it to `[]` or `{}`.
 
 `tools` is a non-enumerable proxy: `Object.keys(tools)` throws. Always use `tools.search` for discovery. When a known flat path is a valid identifier, direct calls such as `tools.github_search_issues(args)` are supported; use bracket syntax for hyphenated names: `tools["server_tool-name"](args)`. `search`, `call`, `describe`, and promise/serialization names (`then`, `catch`, `finally`, `toJSON`, `toString`, `valueOf`) are reserved on the proxy; if a flat path collides with one, call it via `tools.call("exact-path", args)`.
 

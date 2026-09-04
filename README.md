@@ -512,7 +512,7 @@ emit({ tool: details.path, completed: true });
 return result.data;
 ```
 
-Depending on the server, successful `result.data` may be the raw MCP `CallToolResult` envelope rather than the domain payload. Prefer `result.data.structuredContent` when available; otherwise inspect text blocks in `result.data.content`, and do not coerce an unfamiliar shape to an empty collection.
+Depending on the server, successful `result.data` may be the raw MCP `CallToolResult` envelope rather than the domain payload. Check `result.data.structuredContent` for the fields your script expects; if they are absent, inspect text blocks in `result.data.content` too. If neither shape is understood, return the envelope for inspection instead of coercing it to an empty collection.
 
 See the bundled `mcp-scripting` skill for the complete workflow guide. The API is `await tools.search({ query, server?, limit?, offset? })`, `await tools.describe({ path })`, `tools.call(path, args)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each operation, its path or query, outcome, and duration. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds; each script runs in a worker thread that is terminated at the deadline, including for infinite loops.
 
