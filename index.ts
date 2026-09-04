@@ -225,6 +225,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const namespaceEnvOverride = resolveNamespaceEnvOverride(envRaw, envDirectToolOverride);
   const registeredDirectTools = new Map<string, string>();
   const registeredDirectToolServers = new Map<string, string>();
+  const registeredDirectToolVersions = new Map<string, number>();
+  // Overlapping connect results consume each server's discovery names once.
+  // Removal clears the record so stale/fallback reactivation is reportable.
+  const reportedDirectToolNamesByServer = new Map<string, Set<string>>();
   const registeredNamespaceProxyTools = new Set<string>();
   const fallbackDeactivatedTools = new Set<string>();
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
@@ -267,6 +271,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       uiResourceUri: spec.uiResourceUri,
       uiStreamMode: spec.uiStreamMode,
     });
+  }
+
+  function forgetReportedDirectToolName(serverName: string | undefined, toolName: string): void {
+    if (!serverName) return;
+    const reportedNames = reportedDirectToolNamesByServer.get(serverName);
+    if (!reportedNames) return;
+    reportedNames.delete(toolName);
+    if (reportedNames.size === 0) reportedDirectToolNamesByServer.delete(serverName);
   }
 
   function registerDirectTool(spec: DirectToolSpec, config: McpConfig): void {
@@ -346,9 +358,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const fingerprint = directToolFingerprint(spec);
       const previous = registeredDirectTools.get(spec.prefixedName);
       if (previous !== fingerprint) {
+        const previousServer = registeredDirectToolServers.get(spec.prefixedName);
         registerDirectTool(spec, config);
         registeredDirectTools.set(spec.prefixedName, fingerprint);
         registeredDirectToolServers.set(spec.prefixedName, spec.serverName);
+        registeredDirectToolVersions.set(spec.prefixedName, (registeredDirectToolVersions.get(spec.prefixedName) ?? 0) + 1);
+        if (previousServer !== spec.serverName) {
+          forgetReportedDirectToolName(previousServer, spec.prefixedName);
+        }
         if (fallbackDeactivatedTools.delete(spec.prefixedName)) {
           const activeTools = getActiveToolsIfReady();
           if (activeTools && !activeTools.includes(spec.prefixedName)) {
@@ -361,8 +378,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
     for (const toolName of [...registeredDirectTools.keys()]) {
       if (nextNames.has(toolName)) continue;
+      const serverName = registeredDirectToolServers.get(toolName);
       registeredDirectTools.delete(toolName);
       registeredDirectToolServers.delete(toolName);
+      forgetReportedDirectToolName(serverName, toolName);
       deactivated.push(toolName);
     }
 
@@ -1184,12 +1203,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           // Only this server's tools are attributed: another server's refresh
           // or a concurrent connect can register tools while this one awaits.
           const directToolsBefore = new Set(registeredDirectTools.keys());
+          const directToolVersionsBefore = new Map([...registeredDirectTools.keys()].map((name) => [name, registeredDirectToolVersions.get(name) ?? 0]));
           const result = await executeConnect(state, params.connect, signal);
           if (!directToolsFrozen) syncToolSurface(_ctx as ExtensionContext);
+          const reportedNames = reportedDirectToolNamesByServer.get(params.connect) ?? new Set<string>();
           const addedToolNames = [...registeredDirectTools.keys()].filter(
-            (name) => !directToolsBefore.has(name) && registeredDirectToolServers.get(name) === params.connect,
+            (name) => (!directToolsBefore.has(name) || (registeredDirectToolVersions.get(name) ?? 0) !== (directToolVersionsBefore.get(name) ?? 0))
+              && registeredDirectToolServers.get(name) === params.connect
+              && !reportedNames.has(name),
           );
-          return addedToolNames.length > 0 ? { ...result, addedToolNames } : result;
+          if (addedToolNames.length === 0) return result;
+          for (const name of addedToolNames) reportedNames.add(name);
+          reportedDirectToolNamesByServer.set(params.connect, reportedNames);
+          return { ...result, addedToolNames };
         }
         if (params.describe) {
           return executeDescribe(state, params.describe);
