@@ -106,6 +106,21 @@ describe("commands onboarding", () => {
     expect(loadOnboardingState().sharedConfigHintShown).toBe(true);
   });
 
+  it("passes the active theme into the setup MCP panel", async () => {
+    process.env.HOME = mkdtempSync(join(tmpdir(), "pi-mcp-commands-setup-theme-home-"));
+    const ui = createUi();
+    const { openMcpSetup } = await import("../commands.ts");
+
+    await openMcpSetup(
+      { config: { mcpServers: {} } } as any,
+      {} as any,
+      { hasUI: true, mode: "tui", cwd: process.cwd(), ui } as any,
+    );
+
+    const options = mocks.createMcpSetupPanel.mock.calls.at(-1)?.[2];
+    expect(options.theme).toBe(ui.theme);
+  });
+
   it("passes the active theme into the OAuth MCP panel", async () => {
     const ui = createUi();
     const { openMcpAuthPanel } = await import("../commands.ts");

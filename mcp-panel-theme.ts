@@ -1,4 +1,60 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, type Theme } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+
+/**
+ * A width-aware frame shared by the MCP panel views.
+ *
+ * DynamicBorder owns the horizontal sizing; the panel supplies the corners so
+ * each view can retain its existing frame shape without hand-building a
+ * border-width-dependent ANSI line.
+ */
+export class McpPanelFrame implements Component {
+  private readonly border: DynamicBorder;
+
+  constructor(
+    private readonly theme: McpPanelTheme,
+    private readonly left: string,
+    private readonly right: string,
+    private readonly title?: string,
+  ) {
+    this.border = new DynamicBorder((text: string) => this.theme.border(text));
+  }
+
+  render(width: number): string[] {
+    if (width <= 0) return [];
+    if (width === 1) return [truncateToWidth(this.theme.border(this.left), width, "", false)];
+
+    const innerWidth = width - 2;
+    if (this.title !== undefined) {
+      const titleText = truncateToWidth(` ${this.title} `, innerWidth, "", false);
+      const borderLength = Math.max(0, innerWidth - visibleWidth(titleText));
+      const leftLength = Math.floor(borderLength / 2);
+      const rightLength = borderLength - leftLength;
+      return [
+        this.theme.border(this.left) +
+          this.renderBorderSegment(leftLength) +
+          this.theme.title(titleText) +
+          this.renderBorderSegment(rightLength) +
+          this.theme.border(this.right),
+      ];
+    }
+
+    return [
+      this.theme.border(this.left) +
+        this.renderBorderSegment(innerWidth) +
+        this.theme.border(this.right),
+    ];
+  }
+
+  invalidate(): void {
+    this.border.invalidate();
+  }
+
+  private renderBorderSegment(width: number): string {
+    if (width <= 0) return "";
+    return this.border.render(width)[0] ?? "";
+  }
+}
 
 /**
  * Semantic styles shared by the MCP panels.

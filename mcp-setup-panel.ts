@@ -1,38 +1,16 @@
-import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Text, matchesKey, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { createMcpPanelTheme, McpPanelFrame, type McpPanelTheme } from "./mcp-panel-theme.ts";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import type { ImportKind } from "./types.ts";
 import { getConfigDirName } from "./agent-dir.ts";
 import { KNOWN_SERVER_PRESETS, type ConfigWritePreview, type KnownServerPreset, type McpDiscoverySummary, type SharedConfigTarget } from "./config.ts";
 import type { McpOnboardingState } from "./onboarding-state.ts";
 
-interface SetupTheme {
-  border: string;
-  title: string;
-  selected: string;
-  hint: string;
-  success: string;
-  warning: string;
-  muted: string;
-}
-
-const DEFAULT_THEME: SetupTheme = {
-  border: "2",
-  title: "36",
-  selected: "32",
-  hint: "2",
-  success: "32",
-  warning: "33",
-  muted: "2;3",
-};
-
 const MIN_PANEL_WIDTH = 24;
 const COMPACT_WIDTH = 60;
 const COMPACT_ACTION_ROWS = 7;
 const DESKTOP_PREVIEW_WIDTH = 74;
-
-function fg(code: string, text: string): string {
-  return code ? `\x1b[${code}m${text}\x1b[0m` : text;
-}
 
 function wrapText(text: string, width: number): string[] {
   if (width <= 8) return [text];
@@ -69,6 +47,7 @@ export interface SetupPanelOptions {
   mode: "empty" | "setup";
   onboardingState: McpOnboardingState;
   keybindings?: PanelKeybindings;
+  theme?: Theme;
 }
 
 type Screen = "empty" | "setup" | "imports" | "paths";
@@ -93,6 +72,347 @@ interface Action {
   target?: SharedConfigTarget;
 }
 
+interface McpSetupPanelViewState {
+  screen: Screen;
+  actionCursor: number;
+  importCursor: number;
+  pathCursor: number;
+  sharedConfigTarget: SharedConfigTarget;
+  selectedImports: ReadonlySet<ImportKind>;
+  busy: boolean;
+  notice: { text: string; tone: "success" | "warning" | "muted" } | null;
+  onboardingState: McpOnboardingState;
+  discovery: McpDiscoverySummary;
+  actions: readonly Action[];
+  detectedPaths: readonly string[];
+}
+
+/**
+ * The setup view owns component composition and display formatting. The panel
+ * below remains the controller for input routing, async actions, and timers.
+ */
+class McpSetupPanelView implements Component {
+  private readonly container = new Container();
+
+  constructor(
+    private readonly getState: () => McpSetupPanelViewState,
+    private readonly callbacks: SetupPanelCallbacks,
+    private readonly theme: McpPanelTheme,
+  ) {}
+
+  render(width: number): string[] {
+    const panelWidth = Math.max(MIN_PANEL_WIDTH, width);
+    const innerWidth = panelWidth - 2;
+    const contentWidth = this.contentWidth(innerWidth);
+    const state = this.getState();
+    this.container.clear();
+
+    this.addFrame("┌", "┐", panelWidth);
+    this.addRow(this.theme.title("MCP setup"), innerWidth);
+    for (const line of wrapText(this.discoverySummaryLine(state), contentWidth)) {
+      this.addRow(line, innerWidth);
+    }
+    for (const line of wrapText(this.theme.description(this.theme.italic(this.secondarySummaryLine(state))), contentWidth)) {
+      this.addRow(line, innerWidth);
+    }
+    this.addRow("", innerWidth);
+
+    if (state.notice) {
+      const tone = state.notice.tone === "success"
+        ? this.theme.confirm
+        : state.notice.tone === "warning"
+          ? this.theme.needsAuth
+          : this.theme.hint;
+      for (const line of wrapText(tone(state.notice.text), contentWidth)) {
+        this.addRow(line, innerWidth);
+      }
+      this.addRow("", innerWidth);
+    }
+
+    this.addFrame("├", "┤", panelWidth);
+    if (state.screen === "imports") {
+      for (const line of this.renderImports(state, innerWidth)) this.addRow(line, innerWidth);
+    } else if (state.screen === "paths") {
+      for (const line of this.renderPaths(state, innerWidth)) this.addRow(line, innerWidth);
+    } else {
+      for (const line of this.renderActions(state, innerWidth)) this.addRow(line, innerWidth);
+    }
+    this.addFrame("└", "┘", panelWidth);
+    return this.container.render(panelWidth);
+  }
+
+  invalidate(): void {
+    this.container.invalidate();
+  }
+
+  private addFrame(left: string, right: string, width: number): void {
+    this.container.addChild(new McpPanelFrame(this.theme, left, right));
+  }
+
+  private addRow(content: string, innerWidth: number): void {
+    this.container.addChild(new Text(this.padLine(content, innerWidth), 0, 0));
+  }
+
+  private renderActions(state: McpSetupPanelViewState, innerWidth: number): string[] {
+    const lines: string[] = [];
+    const actions = state.actions;
+    const compact = innerWidth < COMPACT_WIDTH;
+    const { start, end } = compact
+      ? this.visibleActionRange(actions.length, state.actionCursor)
+      : { start: 0, end: actions.length };
+
+    if (start > 0) {
+      lines.push(this.theme.description(`… ${start} more above`));
+    }
+    for (let index = start; index < end; index++) {
+      const action = actions[index];
+      if (!action) continue;
+      if (action.id === "select-shared-target" && (index === start || actions[index - 1]?.id !== "select-shared-target")) {
+        lines.push(this.theme.title("Choose where new shared servers go"));
+      }
+      if (action.id === "add-known-server" && (index === start || actions[index - 1]?.id !== "add-known-server")) {
+        lines.push(this.theme.title(`Add a known server to ${this.sharedTargetLabel(state)}`));
+      }
+      const selected = index === state.actionCursor;
+      const cursor = selected ? this.theme.selected("›") : " ";
+      lines.push(`${cursor} ${truncateToWidth(action.label, this.contentWidth(innerWidth) - 2)}`);
+    }
+    if (end < actions.length) {
+      lines.push(this.theme.description(`… ${actions.length - end} more below`));
+    }
+    lines.push("");
+
+    const preview = this.getActionPreview(state, actions[state.actionCursor], this.previewWidth(innerWidth));
+    lines.push(...preview);
+    lines.push("");
+    const hint = compact ? "Enter select · Esc back" : "Enter selects, Esc goes back, Ctrl+C closes.";
+    lines.push(this.theme.description(hint));
+    return lines;
+  }
+
+  private renderImports(state: McpSetupPanelViewState, innerWidth: number): string[] {
+    const lines: string[] = [];
+    lines.push("Select compatibility imports. Space toggles, Enter saves, Esc goes back.");
+    lines.push("");
+    for (let index = 0; index < state.discovery.imports.length; index++) {
+      const entry = state.discovery.imports[index];
+      if (!entry) continue;
+      const selected = state.selectedImports.has(entry.kind) ? "[x]" : "[ ]";
+      const cursor = index === state.importCursor ? this.theme.selected("›") : " ";
+      lines.push(`${cursor} ${selected} ${entry.kind}  ${entry.path}`);
+    }
+    lines.push("");
+    const selected = state.discovery.imports
+      .filter((entry) => state.selectedImports.has(entry.kind))
+      .map((entry) => entry.kind);
+    const preview = this.callbacks.previewImports(selected);
+    lines.push(...this.formatWritePreview("Compatibility import write preview", preview, [], this.previewWidth(innerWidth)));
+    return lines;
+  }
+
+  private renderPaths(state: McpSetupPanelViewState, innerWidth: number): string[] {
+    const lines: string[] = [];
+    lines.push("Select a detected config path to open. Enter opens it, Esc goes back.");
+    lines.push("");
+    for (let index = 0; index < state.detectedPaths.length; index++) {
+      const path = state.detectedPaths[index];
+      const cursor = index === state.pathCursor ? this.theme.selected("›") : " ";
+      if (path !== undefined) lines.push(`${cursor} ${path}`);
+    }
+    return lines;
+  }
+
+  private discoverySummaryLine(state: McpSetupPanelViewState): string {
+    if (!state.discovery.hasAnyConfig) {
+      return this.theme.needsAuth(state.onboardingState.setupCompleted
+        ? "No MCP servers are active right now."
+        : "No MCP config is active yet.");
+    }
+
+    if (state.discovery.totalServerCount === 0 && (state.discovery.imports.length > 0 || !!state.discovery.repoPrompt.executablePath)) {
+      return this.theme.needsAuth("Pi found MCP-related setup options, but none are active in Pi yet.");
+    }
+
+    const shared = state.discovery.sources.filter((source) => source.kind === "shared" && source.serverCount > 0).length;
+    const piOwned = state.discovery.sources.filter((source) => source.kind === "pi" && source.serverCount > 0).length;
+    return this.theme.hint(`Detected ${state.discovery.totalServerCount} configured servers across ${shared} shared and ${piOwned} Pi-owned source${shared + piOwned === 1 ? "" : "s"}.`);
+  }
+
+  private secondarySummaryLine(state: McpSetupPanelViewState): string {
+    const hostNote = state.discovery.hostConfigs.length > 0
+      ? ` Host discovery is ${state.discovery.hostConfigDiscovery}; ${state.discovery.hostConfigs.length} host source${state.discovery.hostConfigs.length === 1 ? "" : "s"} detected.`
+      : "";
+    const conflictNote = state.discovery.conflicts.length > 0
+      ? ` ${state.discovery.conflicts.length} same-name conflict${state.discovery.conflicts.length === 1 ? "" : "s"} reported.`
+      : "";
+    if (!state.discovery.hasAnyConfig) {
+      return `Add shared servers to .mcp.json for this project/team or ~/.config/mcp/mcp.json for all projects. Adopt host imports or quick-add RepoPrompt from this screen.${hostNote}${conflictNote}`;
+    }
+    if (state.discovery.totalServerCount === 0 && state.discovery.imports.length > 0) {
+      return `Detected ${state.discovery.imports.length} compatibility import source${state.discovery.imports.length === 1 ? "" : "s"}. Adopt them into Pi or inspect the underlying files.${hostNote}${conflictNote}`;
+    }
+    return `Use .mcp.json for project/team servers or ~/.config/mcp/mcp.json for all projects. Pi-owned files are for compatibility imports and adapter-specific overrides, not another normal setup path.${hostNote}${conflictNote}`;
+  }
+
+  private visibleActionRange(total: number, cursor: number): { start: number; end: number } {
+    if (total <= COMPACT_ACTION_ROWS) return { start: 0, end: total };
+    const half = Math.floor(COMPACT_ACTION_ROWS / 2);
+    const start = Math.min(Math.max(0, cursor - half), Math.max(0, total - COMPACT_ACTION_ROWS));
+    return { start, end: Math.min(total, start + COMPACT_ACTION_ROWS) };
+  }
+
+  private contentWidth(innerWidth: number): number {
+    return Math.max(8, innerWidth - 4);
+  }
+
+  private previewWidth(innerWidth: number): number {
+    return Math.max(12, Math.min(DESKTOP_PREVIEW_WIDTH, this.contentWidth(innerWidth)));
+  }
+
+  private sharedTargetLabel(state: McpSetupPanelViewState): string {
+    return state.sharedConfigTarget === "project" ? "project .mcp.json" : "global ~/.config/mcp/mcp.json";
+  }
+
+  private getActionPreview(state: McpSetupPanelViewState, action?: Action, previewW = DESKTOP_PREVIEW_WIDTH): string[] {
+    switch (action?.id) {
+      case "run-setup":
+        return this.formatPreview([
+          "Run setup to adopt host-specific imports, inspect detected paths, and scaffold a minimal `.mcp.json` if needed.",
+        ], previewW);
+      case "adopt-imports":
+        return this.formatWritePreview(
+          "Compatibility import write preview",
+          this.callbacks.previewImports(state.discovery.imports
+            .filter((entry) => state.selectedImports.has(entry.kind))
+            .map((entry) => entry.kind)),
+          [
+            `Detected imports: ${state.discovery.imports.map((entry) => `${entry.kind} (${entry.serverCount} servers)`).join(", ")}`,
+            "Selected imports are written into the Pi agent dir config as Pi-owned compatibility state.",
+          ],
+          previewW,
+        );
+      case "select-shared-target":
+        return this.formatPreview([
+          action.target === "project" ? "Project target: .mcp.json" : "Global target: ~/.config/mcp/mcp.json",
+          "Known server presets and starter configs will be written to the selected normal MCP setup path.",
+          "Pi-owned mcp.json files remain compatibility and adapter-only override state.",
+        ], previewW);
+      case "view-example":
+        return this.formatPreview([
+          "Example shared `.mcp.json`:",
+          "{",
+          '  "mcpServers": {',
+          '    "chrome-devtools": {',
+          '      "command": "npx",',
+          '      "args": ["-y", "chrome-devtools-mcp@1.6.0"]',
+          "    }",
+          "  }",
+          "}",
+          "",
+          "Use Scaffold selected config when you want a safe empty shell instead of a live example server.",
+        ], previewW);
+      case "show-precedence":
+        return this.formatPreview([
+          "Recommended shared config:",
+          "  project/team: .mcp.json",
+          "  all projects: ~/.config/mcp/mcp.json",
+          "",
+          "Advanced compatibility and Pi-owned layers:",
+          "  host imports, .agents files, package MCP manifests, and Pi overrides",
+          "",
+          "Read order (later entries win):",
+          "0. detected host configs (opt-in lowest-precedence fallback)",
+          "1. ~/.config/mcp/mcp.json",
+          "2. ~/.agents/mcp.json",
+          "3. ~/.agents/mcp/mcp.json",
+          "4. <Pi agent dir>/mcp.json",
+          "5. .mcp.json",
+          `6. ${getConfigDirName()}/mcp.json`,
+          `Host discovery: ${state.discovery.hostConfigDiscovery}. Conflicts reported: ${state.discovery.conflicts.length}.`,
+          ...state.discovery.conflicts.slice(0, 8).map((conflict) =>
+            `${conflict.serverName}: ${conflict.sources.map((source) => source.path).join(" -> ")} (winner: ${conflict.winner.path})`,
+          ),
+          "Pi writes compatibility imports and adapter-only overrides to Pi-owned files.",
+        ], previewW);
+      case "open-paths":
+        return this.formatPreview(state.detectedPaths.length > 0
+          ? ["Detected paths:", ...state.detectedPaths]
+          : ["No config paths were detected."], previewW);
+      case "add-repoprompt": {
+        const repoPrompt = state.discovery.repoPrompt;
+        const preview = this.callbacks.previewRepoPrompt(state.sharedConfigTarget);
+        if (!preview) {
+          return this.formatPreview(["RepoPrompt is not available to add from this setup screen."], previewW);
+        }
+        return this.formatWritePreview(
+          "RepoPrompt write preview",
+          preview,
+          [
+            `Executable: ${repoPrompt.executablePath ?? "not found"}`,
+            `Target: ${this.sharedTargetLabel(state)}`,
+            `Server name: ${repoPrompt.serverName ?? "repoprompt"}`,
+          ],
+          previewW,
+        );
+      }
+      case "add-known-server": {
+        const preset = action.preset;
+        if (!preset) return this.formatPreview(["Known server preset is unavailable."], previewW);
+        return this.formatWritePreview(
+          `${preset.name} write preview`,
+          this.callbacks.previewKnownServer(preset, state.sharedConfigTarget),
+          [preset.summary, `Target: ${this.sharedTargetLabel(state)}`],
+          previewW,
+        );
+      }
+      case "scaffold-shared-config":
+        return this.formatWritePreview(
+          `${this.sharedTargetLabel(state)} starter write preview`,
+          this.callbacks.previewStarterConfig(state.sharedConfigTarget),
+          [
+            "This writes a minimal config at the selected normal MCP setup path.",
+            "It intentionally avoids adding a fake placeholder server that would fail on first reload.",
+          ],
+          previewW,
+        );
+      case "close":
+      default:
+        return this.formatPreview(["Close the setup flow."], previewW);
+    }
+  }
+
+  private formatPreview(lines: string[], width = DESKTOP_PREVIEW_WIDTH): string[] {
+    const preview: string[] = [];
+    for (const line of lines) preview.push(...wrapText(line, width));
+    return preview;
+  }
+
+  private formatWritePreview(title: string, preview: ConfigWritePreview, intro: string[] = [], width = DESKTOP_PREVIEW_WIDTH): string[] {
+    const lines: string[] = [];
+    for (const line of intro) lines.push(...wrapText(line, width));
+    if (intro.length > 0) lines.push("");
+    lines.push(...wrapText(`${title}: ${preview.path}`, width));
+    lines.push(...wrapText(preview.existed ? "Existing file detected. Showing exact before/after diff." : "New file will be created. Showing exact content diff.", width));
+    lines.push("");
+    const diffLines = preview.diffText.split("\n");
+    const maxLines = 18;
+    const shown = diffLines.slice(0, maxLines);
+    for (const line of shown) lines.push(...wrapText(line, width));
+    if (diffLines.length > maxLines) {
+      lines.push(...wrapText(`… ${diffLines.length - maxLines} more diff line${diffLines.length - maxLines === 1 ? "" : "s"}`, width));
+    }
+    return lines;
+  }
+
+  private padLine(text: string, innerWidth: number): string {
+    const inset = 2;
+    const contentWidth = Math.max(0, innerWidth - inset * 2);
+    const fitted = truncateToWidth(text, contentWidth, "…", true);
+    const padding = Math.max(0, contentWidth - visibleWidth(fitted));
+    return `${this.theme.border("│")}${" ".repeat(inset)}${fitted}${" ".repeat(padding)}${" ".repeat(inset)}${this.theme.border("│")}`;
+  }
+}
+
 export class McpSetupPanel {
   private screen: Screen;
   private actionCursor = 0;
@@ -103,7 +423,8 @@ export class McpSetupPanel {
   private busy = false;
   private notice: { text: string; tone: "success" | "warning" | "muted" } | null = null;
   private tui: { requestRender(): void };
-  private t = DEFAULT_THEME;
+  private readonly theme: McpPanelTheme;
+  private readonly view: McpSetupPanelView;
   private keys: PanelKeys;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly INACTIVITY_MS = 60_000;
@@ -117,6 +438,8 @@ export class McpSetupPanel {
   ) {
     this.tui = tui;
     this.keys = createPanelKeys(options.keybindings);
+    this.theme = createMcpPanelTheme(options.theme);
+    this.view = new McpSetupPanelView(() => this.getViewState(), callbacks, this.theme);
     this.screen = options.mode;
     for (const entry of discovery.imports) {
       this.selectedImports.add(entry.kind);
@@ -386,308 +709,30 @@ export class McpSetupPanel {
     }
   }
 
+  private getViewState(): McpSetupPanelViewState {
+    return {
+      screen: this.screen,
+      actionCursor: this.actionCursor,
+      importCursor: this.importCursor,
+      pathCursor: this.pathCursor,
+      sharedConfigTarget: this.sharedConfigTarget,
+      selectedImports: this.selectedImports,
+      busy: this.busy,
+      notice: this.notice,
+      onboardingState: this.options.onboardingState,
+      discovery: this.discovery,
+      actions: this.getActions(),
+      detectedPaths: this.getDetectedPaths(),
+    };
+  }
+
   render(width: number): string[] {
-    const panelW = Math.max(MIN_PANEL_WIDTH, width);
-    const innerW = panelW - 2;
-    const contentW = this.contentWidth(innerW);
-    const lines: string[] = [];
-    const border = fg(this.t.border, "─".repeat(innerW));
-    lines.push(`┌${border}┐`);
-    lines.push(this.padLine(fg(this.t.title, "MCP setup"), innerW));
-    for (const line of wrapText(this.discoverySummaryLine(), contentW)) {
-      lines.push(this.padLine(line, innerW));
-    }
-    for (const line of wrapText(this.secondarySummaryLine(), contentW)) {
-      lines.push(this.padLine(fg(this.t.muted, line), innerW));
-    }
-    lines.push(this.padLine("", innerW));
-
-    if (this.notice) {
-      const tone = this.notice.tone === "success" ? this.t.success : this.notice.tone === "warning" ? this.t.warning : this.t.hint;
-      for (const line of wrapText(this.notice.text, contentW)) {
-        lines.push(this.padLine(fg(tone, line), innerW));
-      }
-      lines.push(this.padLine("", innerW));
-    }
-
-    lines.push(`├${border}┤`);
-
-    if (this.screen === "imports") {
-      lines.push(...this.renderImports(innerW));
-    } else if (this.screen === "paths") {
-      lines.push(...this.renderPaths(innerW));
-    } else {
-      lines.push(...this.renderActions(innerW));
-    }
-
-    lines.push(`└${border}┘`);
-    return lines;
+    return this.view.render(width);
   }
 
-  private renderActions(innerW: number): string[] {
-    const lines: string[] = [];
-    const actions = this.getActions();
-    const compact = innerW < COMPACT_WIDTH;
-    const { start, end } = compact
-      ? this.visibleActionRange(actions.length)
-      : { start: 0, end: actions.length };
-
-    if (start > 0) {
-      lines.push(this.padLine(fg(this.t.muted, `… ${start} more above`), innerW));
-    }
-    for (let index = start; index < end; index++) {
-      const action = actions[index];
-      if (!action) continue;
-      if (action.id === "select-shared-target" && (index === start || actions[index - 1]?.id !== "select-shared-target")) {
-        lines.push(this.padLine(fg(this.t.title, "Choose where new shared servers go"), innerW));
-      }
-      if (action.id === "add-known-server" && (index === start || actions[index - 1]?.id !== "add-known-server")) {
-        lines.push(this.padLine(fg(this.t.title, `Add a known server to ${this.sharedTargetLabel()}`), innerW));
-      }
-      const selected = index === this.actionCursor;
-      const cursor = selected ? fg(this.t.selected, "›") : " ";
-      lines.push(this.padLine(`${cursor} ${truncateToWidth(action.label, this.contentWidth(innerW) - 2)}`, innerW));
-    }
-    if (end < actions.length) {
-      lines.push(this.padLine(fg(this.t.muted, `… ${actions.length - end} more below`), innerW));
-    }
-    lines.push(this.padLine("", innerW));
-
-    const preview = this.getActionPreview(this.getSelectedAction(), this.previewWidth(innerW));
-    for (const line of preview) {
-      lines.push(this.padLine(line, innerW));
-    }
-    lines.push(this.padLine("", innerW));
-    const hint = compact ? "Enter select · Esc back" : "Enter selects, Esc goes back, Ctrl+C closes.";
-    lines.push(this.padLine(fg(this.t.muted, hint), innerW));
-    return lines;
+  invalidate(): void {
+    this.view.invalidate();
   }
-
-  private renderImports(innerW: number): string[] {
-    const lines: string[] = [];
-    lines.push(this.padLine("Select compatibility imports. Space toggles, Enter saves, Esc goes back.", innerW));
-    lines.push(this.padLine("", innerW));
-    for (let index = 0; index < this.discovery.imports.length; index++) {
-      const entry = this.discovery.imports[index];
-      if (!entry) continue;
-      const selected = this.selectedImports.has(entry.kind) ? "[x]" : "[ ]";
-      const cursor = index === this.importCursor ? fg(this.t.selected, "›") : " ";
-      lines.push(this.padLine(`${cursor} ${selected} ${entry.kind}  ${entry.path}`, innerW));
-    }
-    lines.push(this.padLine("", innerW));
-    const selected = this.discovery.imports.filter((entry) => this.selectedImports.has(entry.kind)).map((entry) => entry.kind);
-    const preview = this.callbacks.previewImports(selected);
-    for (const line of this.formatWritePreview("Compatibility import write preview", preview, [], this.previewWidth(innerW))) {
-      lines.push(this.padLine(line, innerW));
-    }
-    return lines;
-  }
-
-  private renderPaths(innerW: number): string[] {
-    const lines: string[] = [];
-    lines.push(this.padLine("Select a detected config path to open. Enter opens it, Esc goes back.", innerW));
-    lines.push(this.padLine("", innerW));
-    const paths = this.getDetectedPaths();
-    for (let index = 0; index < paths.length; index++) {
-      const cursor = index === this.pathCursor ? fg(this.t.selected, "›") : " ";
-      const path = paths[index];
-      if (path !== undefined) lines.push(this.padLine(`${cursor} ${path}`, innerW));
-    }
-    return lines;
-  }
-
-  private discoverySummaryLine(): string {
-    if (!this.discovery.hasAnyConfig) {
-      return fg(this.t.warning, this.options.onboardingState.setupCompleted
-        ? "No MCP servers are active right now."
-        : "No MCP config is active yet.");
-    }
-
-    if (this.discovery.totalServerCount === 0 && (this.discovery.imports.length > 0 || !!this.discovery.repoPrompt.executablePath)) {
-      return fg(this.t.warning, "Pi found MCP-related setup options, but none are active in Pi yet.");
-    }
-
-    const shared = this.discovery.sources.filter((source) => source.kind === "shared" && source.serverCount > 0).length;
-    const piOwned = this.discovery.sources.filter((source) => source.kind === "pi" && source.serverCount > 0).length;
-    return fg(this.t.hint, `Detected ${this.discovery.totalServerCount} configured servers across ${shared} shared and ${piOwned} Pi-owned source${shared + piOwned === 1 ? "" : "s"}.`);
-  }
-
-  private secondarySummaryLine(): string {
-    const hostNote = this.discovery.hostConfigs.length > 0
-      ? ` Host discovery is ${this.discovery.hostConfigDiscovery}; ${this.discovery.hostConfigs.length} host source${this.discovery.hostConfigs.length === 1 ? "" : "s"} detected.`
-      : "";
-    const conflictNote = this.discovery.conflicts.length > 0
-      ? ` ${this.discovery.conflicts.length} same-name conflict${this.discovery.conflicts.length === 1 ? "" : "s"} reported.`
-      : "";
-    if (!this.discovery.hasAnyConfig) {
-      return `Add shared servers to .mcp.json for this project/team or ~/.config/mcp/mcp.json for all projects. Adopt host imports or quick-add RepoPrompt from this screen.${hostNote}${conflictNote}`;
-    }
-    if (this.discovery.totalServerCount === 0 && this.discovery.imports.length > 0) {
-      return `Detected ${this.discovery.imports.length} compatibility import source${this.discovery.imports.length === 1 ? "" : "s"}. Adopt them into Pi or inspect the underlying files.${hostNote}${conflictNote}`;
-    }
-    return `Use .mcp.json for project/team servers or ~/.config/mcp/mcp.json for all projects. Pi-owned files are for compatibility imports and adapter-specific overrides, not another normal setup path.${hostNote}${conflictNote}`;
-  }
-
-  private visibleActionRange(total: number): { start: number; end: number } {
-    if (total <= COMPACT_ACTION_ROWS) return { start: 0, end: total };
-    const half = Math.floor(COMPACT_ACTION_ROWS / 2);
-    const start = Math.min(Math.max(0, this.actionCursor - half), Math.max(0, total - COMPACT_ACTION_ROWS));
-    return { start, end: Math.min(total, start + COMPACT_ACTION_ROWS) };
-  }
-
-  private contentWidth(innerW: number): number {
-    return Math.max(8, innerW - 4);
-  }
-
-  private previewWidth(innerW: number): number {
-    return Math.max(12, Math.min(DESKTOP_PREVIEW_WIDTH, this.contentWidth(innerW)));
-  }
-
-  private getActionPreview(action?: Action, previewW = DESKTOP_PREVIEW_WIDTH): string[] {
-    switch (action?.id) {
-      case "run-setup":
-        return this.formatPreview([
-          "Run setup to adopt host-specific imports, inspect detected paths, and scaffold a minimal `.mcp.json` if needed.",
-        ], previewW);
-      case "adopt-imports":
-        return this.formatWritePreview(
-          "Compatibility import write preview",
-          this.callbacks.previewImports(this.discovery.imports.filter((entry) => this.selectedImports.has(entry.kind)).map((entry) => entry.kind)),
-          [
-            `Detected imports: ${this.discovery.imports.map((entry) => `${entry.kind} (${entry.serverCount} servers)`).join(", ")}`,
-            "Selected imports are written into the Pi agent dir config as Pi-owned compatibility state.",
-          ],
-          previewW,
-        );
-      case "select-shared-target":
-        return this.formatPreview([
-          action.target === "project" ? "Project target: .mcp.json" : "Global target: ~/.config/mcp/mcp.json",
-          "Known server presets and starter configs will be written to the selected normal MCP setup path.",
-          "Pi-owned mcp.json files remain compatibility and adapter-only override state.",
-        ], previewW);
-      case "view-example":
-        return this.formatPreview([
-          "Example shared `.mcp.json`:",
-          "{",
-          '  "mcpServers": {',
-          '    "chrome-devtools": {',
-          '      "command": "npx",',
-          '      "args": ["-y", "chrome-devtools-mcp@1.6.0"]',
-          "    }",
-          "  }",
-          "}",
-          "",
-          "Use Scaffold selected config when you want a safe empty shell instead of a live example server.",
-        ], previewW);
-      case "show-precedence":
-        return this.formatPreview([
-          "Recommended shared config:",
-          "  project/team: .mcp.json",
-          "  all projects: ~/.config/mcp/mcp.json",
-          "",
-          "Advanced compatibility and Pi-owned layers:",
-          "  host imports, .agents files, package MCP manifests, and Pi overrides",
-          "",
-          "Read order (later entries win):",
-          "0. detected host configs (opt-in lowest-precedence fallback)",
-          "1. ~/.config/mcp/mcp.json",
-          "2. ~/.agents/mcp.json",
-          "3. ~/.agents/mcp/mcp.json",
-          "4. <Pi agent dir>/mcp.json",
-          "5. .mcp.json",
-          `6. ${getConfigDirName()}/mcp.json`,
-          `Host discovery: ${this.discovery.hostConfigDiscovery}. Conflicts reported: ${this.discovery.conflicts.length}.`,
-          ...this.discovery.conflicts.slice(0, 8).map((conflict) =>
-            `${conflict.serverName}: ${conflict.sources.map((source) => source.path).join(" -> ")} (winner: ${conflict.winner.path})`,
-          ),
-          "Pi writes compatibility imports and adapter-only overrides to Pi-owned files."
-        ], previewW);
-      case "open-paths":
-        return this.formatPreview(this.getDetectedPaths().length > 0
-          ? ["Detected paths:", ...this.getDetectedPaths()]
-          : ["No config paths were detected."], previewW);
-      case "add-repoprompt": {
-        const repoPrompt = this.discovery.repoPrompt;
-        const preview = this.callbacks.previewRepoPrompt(this.sharedConfigTarget);
-        if (!preview) {
-          return this.formatPreview(["RepoPrompt is not available to add from this setup screen."], previewW);
-        }
-        return this.formatWritePreview(
-          "RepoPrompt write preview",
-          preview,
-          [
-            `Executable: ${repoPrompt.executablePath ?? "not found"}`,
-            `Target: ${this.sharedTargetLabel()}`,
-            `Server name: ${repoPrompt.serverName ?? "repoprompt"}`,
-          ],
-          previewW,
-        );
-      }
-      case "add-known-server": {
-        const preset = action.preset;
-        if (!preset) return this.formatPreview(["Known server preset is unavailable."], previewW);
-        return this.formatWritePreview(
-          `${preset.name} write preview`,
-          this.callbacks.previewKnownServer(preset, this.sharedConfigTarget),
-          [preset.summary, `Target: ${this.sharedTargetLabel()}`],
-          previewW,
-        );
-      }
-      case "scaffold-shared-config":
-        return this.formatWritePreview(
-          `${this.sharedTargetLabel()} starter write preview`,
-          this.callbacks.previewStarterConfig(this.sharedConfigTarget),
-          [
-            "This writes a minimal config at the selected normal MCP setup path.",
-            "It intentionally avoids adding a fake placeholder server that would fail on first reload.",
-          ],
-          previewW,
-        );
-      case "close":
-      default:
-        return this.formatPreview(["Close the setup flow."], previewW);
-    }
-  }
-
-  private formatPreview(lines: string[], width = DESKTOP_PREVIEW_WIDTH): string[] {
-    const preview: string[] = [];
-    for (const line of lines) {
-      preview.push(...wrapText(line, width));
-    }
-    return preview;
-  }
-
-  private formatWritePreview(title: string, preview: ConfigWritePreview, intro: string[] = [], width = DESKTOP_PREVIEW_WIDTH): string[] {
-    const lines: string[] = [];
-    for (const line of intro) {
-      lines.push(...wrapText(line, width));
-    }
-    if (intro.length > 0) lines.push("");
-    lines.push(...wrapText(`${title}: ${preview.path}`, width));
-    lines.push(...wrapText(preview.existed ? "Existing file detected. Showing exact before/after diff." : "New file will be created. Showing exact content diff.", width));
-    lines.push("");
-    const diffLines = preview.diffText.split("\n");
-    const maxLines = 18;
-    const shown = diffLines.slice(0, maxLines);
-    for (const line of shown) {
-      lines.push(...wrapText(line, width));
-    }
-    if (diffLines.length > maxLines) {
-      lines.push(...wrapText(`… ${diffLines.length - maxLines} more diff line${diffLines.length - maxLines === 1 ? "" : "s"}`, width));
-    }
-    return lines;
-  }
-
-  private padLine(text: string, innerW: number): string {
-    const inset = 2;
-    const contentW = Math.max(0, innerW - inset * 2);
-    const fitted = truncateToWidth(text, contentW, "…", true);
-    const plainWidth = visibleWidth(fitted);
-    const padding = Math.max(0, contentW - plainWidth);
-    return `│${" ".repeat(inset)}${fitted}${" ".repeat(padding)}${" ".repeat(inset)}│`;
-  }
-
-  invalidate(): void {}
 
   dispose(): void {
     this.cleanup();
