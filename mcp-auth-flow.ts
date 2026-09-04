@@ -526,8 +526,9 @@ export async function startAuth(
         await clearOAuthState(serverName, authStorageOptions)
       } else {
         const redirectUris = storedAuth.clientInfo.redirectUris
-        if ((!Array.isArray(redirectUris) || !redirectUris.includes(authProvider.redirectUrl ?? ""))
-          && !storedAuth.tokens.refreshToken) {
+        const redirectUriMatches = Array.isArray(redirectUris)
+          && redirectUris.includes(authProvider.redirectUrl ?? "")
+        if (!redirectUriMatches && !storedAuth.tokens.refreshToken) {
           // A stale redirect URI only blocks the interactive leg; refresh does
           // not send redirect_uri, so keep refresh-capable credentials intact.
           clearClientInfo(serverName, authStorageOptions)

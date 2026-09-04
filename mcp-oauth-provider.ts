@@ -256,6 +256,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private flowState: string | undefined
   private invalidatedAccessToken: string | undefined
   private invalidatedClientId: string | undefined
+  private staleRedirectClientId: string | undefined
   private lastObservedClientId: string | undefined
   private lastSavedAccessToken: string | undefined
   private pendingAuthAccessToken: string | undefined
@@ -288,6 +289,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.active = false
     this.invalidatedAccessToken = undefined
     this.invalidatedClientId = undefined
+    this.staleRedirectClientId = undefined
     this.lastObservedClientId = undefined
     this.lastSavedAccessToken = undefined
     this.pendingAuthAccessToken = undefined
@@ -435,6 +437,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.flowClientInfo = clientInfo
         updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
       }
+      // Keep a stale dynamic registration available for its refresh attempt,
+      // but suppress it if that attempt invalidates the token and auth falls
+      // back to an interactive flow. The next clientInformation() call then
+      // makes the SDK register the current callback URI.
+      const redirectUriIsStale = this.redirectUrl !== undefined
+        && (!Array.isArray(clientInfo.redirectUris) || !clientInfo.redirectUris.includes(this.redirectUrl))
+      this.staleRedirectClientId = redirectUriIsStale ? clientInfo.clientId : undefined
       // Return all registration metadata and the local issuer extension.
       // This keeps the SDK OAuth view and the stored issuer binding consistent.
       this.lastObservedClientId = clientInfo.clientId
@@ -657,6 +666,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.flowState = undefined
         this.invalidatedAccessToken = undefined
         this.invalidatedClientId = undefined
+        this.staleRedirectClientId = undefined
         this.lastObservedClientId = undefined
         this.lastSavedAccessToken = undefined
         this.pendingAuthAccessToken = undefined
@@ -679,6 +689,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.invalidatedAccessToken = this.pendingAuthAccessToken ?? this.lastSavedAccessToken
         this.lastSavedAccessToken = undefined
         this.pendingAuthAccessToken = undefined
+        if (this.staleRedirectClientId !== undefined) {
+          this.invalidatedClientId = this.staleRedirectClientId
+        }
         invalidateAuthEntryCache(this.serverName)
         break
       case "verifier":

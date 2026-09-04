@@ -14,6 +14,8 @@ import {
   getAuthForUrl,
   getTestAuthSecretStoreEntries,
   resetTestAuthSecretStore,
+  updateClientInfo,
+  updateTokens,
 } from "./mcp-auth.ts"
 import { waitForCallback } from "./mcp-callback-server.ts"
 
@@ -23,6 +25,8 @@ describe("local OAuth authorization-code flow", () => {
   let serverUrl = ""
   let authorizationRequest: URL | undefined
   let tokenRequest: URLSearchParams | undefined
+  const registrationRedirectUris: string[][] = []
+  const refreshTokenRequests: URLSearchParams[] = []
   const authServer = createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", origin || "http://127.0.0.1")
 
@@ -53,6 +57,7 @@ describe("local OAuth authorization-code flow", () => {
         issuer: origin,
         authorization_endpoint: `${origin}/authorize`,
         token_endpoint: `${origin}/token`,
+        registration_endpoint: `${origin}/register`,
         response_types_supported: ["code"],
         code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["none"],
@@ -61,10 +66,31 @@ describe("local OAuth authorization-code flow", () => {
       return
     }
 
+    if (request.method === "POST" && requestUrl.pathname === "/register") {
+      let body = ""
+      for await (const chunk of request) body += chunk
+      const metadata = JSON.parse(body) as { redirect_uris?: string[] }
+      const redirectUris = metadata.redirect_uris ?? []
+      registrationRedirectUris.push(redirectUris)
+      response.writeHead(201, { "Content-Type": "application/json" })
+      response.end(JSON.stringify({
+        client_id: "new-dynamic-client",
+        redirect_uris: redirectUris,
+      }))
+      return
+    }
+
     if (request.method === "POST" && requestUrl.pathname === "/token") {
       let body = ""
       for await (const chunk of request) body += chunk
       tokenRequest = new URLSearchParams(body)
+      if (tokenRequest.get("grant_type") === "refresh_token"
+        && tokenRequest.get("refresh_token") === "revoked-refresh") {
+        refreshTokenRequests.push(tokenRequest)
+        response.writeHead(400, { "Content-Type": "application/json" })
+        response.end(JSON.stringify({ error: "invalid_grant" }))
+        return
+      }
       response.writeHead(200, { "Content-Type": "application/json" })
       response.end(JSON.stringify({
         access_token: "example-access-token",
@@ -167,5 +193,43 @@ describe("local OAuth authorization-code flow", () => {
     assert.ok(secureStorePayload.includes("example-refresh-token"))
     assert.ok(!secureStorePayload.includes(codeVerifier))
     assert.ok(!secureStorePayload.includes(state))
+  })
+
+  it("re-registers a stale dynamic client after a refresh invalid_grant", async () => {
+    const refreshServerName = "local-oauth-redirect-refresh"
+    const staleRedirectUri = "http://127.0.0.1:1/callback"
+    await updateClientInfo(refreshServerName, {
+      clientId: "stale-dynamic-client",
+      redirectUris: [staleRedirectUri],
+    }, serverUrl)
+    await updateTokens(refreshServerName, {
+      accessToken: "expired-access-token",
+      refreshToken: "revoked-refresh",
+      expiresAt: Date.now() / 1000 - 60,
+    }, serverUrl)
+
+    const registrationCount = registrationRedirectUris.length
+    refreshTokenRequests.length = 0
+    const { authorizationUrl } = await startAuth(refreshServerName, serverUrl, {
+      url: serverUrl,
+      auth: "oauth",
+      oauth: { redirectUri: "http://127.0.0.1:{port}/callback" },
+    })
+    const fallbackAuthorizationRequest = new URL(authorizationUrl)
+
+    assert.strictEqual(refreshTokenRequests.length, 1)
+    assert.strictEqual(registrationRedirectUris.length, registrationCount + 1)
+    const registeredRedirectUri = registrationRedirectUris[registrationRedirectUris.length - 1]?.[0]
+    assert.ok(registeredRedirectUri)
+    assert.notStrictEqual(registeredRedirectUri, staleRedirectUri)
+    assert.strictEqual(fallbackAuthorizationRequest.searchParams.get("client_id"), "new-dynamic-client")
+    assert.strictEqual(
+      fallbackAuthorizationRequest.searchParams.get("redirect_uri"),
+      registeredRedirectUri,
+    )
+
+    const stored = await getAuthForUrl(refreshServerName, serverUrl)
+    assert.strictEqual(stored?.clientInfo?.clientId, "new-dynamic-client")
+    clearAllCredentials(refreshServerName)
   })
 })

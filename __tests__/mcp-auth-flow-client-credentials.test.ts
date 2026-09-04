@@ -599,6 +599,8 @@ describe("mcp-auth-flow explicit auth", () => {
 
   it("re-registers dynamic OAuth clients when cached redirect URIs are stale", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      expect(await provider.clientInformation()).toEqual({ client_id: "stale-client", client_secret: "stale-secret", redirect_uris: ["http://localhost:19876/callback"] });
+      await provider.invalidateCredentials("tokens");
       expect(await provider.clientInformation()).toBeUndefined();
       await provider.saveClientInformation({
         client_id: "fresh-client",
@@ -629,9 +631,9 @@ describe("mcp-auth-flow explicit auth", () => {
     const stored = getAuthForUrl("stale-redirect", "https://api.example.com/mcp");
     expect(stored?.clientInfo?.clientId).toBe("fresh-client");
     expect(stored?.clientInfo?.redirectUris).toEqual(["http://localhost:3118/callback"]);
-    expect(stored?.tokens).toBeUndefined();
-    expect(stored?.codeVerifier).toBeUndefined();
-    expect(stored?.oauthState).not.toBe("old-state");
+    expect(stored?.tokens?.refreshToken).toBe("old-refresh");
+    expect(stored?.codeVerifier).toBe("old-verifier");
+    expect(stored?.oauthState).toBe("old-state");
     expect(mocks.ensureCallbackServer).toHaveBeenCalledWith(expect.objectContaining({
       strictPort: true,
       port: 3118,
@@ -644,6 +646,8 @@ describe("mcp-auth-flow explicit auth", () => {
 
   it("re-registers dynamic OAuth clients when cached redirect URI metadata is missing", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      expect(await provider.clientInformation()).toEqual({ client_id: "legacy-client", client_secret: "legacy-secret" });
+      await provider.invalidateCredentials("tokens");
       expect(await provider.clientInformation()).toBeUndefined();
       await provider.saveClientInformation({
         client_id: "fresh-client",
@@ -670,11 +674,13 @@ describe("mcp-auth-flow explicit auth", () => {
     const stored = getAuthForUrl("missing-redirect-metadata", "https://api.example.com/mcp");
     expect(stored?.clientInfo?.clientId).toBe("fresh-client");
     expect(stored?.clientInfo?.redirectUris).toEqual(["http://localhost:19876/callback"]);
-    expect(stored?.tokens).toBeUndefined();
+    expect(stored?.tokens?.refreshToken).toBe("old-refresh");
   });
 
   it("re-registers dynamic OAuth clients when cached redirect URI metadata is malformed", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
+      expect(await provider.clientInformation()).toEqual({ client_id: "legacy-client", client_secret: "legacy-secret" });
+      await provider.invalidateCredentials("tokens");
       expect(await provider.clientInformation()).toBeUndefined();
       await provider.saveClientInformation({
         client_id: "fresh-client",
@@ -704,7 +710,7 @@ describe("mcp-auth-flow explicit auth", () => {
     const stored = getAuthForUrl("malformed-redirect-metadata", "https://api.example.com/mcp");
     expect(stored?.clientInfo?.clientId).toBe("fresh-client");
     expect(stored?.clientInfo?.redirectUris).toEqual(["http://localhost:19876/callback"]);
-    expect(stored?.tokens).toBeUndefined();
+    expect(stored?.tokens?.refreshToken).toBe("old-refresh");
   });
 
   it("refreshes expired tokens even when cached dynamic redirect URIs are stale", async () => {

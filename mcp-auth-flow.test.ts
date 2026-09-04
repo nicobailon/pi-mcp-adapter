@@ -541,7 +541,7 @@ describe("mcp-auth-flow", () => {
       // startAuth binds a fresh ephemeral port, so the stored redirect URI does
       // not match. The flow then proceeds to discovery, which fails for this
       // fake server — but the mismatch decision has already been made.
-      await assert.rejects(async () => await startAuth(serverName, serverUrl, {
+      await assert.rejects(() => startAuth(serverName, serverUrl, {
         url: serverUrl,
         auth: "oauth",
       }))
@@ -566,7 +566,7 @@ describe("mcp-auth-flow", () => {
         expiresAt: Date.now() / 1000 - 3600,
       }, serverUrl)
 
-      await assert.rejects(async () => await startAuth(serverName, serverUrl, {
+      await assert.rejects(() => startAuth(serverName, serverUrl, {
         url: serverUrl,
         auth: "oauth",
       }))
@@ -578,6 +578,5 @@ describe("mcp-auth-flow", () => {
 
       clearAllCredentials(serverName)
     })
-
   })
 })
