@@ -105,7 +105,7 @@ class McpSetupPanelView implements Component {
     const state = this.getState();
     this.container.clear();
 
-    this.addFrame("┌", "┐", panelWidth);
+    this.addFrame("┌", "┐");
     this.addRow(this.theme.title("MCP setup"), innerWidth);
     for (const line of wrapText(this.discoverySummaryLine(state), contentWidth)) {
       this.addRow(line, innerWidth);
@@ -127,15 +127,15 @@ class McpSetupPanelView implements Component {
       this.addRow("", innerWidth);
     }
 
-    this.addFrame("├", "┤", panelWidth);
+    this.addFrame("├", "┤");
     if (state.screen === "imports") {
       for (const line of this.renderImports(state, innerWidth)) this.addRow(line, innerWidth);
     } else if (state.screen === "paths") {
-      for (const line of this.renderPaths(state, innerWidth)) this.addRow(line, innerWidth);
+      for (const line of this.renderPaths(state)) this.addRow(line, innerWidth);
     } else {
       for (const line of this.renderActions(state, innerWidth)) this.addRow(line, innerWidth);
     }
-    this.addFrame("└", "┘", panelWidth);
+    this.addFrame("└", "┘");
     return this.container.render(panelWidth);
   }
 
@@ -143,7 +143,7 @@ class McpSetupPanelView implements Component {
     this.container.invalidate();
   }
 
-  private addFrame(left: string, right: string, width: number): void {
+  private addFrame(left: string, right: string): void {
     this.container.addChild(new McpPanelFrame(this.theme, left, right));
   }
 
@@ -208,7 +208,7 @@ class McpSetupPanelView implements Component {
     return lines;
   }
 
-  private renderPaths(state: McpSetupPanelViewState, innerWidth: number): string[] {
+  private renderPaths(state: McpSetupPanelViewState): string[] {
     const lines: string[] = [];
     lines.push("Select a detected config path to open. Enter opens it, Esc goes back.");
     lines.push("");
