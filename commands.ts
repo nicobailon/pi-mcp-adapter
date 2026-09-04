@@ -670,7 +670,7 @@ export async function openMcpPanel(
 
   await new Promise<void>((resolve) => {
     ctx.ui.custom(
-      (tui, _theme, keybindings, done) => {
+      (tui, theme, keybindings, done) => {
         return createMcpPanel(config, cache, provenanceMap, callbacks, tui, (result: McpPanelResult) => {
           void (async () => {
             if (!result.cancelled && result.disabledChanges.size > 0) {
@@ -699,7 +699,7 @@ export async function openMcpPanel(
             done(undefined);
             resolve();
           });
-        }, { noticeLines, keybindings });
+        }, { noticeLines, keybindings, theme });
       },
       {
         overlay: true,
@@ -750,13 +750,14 @@ export async function openMcpAuthPanel(
 
   await new Promise<void>((resolve) => {
     ctx.ui.custom(
-      (tui, _theme, keybindings, done) => {
+      (tui, theme, keybindings, done) => {
         return createMcpPanel(config, cache, provenanceMap, callbacks, tui, () => {
           done(undefined);
           resolve();
         }, {
           authOnly: true,
           keybindings,
+          theme,
           noticeLines: ["Select an OAuth MCP server and press Enter or ctrl+a to authenticate."],
         });
       },

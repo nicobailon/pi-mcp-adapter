@@ -142,6 +142,7 @@
     "mcp-callback-server.ts",
     "mcp-auth-flow.ts",
     "mcp-panel.ts",
+    "mcp-panel-theme.ts",
     "panel-keys.ts",
     "mcp-trace.ts",
     "logger.ts",

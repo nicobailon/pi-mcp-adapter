@@ -49,10 +49,12 @@ describe("commands onboarding", () => {
   });
 
   function createUi() {
+    const theme = { name: "active-test-theme" };
     return {
       notify: vi.fn(),
       setStatus: vi.fn(),
-      custom: vi.fn((renderer: any) => renderer({ requestRender: vi.fn() }, {}, {}, vi.fn())),
+      theme,
+      custom: vi.fn((renderer: any) => renderer({ requestRender: vi.fn() }, theme, {}, vi.fn())),
     };
   }
 
@@ -85,6 +87,7 @@ describe("commands onboarding", () => {
     });
 
     const ui = createUi();
+    const { theme } = ui;
     const { loadMcpConfig } = await import("../config.ts");
     const { openMcpPanel } = await import("../commands.ts");
     const { loadOnboardingState } = await import("../onboarding-state.ts");
@@ -99,7 +102,28 @@ describe("commands onboarding", () => {
     expect(mocks.createMcpPanel).toHaveBeenCalled();
     const options = mocks.createMcpPanel.mock.calls[0]?.[6];
     expect(options.noticeLines[0]).toContain("Using standard MCP config");
+    expect(options.theme).toBe(theme);
     expect(loadOnboardingState().sharedConfigHintShown).toBe(true);
+  });
+
+  it("passes the active theme into the OAuth MCP panel", async () => {
+    const ui = createUi();
+    const { openMcpAuthPanel } = await import("../commands.ts");
+
+    await openMcpAuthPanel({
+      programmaticConfig: false,
+      config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
+      manager: { getConnection: () => null },
+      failureTracker: new Map(),
+    } as any, { getFlag: () => undefined } as any, {
+      hasUI: true,
+      mode: "tui",
+      cwd: process.cwd(),
+      ui,
+    } as any);
+
+    const options = mocks.createMcpPanel.mock.calls.at(-1)?.[6];
+    expect(options.theme).toBe(ui.theme);
   });
 
   it("does not present an .agents-only config as canonical shared MCP config", async () => {
