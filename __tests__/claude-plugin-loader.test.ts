@@ -31,6 +31,7 @@ describe("Claude plugin bundles", () => {
   });
 
   afterEach(() => {
+    vi.doUnmock("node:fs");
     process.env.HOME = originalHome;
     process.chdir(originalCwd);
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -112,6 +113,116 @@ describe("Claude plugin bundles", () => {
     expect(config.mcpServers.local).toMatchObject({ command: "node", args: ["server.js"] });
     expect(discoverConfiguredClaudePluginSkills(config, project)).toEqual([]);
     expect(warning).not.toHaveBeenCalledWith(expect.stringContaining("skills"));
+  });
+
+  it("treats an optional manifest that races away as absent metadata", async () => {
+    const { project, plugin } = setup();
+    writeManifest(plugin, "raced-manifest");
+    writeText(join(plugin, "skills", "valid", "SKILL.md"), "---\nname: valid\ndescription: Valid skill\n---\n");
+    writeJson(join(project, ".mcp.json"), {
+      claudePlugins: [{ path: plugin, skills: true }],
+      mcpServers: {},
+    });
+    const racedManifestPath = realpathSync(join(plugin, ".claude-plugin", "plugin.json"));
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.doMock("node:fs", () => ({
+      ...actualFs,
+      statSync: vi.fn((path: Parameters<typeof actualFs.statSync>[0]) => {
+        if (String(path) === racedManifestPath) throw new Error("manifest raced away");
+        return actualFs.statSync(path);
+      }),
+    }));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { discoverConfiguredClaudePluginSkills, loadMcpConfig } = await import("../config.ts");
+    expect(discoverConfiguredClaudePluginSkills(loadMcpConfig(), project)).toEqual([realpathSync(join(plugin, "skills", "valid", "SKILL.md"))]);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("manifest could not be read"));
+  });
+
+  it("treats an unreadable optional manifest as absent metadata", async () => {
+    const { project, plugin } = setup();
+    writeManifest(plugin, "unreadable-manifest");
+    writeJson(join(plugin, ".mcp.json"), { mcpServers: { local: { command: "node", args: ["server.js"] } } });
+    writeText(join(plugin, "skills", "valid", "SKILL.md"), "---\nname: valid\ndescription: Valid skill\n---\n");
+    writeJson(join(project, ".mcp.json"), {
+      claudePlugins: [{ path: plugin, mcp: true, skills: true }],
+      mcpServers: {},
+    });
+    const manifestPath = realpathSync(join(plugin, ".claude-plugin", "plugin.json"));
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.doMock("node:fs", () => ({
+      ...actualFs,
+      openSync: vi.fn((path: Parameters<typeof actualFs.openSync>[0], ...args: unknown[]) => {
+        if (String(path) === manifestPath) throw new Error("manifest unreadable");
+        return actualFs.openSync(path, ...(args as []));
+      }),
+    }));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { discoverConfiguredClaudePluginSkills, loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+    expect(config.mcpServers.local.command).toBe("node");
+    expect(discoverConfiguredClaudePluginSkills(config, project)).toEqual([realpathSync(join(plugin, "skills", "valid", "SKILL.md"))]);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("manifest could not be read"));
+  });
+
+  it("does not read MCP config that races into an escaping symlink", async () => {
+    const { project, plugin } = setup();
+    const outsideConfig = join(project, "outside", ".mcp.json");
+    writeManifest(plugin, "config-read-race");
+    writeJson(join(plugin, ".mcp.json"), { mcpServers: { safe: { command: "safe" } } });
+    writeJson(outsideConfig, { mcpServers: { escaped: { command: "escaped" } } });
+    writeJson(join(project, ".mcp.json"), {
+      claudePlugins: [{ path: plugin, mcp: true }],
+      mcpServers: {},
+    });
+    const configPath = realpathSync(join(plugin, ".mcp.json"));
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.doMock("node:fs", () => ({
+      ...actualFs,
+      openSync: vi.fn((path: Parameters<typeof actualFs.openSync>[0], ...args: unknown[]) => {
+        if (String(path) === configPath) {
+          actualFs.rmSync(configPath);
+          actualFs.symlinkSync(outsideConfig, configPath);
+        }
+        return actualFs.openSync(path, ...(args as []));
+      }),
+    }));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers).toEqual({});
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("MCP config could not be read"));
+  });
+
+  it("does not read MCP config through a raced ancestor symlink", async () => {
+    const { project, plugin } = setup();
+    const renamedPlugin = join(project, "plugins", "acme-tools-renamed");
+    const outsidePlugin = join(project, "outside-plugin");
+    writeManifest(plugin, "config-ancestor-race");
+    writeJson(join(plugin, ".mcp.json"), { mcpServers: { safe: { command: "safe" } } });
+    writeJson(join(outsidePlugin, ".mcp.json"), { mcpServers: { escaped: { command: "escaped" } } });
+    writeJson(join(project, ".mcp.json"), {
+      claudePlugins: [{ path: plugin, mcp: true }],
+      mcpServers: {},
+    });
+    const configPath = realpathSync(join(plugin, ".mcp.json"));
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.doMock("node:fs", () => ({
+      ...actualFs,
+      openSync: vi.fn((path: Parameters<typeof actualFs.openSync>[0], ...args: unknown[]) => {
+        if (String(path) === configPath && !actualFs.existsSync(renamedPlugin)) {
+          actualFs.renameSync(plugin, renamedPlugin);
+          actualFs.symlinkSync(outsidePlugin, plugin);
+        }
+        return actualFs.openSync(path, ...(args as []));
+      }),
+    }));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers).toEqual({});
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("resolves outside the configured plugin directory"));
   });
 
   it("loads explicitly configured plugins for isolated SDK config", async () => {
@@ -237,6 +348,80 @@ describe("Claude plugin bundles", () => {
 
     const { discoverConfiguredClaudePluginSkills, loadMcpConfig } = await import("../config.ts");
     expect(discoverConfiguredClaudePluginSkills(loadMcpConfig(), project)).toEqual([]);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("outside its skills directory"));
+  });
+
+  it("skips broken skill symlinks without dropping valid plugin skills", async () => {
+    const { project, plugin } = setup();
+    writeManifest(plugin, "broken-skill-link");
+    writeText(join(plugin, "skills", "valid", "SKILL.md"), "---\nname: valid\ndescription: Valid skill\n---\n");
+    symlinkSync(join(plugin, "missing-skill"), join(plugin, "skills", "broken"));
+    writeJson(join(project, ".mcp.json"), {
+      claudePlugins: [{ path: plugin, skills: true }],
+      mcpServers: {},
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { discoverConfiguredClaudePluginSkills, loadMcpConfig } = await import("../config.ts");
+    expect(discoverConfiguredClaudePluginSkills(loadMcpConfig(), project)).toEqual([realpathSync(join(plugin, "skills", "valid", "SKILL.md"))]);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("skill path could not be read"));
+  });
+
+  it("skips a raced-away skills root without dropping later plugin skills", async () => {
+    const { project, plugin } = setup();
+    const laterPlugin = join(project, "plugins", "later-tools");
+    writeManifest(plugin, "raced-skills-root");
+    writeManifest(laterPlugin, "later-tools");
+    writeText(join(plugin, "skills", "lost", "SKILL.md"), "---\nname: lost\ndescription: Lost skill\n---\n");
+    writeText(join(laterPlugin, "skills", "valid", "SKILL.md"), "---\nname: valid\ndescription: Valid skill\n---\n");
+    writeJson(join(project, ".mcp.json"), {
+      claudePlugins: [
+        { path: plugin, skills: true },
+        { path: laterPlugin, skills: true },
+      ],
+      mcpServers: {},
+    });
+    const racedSkillsRoot = realpathSync(join(plugin, "skills"));
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.doMock("node:fs", () => ({
+      ...actualFs,
+      statSync: vi.fn((path: Parameters<typeof actualFs.statSync>[0]) => {
+        if (String(path) === racedSkillsRoot) throw new Error("skills root raced away");
+        return actualFs.statSync(path);
+      }),
+    }));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { discoverConfiguredClaudePluginSkills, loadMcpConfig } = await import("../config.ts");
+    expect(discoverConfiguredClaudePluginSkills(loadMcpConfig(), project)).toEqual([realpathSync(join(laterPlugin, "skills", "valid", "SKILL.md"))]);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("skills could not be read"));
+  });
+
+  it("does not discover a skill file that races into an escaping symlink", async () => {
+    const { project, plugin } = setup();
+    const outsideSkill = join(project, "outside", "SKILL.md");
+    writeManifest(plugin, "skill-file-race");
+    writeText(join(plugin, "skills", "SKILL.md"), "---\nname: raced\ndescription: Raced skill\n---\n");
+    writeText(join(plugin, "skills", "valid", "SKILL.md"), "---\nname: valid\ndescription: Valid skill\n---\n");
+    writeText(outsideSkill, "---\nname: escaped\ndescription: Escaped skill\n---\n");
+    writeJson(join(project, ".mcp.json"), {
+      claudePlugins: [{ path: plugin, skills: true }],
+      mcpServers: {},
+    });
+    const racedSkillPath = realpathSync(join(plugin, "skills", "SKILL.md"));
+    const outsideSkillPath = realpathSync(outsideSkill);
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.doMock("node:fs", () => ({
+      ...actualFs,
+      realpathSync: vi.fn((path: Parameters<typeof actualFs.realpathSync>[0]) => {
+        if (String(path) === racedSkillPath) return outsideSkillPath;
+        return actualFs.realpathSync(path);
+      }),
+    }));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { discoverConfiguredClaudePluginSkills, loadMcpConfig } = await import("../config.ts");
+    expect(discoverConfiguredClaudePluginSkills(loadMcpConfig(), project)).toEqual([realpathSync(join(plugin, "skills", "valid", "SKILL.md"))]);
     expect(warning).toHaveBeenCalledWith(expect.stringContaining("outside its skills directory"));
   });
 

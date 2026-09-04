@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent, type Stats } from "node:fs";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import stripJsonComments from "strip-json-comments";
 import { formatServerNamespace, type ClaudePluginConfig, type McpConfig, type ServerEntry } from "./types.ts";
@@ -92,29 +92,37 @@ function resolvePluginRoot(path: string): string | null {
     console.warn(`Claude plugin path does not exist: ${path}`);
     return null;
   }
-  if (!statSync(path).isDirectory()) {
+  const stats = safeStat(path, "Claude plugin path");
+  if (!stats) return null;
+  if (!stats.isDirectory()) {
     console.warn(`Claude plugin path is not a directory: ${path}`);
     return null;
   }
-  return realpathSync(path);
+  return safeRealpath(path, "Claude plugin path");
 }
 
 function readPluginManifest(pluginRoot: string): ClaudePluginManifest | null | false {
   const configuredManifestPath = resolve(pluginRoot, ".claude-plugin", "plugin.json");
   if (!existsSync(configuredManifestPath)) return null;
-  if (!statSync(configuredManifestPath).isFile()) {
+  const stats = safeStat(configuredManifestPath, "Claude plugin manifest");
+  if (!stats) return null;
+  if (!stats.isFile()) {
     console.warn(`Claude plugin manifest is not a regular file: ${configuredManifestPath}`);
     return false;
   }
-  const manifestPath = realpathSync(configuredManifestPath);
+  const manifestPath = safeRealpath(configuredManifestPath, "Claude plugin manifest");
+  if (!manifestPath) return null;
   if (!isContainedPath(pluginRoot, manifestPath)) {
     console.warn(`Claude plugin manifest resolves outside the configured plugin directory: ${manifestPath}`);
     return false;
   }
 
+  const manifestText = safeReadFile(manifestPath, "Claude plugin manifest", pluginRoot);
+  if (manifestText === null) return null;
+
   let raw: unknown;
   try {
-    raw = parseJson(readFileSync(manifestPath, "utf8"));
+    raw = parseJson(manifestText);
   } catch (error) {
     console.warn(`Claude plugin manifest contains invalid JSON at ${manifestPath}: ${formatError(error)}`);
     return false;
@@ -168,12 +176,14 @@ function resolveContainedComponent(
     console.warn(`Claude plugin "${pluginName}" is missing ${component}: ${path}`);
     return null;
   }
-  const stats = statSync(path);
+  const stats = safeStat(path, `Claude plugin "${pluginName}" ${component}`);
+  if (!stats) return null;
   if (expected === "file" ? !stats.isFile() : !stats.isDirectory()) {
     console.warn(`Claude plugin "${pluginName}" ${component} is not a ${expected}: ${path}`);
     return null;
   }
-  const realPath = realpathSync(path);
+  const realPath = safeRealpath(path, `Claude plugin "${pluginName}" ${component}`);
+  if (!realPath) return null;
   if (!isContainedPath(pluginRoot, realPath)) {
     console.warn(`Claude plugin "${pluginName}" ${component} resolves outside the configured plugin directory: ${realPath}`);
     return null;
@@ -185,24 +195,39 @@ function discoverContainedSkillFiles(skillsRoot: string, pluginName: string): st
   const skillFiles: string[] = [];
   const visitedDirectories = new Set<string>();
   const visit = (directory: string): void => {
-    const realDirectory = realpathSync(directory);
+    const realDirectory = safeRealpath(directory, `Claude plugin "${pluginName}" skill directory`);
+    if (!realDirectory) return;
+    if (!isContainedPath(skillsRoot, realDirectory)) {
+      console.warn(`Claude plugin "${pluginName}" skill path resolves outside its skills directory: ${directory} -> ${realDirectory}`);
+      return;
+    }
     if (visitedDirectories.has(realDirectory)) return;
     visitedDirectories.add(realDirectory);
-    for (const entry of readdirSync(realDirectory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+    const entries = safeReadDir(realDirectory, `Claude plugin "${pluginName}" skill directory`);
+    if (!entries) return;
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       const path = resolve(realDirectory, entry.name);
       if (entry.isSymbolicLink()) {
-        const target = realpathSync(path);
+        const target = safeRealpath(path, `Claude plugin "${pluginName}" skill path`);
+        if (!target) continue;
         if (!isContainedPath(skillsRoot, target)) {
           console.warn(`Claude plugin "${pluginName}" skill path resolves outside its skills directory: ${path} -> ${target}`);
           continue;
         }
-        const targetStats = statSync(target);
+        const targetStats = safeStat(target, `Claude plugin "${pluginName}" skill path`);
+        if (!targetStats) continue;
         if (targetStats.isDirectory()) visit(target);
         else if (targetStats.isFile() && entry.name === "SKILL.md") skillFiles.push(target);
       } else if (entry.isDirectory()) {
         visit(path);
       } else if (entry.isFile() && entry.name === "SKILL.md") {
-        skillFiles.push(realpathSync(path));
+        const realPath = safeRealpath(path, `Claude plugin "${pluginName}" skill path`);
+        if (!realPath) continue;
+        if (!isContainedPath(skillsRoot, realPath)) {
+          console.warn(`Claude plugin "${pluginName}" skill path resolves outside its skills directory: ${path} -> ${realPath}`);
+          continue;
+        }
+        skillFiles.push(realPath);
       }
     }
   };
@@ -218,7 +243,9 @@ function readPluginMcpConfig(
 ): McpConfig {
   let raw: unknown;
   try {
-    raw = parseJson(readFileSync(configPath, "utf8"));
+    const configText = safeReadFile(configPath, `Claude plugin "${pluginName}" MCP config`, pluginRoot);
+    if (configText === null) return { mcpServers: {} };
+    raw = parseJson(configText);
   } catch (error) {
     console.warn(`Claude plugin "${pluginName}" has invalid MCP config at ${configPath}: ${formatError(error)}`);
     return { mcpServers: {} };
@@ -278,6 +305,63 @@ function isContainedPath(root: string, path: string): boolean {
 
 function parseJson(raw: string): unknown {
   return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
+}
+
+function safeStat(path: string, description: string): Stats | null {
+  try {
+    return statSync(path);
+  } catch (error) {
+    console.warn(`${description} could not be read: ${path}: ${formatError(error)}`);
+    return null;
+  }
+}
+
+function safeRealpath(path: string, description: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    console.warn(`${description} could not be read: ${path}: ${formatError(error)}`);
+    return null;
+  }
+}
+
+function safeReadFile(path: string, description: string, containmentRoot: string): string | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const openedStats = fstatSync(fd);
+    if (!openedStats.isFile()) {
+      console.warn(`${description} is not a regular file: ${path}`);
+      return null;
+    }
+    const resolvedPath = safeRealpath(path, description);
+    if (!resolvedPath) return null;
+    if (!isContainedPath(containmentRoot, resolvedPath)) {
+      console.warn(`${description} resolves outside the configured plugin directory: ${resolvedPath}`);
+      return null;
+    }
+    const currentStats = safeStat(resolvedPath, description);
+    if (!currentStats) return null;
+    if (openedStats.dev !== currentStats.dev || openedStats.ino !== currentStats.ino) {
+      console.warn(`${description} changed while being read: ${path}`);
+      return null;
+    }
+    return readFileSync(fd, "utf8");
+  } catch (error) {
+    console.warn(`${description} could not be read: ${path}: ${formatError(error)}`);
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function safeReadDir(path: string, description: string): Dirent[] | null {
+  try {
+    return readdirSync(path, { withFileTypes: true });
+  } catch (error) {
+    console.warn(`${description} could not be read: ${path}: ${formatError(error)}`);
+    return null;
+  }
 }
 
 function formatError(error: unknown): string {
