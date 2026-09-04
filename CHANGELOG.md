@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mcp({ connect })` now reports the direct tools it discovers on the tool result via `addedToolNames`, Pi's result-scoped tool activation surface, so they load from that transcript point instead of through an active-tool list rewrite. (#490) Thanks to [@chiptoe-svg](https://github.com/chiptoe-svg) for PR #494.
 
 ### Fixed
+- Early MCP tool discovery now honors `--mcp-config=<path>`, including paths containing `=`. (#512)
 - The optional `@earendil-works/pi-ai` peer now supports Pi 0.85 alongside 0.84.1, avoiding npm resolution conflicts. Thanks to [@dyld-w](https://github.com/dyld-w) for #507.
 - Session-scoped MCP tool approvals and MCP App iframe consent now persist on and restore from the active Pi session branch. (#492)
 - The `/mcp` panel no longer marks reconnects as cached when cache reload returns no entry, while preserving explicit zero-TTL behavior. Thanks to [@fyq163](https://github.com/fyq163) for #497.

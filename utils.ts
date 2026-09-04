@@ -64,11 +64,28 @@ export async function parallelLimit<T, R>(
 }
 
 export function getConfigPathFromArgv(): string | undefined {
-  const idx = process.argv.indexOf("--mcp-config");
-  if (idx >= 0 && idx + 1 < process.argv.length) {
-    return process.argv[idx + 1];
+  let configPath: string | undefined;
+  for (let index = 2; index < process.argv.length; index++) {
+    const arg = process.argv[index];
+    if (arg === undefined) continue;
+    if (arg === "--") break;
+
+    if (arg === "--mcp-config") {
+      const value = process.argv[index + 1];
+      if (value !== undefined && !value.startsWith("-") && !value.startsWith("@")) {
+        configPath = value;
+        index++;
+      } else {
+        configPath = undefined;
+      }
+      continue;
+    }
+
+    if (arg.startsWith("--mcp-config=")) {
+      configPath = arg.slice("--mcp-config=".length);
+    }
   }
-  return undefined;
+  return configPath;
 }
 
 export function interpolateEnvVars(value: string): string;

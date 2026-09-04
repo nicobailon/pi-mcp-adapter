@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { platform } from "node:os";
-import { openUrl } from "../utils.ts";
+import { getConfigPathFromArgv, openUrl } from "../utils.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 vi.mock("node:os", async (importOriginal) => {
@@ -12,6 +12,25 @@ function fakePi(): { pi: ExtensionAPI; exec: ReturnType<typeof vi.fn> } {
   const exec = vi.fn().mockResolvedValue({ code: 0, stdout: "", stderr: "" });
   return { pi: { exec } as unknown as ExtensionAPI, exec };
 }
+
+describe("getConfigPathFromArgv", () => {
+  it.each([
+    ["split form", ["--mcp-config", "/ambient.json"], "/ambient.json"],
+    ["equals form", ["--mcp-config=/override.json"], "/override.json"],
+    ["equals-containing path", ["--mcp-config=/override=mcp.json"], "/override=mcp.json"],
+    ["last occurrence", ["--mcp-config", "/ambient.json", "--mcp-config=/override.json"], "/override.json"],
+    ["end of options", ["--mcp-config", "/ambient.json", "--", "--mcp-config=/ignored.json"], "/ambient.json"],
+    ["split flag-like value", ["--mcp-config", "@ambient.json"], undefined],
+  ] as const)("matches Pi's %s argv result", (_name, args, expected) => {
+    const originalArgv = process.argv;
+    try {
+      process.argv = ["node", "script", ...args];
+      expect(getConfigPathFromArgv()).toBe(expected);
+    } finally {
+      process.argv = originalArgv;
+    }
+  });
+});
 
 describe("openUrl on darwin", () => {
   beforeEach(() => {
