@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolve } from "node:path";
 import { MCP_STATUS_EVENT } from "../types.ts";
 import { ConsentManager } from "../consent-manager.ts";
 import { MCP_APPROVAL_CUSTOM_TYPE, getToolApprovalIdentity, makeToolApprovalKey } from "../session-approvals.ts";
@@ -1611,6 +1612,39 @@ describe("mcpAdapter session lifecycle", () => {
       expect.objectContaining({ config: expect.objectContaining({ mcpServers: config.mcpServers }) }),
     );
     expect(mocks.initializeMcp.mock.calls[0][3].config).not.toBe(config);
+  });
+
+  it("keeps programmatic relative Claude plugin paths stable when the session cwd differs", async () => {
+    const processCwd = "/process-project";
+    const sessionCwd = "/active-project";
+    vi.spyOn(process, "cwd").mockReturnValue(processCwd);
+    const config = {
+      mcpServers: {},
+      claudePlugins: [{ path: "./plugins/local", mcp: true, skills: true }],
+    };
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { createMcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    createMcpAdapter({ config })(api);
+
+    const expectedPath = resolve(processCwd, "./plugins/local");
+    expect(mocks.resolveConfiguredClaudePluginMcp.mock.calls[0]?.[0]).toEqual({
+      mcpServers: {},
+      claudePlugins: [{ path: expectedPath, mcp: true, skills: true }],
+    });
+
+    await handlers.get("session_start")?.({}, { hasUI: false, mode: "print", cwd: sessionCwd });
+    await Promise.resolve();
+    const runtimeConfig = mocks.initializeMcp.mock.calls[0]?.[3].config;
+    expect(runtimeConfig.claudePlugins[0].path).toBe(expectedPath);
+    expect(mocks.initializeMcp.mock.calls[0]?.[1].cwd).toBe(sessionCwd);
+
+    const discover = handlers.get("resources_discover")!;
+    discover({ cwd: sessionCwd, reason: "reload" });
+    expect(mocks.discoverConfiguredClaudePluginSkills.mock.calls[0]?.[0].claudePlugins[0].path).toBe(expectedPath);
+    expect(mocks.discoverConfiguredClaudePluginSkills.mock.calls[0]?.[1]).toBe(sessionCwd);
   });
 
   it("adds strict direct-tool argument preparation only when configured", async () => {

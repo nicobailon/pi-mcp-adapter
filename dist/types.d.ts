@@ -438,7 +438,7 @@ export interface McpSettings {
     oauthDir?: string;
 }
 export interface ClaudePluginConfig {
-    /** Explicit local Claude plugin directory. Relative paths resolve from the active project cwd. */
+    /** Explicit local Claude plugin directory. File-based config resolves relative paths from the active project cwd; createMcpAdapter snapshots programmatic paths against process.cwd(). */
     path: string;
     /** Load the plugin's root .mcp.json as low-precedence MCP defaults. */
     mcp?: boolean;
