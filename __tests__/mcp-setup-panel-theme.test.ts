@@ -93,4 +93,48 @@ describe("mcp setup panel theme and component rendering", () => {
     expect(Math.max(...lines.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(60);
     panel.dispose();
   });
+
+  it("reapplies active styles to wrapped setup continuation lines", () => {
+    const { theme } = createTheme();
+    const discovery = createDiscovery();
+    const panel = createMcpSetupPanel(
+      discovery,
+      createCallbacks(),
+      {
+        mode: "setup",
+        onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
+        theme,
+      },
+      { requestRender: () => {} },
+      () => {},
+    );
+
+    const secondaryLines = panel.render(40).filter((line) => [
+      "for this project/team or",
+      "~/.config/mcp/mcp.json for all",
+      "projects. Adopt host imports or",
+      "quick-add RepoPrompt from this",
+      "screen.",
+    ].some((text) => line.includes(text)));
+    expect(secondaryLines).toHaveLength(5);
+    for (const line of secondaryLines) {
+      expect(line).toContain("\x1b[38;5;35m");
+      expect(line).toContain("\x1b[3m");
+    }
+
+    panel.handleInput("\x1b[B");
+    panel.handleInput("\r");
+    const noticeLine = panel.render(40).find((line) => line.includes("to global ~/.config/mcp/mcp.json."));
+    expect(noticeLine).toContain("\x1b[38;5;36m");
+
+    discovery.hasAnyConfig = true;
+    discovery.totalServerCount = 123;
+    discovery.sources = [
+      { id: "shared-project", label: "project shared", path: "/tmp/shared", exists: true, scope: "project", kind: "shared", serverCount: 1 },
+      { id: "pi-project", label: "project Pi", path: "/tmp/pi", exists: true, scope: "project", kind: "pi", serverCount: 1 },
+    ];
+    const summaryLine = panel.render(40).find((line) => line.includes("across 1 shared"));
+    expect(summaryLine).toContain("\x1b[38;5;36m");
+    panel.dispose();
+  });
 });

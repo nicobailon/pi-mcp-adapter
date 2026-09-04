@@ -107,11 +107,15 @@ class McpSetupPanelView implements Component {
 
     this.addFrame("┌", "┐");
     this.addRow(this.theme.title("MCP setup"), innerWidth);
-    for (const line of wrapText(this.discoverySummaryLine(state), contentWidth)) {
-      this.addRow(line, innerWidth);
+    let discoveryTone = this.theme.hint;
+    if (!state.discovery.hasAnyConfig || (state.discovery.totalServerCount === 0 && (state.discovery.imports.length > 0 || !!state.discovery.repoPrompt.executablePath))) {
+      discoveryTone = this.theme.needsAuth;
     }
-    for (const line of wrapText(this.theme.description(this.theme.italic(this.secondarySummaryLine(state))), contentWidth)) {
-      this.addRow(line, innerWidth);
+    for (const line of wrapText(this.discoverySummaryLine(state), contentWidth)) {
+      this.addRow(discoveryTone(line), innerWidth);
+    }
+    for (const line of wrapText(this.secondarySummaryLine(state), contentWidth)) {
+      this.addRow(this.theme.description(this.theme.italic(line)), innerWidth);
     }
     this.addRow("", innerWidth);
 
@@ -122,8 +126,8 @@ class McpSetupPanelView implements Component {
       } else if (state.notice.tone === "warning") {
         tone = this.theme.needsAuth;
       }
-      for (const line of wrapText(tone(state.notice.text), contentWidth)) {
-        this.addRow(line, innerWidth);
+      for (const line of wrapText(state.notice.text, contentWidth)) {
+        this.addRow(tone(line), innerWidth);
       }
       this.addRow("", innerWidth);
     }
@@ -223,18 +227,18 @@ class McpSetupPanelView implements Component {
 
   private discoverySummaryLine(state: McpSetupPanelViewState): string {
     if (!state.discovery.hasAnyConfig) {
-      return this.theme.needsAuth(state.onboardingState.setupCompleted
+      return state.onboardingState.setupCompleted
         ? "No MCP servers are active right now."
-        : "No MCP config is active yet.");
+        : "No MCP config is active yet.";
     }
 
     if (state.discovery.totalServerCount === 0 && (state.discovery.imports.length > 0 || !!state.discovery.repoPrompt.executablePath)) {
-      return this.theme.needsAuth("Pi found MCP-related setup options, but none are active in Pi yet.");
+      return "Pi found MCP-related setup options, but none are active in Pi yet.";
     }
 
     const shared = state.discovery.sources.filter((source) => source.kind === "shared" && source.serverCount > 0).length;
     const piOwned = state.discovery.sources.filter((source) => source.kind === "pi" && source.serverCount > 0).length;
-    return this.theme.hint(`Detected ${state.discovery.totalServerCount} configured servers across ${shared} shared and ${piOwned} Pi-owned source${shared + piOwned === 1 ? "" : "s"}.`);
+    return `Detected ${state.discovery.totalServerCount} configured servers across ${shared} shared and ${piOwned} Pi-owned source${shared + piOwned === 1 ? "" : "s"}.`;
   }
 
   private secondarySummaryLine(state: McpSetupPanelViewState): string {
