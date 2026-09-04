@@ -307,6 +307,40 @@ describe("proxy discovery", () => {
     expect(callTool).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards a raw TaskManager claim token through the proxy", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "renewed" }] }));
+    const state = {
+      config: { mcpServers: { taskmanager: { command: "taskmanager" } } },
+      toolMetadata: new Map([["taskmanager", [
+        { name: "taskmanager_renew_task_claim", originalName: "renew_task_claim", description: "Renew a claim" },
+      ]]]),
+      manager: {
+        getConnection: () => ({
+          status: "connected",
+          tools: [{ name: "renew_task_claim", description: "Renew a claim" }],
+          resources: [],
+          prompts: [],
+          client: { callTool },
+        }),
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+        getRequestOptions: () => undefined,
+      },
+      failureTracker: new Map(),
+      serverInstructions: new Map(),
+      completedUiSessions: [],
+    } as unknown as McpExtensionState;
+
+    await expect(executeCall(state, "taskmanager_renew_task_claim", { task_id: "1", claim_token: "opaque-token" })).resolves.toMatchObject({
+      details: { server: "taskmanager", tool: "renew_task_claim" },
+    });
+    expect(callTool).toHaveBeenCalledWith(
+      { name: "renew_task_claim", arguments: { task_id: "1", claim_token: "opaque-token" }, _meta: undefined },
+      undefined,
+    );
+  });
+
   it("resolves a raw upstream name for an explicitly selected server", async () => {
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
     const state = {

@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DIRECT_TOOLS_ADVISORY_THRESHOLD, buildProxyDescription, resolveDirectTools } from "../direct-tools.ts";
+import {
+  DIRECT_TOOLS_ADVISORY_THRESHOLD,
+  buildProxyDescription,
+  createDirectToolExecutor,
+  resolveDirectTools,
+} from "../direct-tools.ts";
 import {
   computeServerHash,
   getMissingConfiguredDirectToolServers,
@@ -1143,6 +1148,48 @@ describe("excludeTools filtering", () => {
       "tool arguments: value at token is not JSON-serializable",
     );
     expect(callTool).toHaveBeenCalledOnce();
+  });
+
+  it("forwards a raw TaskManager claim token through a direct tool", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "renewed" }] }));
+    const connection = {
+      status: "connected",
+      tools: [{ name: "renew_task_claim", description: "Renew a claim" }],
+      resources: [],
+      prompts: [],
+      client: { callTool },
+    };
+    const state = {
+      config: { mcpServers: { taskmanager: { command: "taskmanager" } } },
+      toolMetadata: new Map(),
+      resourceCounts: new Map(),
+      promptMetadata: new Map(),
+      promptMetadataLive: new Set(),
+      serverInstructions: new Map(),
+      manager: {
+        getConnection: () => connection,
+        getRequestOptions: () => undefined,
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as any;
+    const execute = createDirectToolExecutor(() => state, () => null, {
+      serverName: "taskmanager",
+      originalName: "renew_task_claim",
+      prefixedName: "taskmanager_renew_task_claim",
+      description: "Renew a claim",
+    });
+
+    await expect(execute("call", { task_id: "1", claim_token: "opaque-token" }, undefined, undefined, {} as any)).resolves.toMatchObject({
+      details: { server: "taskmanager", tool: "renew_task_claim" },
+    });
+    expect(callTool).toHaveBeenCalledWith(
+      { name: "renew_task_claim", arguments: { task_id: "1", claim_token: "opaque-token" }, _meta: undefined },
+      undefined,
+    );
   });
 
   it("does not apply live legacy exclusions to another server's current tool name", () => {

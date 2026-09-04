@@ -30,7 +30,6 @@ import {
   resolveServerUrl,
 } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
-import { projectTaskManagerMetadata } from "./tool-metadata.ts";
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -227,12 +226,11 @@ export function reconstructToolMetadata(
     }
     seenNames.add(name);
 
-    const taskManagerProjection = projectTaskManagerMetadata(serverName, tool.name, tool.description ?? "", tool.inputSchema);
     metadata.push({
       name,
       originalName: tool.name,
-      description: taskManagerProjection.description,
-      ...(tool.inputSchema === undefined ? {} : { inputSchema: taskManagerProjection.inputSchema }),
+      description: tool.description ?? "",
+      ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
       ...(tool.uiResourceUri === undefined ? {} : { uiResourceUri: tool.uiResourceUri }),
       ...(tool.uiVisibility === undefined ? {} : { uiVisibility: tool.uiVisibility }),
       ...(tool.uiStreamMode === undefined ? {} : { uiStreamMode: tool.uiStreamMode }),

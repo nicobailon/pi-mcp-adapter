@@ -117,7 +117,6 @@
     "tool-result-renderer.ts",
     "mcp-output-guard.ts",
     "mcp-code.ts",
-    "taskmanager-claim-vault.ts",
     "mcp-script-worker.mjs",
     "mcp-probe.ts",
     "agent-plugin-loader.ts",

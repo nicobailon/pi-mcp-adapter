@@ -7,7 +7,7 @@ import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
-import { formatSchema, projectTaskManagerMetadata } from "./tool-metadata.ts";
+import { formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
@@ -19,7 +19,6 @@ import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl } f
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
-import { captureTaskManagerResult, getTaskManagerClaimVault, prepareTaskManagerArgs, validateTaskManagerArgs } from "./taskmanager-claim-vault.ts";
 import { Check, Errors } from "typebox/value";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 
@@ -241,13 +240,12 @@ export function resolveDirectTools(
         continue;
       }
       seenNames.add(prefixedName);
-      const taskManagerProjection = projectTaskManagerMetadata(serverName, tool.name, tool.description ?? "", tool.inputSchema);
       specs.push({
         serverName,
         originalName: tool.name,
         prefixedName,
-        description: taskManagerProjection.description,
-        ...(tool.inputSchema === undefined ? {} : { inputSchema: taskManagerProjection.inputSchema }),
+        description: tool.description ?? "",
+        ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
         ...(tool.uiResourceUri === undefined ? {} : { uiResourceUri: tool.uiResourceUri }),
         ...(tool.uiStreamMode === undefined ? {} : { uiStreamMode: tool.uiStreamMode }),
       });
@@ -422,8 +420,6 @@ export function createDirectToolExecutor(
     }
 
     let normalizedParams = spec.resourceUri ? params : normalizeToolArguments(params);
-    const claimVault = getTaskManagerClaimVault(state.approvalEvents ?? state, state.owner);
-    validateTaskManagerArgs(claimVault, spec.serverName, spec.originalName, normalizedParams);
     const modelVisibleParams = normalizedParams;
     const approval = await ensureToolCallApproved(state, spec.serverName, {
       name: spec.prefixedName,
@@ -448,8 +444,6 @@ export function createDirectToolExecutor(
         },
       };
     }
-
-    normalizedParams = prepareTaskManagerArgs(claimVault, spec.serverName, spec.originalName, normalizedParams) ?? {};
 
     let uiSession: UiSessionRuntime | null = null;
     const requestOptions = state.manager.getRequestOptions?.(spec.serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
@@ -541,7 +535,6 @@ export function createDirectToolExecutor(
           }, requestOptions), ownedSignal);
         },
       );
-      result = captureTaskManagerResult(getTaskManagerClaimVault(state.approvalEvents ?? state, state.owner), spec.serverName, spec.originalName, result, normalizedParams) as ClientCallToolResult;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
 
       if (result.isError) {

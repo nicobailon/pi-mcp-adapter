@@ -20,7 +20,6 @@ import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } fro
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
-import { captureTaskManagerResult, getTaskManagerClaimVault, prepareTaskManagerArgs, validateTaskManagerArgs } from "./taskmanager-claim-vault.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -1263,8 +1262,6 @@ export async function executeCall(
   }
 
   let normalizedArgs = toolMeta.resourceUri ? args ?? {} : normalizeToolArguments(args);
-  const claimVault = getTaskManagerClaimVault(state.approvalEvents ?? state, state.owner);
-  validateTaskManagerArgs(claimVault, serverName, toolMeta.originalName, normalizedArgs);
   const modelVisibleArgs = normalizedArgs;
   const approval = await ensureToolCallApproved(
     state,
@@ -1289,8 +1286,6 @@ export async function executeCall(
       },
     };
   }
-
-  normalizedArgs = prepareTaskManagerArgs(claimVault, serverName, toolMeta.originalName, normalizedArgs) ?? {};
 
   let uiSession: UiSessionRuntime | null = null;
   const requestOptions = withUiProgressBridge(
@@ -1385,8 +1380,6 @@ export async function executeCall(
         }, requestOptions), ownedSignal);
       },
     );
-    result = captureTaskManagerResult(getTaskManagerClaimVault(state.approvalEvents ?? state, state.owner), serverName, toolMeta.originalName, result, normalizedArgs) as ClientCallToolResult;
-
     if (toolMeta.uiResourceUri) {
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
 
