@@ -450,7 +450,8 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
 | `oauthDir` | Legacy OAuth `tokens.json` import directory for this MCP config. Relative paths resolve from the active project cwd. `MCP_OAUTH_DIR` still wins when set. Persistent OAuth credentials are stored in the OS credential store, not this directory. |
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
-| `directTools` | Global default for all servers (default: false). Per-server overrides this. |
+| `directTools` | Global default for all servers (default: false). `true`, `false`, or `"search"`. Per-server overrides this. |
+| `activeToolCap` | Ceiling on simultaneously active search-activated direct tools (default: 24). Only applies to `directTools: "search"`. |
 | `strictDirectToolArguments` | Validate direct-tool inputs against their advertised schemas and recover one JSON string layer for object and array properties (default: false). |
 | `directToolResultDetails` | Direct-tool result details: `"lean"` (default) or `"bounded"` to retain the guarded raw MCP result. |
 | `warnOnLargeDirectTools` | Show the advisory when 75 or more direct tools resolve (default: `true`). Set to `false` to suppress only this advisory. |
@@ -633,6 +634,27 @@ To set a global default for all servers:
 ```
 
 Per-server `directTools` overrides the global setting. The example above registers direct tools for every server except `huge-server`.
+
+### Search-activated direct tools
+
+`directTools: true` puts every tool's definition in front of the model on every turn. Past a few dozen tools that costs context and, on smaller models, accuracy — the advisory at 75 exists for that reason. `directTools: "search"` is the middle path: the tools are registered as real direct tools with real schemas, but **inactive**, and `mcp({ search })` activates the matches additively.
+
+```json
+{
+  "settings": { "activeToolCap": 24 },
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "directTools": "search"
+    }
+  }
+}
+```
+
+The model starts each turn seeing only the `mcp` proxy (and any eager direct tools). When it searches, matching tools from search-mode servers become active direct tools, reported on the result as `addedToolNames` so Pi treats that point as their load point. What it activates are real tools with real schemas, not a proxy call.
+
+`activeToolCap` bounds how many search-activated tools stay active at once (default 24). It counts only those: the floor — Pi's built-ins, other extensions' tools, eager direct tools, the `mcp` proxy — is neither counted nor evicted, so the total active set is your floor plus at most the cap. When the ceiling is reached, the least-recently-used search-activated tool that the model has **not** called is deactivated first; a tool the model has called keeps its slot for the session, so a tool in use cannot vanish under it. If every slot is held by a used tool, nothing new activates and the result says so — `mcp({ tool })` always works as the fallback. Activation state lives in the running process, so at session start the adapter re-activates the search-mode tools the transcript already reports as loaded (the `addedToolNames` on earlier `mcp` results), newest first, under the cap. The search result says what was activated, what was deactivated, and when the ceiling truncated the match list, so the model can narrow the query or fall back to `mcp({ tool })`. Search-mode tools do not count toward the 75-tool advisory.
 
 To expose only a subset of a noisy server, add `includeTools` on the server. Values can be exact original names, generated resource names such as `read_<resource>`, prefixed names, or simple glob patterns:
 

@@ -259,12 +259,25 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const namespaceEnvOverride = resolveNamespaceEnvOverride(envRaw, envDirectToolOverride);
   const registeredDirectTools = new Map<string, string>();
   const registeredDirectToolServers = new Map<string, string>();
+  // prefixed name → the server's own tool name, so a proxy call (which reports
+  // server + original name) can find the lazy direct tool it corresponds to.
+  const registeredDirectToolOriginalNames = new Map<string, string>();
   const registeredDirectToolVersions = new Map<string, number>();
   // Overlapping connect results consume each server's discovery names once.
   // Removal clears the record so stale/fallback reactivation is reportable.
   const reportedDirectToolNamesByServer = new Map<string, Set<string>>();
   const registeredNamespaceProxyTools = new Set<string>();
   const fallbackDeactivatedTools = new Set<string>();
+  // directTools: "search" — registered inactive, activated by mcp({ search }).
+  const lazyDirectTools = new Set<string>();
+  // Search-activated tools, least-recently-used first; a call moves a tool to the end.
+  const searchActivatedTools: string[] = [];
+  // Search-activated tools the model has actually called. Never evicted: a tool
+  // in use must not vanish under the model. mcp({ tool }) always remains as the
+  // escape hatch when the ceiling is full of used tools.
+  const usedSearchTools = new Set<string>();
+  let reactivateFromTranscriptOnInit = false;
+  const DEFAULT_ACTIVE_TOOL_CAP = 24;
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
   const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
   const renderMcpToolResult = createMcpToolResultRenderer(toolRenderOptions);
@@ -325,11 +338,140 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ...(config.settings?.strictDirectToolArguments === true
         ? { prepareArguments: (args: unknown) => prepareDirectToolArguments(spec.inputSchema, args) }
         : {}),
-      execute: createDirectToolExecutor(() => state, () => initPromise, spec),
+      execute: spec.lazy
+        ? withUsageTracking(spec.prefixedName, createDirectToolExecutor(() => state, () => initPromise, spec))
+        : createDirectToolExecutor(() => state, () => initPromise, spec),
       renderShell: toolRenderShell,
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName, toolRenderOptions),
       renderResult: renderMcpToolResult,
     });
+  }
+
+  function withUsageTracking<T extends (...args: any[]) => unknown>(toolName: string, execute: T): T {
+    return ((...args: Parameters<T>) => {
+      touchSearchActivated(toolName, true);
+      return execute(...args);
+    }) as T;
+  }
+
+  function touchSearchActivated(toolName: string, used = false): void {
+    const at = searchActivatedTools.indexOf(toolName);
+    if (at !== -1) searchActivatedTools.splice(at, 1);
+    searchActivatedTools.push(toolName);
+    if (used) usedSearchTools.add(toolName);
+  }
+
+  // The lazy direct tool registered for a server's own tool name, if any.
+  function lazyToolFor(server: string, originalName: string): string | undefined {
+    for (const name of lazyDirectTools) {
+      if (registeredDirectToolServers.get(name) === server && registeredDirectToolOriginalNames.get(name) === originalName) return name;
+    }
+    return undefined;
+  }
+
+  // Pi registers a tool active. A lazy tool must not stay that way: hold every
+  // lazy tool that search has not activated out of the active set. Safe to call
+  // repeatedly; a no-op until Pi's action methods are available.
+  function holdLazyToolsInactive(): void {
+    if (lazyDirectTools.size === 0) return;
+    const activeTools = getActiveToolsIfReady();
+    if (!activeTools) return;
+    const activated = new Set(searchActivatedTools);
+    const next = activeTools.filter((name) => !lazyDirectTools.has(name) || activated.has(name));
+    if (next.length !== activeTools.length) pi.setActiveTools(next);
+  }
+
+  function activeToolCap(config: McpConfig): number {
+    const value = config.settings?.activeToolCap;
+    return typeof value === "number" && value > 0 ? Math.floor(value) : DEFAULT_ACTIVE_TOOL_CAP;
+  }
+
+  /**
+   * Activate the lazy direct tools a search matched, additively, under the cap.
+   * The floor (everything that is not search-activated) is never evicted;
+   * eviction is least-recently-used among search-activated tools, and a call
+   * counts as a use. Returns what changed so the result can say so.
+   */
+  function activateSearchMatches(
+    config: McpConfig,
+    matches: ReadonlyArray<{ server: string; tool: string }>,
+  ): { added: string[]; evicted: string[]; capped: boolean; cap: number } {
+    const cap = activeToolCap(config);
+    const activeTools = getActiveToolsIfReady() ?? [];
+    const activeSet = new Set(activeTools);
+    // executeSearch reports ToolMetadata.name, which is the prefixed name a
+    // direct tool is registered under — the same key the lazy set holds.
+    const wanted: string[] = [];
+    for (const match of matches) {
+      const name = match.tool;
+      if (!lazyDirectTools.has(name) || registeredDirectToolServers.get(name) !== match.server) continue;
+      if (!activeSet.has(name) && !wanted.includes(name)) wanted.push(name);
+    }
+    // The cap bounds search-activated tools only; the floor (built-ins, the
+    // proxy, eager direct tools, other extensions) is neither counted nor
+    // evicted, so the setting reads as "how many search tools may be active".
+    // Ones the model has called keep their slot; the rest are evictable,
+    // oldest first.
+    const activated = searchActivatedTools.filter((name) => activeSet.has(name));
+    const kept = activated.filter((name) => usedSearchTools.has(name));
+    const evictable = activated.filter((name) => !usedSearchTools.has(name));
+    const free = Math.max(0, cap - kept.length);
+    const added = wanted.slice(0, free);
+    const overflow = evictable.length + added.length - free;
+    const evicted = overflow > 0 ? evictable.slice(0, overflow) : [];
+    const capped = added.length < wanted.length;
+    if (added.length > 0 || evicted.length > 0) {
+      const next = new Set(activeTools);
+      for (const name of added) next.add(name);
+      for (const name of evicted) {
+        next.delete(name);
+        const at = searchActivatedTools.indexOf(name);
+        if (at !== -1) searchActivatedTools.splice(at, 1);
+      }
+      pi.setActiveTools([...next]);
+      for (const name of added) touchSearchActivated(name);
+    }
+    return { added, evicted, capped, cap };
+  }
+
+  /**
+   * At session start, re-activate the search-mode tools the transcript says
+   * were loaded: every addedToolNames on an earlier `mcp` result, newest first
+   * so the most recently loaded win under the cap. Reads the active branch,
+   * like approval restore, so tree navigation is respected. A fresh session
+   * has no such results and nothing happens.
+   */
+  function reactivateFromTranscript(targetState: McpExtensionState): void {
+    if (lazyDirectTools.size === 0) return;
+    const sessionManager = targetState.sessionManager;
+    if (!sessionManager) return;
+    let branch: readonly unknown[] = [];
+    try {
+      branch = sessionManager.getBranch();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.debug(`MCP: could not read the active session branch for tool re-activation: ${detail}`);
+      return;
+    }
+    const names: string[] = [];
+    for (let i = branch.length - 1; i >= 0; i -= 1) {
+      const entry = branch[i] as { type?: string; message?: { role?: string; toolName?: string; addedToolNames?: unknown } } | undefined;
+      const message = entry?.type === "message" ? entry.message : undefined;
+      if (!message || message.role !== "toolResult" || message.toolName !== "mcp") continue;
+      if (!Array.isArray(message.addedToolNames)) continue;
+      for (const name of message.addedToolNames) {
+        if (typeof name === "string" && lazyDirectTools.has(name) && !names.includes(name)) names.push(name);
+      }
+    }
+    if (names.length === 0) return;
+    const matches = names.flatMap((name) => {
+      const server = registeredDirectToolServers.get(name);
+      return server ? [{ server, tool: name }] : [];
+    });
+    const { added, capped } = activateSearchMatches(targetState.config, matches);
+    if (added.length > 0 || capped) {
+      logger.debug(`MCP: resume re-activated ${added.length} search-mode tool(s)${capped ? " (ceiling reached)" : ""}: ${added.join(", ")}`);
+    }
   }
 
   function activeFailureServers(): Set<string> {
@@ -396,17 +538,28 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         registerDirectTool(spec, config);
         registeredDirectTools.set(spec.prefixedName, fingerprint);
         registeredDirectToolServers.set(spec.prefixedName, spec.serverName);
+        registeredDirectToolOriginalNames.set(spec.prefixedName, spec.originalName);
         registeredDirectToolVersions.set(spec.prefixedName, (registeredDirectToolVersions.get(spec.prefixedName) ?? 0) + 1);
         if (previousServer !== spec.serverName) {
           forgetReportedDirectToolName(previousServer, spec.prefixedName);
         }
-        if (fallbackDeactivatedTools.delete(spec.prefixedName)) {
+        if (fallbackDeactivatedTools.delete(spec.prefixedName) && !spec.lazy) {
           const activeTools = getActiveToolsIfReady();
           if (activeTools && !activeTools.includes(spec.prefixedName)) {
             pi.setActiveTools([...activeTools, spec.prefixedName]);
           }
         }
         (previous ? updated : added).push(spec.prefixedName);
+      }
+      if (spec.lazy) {
+        lazyDirectTools.add(spec.prefixedName);
+      } else if (lazyDirectTools.delete(spec.prefixedName)) {
+        // Lazy → eager (e.g. the server flipped to directTools: true in the
+        // panel): it is floor now, so it must neither count against the cap
+        // nor be evictable as an unused search tool.
+        const at = searchActivatedTools.indexOf(spec.prefixedName);
+        if (at !== -1) searchActivatedTools.splice(at, 1);
+        usedSearchTools.delete(spec.prefixedName);
       }
     }
 
@@ -415,15 +568,22 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const serverName = registeredDirectToolServers.get(toolName);
       registeredDirectTools.delete(toolName);
       registeredDirectToolServers.delete(toolName);
+      registeredDirectToolOriginalNames.delete(toolName);
       forgetReportedDirectToolName(serverName, toolName);
+      if (lazyDirectTools.delete(toolName)) {
+        const at = searchActivatedTools.indexOf(toolName);
+        if (at !== -1) searchActivatedTools.splice(at, 1);
+        usedSearchTools.delete(toolName);
+      }
       deactivated.push(toolName);
     }
 
     deactivateTools(deactivated);
+    holdLazyToolsInactive();
     return { specs, reservedDirectNames, activeDirectNames: nextNames, added, updated, deactivated };
   }
 
-  function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false>): void {
+  function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false | "search">): void {
     if (!state) return;
     for (const [serverName, value] of changes) {
       const definition = state.config.mcpServers[serverName];
@@ -650,6 +810,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       };
       syncPromptCommands();
       syncToolSurface(ctx);
+      if (reactivateFromTranscriptOnInit) {
+        reactivateFromTranscriptOnInit = false;
+        reactivateFromTranscript(nextState);
+      }
       // A connected snapshot is readiness-like external state. Publish it only
       // after Pi's model-facing direct-tool surface reflects live metadata.
       nextState.statusEvents = pi.events;
@@ -714,8 +878,17 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     return skillPaths.length > 0 ? { skillPaths } : undefined;
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     const generation = ++lifecycleGeneration;
+    // Activation state is per process, but the transcript already says which
+    // search-mode tools were loaded (the addedToolNames on earlier mcp
+    // results). Consult it on every session start, not just reason "resume":
+    // a process launched with `--session <file>` starts with reason "startup"
+    // and a full transcript, and an rpc host that runs one process per turn
+    // resumes that way every time. A fresh session has no such results, so
+    // this is a no-op there.
+    void event;
+    reactivateFromTranscriptOnInit = true;
     const previousState = state;
     const previousOwner = currentOwner;
     const previousOAuthRuntime = currentOAuthRuntime;
@@ -1254,7 +1427,34 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             : executeAuthComplete(state, params.server, input);
         }
         if (params.tool) {
-          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal);
+          const result = await executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal);
+          if (lazyDirectTools.size === 0) return result;
+          // A proxy call is as clear a signal as a search hit: the model wants
+          // this tool. Activate it so the next call gets the real schema, under
+          // the same cap and eviction. The call counts as a use, so it keeps
+          // its slot. Lookup failures carry details.error and activate nothing.
+          const identity = result.details as { error?: unknown; server?: unknown; tool?: unknown } | undefined;
+          if (!identity || identity.error !== undefined || typeof identity.server !== "string" || typeof identity.tool !== "string") return result;
+          const name = lazyToolFor(identity.server, identity.tool);
+          if (!name) return result;
+          holdLazyToolsInactive();
+          if ((getActiveToolsIfReady() ?? []).includes(name)) {
+            touchSearchActivated(name, true);
+            return result;
+          }
+          const { added, evicted, capped, cap } = activateSearchMatches(state.config, [{ server: identity.server, tool: name }]);
+          if (added.includes(name)) touchSearchActivated(name, true);
+          if (added.length === 0 && evicted.length === 0 && !capped) return result;
+          const notes: string[] = [];
+          if (added.length > 0) notes.push(`Activated as a direct tool: ${name} — call it by name from now on.`);
+          if (evicted.length > 0) notes.push(`Deactivated (unused, at the ${cap}-tool ceiling): ${evicted.join(", ")}.`);
+          if (capped) notes.push(`Not activated: the ${cap}-tool ceiling is full of tools in use; keep calling it through mcp({ tool }) or raise settings.activeToolCap.`);
+          return {
+            ...result,
+            content: [...result.content, { type: "text" as const, text: notes.join(" ") }],
+            details: { ...(result.details ?? {}), activated: added, evicted, cap },
+            ...(added.length > 0 ? { addedToolNames: added } : {}),
+          };
         }
         if (params.connect) {
           // Direct tools discovered by this connect are registered by the
@@ -1268,10 +1468,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           const result = await executeConnect(state, params.connect, signal);
           if (!directToolsFrozen) syncToolSurface(_ctx as ExtensionContext);
           const reportedNames = reportedDirectToolNamesByServer.get(params.connect) ?? new Set<string>();
+          // A search-mode tool is registered but held inactive; it is not
+          // loaded at this point, so it must not be reported as such — search
+          // admission under the cap is its load point.
           const addedToolNames = [...registeredDirectTools.keys()].filter(
             (name) => (!directToolsBefore.has(name) || (registeredDirectToolVersions.get(name) ?? 0) !== (directToolVersionsBefore.get(name) ?? 0))
               && registeredDirectToolServers.get(name) === params.connect
-              && !reportedNames.has(name),
+              && !reportedNames.has(name)
+              && !lazyDirectTools.has(name),
           );
           if (addedToolNames.length === 0) return result;
           for (const name of addedToolNames) reportedNames.add(name);
@@ -1285,7 +1489,27 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return executeInstructions(state, params.instructions);
         }
         if (params.search !== undefined) {
-          return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset);
+          const result = executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset);
+          if (lazyDirectTools.size === 0) return result;
+          holdLazyToolsInactive();
+          const matches = (result.details as { matches?: Array<{ server: string; tool: string }> } | undefined)?.matches ?? [];
+          const { added, evicted, capped, cap } = activateSearchMatches(state.config, matches);
+          if (added.length === 0 && evicted.length === 0 && !capped) return result;
+          const notes: string[] = [];
+          if (added.length > 0) notes.push(`Activated as direct tools: ${added.join(", ")}.`);
+          if (evicted.length > 0) notes.push(`Deactivated (unused, at the ${cap}-tool ceiling): ${evicted.join(", ")}.`);
+          if (capped) {
+            notes.push(added.length === 0
+              ? `At the ${cap}-tool ceiling with nothing unused to free — use the tools already active, call these through mcp({ tool }), or raise settings.activeToolCap.`
+              : `Only ${added.length} activated; the ${cap}-tool ceiling is full. Narrow the search or call the rest through mcp({ tool }).`);
+          }
+          const text = result.content.map((block) => ("text" in block ? block.text : "")).join("\n");
+          return {
+            ...result,
+            content: [{ type: "text" as const, text: `${notes.join(" ")}\n\n${text}` }],
+            details: { ...(result.details ?? {}), activated: added, evicted, cap },
+            ...(added.length > 0 ? { addedToolNames: added } : {}),
+          };
         }
         if (params.server) {
           return executeList(state, params.server);
