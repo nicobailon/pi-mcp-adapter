@@ -52,7 +52,9 @@ parentPort.on("message", (message) => {
   const resolve = pending.get(message.id);
   if (!resolve) return;
   pending.delete(message.id);
-  resolve(message.envelope);
+  resolve("dataJson" in message
+    ? { ok: true, data: JSON.parse(message.dataJson) }
+    : message.envelope);
 });
 
 function request(type, payload) {

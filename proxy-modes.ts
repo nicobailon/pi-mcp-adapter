@@ -926,6 +926,8 @@ export async function executeCall(
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
   origin?: "proxy" | "script",
+  // Internal consumers own successful data delivery; origin remains approval metadata only.
+  internalDelivery?: { onSuccess: (data: unknown) => void },
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
@@ -1345,6 +1347,13 @@ export async function executeCall(
         },
       );
       const content = transformMcpResourceContents(result.contents ?? [], state.owner?.signal);
+      if (internalDelivery) {
+        throwIfAborted(ownedSignal);
+        internalDelivery.onSuccess(content.length > 0
+          ? content.filter(block => block.type === "text").map(block => block.text).join("\n")
+          : "(empty resource)");
+        return { content: [], details: { mode: "call", ...callIdentity } };
+      }
       const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
       return {
         content: guarded.content,
@@ -1384,7 +1393,15 @@ export async function executeCall(
 
     if (toolMeta.uiResourceUri) {
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
+    }
 
+    if (!result.isError && internalDelivery) {
+      throwIfAborted(ownedSignal);
+      internalDelivery.onSuccess(result);
+      return { content: [], details: { mode: "call", ...callIdentity } };
+    }
+
+    if (toolMeta.uiResourceUri) {
       if (result.isError) {
         const mcpContent = (result.content ?? []) as McpContent[];
         const content = transformMcpContent(mcpContent, state.owner?.signal);
