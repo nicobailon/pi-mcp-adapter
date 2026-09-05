@@ -267,7 +267,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const fallbackDeactivatedTools = new Set<string>();
   // directTools: "search" — registered inactive, activated by mcp({ search }).
   const lazyDirectTools = new Set<string>();
-  const lazyToolByServerTool = new Map<string, string>();
   // Search-activated tools, least-recently-used first; a call moves a tool to the end.
   const searchActivatedTools: string[] = [];
   // Search-activated tools the model has actually called. Never evicted: a tool
@@ -358,10 +357,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (used) usedSearchTools.add(toolName);
   }
 
-  function lazyKey(serverName: string, originalName: string): string {
-    return `${serverName}\u0000${originalName}`;
-  }
-
   // Pi registers a tool active. A lazy tool must not stay that way: hold every
   // lazy tool that search has not activated out of the active set. Safe to call
   // repeatedly; a no-op until Pi's action methods are available.
@@ -392,10 +387,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const cap = activeToolCap(config);
     const activeTools = getActiveToolsIfReady() ?? [];
     const activeSet = new Set(activeTools);
+    // executeSearch reports ToolMetadata.name, which is the prefixed name a
+    // direct tool is registered under — the same key the lazy set holds.
     const wanted: string[] = [];
     for (const match of matches) {
-      const name = lazyToolByServerTool.get(lazyKey(match.server, match.tool));
-      if (name && lazyDirectTools.has(name) && !activeSet.has(name) && !wanted.includes(name)) wanted.push(name);
+      const name = match.tool;
+      if (!lazyDirectTools.has(name) || registeredDirectToolServers.get(name) !== match.server) continue;
+      if (!activeSet.has(name) && !wanted.includes(name)) wanted.push(name);
     }
     // The cap bounds search-activated tools only; the floor (built-ins, the
     // proxy, eager direct tools, other extensions) is neither counted nor
@@ -500,12 +498,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         (previous ? updated : added).push(spec.prefixedName);
       }
-      if (spec.lazy) {
-        lazyDirectTools.add(spec.prefixedName);
-        lazyToolByServerTool.set(lazyKey(spec.serverName, spec.originalName), spec.prefixedName);
-      } else if (lazyDirectTools.delete(spec.prefixedName)) {
-        lazyToolByServerTool.delete(lazyKey(spec.serverName, spec.originalName));
-      }
+      if (spec.lazy) lazyDirectTools.add(spec.prefixedName);
+      else lazyDirectTools.delete(spec.prefixedName);
     }
 
     for (const toolName of [...registeredDirectTools.keys()]) {
@@ -515,9 +509,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       registeredDirectToolServers.delete(toolName);
       forgetReportedDirectToolName(serverName, toolName);
       if (lazyDirectTools.delete(toolName)) {
-        for (const [key, name] of lazyToolByServerTool) if (name === toolName) lazyToolByServerTool.delete(key);
         const at = searchActivatedTools.indexOf(toolName);
         if (at !== -1) searchActivatedTools.splice(at, 1);
+        usedSearchTools.delete(toolName);
       }
       deactivated.push(toolName);
     }
@@ -1372,10 +1366,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           const result = await executeConnect(state, params.connect, signal);
           if (!directToolsFrozen) syncToolSurface(_ctx as ExtensionContext);
           const reportedNames = reportedDirectToolNamesByServer.get(params.connect) ?? new Set<string>();
+          // A search-mode tool is registered but held inactive; it is not
+          // loaded at this point, so it must not be reported as such — search
+          // admission under the cap is its load point.
           const addedToolNames = [...registeredDirectTools.keys()].filter(
             (name) => (!directToolsBefore.has(name) || (registeredDirectToolVersions.get(name) ?? 0) !== (directToolVersionsBefore.get(name) ?? 0))
               && registeredDirectToolServers.get(name) === params.connect
-              && !reportedNames.has(name),
+              && !reportedNames.has(name)
+              && !lazyDirectTools.has(name),
           );
           if (addedToolNames.length === 0) return result;
           for (const name of addedToolNames) reportedNames.add(name);

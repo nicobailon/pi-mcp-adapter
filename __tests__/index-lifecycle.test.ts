@@ -2477,9 +2477,10 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
   });
 
   const lazySpec = (name: string) => ({ lazy: true, serverName: "demo", originalName: name, prefixedName: `demo_${name}`, description: `${name} tool` });
+  // executeSearch reports ToolMetadata.name — the PREFIXED name — never the original.
   const searchResult = (...names: string[]) => ({
     content: [{ type: "text", text: `Found ${names.length}` }],
-    details: { mode: "search", matches: names.map((tool) => ({ server: "demo", tool, score: 1 })), count: names.length, hasMore: false, nextOffset: null, query: "q" },
+    details: { mode: "search", matches: names.map((tool) => ({ server: "demo", tool: `demo_${tool}`, score: 1 })), count: names.length, hasMore: false, nextOffset: null, query: "q" },
   });
 
   async function boot(settings: Record<string, unknown> = {}, specs = [lazySpec("alpha"), lazySpec("beta"), lazySpec("gamma"), lazySpec("delta")]) {
@@ -2553,6 +2554,34 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
     expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
     expect(result.addedToolNames).toBeUndefined();
     expect(result.content[0].text).toContain("ceiling with nothing unused to free");
+  });
+
+  it("connect does not report held-inactive search-mode tools as loaded", async () => {
+    const config = { settings: { scriptMode: false }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([])
+      .mockReturnValue([lazySpec("alpha"), lazySpec("beta")]);
+    mocks.initializeMcp.mockResolvedValue(state);
+    const connectResult = { content: [{ type: "text", text: "connected" }], details: { mode: "connect" } };
+    mocks.executeConnect.mockImplementation(async (currentState: any) => {
+      currentState.onToolMetadataUpdated?.("demo", "proxy-connect");
+      return connectResult;
+    });
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const result = await proxyTool.execute("call-1", { connect: "demo" });
+    expect(result.addedToolNames).toBeUndefined(); // nothing loaded yet — search is the load point
+    expect(activeTools()).toEqual(["bash", "mcp"]); // registered, held inactive
   });
 
   it("leaves a search result untouched when no server is in search mode", async () => {
