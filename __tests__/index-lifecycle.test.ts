@@ -2556,7 +2556,7 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
     expect(result.content[0].text).toContain("ceiling with nothing unused to free");
   });
 
-  it("on resume, re-activates the search-mode tools the transcript says were loaded, newest first under the cap", async () => {
+  it("at session start, re-activates the search-mode tools the transcript says were loaded, newest first under the cap", async () => {
     const config = { settings: { scriptMode: false, activeToolCap: 2 }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
     const state = createState();
     state.config = config;
@@ -2576,7 +2576,9 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
     const { api, handlers } = createPi();
     const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
     mcpAdapter(api);
-    await handlers.get("session_start")?.({ reason: "resume" }, {});
+    // reason "startup" on purpose: a `--session <file>` launch (one process per
+    // turn under an rpc host) starts this way with a full transcript.
+    await handlers.get("session_start")?.({ reason: "startup" }, {});
     // Re-activation runs after initialization resolves (post-init surface
     // sync), which is a few ticks later than the early registration pass.
     await vi.waitFor(() => expect(activeTools()).toContain("demo_gamma"));
@@ -2586,11 +2588,11 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
     expect(activeTools()).not.toContain("demo_delta"); // another tool's result is not ours
   });
 
-  it("on a new session, the transcript is not consulted and lazy tools stay held", async () => {
+  it("a transcript with no search results re-activates nothing and lazy tools stay held", async () => {
     const config = { settings: { scriptMode: false }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
     const state = createState();
     state.config = config;
-    state.sessionManager = { getBranch: () => [{ type: "message", message: { role: "toolResult", toolName: "mcp", addedToolNames: ["demo_alpha"] } }] };
+    state.sessionManager = { getBranch: () => [{ type: "message", message: { role: "user", content: "hello" } }] };
     state.consentManager = { clear: vi.fn(), restoreDecision: vi.fn() };
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.resolveDirectTools.mockReturnValue([lazySpec("alpha")]);

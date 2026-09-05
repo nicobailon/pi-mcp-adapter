@@ -424,10 +424,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   /**
-   * On resume, re-activate the search-mode tools the transcript says were
-   * loaded: every addedToolNames on an earlier `mcp` result, newest first so
-   * the most recently loaded win under the cap. Reads the active branch, like
-   * approval restore, so tree navigation is respected.
+   * At session start, re-activate the search-mode tools the transcript says
+   * were loaded: every addedToolNames on an earlier `mcp` result, newest first
+   * so the most recently loaded win under the cap. Reads the active branch,
+   * like approval restore, so tree navigation is respected. A fresh session
+   * has no such results and nothing happens.
    */
   function reactivateFromTranscript(targetState: McpExtensionState): void {
     if (lazyDirectTools.size === 0) return;
@@ -858,11 +859,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   pi.on("session_start", async (event, ctx) => {
     const generation = ++lifecycleGeneration;
-    // Activation state is per process. A resumed session's transcript already
-    // says which search-mode tools were loaded (the addedToolNames on earlier
-    // mcp results); without this, every resume silently drops them back to
-    // inactive and the model is left calling them through the proxy.
-    reactivateFromTranscriptOnInit = (event as { reason?: string } | undefined)?.reason === "resume";
+    // Activation state is per process, but the transcript already says which
+    // search-mode tools were loaded (the addedToolNames on earlier mcp
+    // results). Consult it on every session start, not just reason "resume":
+    // a process launched with `--session <file>` starts with reason "startup"
+    // and a full transcript, and an rpc host that runs one process per turn
+    // resumes that way every time. A fresh session has no such results, so
+    // this is a no-op there.
+    void event;
+    reactivateFromTranscriptOnInit = true;
     const previousState = state;
     const previousOwner = currentOwner;
     const previousOAuthRuntime = currentOAuthRuntime;
