@@ -265,6 +265,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const reportedDirectToolNamesByServer = new Map<string, Set<string>>();
   const registeredNamespaceProxyTools = new Set<string>();
   const fallbackDeactivatedTools = new Set<string>();
+  // directTools: "search" — registered inactive, activated by mcp({ search }).
+  const lazyDirectTools = new Set<string>();
+  const lazyToolByServerTool = new Map<string, string>();
+  // Search-activated tools, least-recently-used first; a call moves a tool to the end.
+  const searchActivatedTools: string[] = [];
+  // Search-activated tools the model has actually called. Never evicted: a tool
+  // in use must not vanish under the model. mcp({ tool }) always remains as the
+  // escape hatch when the ceiling is full of used tools.
+  const usedSearchTools = new Set<string>();
+  const DEFAULT_ACTIVE_TOOL_CAP = 24;
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
   const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
   const renderMcpToolResult = createMcpToolResultRenderer(toolRenderOptions);
@@ -325,11 +335,91 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ...(config.settings?.strictDirectToolArguments === true
         ? { prepareArguments: (args: unknown) => prepareDirectToolArguments(spec.inputSchema, args) }
         : {}),
-      execute: createDirectToolExecutor(() => state, () => initPromise, spec),
+      execute: spec.lazy
+        ? withUsageTracking(spec.prefixedName, createDirectToolExecutor(() => state, () => initPromise, spec))
+        : createDirectToolExecutor(() => state, () => initPromise, spec),
       renderShell: toolRenderShell,
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName, toolRenderOptions),
       renderResult: renderMcpToolResult,
     });
+  }
+
+  function withUsageTracking<T extends (...args: any[]) => unknown>(toolName: string, execute: T): T {
+    return ((...args: Parameters<T>) => {
+      touchSearchActivated(toolName, true);
+      return execute(...args);
+    }) as T;
+  }
+
+  function touchSearchActivated(toolName: string, used = false): void {
+    const at = searchActivatedTools.indexOf(toolName);
+    if (at !== -1) searchActivatedTools.splice(at, 1);
+    searchActivatedTools.push(toolName);
+    if (used) usedSearchTools.add(toolName);
+  }
+
+  function lazyKey(serverName: string, originalName: string): string {
+    return `${serverName}\u0000${originalName}`;
+  }
+
+  // Pi registers a tool active. A lazy tool must not stay that way: hold every
+  // lazy tool that search has not activated out of the active set. Safe to call
+  // repeatedly; a no-op until Pi's action methods are available.
+  function holdLazyToolsInactive(): void {
+    if (lazyDirectTools.size === 0) return;
+    const activeTools = getActiveToolsIfReady();
+    if (!activeTools) return;
+    const activated = new Set(searchActivatedTools);
+    const next = activeTools.filter((name) => !lazyDirectTools.has(name) || activated.has(name));
+    if (next.length !== activeTools.length) pi.setActiveTools(next);
+  }
+
+  function activeToolCap(config: McpConfig): number {
+    const value = config.settings?.activeToolCap;
+    return typeof value === "number" && value > 0 ? Math.floor(value) : DEFAULT_ACTIVE_TOOL_CAP;
+  }
+
+  /**
+   * Activate the lazy direct tools a search matched, additively, under the cap.
+   * The floor (everything that is not search-activated) is never evicted;
+   * eviction is least-recently-used among search-activated tools, and a call
+   * counts as a use. Returns what changed so the result can say so.
+   */
+  function activateSearchMatches(
+    config: McpConfig,
+    matches: ReadonlyArray<{ server: string; tool: string }>,
+  ): { added: string[]; evicted: string[]; capped: boolean; cap: number } {
+    const cap = activeToolCap(config);
+    const activeTools = getActiveToolsIfReady() ?? [];
+    const activeSet = new Set(activeTools);
+    const wanted: string[] = [];
+    for (const match of matches) {
+      const name = lazyToolByServerTool.get(lazyKey(match.server, match.tool));
+      if (name && lazyDirectTools.has(name) && !activeSet.has(name) && !wanted.includes(name)) wanted.push(name);
+    }
+    // Slots above the floor are shared by search-activated tools. Ones the
+    // model has called keep their slot; the rest are evictable, oldest first.
+    const activated = searchActivatedTools.filter((name) => activeSet.has(name));
+    const kept = activated.filter((name) => usedSearchTools.has(name));
+    const evictable = activated.filter((name) => !usedSearchTools.has(name));
+    const capacity = cap - (activeTools.length - activated.length);
+    const free = Math.max(0, capacity - kept.length);
+    const added = wanted.slice(0, free);
+    const overflow = evictable.length + added.length - free;
+    const evicted = overflow > 0 ? evictable.slice(0, overflow) : [];
+    const capped = added.length < wanted.length;
+    if (added.length > 0 || evicted.length > 0) {
+      const next = new Set(activeTools);
+      for (const name of added) next.add(name);
+      for (const name of evicted) {
+        next.delete(name);
+        const at = searchActivatedTools.indexOf(name);
+        if (at !== -1) searchActivatedTools.splice(at, 1);
+      }
+      pi.setActiveTools([...next]);
+      for (const name of added) touchSearchActivated(name);
+    }
+    return { added, evicted, capped, cap };
   }
 
   function activeFailureServers(): Set<string> {
@@ -400,13 +490,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         if (previousServer !== spec.serverName) {
           forgetReportedDirectToolName(previousServer, spec.prefixedName);
         }
-        if (fallbackDeactivatedTools.delete(spec.prefixedName)) {
+        if (fallbackDeactivatedTools.delete(spec.prefixedName) && !spec.lazy) {
           const activeTools = getActiveToolsIfReady();
           if (activeTools && !activeTools.includes(spec.prefixedName)) {
             pi.setActiveTools([...activeTools, spec.prefixedName]);
           }
         }
         (previous ? updated : added).push(spec.prefixedName);
+      }
+      if (spec.lazy) {
+        lazyDirectTools.add(spec.prefixedName);
+        lazyToolByServerTool.set(lazyKey(spec.serverName, spec.originalName), spec.prefixedName);
+      } else if (lazyDirectTools.delete(spec.prefixedName)) {
+        lazyToolByServerTool.delete(lazyKey(spec.serverName, spec.originalName));
       }
     }
 
@@ -416,14 +512,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       registeredDirectTools.delete(toolName);
       registeredDirectToolServers.delete(toolName);
       forgetReportedDirectToolName(serverName, toolName);
+      if (lazyDirectTools.delete(toolName)) {
+        for (const [key, name] of lazyToolByServerTool) if (name === toolName) lazyToolByServerTool.delete(key);
+        const at = searchActivatedTools.indexOf(toolName);
+        if (at !== -1) searchActivatedTools.splice(at, 1);
+      }
       deactivated.push(toolName);
     }
 
     deactivateTools(deactivated);
+    holdLazyToolsInactive();
     return { specs, reservedDirectNames, activeDirectNames: nextNames, added, updated, deactivated };
   }
 
-  function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false>): void {
+  function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false | "search">): void {
     if (!state) return;
     for (const [serverName, value] of changes) {
       const definition = state.config.mcpServers[serverName];
@@ -1285,7 +1387,27 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return executeInstructions(state, params.instructions);
         }
         if (params.search !== undefined) {
-          return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset);
+          const result = executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset);
+          if (lazyDirectTools.size === 0) return result;
+          holdLazyToolsInactive();
+          const matches = (result.details as { matches?: Array<{ server: string; tool: string }> } | undefined)?.matches ?? [];
+          const { added, evicted, capped, cap } = activateSearchMatches(state.config, matches);
+          if (added.length === 0 && evicted.length === 0 && !capped) return result;
+          const notes: string[] = [];
+          if (added.length > 0) notes.push(`Activated as direct tools: ${added.join(", ")}.`);
+          if (evicted.length > 0) notes.push(`Deactivated (unused, at the ${cap}-tool ceiling): ${evicted.join(", ")}.`);
+          if (capped) {
+            notes.push(added.length === 0
+              ? `At the ${cap}-tool ceiling with nothing unused to free — use the tools already active, call these through mcp({ tool }), or raise settings.activeToolCap.`
+              : `Only ${added.length} activated; the ${cap}-tool ceiling is full. Narrow the search or call the rest through mcp({ tool }).`);
+          }
+          const text = result.content.map((block) => ("text" in block ? block.text : "")).join("\n");
+          return {
+            ...result,
+            content: [{ type: "text" as const, text: `${notes.join(" ")}\n\n${text}` }],
+            details: { ...(result.details ?? {}), activated: added, evicted, cap },
+            ...(added.length > 0 ? { addedToolNames: added } : {}),
+          };
         }
         if (params.server) {
           return executeList(state, params.server);

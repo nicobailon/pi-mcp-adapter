@@ -460,7 +460,7 @@ export interface ServerEntry {
   // Resource handling
   exposeResources?: boolean;
   // Direct tool registration
-  directTools?: boolean | string[];
+  directTools?: boolean | string[] | "search";
   // Override settings.toolPrefix for this server.
   toolPrefix?: ToolPrefix;
   // Include/exclude specific MCP tools/resources by original or prefixed name
@@ -570,7 +570,14 @@ export interface McpSettings {
   agentPluginPaths?: string[];
   idleTimeout?: number; // minutes, default 10, 0 to disable
   requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
-  directTools?: boolean;
+  directTools?: boolean | "search";
+  /**
+   * Ceiling on simultaneously ACTIVE search-activated direct tools. Only
+   * meaningful when some server uses `directTools: "search"`. Defaults to 24.
+   * Built-ins, other extensions' tools, eager direct tools and the `mcp` proxy
+   * are never counted against it and never evicted.
+   */
+  activeToolCap?: number;
   /**
    * Validate direct-tool inputs against the advertised schema after recovering
    * one JSON string layer for object and array properties. Defaults to false.
@@ -678,6 +685,8 @@ export interface PromptMetadata {
 }
 
 export interface DirectToolSpec {
+  /** Registered inactive; `mcp({ search })` activates it (directTools: "search"). */
+  lazy?: boolean;
   serverName: string;
   originalName: string;
   prefixedName: string;
