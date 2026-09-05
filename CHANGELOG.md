@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mcp({ connect })` now reports the direct tools it discovers on the tool result via `addedToolNames`, Pi's result-scoped tool activation surface, so they load from that transcript point instead of through an active-tool list rewrite. (#490) Thanks to [@chiptoe-svg](https://github.com/chiptoe-svg) for PR #494.
 
 ### Fixed
+- Namespace proxy argument guidance now uses exact search-result tool names for schema inspection. Thanks to [@r1ckyIn](https://github.com/r1ckyIn) for PR #519.
 - Early MCP tool discovery now honors `--mcp-config=<path>`, including paths containing `=`. (#512)
 - The repository lock now resolves `qs` to patched 6.16.0 for its published moderate advisories. (#517)
 - The optional `@earendil-works/pi-ai` peer now supports Pi 0.85 alongside 0.84.1, avoiding npm resolution conflicts. Thanks to [@dyld-w](https://github.com/dyld-w) for #507.
