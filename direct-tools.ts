@@ -317,6 +317,17 @@ export function buildProxyDescription(config: McpConfig): string {
     desc += `\nServers: ${serverNames.join(", ")}\n`;
   }
 
+  // Search-mode tools are real tools held inactive. Say how they wake up, or
+  // the model reads mcp({ tool }) as the only way in and never gets a schema.
+  const searchModeServers = serverNames.filter((serverName) => {
+    const definition = config.mcpServers[serverName];
+    const selected = definition?.directTools !== undefined ? definition.directTools : config.settings?.directTools;
+    return selected === "search";
+  });
+  if (searchModeServers.length > 0) {
+    desc += `\nSearch-mode servers (${searchModeServers.join(", ")}): their tools become real, schema-backed tools the first time mcp({ search }) matches them or mcp({ tool }) calls them — after that, call them directly by name.\n`;
+  }
+
   const disabledServers = Object.entries(config.mcpServers)
     .filter(([, definition]) => isServerDisabled(definition))
     .map(([serverName]) => serverName);

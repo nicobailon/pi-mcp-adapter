@@ -2519,6 +2519,32 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
     expect(result.content[0].text).toContain("Found 2"); // the search text is kept
   });
 
+  it("a proxy call for a held tool activates it as used and reports it as addedToolNames", async () => {
+    const { activeTools, proxyTool } = await boot({ activeToolCap: 1 });
+    mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }], details: { mode: "call", server: "demo", tool: "alpha" } });
+    const result = await proxyTool.execute("call-1", { tool: "demo_alpha", args: {} });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+    expect(result.addedToolNames).toEqual(["demo_alpha"]);
+    expect(result.content.map((block: any) => block.text).join("\n")).toContain("Activated as a direct tool: demo_alpha");
+    // A call is a use: the tool keeps its slot when a later search would overflow the ceiling.
+    mocks.executeSearch.mockReturnValue(searchResult("gamma"));
+    const search = await proxyTool.execute("call-2", { search: "q" });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+    expect(search.content[0].text).toContain("ceiling");
+    // Calling an already-active tool through the proxy changes nothing.
+    const again = await proxyTool.execute("call-3", { tool: "demo_alpha", args: {} });
+    expect(again.addedToolNames).toBeUndefined();
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+  });
+
+  it("a proxy call that does not resolve to a held tool activates nothing", async () => {
+    const { activeTools, proxyTool } = await boot();
+    mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "not found" }], details: { mode: "call", error: "tool_not_found", requestedTool: "demo_zeta" } });
+    const result = await proxyTool.execute("call-1", { tool: "demo_zeta", args: {} });
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+    expect(result.addedToolNames).toBeUndefined();
+  });
+
   it("stops at the cap and says so, evicting the least-recently-used unused tool first", async () => {
     // The cap counts search-activated tools only; the floor (bash + mcp) is outside it.
     const { activeTools, proxyTool, directTool } = await boot({ activeToolCap: 2 });
