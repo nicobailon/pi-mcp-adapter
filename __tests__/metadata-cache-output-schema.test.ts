@@ -53,15 +53,10 @@ describe("cached output schema discovery", () => {
       const result = await runMcpScript(state, 'return await tools.describe({ path: "demo_info" });');
       const text = result.content.filter(block => block.type === "text").at(-1)!;
       const descriptor = JSON.parse(text.text);
-      if (outputSchema === undefined) {
-        expect(loaded.tools[0]).not.toHaveProperty("outputSchema");
-        expect(cached[0]).not.toHaveProperty("outputSchema");
-        expect(descriptor).not.toHaveProperty("outputSchema");
-        expect(descriptor).not.toHaveProperty("outputSchemaTarget");
-      } else {
-        expect(descriptor.outputSchema).toEqual(outputSchema);
-        expect(descriptor.outputSchemaTarget).toBe("data.structuredContent");
-      }
+      expect(descriptor).toEqual({
+        path: "demo_info", name: "info", server: "demo", inputTypeScript: "{}",
+        ...(outputSchema !== undefined ? { outputSchema, outputSchemaTarget: "data.structuredContent" } : {}),
+      });
     }
   });
 });

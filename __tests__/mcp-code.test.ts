@@ -88,6 +88,7 @@ describe("runMcpScript", () => {
             description: "Echo a value",
             inputSchema: {
               type: "object",
+              description: "Root guidance is not field documentation",
               properties: { value: { type: "string" } },
               required: ["value"],
             },
@@ -152,7 +153,7 @@ describe("runMcpScript", () => {
     });
   });
 
-  it("describes script-visible schemas and suggests corrections without throwing", async () => {
+  it("keeps inputs without field documentation compact and suggests corrections without throwing", async () => {
     const result = await runMcpScript(
       state,
       'return { supported: await tools.describe({ path: "fixture_echo" }), unsupported: await tools.describe({ path: "fixture_fail" }), missing: await tools.describe({ path: "fixture_ech" }) };',
