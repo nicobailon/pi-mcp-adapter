@@ -266,7 +266,7 @@ describe("syncNamespaceProxyTools", () => {
     expect(registered.has("mcp__other")).toBe(false);
   });
 
-  it("exposes a `tool` and optional `args` parameter schema for dispatch", async () => {
+  it("exposes dispatch parameters with search-first describe guidance", async () => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered } = makePi();
 
@@ -287,9 +287,13 @@ describe("syncNamespaceProxyTools", () => {
     expect(tool.parameters).toMatchObject({
       properties: {
         tool: expect.anything(),
-        args: expect.anything(),
+        args: {
+          description: expect.stringMatching(/mcp\(\{ search:.*mcp\(\{ describe:/),
+        },
       },
     });
+    expect(JSON.stringify(tool.parameters)).toContain("exact tool name returned by search");
+    expect(JSON.stringify(tool.parameters)).not.toContain("server/tool");
   });
 
   it("skips registration when an existing direct tool already uses mcp__<server>", async () => {

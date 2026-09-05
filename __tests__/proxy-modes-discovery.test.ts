@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { executeCall, executeDescribe, executeList, executeSearch, executeStatus } from "../proxy-modes.ts";
 import type { McpExtensionState } from "../state.ts";
+import { buildToolMetadata } from "../tool-metadata.ts";
+import type { ServerEntry } from "../types.ts";
 
 function createState(): McpExtensionState {
   return {
@@ -206,6 +208,45 @@ describe("proxy discovery", () => {
     expect(result.content[0].text).toContain(
       'demo (2 tools (lazy: tools from cache, not connected yet — mcp({ connect: "demo" }) to connect)):',
     );
+  });
+
+  describe.each(["global", "server"] as const)("%s toolPrefix discovery", scope => {
+    it.each([
+      ["server", "demo-mcp_search"],
+      ["short", "demo_search"],
+      ["none", "search"],
+      ["mcp", "mcp__demo-mcp_search"],
+    ] as const)("describes the exact search result with %s prefixes", (prefix, expectedName) => {
+      const state = createState();
+      const server = "demo-mcp";
+      const definition: ServerEntry = { command: "demo" };
+      const globalPrefix = scope === "global" ? prefix : "none";
+      if (scope === "server") definition.toolPrefix = prefix;
+      state.config = {
+        mcpServers: { [server]: definition },
+        settings: { toolPrefix: globalPrefix },
+      };
+      const inputSchema = { type: "object", properties: { query: { type: "string" } }, required: ["query"] };
+      const { metadata } = buildToolMetadata(
+        [{ name: "search", description: "Search demo records", inputSchema }],
+        [],
+        definition,
+        server,
+        globalPrefix,
+      );
+      state.toolMetadata = new Map([[server, metadata]]);
+
+      const search = executeSearch(state, "search", false, server);
+      expect(search.details).toMatchObject({ count: 1, matches: [{ tool: expectedName }] });
+      const matches = search.details.matches as Array<{ tool: string }>;
+      const result = executeDescribe(state, matches[0]!.tool);
+
+      expect(result.details).toMatchObject({
+        mode: "describe",
+        server,
+        tool: { name: expectedName, originalName: "search", inputSchema },
+      });
+    });
   });
 
   it("suggests the matching tool for a prefix-mangled describe name", () => {
