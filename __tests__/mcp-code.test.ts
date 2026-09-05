@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { createMcpAdapter } from "../index.ts";
 import { runMcpScript } from "../mcp-code.ts";
+import { executeCall } from "../proxy-modes.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
@@ -15,6 +16,7 @@ const fdRunner = fileURLToPath(new URL("./fixtures/mcp-code-fd-runner.ts", impor
 const definition = { command: process.execPath, args: [fixture] };
 let manager: McpServerManager;
 let state: McpExtensionState;
+let intermediateState: McpExtensionState;
 
 function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] {
   return result.content
@@ -110,6 +112,15 @@ describe("runMcpScript", () => {
       failureTracker: new Map(),
       completedUiSessions: [],
     } as unknown as McpExtensionState;
+    intermediateState = {
+      ...state,
+      toolMetadata: new Map([["fixture", [
+        ...state.toolMetadata.get("fixture")!,
+        { name: "fixture_sized", originalName: "sized" },
+        { name: "fixture_read_resource", originalName: "read_resource", resourceUri: "fixture://text" },
+        { name: "fixture_read_empty", originalName: "read_empty", resourceUri: "fixture://empty" },
+      ]]]),
+    };
   });
 
   afterAll(async () => {
@@ -351,6 +362,82 @@ describe("runMcpScript", () => {
         structuredContent: { echoed: "round trip" },
       },
     });
+  });
+
+  it("filters a large intermediate to [7] without exposing raw data or spill metadata", async () => {
+    const result = await runMcpScript(intermediateState, `
+      const response = await tools.call("fixture_sized", { bytes: 128 * 1024 });
+      return response.data.structuredContent.rows.filter(id => id === 7);
+    `);
+    expect(textBlocks(result)).toHaveLength(1);
+    expect(JSON.parse(textBlocks(result)[0])).toEqual([7]);
+    expect(result.details).toMatchObject({ calls: [{ path: "fixture_sized", ok: true }] });
+    expect(JSON.stringify(result)).not.toMatch(/padding|omitted|fullResultPath|fullOutputPath|outputGuard/);
+  });
+
+  it("keeps ordinary calls guarded even with script origin, and guards final script output", async () => {
+    const value = "private-tail".padStart(128 * 1024, "x");
+    const ordinary = await executeCall(state, "fixture_echo", { value }, undefined, undefined, undefined, "script");
+    expect(ordinary.details).toMatchObject({ outputGuard: { truncated: true }, mcpResult: { omitted: true } });
+    expect(JSON.stringify(ordinary)).not.toContain("private-tail");
+    const result = await runMcpScript(state, `return (await tools.fixture_echo({ value: ${JSON.stringify(value)} })).data.content[0].text;`);
+    expect(result.details).toMatchObject({ outputGuard: { truncated: true } });
+    expect(JSON.stringify(result)).not.toContain("private-tail");
+  });
+
+  it("admits exactly 16 MiB cumulatively across sequential successful results", async () => {
+    const result = await runMcpScript(intermediateState, `
+      const first = await tools.fixture_sized({ bytes: 8 * 1024 * 1024 });
+      const second = await tools.fixture_sized({ bytes: 8 * 1024 * 1024 });
+      const excess = await tools.fixture_echo({ value: "over budget" });
+      return { admitted: [first.ok, second.ok], excess, continued: true };
+    `);
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+      admitted: [true, true], continued: true,
+      excess: { ok: false, error: { code: "intermediate_result_too_large", message: expect.any(String) } },
+    });
+    expect(result.details).toMatchObject({ calls: [
+      { ok: true, durationMs: expect.any(Number) },
+      { ok: true, durationMs: expect.any(Number) },
+      { ok: false, error: "intermediate_result_too_large", durationMs: expect.any(Number) },
+    ] });
+    expect(result.details).not.toHaveProperty("error");
+  });
+
+  it("shares the cumulative budget across parallel calls without depending on admission order", async () => {
+    const result = await runMcpScript(intermediateState, `
+      const responses = await Promise.all([1, 2, 3].map(() => tools.fixture_sized({ bytes: 6 * 1024 * 1024 })));
+      return responses.map(r => r.ok ? "admitted" : r.error.code).sort();
+    `);
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual(["admitted", "admitted", "intermediate_result_too_large"]);
+    expect(result.details).toMatchObject({ calls: expect.arrayContaining([
+      expect.objectContaining({ ok: true, durationMs: expect.any(Number) }),
+      expect.objectContaining({ ok: false, error: "intermediate_result_too_large", durationMs: expect.any(Number) }),
+    ]) });
+  });
+
+  it("counts UTF-8 JSON bytes, rejects one byte over, and does not charge rejected bytes", async () => {
+    const result = await runMcpScript(intermediateState, `
+      await tools.fixture_sized({ bytes: 8 * 1024 * 1024 });
+      const rejected = await tools.fixture_sized({ bytes: 8 * 1024 * 1024 + 1, multibyte: true });
+      const exact = await tools.fixture_sized({ bytes: 8 * 1024 * 1024, multibyte: true });
+      return { rejected, admitted: exact.ok, rows: exact.data?.structuredContent.rows ?? null, error: exact.error ?? null };
+    `);
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+      rejected: { ok: false, error: { code: "intermediate_result_too_large" } }, admitted: true, rows: [7], error: null,
+    });
+    expect(result.details).toMatchObject({ calls: [
+      { ok: true }, { ok: false, error: "intermediate_result_too_large" }, { ok: true },
+    ] });
+    const nextScript = await runMcpScript(intermediateState, 'return (await tools.fixture_echo({ value: "fresh budget" })).ok;');
+    expect(textBlocks(nextScript)).toEqual(["true"]);
+  });
+
+  it("preserves resource text joining and the empty-resource fallback", async () => {
+    const result = await runMcpScript(intermediateState, 'return [await tools.fixture_read_resource({}), await tools.fixture_read_empty({})];');
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual([
+      { ok: true, data: "first\nsecond" }, { ok: true, data: "(empty resource)" },
+    ]);
   });
 
   it("returns a failure envelope and lets the script continue", async () => {

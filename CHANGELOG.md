@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mcp({ connect })` now reports the direct tools it discovers on the tool result via `addedToolNames`, Pi's result-scoped tool activation surface, so they load from that transcript point instead of through an active-tool list rewrite. (#490) Thanks to [@chiptoe-svg](https://github.com/chiptoe-svg) for PR #494.
 
 ### Fixed
+- Script calls now preserve full intermediate data for filtering within a fixed 16 MiB cumulative transfer budget, returning `intermediate_result_too_large` when exhausted while retaining final-output guards. (#520)
 - Namespace proxy argument guidance now uses exact search-result tool names for schema inspection. Thanks to [@r1ckyIn](https://github.com/r1ckyIn) for PR #519.
 - Script `tools.describe()` now retains documented input field guidance alongside compact parameter shapes, including formats and units. (#521)
 - Early MCP tool discovery now honors `--mcp-config=<path>`, including paths containing `=`. (#512)
