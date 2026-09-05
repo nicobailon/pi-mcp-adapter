@@ -2537,6 +2537,23 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
     expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
   });
 
+  it("a search-mode tool that becomes eager leaves the search bookkeeping (floor, not counted, never evicted)", async () => {
+    const { activeTools, proxyTool } = await boot({ activeToolCap: 1 });
+    mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }], details: { mode: "call", server: "demo", tool: "alpha" } });
+    await proxyTool.execute("call-1", { tool: "demo_alpha", args: {} });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+    // The server flips to eager direct tools (e.g. via the /mcp panel); alpha is re-resolved non-lazy.
+    mocks.resolveDirectTools.mockReturnValue([{ ...lazySpec("alpha"), lazy: false }, lazySpec("gamma")]);
+    mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
+    await proxyTool.execute("call-2", { connect: "demo" });
+    // alpha is floor now: a search must not count it against the cap nor evict it.
+    mocks.executeSearch.mockReturnValue(searchResult("gamma"));
+    const search = await proxyTool.execute("call-3", { search: "q" });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha", "demo_gamma"]);
+    expect(search.addedToolNames).toEqual(["demo_gamma"]);
+    expect(search.content[0].text).not.toContain("ceiling");
+  });
+
   it("a proxy call that does not resolve to a held tool activates nothing", async () => {
     const { activeTools, proxyTool } = await boot();
     mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "not found" }], details: { mode: "call", error: "tool_not_found", requestedTool: "demo_zeta" } });

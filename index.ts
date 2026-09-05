@@ -551,8 +551,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         (previous ? updated : added).push(spec.prefixedName);
       }
-      if (spec.lazy) lazyDirectTools.add(spec.prefixedName);
-      else lazyDirectTools.delete(spec.prefixedName);
+      if (spec.lazy) {
+        lazyDirectTools.add(spec.prefixedName);
+      } else if (lazyDirectTools.delete(spec.prefixedName)) {
+        // Lazy → eager (e.g. the server flipped to directTools: true in the
+        // panel): it is floor now, so it must neither count against the cap
+        // nor be evictable as an unused search tool.
+        const at = searchActivatedTools.indexOf(spec.prefixedName);
+        if (at !== -1) searchActivatedTools.splice(at, 1);
+        usedSearchTools.delete(spec.prefixedName);
+      }
     }
 
     for (const toolName of [...registeredDirectTools.keys()]) {
