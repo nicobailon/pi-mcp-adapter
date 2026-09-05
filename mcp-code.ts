@@ -7,7 +7,7 @@ import { combineAbortSignals } from "./runtime-owner.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import type { McpExtensionState } from "./state.ts";
-import { findToolByName, formatSchema } from "./tool-metadata.ts";
+import { findToolByName, formatSchema, hasSchemaDescriptions } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import type { ContentBlock } from "./types.ts";
 
@@ -206,15 +206,20 @@ export async function runMcpScript(
         if (isServerInActiveFailureBackoff(state, server)) continue;
         const tool = findToolByName(metadata, path);
         if (!tool) continue;
-        const inputTypeScript = tool.inputSchema
-          ? renderTsShape(tool.inputSchema) ?? formatSchema(tool.inputSchema)
-          : null;
+        const inputShape = tool.inputSchema ? renderTsShape(tool.inputSchema) : null;
+        const inputTypeScript = inputShape ?? (tool.inputSchema ? formatSchema(tool.inputSchema) : null);
         return {
           path: tool.name,
           name: tool.originalName,
           server,
           ...(tool.description ? { description: tool.description } : {}),
           ...(inputTypeScript ? { inputTypeScript } : {}),
+          ...(inputShape && hasSchemaDescriptions(tool.inputSchema)
+            ? { inputGuidance: formatSchema(tool.inputSchema) } : {}),
+          ...(tool.outputSchema !== undefined ? {
+            outputSchemaTarget: "data.structuredContent",
+            outputSchema: tool.outputSchema,
+          } : {}),
         };
       }
       const suggestions = path ? rankSuggestions(state, path, 5) : [];

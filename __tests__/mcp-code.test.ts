@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { createMcpAdapter } from "../index.ts";
 import { runMcpScript } from "../mcp-code.ts";
+import { buildToolMetadata } from "../tool-metadata.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 import { MCP_TOOL_APPROVAL_REQUEST_EVENT, type McpToolApprovalRequest } from "../types.ts";
@@ -181,6 +182,42 @@ describe("runMcpScript", () => {
         },
       },
     });
+  });
+
+  it("preserves documented input guidance and original structured output schemas only in describe", async () => {
+    const outputSchema = {
+      type: "object" as const,
+      properties: { pixels: { type: "number", description: "Rendered width in pixels" } },
+      allOf: [{ required: ["pixels"] }],
+      additionalProperties: { type: "string" },
+    };
+    const { metadata } = buildToolMetadata([{
+      name: "icon",
+      inputSchema: {
+        type: "object",
+        properties: {
+          icon_id: { type: "string", description: "Icon ID in prefix:name format" },
+          color: { enum: ["red", "blue"], description: "Color, for example red" },
+          options: {
+            type: "object",
+            properties: { size: { type: "number", description: "Size in pixels" } },
+          },
+        },
+        required: ["icon_id"],
+      },
+      outputSchema,
+    }], [], definition, "fixture", "server");
+    const result = await runMcpScript({ ...state, toolMetadata: new Map([["fixture", metadata]]) },
+      'return { descriptor: await tools.describe({ path: "fixture_icon" }), search: await tools.search({ query: "icon" }) };');
+    const { descriptor, search } = JSON.parse(textBlocks(result).at(-1)!);
+    expect(descriptor).toEqual({
+      path: "fixture_icon", name: "icon", server: "fixture",
+      inputTypeScript: '{ icon_id: string; color?: "red" | "blue"; options?: { size?: number; }; }',
+      inputGuidance: '  icon_id (string) *required* - Icon ID in prefix:name format\n  color (enum: "red", "blue") - Color, for example red\n  options (object)\n    size (number) - Size in pixels',
+      outputSchemaTarget: "data.structuredContent",
+      outputSchema,
+    });
+    expect(search.items).toEqual([{ path: "fixture_icon", name: "icon", server: "fixture", score: expect.any(Number) }]);
   });
 
   it("keeps active failed-backoff tools out of script describe results", async () => {

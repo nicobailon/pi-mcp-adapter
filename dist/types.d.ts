@@ -45,6 +45,7 @@ export interface McpTool {
     title?: SdkTool["title"];
     description?: SdkTool["description"];
     inputSchema?: SdkTool["inputSchema"];
+    outputSchema?: SdkTool["outputSchema"];
     _meta?: SdkTool["_meta"];
 }
 export interface McpResource {
@@ -466,6 +467,7 @@ export interface ToolMetadata {
     uiResourceUri?: string;
     uiVisibility?: UiToolVisibility[];
     inputSchema?: unknown;
+    outputSchema?: unknown;
     uiStreamMode?: UiStreamMode;
 }
 export interface PromptMetadata {
@@ -499,6 +501,7 @@ export interface CachedTool {
     name: string;
     description?: string;
     inputSchema?: unknown;
+    outputSchema?: unknown;
     uiResourceUri?: string;
     uiVisibility?: UiToolVisibility[];
     uiStreamMode?: "eager" | "stream-first";

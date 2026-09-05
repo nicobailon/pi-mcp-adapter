@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Script `tools.describe()` now exposes server-advertised output schemas for `data.structuredContent`, preserved through metadata caching and refresh. (#522)
 - Stdio MCP servers can opt out of arbitrary adapter environment inheritance with `inheritEnv: false`; SDK platform defaults and explicit `env` overlays remain. Thanks to [@zenolam](https://github.com/zenolam) for #509.
 - Local Claude plugin bundles can now be loaded from trusted configured directories, including bundled MCP servers and skills. Thanks to [@gugu91](https://github.com/gugu91) for PR #493.
 - OAuth loopback redirects can use `{port}` with `localhost`, `127.0.0.1`, or `::1` when a provider permits RFC 8252 dynamic ports. Thanks to [@nrutman](https://github.com/nrutman) for PR #483.
@@ -20,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Namespace proxy argument guidance now uses exact search-result tool names for schema inspection. Thanks to [@r1ckyIn](https://github.com/r1ckyIn) for PR #519.
+- Script `tools.describe()` now retains documented input field guidance alongside compact parameter shapes, including formats and units. (#521)
 - Early MCP tool discovery now honors `--mcp-config=<path>`, including paths containing `=`. (#512)
 - The repository lock now resolves `qs` to patched 6.16.0 for its published moderate advisories. (#517)
 - The optional `@earendil-works/pi-ai` peer now supports Pi 0.85 alongside 0.84.1, avoiding npm resolution conflicts. Thanks to [@dyld-w](https://github.com/dyld-w) for #507.

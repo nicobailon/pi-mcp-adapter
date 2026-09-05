@@ -86,6 +86,7 @@ export interface McpTool {
   title?: SdkTool["title"];
   description?: SdkTool["description"];
   inputSchema?: SdkTool["inputSchema"]; // JSON Schema
+  outputSchema?: SdkTool["outputSchema"]; // JSON Schema for structuredContent
   _meta?: SdkTool["_meta"];
 }
 
@@ -663,6 +664,7 @@ export interface ToolMetadata {
   uiResourceUri?: string; // For app-enabled tools: the UI resource URI
   uiVisibility?: UiToolVisibility[];
   inputSchema?: unknown;  // JSON Schema for parameters (stored for describe/errors)
+  outputSchema?: unknown; // Server schema for structuredContent (stored for describe)
   uiStreamMode?: UiStreamMode;
 }
 
@@ -701,6 +703,7 @@ export interface CachedTool {
   name: string;
   description?: string;
   inputSchema?: unknown;
+  outputSchema?: unknown;
   uiResourceUri?: string;
   uiVisibility?: UiToolVisibility[];
   uiStreamMode?: "eager" | "stream-first";
