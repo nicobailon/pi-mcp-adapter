@@ -2556,6 +2556,54 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
     expect(result.content[0].text).toContain("ceiling with nothing unused to free");
   });
 
+  it("on resume, re-activates the search-mode tools the transcript says were loaded, newest first under the cap", async () => {
+    const config = { settings: { scriptMode: false, activeToolCap: 2 }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
+    const state = createState();
+    state.config = config;
+    // The resumed transcript: two earlier searches loaded alpha+beta, then gamma.
+    const getBranch = vi.fn(() => [
+        { type: "message", message: { role: "user", content: "find tools" } },
+        { type: "message", message: { role: "toolResult", toolName: "mcp", addedToolNames: ["demo_alpha", "demo_beta"] } },
+        { type: "message", message: { role: "toolResult", toolName: "mcp", addedToolNames: ["demo_gamma"] } },
+        { type: "message", message: { role: "toolResult", toolName: "other", addedToolNames: ["demo_delta"] } }, // not ours
+      ]);
+    state.sessionManager = { getBranch };
+    state.consentManager = { clear: vi.fn(), restoreDecision: vi.fn() };
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValue([lazySpec("alpha"), lazySpec("beta"), lazySpec("gamma"), lazySpec("delta")]);
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({ reason: "resume" }, {});
+    // Re-activation runs after initialization resolves (post-init surface
+    // sync), which is a few ticks later than the early registration pass.
+    await vi.waitFor(() => expect(activeTools()).toContain("demo_gamma"));
+    expect(getBranch).toHaveBeenCalled();
+    // Newest first: gamma, then alpha+beta — the cap of 2 keeps gamma and alpha.
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_gamma", "demo_alpha"]);
+    expect(activeTools()).not.toContain("demo_delta"); // another tool's result is not ours
+  });
+
+  it("on a new session, the transcript is not consulted and lazy tools stay held", async () => {
+    const config = { settings: { scriptMode: false }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
+    const state = createState();
+    state.config = config;
+    state.sessionManager = { getBranch: () => [{ type: "message", message: { role: "toolResult", toolName: "mcp", addedToolNames: ["demo_alpha"] } }] };
+    state.consentManager = { clear: vi.fn(), restoreDecision: vi.fn() };
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValue([lazySpec("alpha")]);
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({ reason: "new" }, {});
+    await new Promise((resolve) => setTimeout(resolve, 20)); // let post-init work settle
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+  });
+
   it("connect does not report held-inactive search-mode tools as loaded", async () => {
     const config = { settings: { scriptMode: false }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
     const state = createState();

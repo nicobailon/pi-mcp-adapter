@@ -273,6 +273,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // in use must not vanish under the model. mcp({ tool }) always remains as the
   // escape hatch when the ceiling is full of used tools.
   const usedSearchTools = new Set<string>();
+  let reactivateFromTranscriptOnInit = false;
   const DEFAULT_ACTIVE_TOOL_CAP = 24;
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
   const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
@@ -420,6 +421,45 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       for (const name of added) touchSearchActivated(name);
     }
     return { added, evicted, capped, cap };
+  }
+
+  /**
+   * On resume, re-activate the search-mode tools the transcript says were
+   * loaded: every addedToolNames on an earlier `mcp` result, newest first so
+   * the most recently loaded win under the cap. Reads the active branch, like
+   * approval restore, so tree navigation is respected.
+   */
+  function reactivateFromTranscript(targetState: McpExtensionState): void {
+    if (lazyDirectTools.size === 0) return;
+    const sessionManager = targetState.sessionManager;
+    if (!sessionManager) return;
+    let branch: readonly unknown[] = [];
+    try {
+      branch = sessionManager.getBranch();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.debug(`MCP: could not read the active session branch for tool re-activation: ${detail}`);
+      return;
+    }
+    const names: string[] = [];
+    for (let i = branch.length - 1; i >= 0; i -= 1) {
+      const entry = branch[i] as { type?: string; message?: { role?: string; toolName?: string; addedToolNames?: unknown } } | undefined;
+      const message = entry?.type === "message" ? entry.message : undefined;
+      if (!message || message.role !== "toolResult" || message.toolName !== "mcp") continue;
+      if (!Array.isArray(message.addedToolNames)) continue;
+      for (const name of message.addedToolNames) {
+        if (typeof name === "string" && lazyDirectTools.has(name) && !names.includes(name)) names.push(name);
+      }
+    }
+    if (names.length === 0) return;
+    const matches = names.flatMap((name) => {
+      const server = registeredDirectToolServers.get(name);
+      return server ? [{ server, tool: name }] : [];
+    });
+    const { added, capped } = activateSearchMatches(targetState.config, matches);
+    if (added.length > 0 || capped) {
+      logger.debug(`MCP: resume re-activated ${added.length} search-mode tool(s)${capped ? " (ceiling reached)" : ""}: ${added.join(", ")}`);
+    }
   }
 
   function activeFailureServers(): Set<string> {
@@ -748,6 +788,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       };
       syncPromptCommands();
       syncToolSurface(ctx);
+      if (reactivateFromTranscriptOnInit) {
+        reactivateFromTranscriptOnInit = false;
+        reactivateFromTranscript(nextState);
+      }
       // A connected snapshot is readiness-like external state. Publish it only
       // after Pi's model-facing direct-tool surface reflects live metadata.
       nextState.statusEvents = pi.events;
@@ -812,8 +856,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     return skillPaths.length > 0 ? { skillPaths } : undefined;
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     const generation = ++lifecycleGeneration;
+    // Activation state is per process. A resumed session's transcript already
+    // says which search-mode tools were loaded (the addedToolNames on earlier
+    // mcp results); without this, every resume silently drops them back to
+    // inactive and the model is left calling them through the proxy.
+    reactivateFromTranscriptOnInit = (event as { reason?: string } | undefined)?.reason === "resume";
     const previousState = state;
     const previousOwner = currentOwner;
     const previousOAuthRuntime = currentOAuthRuntime;
