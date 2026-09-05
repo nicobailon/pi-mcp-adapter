@@ -2519,8 +2519,8 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
   });
 
   it("stops at the cap and says so, evicting the least-recently-used unused tool first", async () => {
-    // floor = bash + mcp (2); cap 4 leaves room for two search-activated tools
-    const { activeTools, proxyTool, directTool } = await boot({ activeToolCap: 4 });
+    // The cap counts search-activated tools only; the floor (bash + mcp) is outside it.
+    const { activeTools, proxyTool, directTool } = await boot({ activeToolCap: 2 });
     mocks.executeSearch.mockReturnValue(searchResult("alpha"));
     await proxyTool.execute("c1", { search: "q" });
     mocks.executeSearch.mockReturnValue(searchResult("beta"));
@@ -2536,17 +2536,21 @@ describe("directTools: \"search\" — registered inactive, activated by search, 
     expect(activeTools()).not.toContain("demo_beta"); // stale → evicted
     expect(activeTools()).toContain("demo_gamma");
     expect(activeTools()).not.toContain("demo_delta"); // over the ceiling
-    expect(activeTools().length).toBe(4);
-    expect(result.content[0].text).toContain("Deactivated (unused, at the 4-tool ceiling): demo_beta");
+    expect(activeTools().length).toBe(4); // floor of 2 + cap of 2
+    expect(result.content[0].text).toContain("Deactivated (unused, at the 2-tool ceiling): demo_beta");
     expect(result.content[0].text).toContain("ceiling is full");
     expect(result.details.evicted).toEqual(["demo_beta"]);
   });
 
-  it("never evicts the floor: with the floor at the cap nothing activates and the result says why", async () => {
-    const { activeTools, proxyTool } = await boot({ activeToolCap: 2 });
+  it("does not count the floor against the cap, and refuses to evict a used tool to make room", async () => {
+    const { activeTools, proxyTool, directTool } = await boot({ activeToolCap: 1 });
     mocks.executeSearch.mockReturnValue(searchResult("alpha"));
-    const result = await proxyTool.execute("c1", { search: "q" });
-    expect(activeTools()).toEqual(["bash", "mcp"]);
+    await proxyTool.execute("c1", { search: "q" });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]); // floor untouched by a cap of 1
+    await directTool("demo_alpha").execute("c2", {}); // now in use → keeps its slot
+    mocks.executeSearch.mockReturnValue(searchResult("beta"));
+    const result = await proxyTool.execute("c3", { search: "q" });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
     expect(result.addedToolNames).toBeUndefined();
     expect(result.content[0].text).toContain("ceiling with nothing unused to free");
   });

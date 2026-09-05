@@ -397,13 +397,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const name = lazyToolByServerTool.get(lazyKey(match.server, match.tool));
       if (name && lazyDirectTools.has(name) && !activeSet.has(name) && !wanted.includes(name)) wanted.push(name);
     }
-    // Slots above the floor are shared by search-activated tools. Ones the
-    // model has called keep their slot; the rest are evictable, oldest first.
+    // The cap bounds search-activated tools only; the floor (built-ins, the
+    // proxy, eager direct tools, other extensions) is neither counted nor
+    // evicted, so the setting reads as "how many search tools may be active".
+    // Ones the model has called keep their slot; the rest are evictable,
+    // oldest first.
     const activated = searchActivatedTools.filter((name) => activeSet.has(name));
     const kept = activated.filter((name) => usedSearchTools.has(name));
     const evictable = activated.filter((name) => !usedSearchTools.has(name));
-    const capacity = cap - (activeTools.length - activated.length);
-    const free = Math.max(0, capacity - kept.length);
+    const free = Math.max(0, cap - kept.length);
     const added = wanted.slice(0, free);
     const overflow = evictable.length + added.length - free;
     const evicted = overflow > 0 ? evictable.slice(0, overflow) : [];
