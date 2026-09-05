@@ -150,7 +150,7 @@ const parameters = Type.Object({
   tool: Type.String({ description: "Underlying MCP tool name to call on this server." }),
   args: Type.Optional(Type.Object({}, {
     additionalProperties: true,
-    description: "Arguments for the underlying tool. Use mcp({ search: '...' }), then mcp({ describe: 'tool_name' }) with the exact tool name returned by search.",
+    description: "Arguments for the underlying tool. When mcp is available, use mcp({ search: '...' }) to inspect schemas; for unique names use mcp({ describe: 'tool_name' }) with the exact tool name returned by search.",
   })),
 });
 

@@ -293,6 +293,8 @@ describe("syncNamespaceProxyTools", () => {
       },
     });
     expect(JSON.stringify(tool.parameters)).toContain("exact tool name returned by search");
+    expect(JSON.stringify(tool.parameters)).toContain("When mcp is available");
+    expect(JSON.stringify(tool.parameters)).toContain("to inspect schemas; for unique names use");
     expect(JSON.stringify(tool.parameters)).not.toContain("server/tool");
   });
 
