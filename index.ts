@@ -265,6 +265,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const reportedDirectToolNamesByServer = new Map<string, Set<string>>();
   const registeredNamespaceProxyTools = new Set<string>();
   const fallbackDeactivatedTools = new Set<string>();
+  // directTools: "search" — registered inactive, activated by mcp({ search }).
+  const lazyDirectTools = new Set<string>();
+  // The lazy tools a search has activated; every other lazy tool is held out
+  // of the active set. Per process: nothing here survives a restart.
+  const searchActivatedTools = new Set<string>();
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
   const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
   const renderMcpToolResult = createMcpToolResultRenderer(toolRenderOptions);
@@ -304,6 +309,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       resourceUri: spec.resourceUri,
       uiResourceUri: spec.uiResourceUri,
       uiStreamMode: spec.uiStreamMode,
+      // A mode-only change (search ↔ eager) must re-register, or the tool
+      // keeps the activation behavior of the mode it was registered under.
+      lazy: spec.lazy === true,
     });
   }
 
@@ -330,6 +338,43 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName, toolRenderOptions),
       renderResult: renderMcpToolResult,
     });
+  }
+
+  // Pi registers a tool active. A lazy tool must not stay that way: hold every
+  // lazy tool that search has not activated out of the active set. Safe to call
+  // repeatedly; a no-op until Pi's action methods are available.
+  function holdLazyToolsInactive(): void {
+    if (lazyDirectTools.size === 0) return;
+    const activeTools = getActiveToolsIfReady();
+    if (!activeTools) return;
+    const next = activeTools.filter((name) => !lazyDirectTools.has(name) || searchActivatedTools.has(name));
+    if (next.length !== activeTools.length) pi.setActiveTools(next);
+  }
+
+  /**
+   * Activate the lazy direct tools a search matched, additively. This is the
+   * one place a search-mode tool becomes active; nothing is ever deactivated
+   * here. Returns the names that actually changed state so the result can
+   * report only real additions.
+   */
+  function activateSearchMatches(matches: ReadonlyArray<{ server: string; tool: string }>): string[] {
+    const activeTools = getActiveToolsIfReady();
+    if (!activeTools) return [];
+    const activeSet = new Set(activeTools);
+    // executeSearch reports ToolMetadata.name, which is the prefixed name a
+    // direct tool is registered under — the same key the lazy set holds.
+    const added: string[] = [];
+    for (const match of matches) {
+      const name = match.tool;
+      if (!lazyDirectTools.has(name) || registeredDirectToolServers.get(name) !== match.server) continue;
+      if (activeSet.has(name) || added.includes(name)) continue;
+      added.push(name);
+    }
+    if (added.length > 0) {
+      pi.setActiveTools([...activeTools, ...added]);
+      for (const name of added) searchActivatedTools.add(name);
+    }
+    return added;
   }
 
   function activeFailureServers(): Set<string> {
@@ -400,13 +445,25 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         if (previousServer !== spec.serverName) {
           forgetReportedDirectToolName(previousServer, spec.prefixedName);
         }
-        if (fallbackDeactivatedTools.delete(spec.prefixedName)) {
+        if (fallbackDeactivatedTools.delete(spec.prefixedName) && !spec.lazy) {
           const activeTools = getActiveToolsIfReady();
           if (activeTools && !activeTools.includes(spec.prefixedName)) {
             pi.setActiveTools([...activeTools, spec.prefixedName]);
           }
         }
         (previous ? updated : added).push(spec.prefixedName);
+      }
+      if (spec.lazy) {
+        // Search mode, whether first registered or flipped from eager (e.g. in
+        // the panel): held inactive below unless a search already activated it.
+        lazyDirectTools.add(spec.prefixedName);
+      } else if (lazyDirectTools.delete(spec.prefixedName)) {
+        // Search → eager: an eager direct tool is active by definition, so a
+        // tool that search never activated must be activated now. Pi does not
+        // re-activate a tool it already knows on re-registration.
+        searchActivatedTools.delete(spec.prefixedName);
+        const activeTools = getActiveToolsIfReady();
+        if (activeTools && !activeTools.includes(spec.prefixedName)) pi.setActiveTools([...activeTools, spec.prefixedName]);
       }
     }
 
@@ -416,14 +473,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       registeredDirectTools.delete(toolName);
       registeredDirectToolServers.delete(toolName);
       forgetReportedDirectToolName(serverName, toolName);
+      if (lazyDirectTools.delete(toolName)) searchActivatedTools.delete(toolName);
       deactivated.push(toolName);
     }
 
     deactivateTools(deactivated);
+    holdLazyToolsInactive();
     return { specs, reservedDirectNames, activeDirectNames: nextNames, added, updated, deactivated };
   }
 
-  function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false>): void {
+  function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false | "search">): void {
     if (!state) return;
     for (const [serverName, value] of changes) {
       const definition = state.config.mcpServers[serverName];
@@ -1268,10 +1327,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           const result = await executeConnect(state, params.connect, signal);
           if (!directToolsFrozen) syncToolSurface(_ctx as ExtensionContext);
           const reportedNames = reportedDirectToolNamesByServer.get(params.connect) ?? new Set<string>();
+          // A search-mode tool is registered but held inactive; it is not
+          // loaded at this point, so it must not be reported as such — a
+          // search that matches it is its load point.
           const addedToolNames = [...registeredDirectTools.keys()].filter(
             (name) => (!directToolsBefore.has(name) || (registeredDirectToolVersions.get(name) ?? 0) !== (directToolVersionsBefore.get(name) ?? 0))
               && registeredDirectToolServers.get(name) === params.connect
-              && !reportedNames.has(name),
+              && !reportedNames.has(name)
+              && !lazyDirectTools.has(name),
           );
           if (addedToolNames.length === 0) return result;
           for (const name of addedToolNames) reportedNames.add(name);
@@ -1285,7 +1348,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return executeInstructions(state, params.instructions);
         }
         if (params.search !== undefined) {
-          return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset);
+          const result = executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset);
+          if (lazyDirectTools.size === 0) return result;
+          holdLazyToolsInactive();
+          const matches = (result.details as { matches?: Array<{ server: string; tool: string }> } | undefined)?.matches ?? [];
+          const added = activateSearchMatches(matches);
+          if (added.length === 0) return result;
+          const text = result.content.map((block) => ("text" in block ? block.text : "")).join("\n");
+          return {
+            ...result,
+            content: [{ type: "text" as const, text: `Activated as direct tools: ${added.join(", ")}.\n\n${text}` }],
+            details: { ...(result.details ?? {}), activated: added },
+            addedToolNames: added,
+          };
         }
         if (params.server) {
           return executeList(state, params.server);

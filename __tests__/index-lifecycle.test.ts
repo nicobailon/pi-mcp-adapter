@@ -2447,3 +2447,174 @@ describe("mcpAdapter session lifecycle", () => {
     expect(toolResult?.({ details: { error: "auth_required", server: "demo" } })).toBeUndefined();
   });
 });
+
+describe("directTools: \"search\" — registered inactive, activated by search", () => {
+  const originalDirectTools = process.env.MCP_DIRECT_TOOLS;
+  beforeEach(() => {
+    delete process.env.MCP_DIRECT_TOOLS;
+    vi.resetModules();
+    vi.doUnmock("typebox");
+    for (const value of Object.values(mocks)) {
+      if (typeof value === "function" && "mockReset" in value) value.mockReset();
+    }
+    mocks.cloneMcpConfig.mockImplementation((config: unknown) => structuredClone(config));
+    mocks.resolveConfiguredClaudePluginMcp.mockImplementation((config: unknown) => structuredClone(config));
+    mocks.discoverConfiguredClaudePluginSkills.mockReturnValue([]);
+    mocks.createOAuthRuntime.mockImplementation((signal: AbortSignal) => ({ signal }));
+    mocks.initializeOAuth.mockResolvedValue(undefined);
+    mocks.shutdownOAuth.mockResolvedValue(undefined);
+    mocks.buildProxyDescription.mockReturnValue("MCP gateway");
+    mocks.createDirectToolExecutor.mockImplementation(() => vi.fn(async () => ({ content: [] })));
+    mocks.prepareDirectToolArguments.mockImplementation((_schema: unknown, args: unknown) => args);
+    mocks.getMissingConfiguredDirectToolServers.mockReturnValue([]);
+    mocks.normalizeDirectToolInputSchema.mockImplementation((schema: unknown) => schema ?? { type: "object", properties: {} });
+    mocks.truncateAtWord.mockImplementation((text: string) => text);
+    mocks.loadMetadataCache.mockReturnValue({ servers: { demo: { tools: [], resources: [] } } });
+  });
+  afterEach(() => {
+    if (originalDirectTools === undefined) delete process.env.MCP_DIRECT_TOOLS;
+    else process.env.MCP_DIRECT_TOOLS = originalDirectTools;
+  });
+
+  const lazySpec = (name: string) => ({ lazy: true, serverName: "demo", originalName: name, prefixedName: `demo_${name}`, description: `${name} tool` });
+  // executeSearch reports ToolMetadata.name — the PREFIXED name — never the original.
+  const searchResult = (...names: string[]) => ({
+    content: [{ type: "text", text: `Found ${names.length}` }],
+    details: { mode: "search", matches: names.map((tool) => ({ server: "demo", tool: `demo_${tool}`, score: 1 })), count: names.length, hasMore: false, nextOffset: null, query: "q" },
+  });
+
+  async function boot(settings: Record<string, unknown> = {}, specs = [lazySpec("alpha"), lazySpec("beta"), lazySpec("gamma"), lazySpec("delta")]) {
+    // scriptMode off keeps the floor at exactly bash + mcp, so the active-set assertions below are legible.
+    const config = { settings: { scriptMode: false, ...settings }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValue(specs);
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const directTool = (name: string) => api.registerTool.mock.calls.find((call: any[]) => call[0].name === name)?.[0];
+    return { api, activeTools, proxyTool, directTool };
+  }
+
+  it("registers lazy tools but holds them out of the active set", async () => {
+    const { api, activeTools } = await boot();
+    expect(api.registerTool.mock.calls.map((call: any[]) => call[0].name)).toEqual(expect.arrayContaining(["demo_alpha", "demo_beta"]));
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+  });
+
+  it("search activates the matches additively and reports them as addedToolNames", async () => {
+    const { activeTools, proxyTool } = await boot();
+    mocks.executeSearch.mockReturnValue(searchResult("alpha", "gamma"));
+    const result = await proxyTool.execute("call-1", { search: "q" });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha", "demo_gamma"]);
+    expect(result.addedToolNames).toEqual(["demo_alpha", "demo_gamma"]);
+    expect(result.content[0].text).toContain("Activated as direct tools: demo_alpha, demo_gamma");
+    expect(result.content[0].text).toContain("Found 2"); // the search text is kept
+  });
+
+  it("a search-mode tool selected eagerly becomes active, even if search never activated it", async () => {
+    const { activeTools, proxyTool, directTool } = await boot();
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+    // The server flips to eager direct tools (e.g. via the /mcp panel); alpha is re-resolved non-lazy.
+    mocks.resolveDirectTools.mockReturnValue([{ ...lazySpec("alpha"), lazy: false }, lazySpec("gamma")]);
+    mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
+    await proxyTool.execute("call-1", { connect: "demo" });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]); // eager → active; gamma still held
+    // A post-transition call runs the tool like any eager direct tool.
+    await directTool("demo_alpha").execute("call-2", {});
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+    // Searching afterwards activates only what is still held, and reports only that.
+    mocks.executeSearch.mockReturnValue(searchResult("alpha", "gamma"));
+    const search = await proxyTool.execute("call-3", { search: "q" });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha", "demo_gamma"]);
+    expect(search.addedToolNames).toEqual(["demo_gamma"]);
+  });
+
+  it("an eager direct tool switched to search mode is held again until a search matches it", async () => {
+    const { activeTools, proxyTool } = await boot({}, [{ ...lazySpec("alpha"), lazy: false }]);
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+    mocks.resolveDirectTools.mockReturnValue([lazySpec("alpha")]);
+    mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
+    await proxyTool.execute("call-1", { connect: "demo" });
+    expect(activeTools()).toEqual(["bash", "mcp"]); // held now
+    mocks.executeSearch.mockReturnValue(searchResult("alpha"));
+    const search = await proxyTool.execute("call-2", { search: "q" });
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+    expect(search.addedToolNames).toEqual(["demo_alpha"]);
+  });
+
+  it("a search that matches only already-active tools reports no additions", async () => {
+    const { activeTools, proxyTool } = await boot();
+    mocks.executeSearch.mockReturnValue(searchResult("alpha"));
+    await proxyTool.execute("c1", { search: "q" });
+    const plain = searchResult("alpha");
+    mocks.executeSearch.mockReturnValue(plain);
+    const again = await proxyTool.execute("c2", { search: "q" });
+    expect(again).toBe(plain); // untouched: nothing changed state
+    expect(again.addedToolNames).toBeUndefined();
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+  });
+
+  it("a proxy call for a held tool does not activate it", async () => {
+    const { activeTools, proxyTool } = await boot();
+    mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }], details: { mode: "call", server: "demo", tool: "alpha" } });
+    const result = await proxyTool.execute("call-1", { tool: "demo_alpha", args: {} });
+    expect(result.addedToolNames).toBeUndefined();
+    expect(activeTools()).toEqual(["bash", "mcp"]); // search is the only load point
+  });
+
+  it("connect does not report held-inactive search-mode tools as loaded", async () => {
+    const config = { settings: { scriptMode: false }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([])
+      .mockReturnValue([lazySpec("alpha"), lazySpec("beta")]);
+    mocks.initializeMcp.mockResolvedValue(state);
+    const connectResult = { content: [{ type: "text", text: "connected" }], details: { mode: "connect" } };
+    mocks.executeConnect.mockImplementation(async (currentState: any) => {
+      currentState.onToolMetadataUpdated?.("demo", "proxy-connect");
+      return connectResult;
+    });
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const result = await proxyTool.execute("call-1", { connect: "demo" });
+    expect(result.addedToolNames).toBeUndefined(); // nothing loaded yet — search is the load point
+    expect(activeTools()).toEqual(["bash", "mcp"]); // registered, held inactive
+  });
+
+  it("leaves a search result untouched when no server is in search mode", async () => {
+    const config = { mcpServers: { demo: { command: "demo", directTools: true } } };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValue([{ serverName: "demo", originalName: "alpha", prefixedName: "demo_alpha", description: "alpha" }]);
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const plain = searchResult("alpha");
+    mocks.executeSearch.mockReturnValue(plain);
+    expect(await proxyTool.execute("c1", { search: "q" })).toBe(plain);
+  });
+});

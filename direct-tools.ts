@@ -187,6 +187,7 @@ export function resolveDirectTools(
     if (!serverCache || !isServerCacheValid(serverCache, definition)) continue;
 
     let toolFilter: true | string[] | false = false;
+    let lazy = false;
 
     if (envSelection) {
       if (envSelection.servers.has(serverName)) {
@@ -195,10 +196,14 @@ export function resolveDirectTools(
         toolFilter = [...envSelection.tools.get(serverName)!];
       }
     } else {
-      if (definition.directTools !== undefined) {
-        toolFilter = definition.directTools;
-      } else if (globalDirect) {
-        toolFilter = globalDirect;
+      const selected = definition.directTools !== undefined ? definition.directTools : globalDirect;
+      if (selected === "search") {
+        // Real tools with real schemas, but registered inactive; the model
+        // reaches them through mcp({ search }), which activates the matches.
+        toolFilter = true;
+        lazy = true;
+      } else if (selected !== undefined) {
+        toolFilter = selected;
       }
     }
 
@@ -243,6 +248,7 @@ export function resolveDirectTools(
       }
       seenNames.add(prefixedName);
       specs.push({
+        ...(lazy ? { lazy: true } : {}),
         serverName,
         originalName: tool.name,
         prefixedName,
@@ -269,6 +275,7 @@ export function resolveDirectTools(
         }
         seenNames.add(prefixedName);
         specs.push({
+          ...(lazy ? { lazy: true } : {}),
           serverName,
           originalName: baseName,
           prefixedName,
@@ -285,8 +292,10 @@ export function resolveDirectTools(
     ? specs
     : specs.filter((spec) => !unavailableServers.has(spec.serverName));
 
-  if (config.settings?.warnOnLargeDirectTools !== false && emittedSpecs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD) {
-    console.warn(`MCP: ${emittedSpecs.length} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered. Set settings.warnOnLargeDirectTools to false to hide this advisory.`);
+  // Lazy specs cost nothing at turn start, so they do not count toward the advisory.
+  const eagerCount = emittedSpecs.filter((spec) => !spec.lazy).length;
+  if (config.settings?.warnOnLargeDirectTools !== false && eagerCount >= DIRECT_TOOLS_ADVISORY_THRESHOLD) {
+    console.warn(`MCP: ${eagerCount} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered. Set settings.warnOnLargeDirectTools to false to hide this advisory.`);
   }
 
   return emittedSpecs;
@@ -306,6 +315,17 @@ export function buildProxyDescription(config: McpConfig): string {
     .filter((serverName) => !isServerDisabled(config.mcpServers[serverName]));
   if (serverNames.length > 0) {
     desc += `\nServers: ${serverNames.join(", ")}\n`;
+  }
+
+  // Search-mode tools are real tools held inactive. Say how they wake up, or
+  // the model reads mcp({ tool }) as the only way in and never gets a schema.
+  const searchModeServers = serverNames.filter((serverName) => {
+    const definition = config.mcpServers[serverName];
+    const selected = definition?.directTools !== undefined ? definition.directTools : config.settings?.directTools;
+    return selected === "search";
+  });
+  if (searchModeServers.length > 0) {
+    desc += `\nSearch-mode servers (${searchModeServers.join(", ")}): their tools become real, schema-backed tools the first time mcp({ search }) matches them — after that, call them directly by name.\n`;
   }
 
   const disabledServers = Object.entries(config.mcpServers)

@@ -479,10 +479,11 @@ class McpPanel {
 
       const globalDirect = config.settings?.directTools;
       let toolFilter: true | string[] | false = false;
-      if (definition.directTools !== undefined) {
-        toolFilter = definition.directTools;
-      } else if (globalDirect) {
-        toolFilter = globalDirect;
+      const selected = definition.directTools !== undefined ? definition.directTools : globalDirect;
+      if (selected === "search") {
+        toolFilter = true; // search-activated tools are still direct tools for the panel
+      } else if (selected !== undefined) {
+        toolFilter = selected;
       }
 
       const tools: ToolState[] = [];
