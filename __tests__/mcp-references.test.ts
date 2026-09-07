@@ -43,6 +43,12 @@ describe("namespaceProxyName", () => {
   it("uses the runtime namespace proxy convention", () => {
     expect(namespaceProxyName("context-mode")).toBe("mcp__context_mode");
   });
+
+  it("encodes only unsafe characters so long dotted names stay under provider limits", () => {
+    const name = namespaceProxyName("awslabs.aws-documentation-mcp-server");
+    expect(name).toBe("mcp___mcpns_awslabs_2e_aws_documentation_mcp_server");
+    expect(name.length).toBeLessThanOrEqual(64);
+  });
 });
 
 describe("resolveMcpToolReferences", () => {
@@ -149,7 +155,7 @@ describe("resolveMcpToolReferences", () => {
 
     const result = resolveMcpToolReferences(["mcp:数", "mcp:_6570_"], config, cache);
 
-    expect(result).toEqual({ names: ["mcp___mcpns_6570", "mcp___6570_"], diagnostics: [] });
+    expect(result).toEqual({ names: ["mcp___mcpns__6570_", "mcp___6570_"], diagnostics: [] });
   });
 
   it("skips namespace proxies that collide with direct tool names", () => {

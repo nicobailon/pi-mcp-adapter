@@ -524,8 +524,10 @@ export function formatServerNamespace(serverName: string): string {
   if (normalized === "" || (/^[A-Za-z0-9_]+$/.test(normalized) && !normalized.startsWith(ENCODED_SERVER_NAMESPACE_MARKER))) {
     return normalized;
   }
-  const codePoints = Array.from(normalized, character => character.codePointAt(0)!.toString(16)).join("_");
-  return `${ENCODED_SERVER_NAMESPACE_MARKER}${codePoints}`;
+  const encoded = Array.from(normalized, character =>
+    /^[A-Za-z0-9_]$/.test(character) ? character : `_${character.codePointAt(0)!.toString(16)}_`,
+  ).join("");
+  return `${ENCODED_SERVER_NAMESPACE_MARKER}${encoded}`;
 }
 export type HostConfigDiscovery = "off" | "prompt" | "on";
 export type McpFooterStatus = "full" | "compact" | "off";
