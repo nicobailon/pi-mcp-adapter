@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 /** Versioned shared-event-bus channel for read-only MCP runtime snapshots. */
 export const MCP_STATUS_EVENT = "pi-mcp-adapter/status/v1";
 export const MCP_STATUS_SNAPSHOT_VERSION = 1;
@@ -70,13 +71,26 @@ export function isServerDisabled(definition) {
     return definition?.disabled === true;
 }
 const ENCODED_SERVER_NAMESPACE_MARKER = "_mcpns_";
+// Provider tool-name limit (64 for Bedrock, Anthropic, OpenAI) minus the `mcp__` proxy prefix.
+const MAX_SERVER_NAMESPACE_LENGTH = 59;
 export function formatServerNamespace(serverName) {
     const normalized = serverName.replace(/-/g, "_");
-    if (normalized === "" || (/^[A-Za-z0-9_]+$/.test(normalized) && !normalized.startsWith(ENCODED_SERVER_NAMESPACE_MARKER))) {
-        return normalized;
-    }
-    const codePoints = Array.from(normalized, character => character.codePointAt(0).toString(16)).join("_");
-    return `${ENCODED_SERVER_NAMESPACE_MARKER}${codePoints}`;
+    const safe = /^[A-Za-z0-9_]*$/.test(normalized) && !normalized.startsWith(ENCODED_SERVER_NAMESPACE_MARKER);
+    const body = safe ? normalized : encodeServerNamespace(normalized);
+    const namespace = safe ? body : `${ENCODED_SERVER_NAMESPACE_MARKER}${body}`;
+    if (namespace.length <= MAX_SERVER_NAMESPACE_LENGTH)
+        return namespace;
+    const digest = createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 16);
+    const head = body.slice(0, MAX_SERVER_NAMESPACE_LENGTH - ENCODED_SERVER_NAMESPACE_MARKER.length - digest.length - 1);
+    return `${ENCODED_SERVER_NAMESPACE_MARKER}${head}_${digest}`;
+}
+// `_` becomes `__`, so `__` and `_<hex>_` form a prefix code and the encoding stays injective.
+function encodeServerNamespace(name) {
+    return Array.from(name, character => {
+        if (character === "_")
+            return "__";
+        return /^[A-Za-z0-9]$/.test(character) ? character : `_${character.codePointAt(0).toString(16)}_`;
+    }).join("");
 }
 export const MCP_TOOL_APPROVAL_REQUEST_EVENT = "pi-mcp-adapter:tool-approval-request";
 /**

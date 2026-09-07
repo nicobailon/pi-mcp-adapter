@@ -44,10 +44,25 @@ describe("namespaceProxyName", () => {
     expect(namespaceProxyName("context-mode")).toBe("mcp__context_mode");
   });
 
-  it("encodes only unsafe characters so long dotted names stay under provider limits", () => {
+  it("encodes only unsafe characters so dotted names stay under provider limits", () => {
     const name = namespaceProxyName("awslabs.aws-documentation-mcp-server");
-    expect(name).toBe("mcp___mcpns_awslabs_2e_aws_documentation_mcp_server");
+    expect(name).toBe("mcp___mcpns_awslabs_2e_aws__documentation__mcp__server");
     expect(name.length).toBeLessThanOrEqual(64);
+  });
+
+  it("keeps encoded names injective", () => {
+    expect(namespaceProxyName("_mcpns_.")).not.toBe(namespaceProxyName("_mcpns__2e_"));
+    expect(namespaceProxyName("a.b")).not.toBe(namespaceProxyName("a_2e_b"));
+  });
+
+  it("caps over-long names at 64 characters with a distinguishing digest", () => {
+    const cjk = namespaceProxyName("数据库数据库数据库");
+    const ascii = namespaceProxyName("a".repeat(70));
+    for (const name of [cjk, ascii]) {
+      expect(name.length).toBeLessThanOrEqual(64);
+      expect(name).toMatch(/^mcp___mcpns_[A-Za-z0-9_]+$/);
+    }
+    expect(namespaceProxyName("a".repeat(70))).not.toBe(namespaceProxyName("a".repeat(71)));
   });
 });
 

@@ -57,7 +57,7 @@ describe("namespaceProxyName", () => {
     const { namespaceProxyName } = await importSync();
     expect(namespaceProxyName("数")).toBe("mcp___mcpns__6570_");
     expect(namespaceProxyName("_6570_")).toBe("mcp___6570_");
-    expect(namespaceProxyName("_mcpns_6570")).toBe("mcp___mcpns__mcpns_6570");
+    expect(namespaceProxyName("_mcpns_6570")).toBe("mcp___mcpns___mcpns__6570");
     expect(namespaceProxyName("数")).toMatch(/^[A-Za-z0-9_]+$/);
   });
 });
