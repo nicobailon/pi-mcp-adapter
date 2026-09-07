@@ -80,7 +80,8 @@ export function formatServerNamespace(serverName) {
     const namespace = safe ? body : `${ENCODED_SERVER_NAMESPACE_MARKER}${body}`;
     if (namespace.length <= MAX_SERVER_NAMESPACE_LENGTH)
         return namespace;
-    const digest = createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 16);
+    // Hash the ASCII encoding, not the raw name: lone surrogates and U+FFFD share UTF-8 bytes.
+    const digest = createHash("sha256").update(namespace, "utf8").digest("hex").slice(0, 16);
     const head = body.slice(0, MAX_SERVER_NAMESPACE_LENGTH - ENCODED_SERVER_NAMESPACE_MARKER.length - digest.length - 1);
     return `${ENCODED_SERVER_NAMESPACE_MARKER}${head}_${digest}`;
 }

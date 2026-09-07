@@ -63,6 +63,8 @@ describe("namespaceProxyName", () => {
       expect(name).toMatch(/^mcp___mcpns_[A-Za-z0-9_]+$/);
     }
     expect(namespaceProxyName("a".repeat(70))).not.toBe(namespaceProxyName("a".repeat(71)));
+    const base = "a".repeat(60);
+    expect(namespaceProxyName(`${base}\uD800`)).not.toBe(namespaceProxyName(`${base}\uFFFD`));
   });
 });
 
