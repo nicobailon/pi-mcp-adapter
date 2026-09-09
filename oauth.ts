@@ -6,12 +6,16 @@ import {
   type StoredTokens,
 } from "./mcp-auth.ts";
 
+import type { ServerEntry } from "./types.ts";
+
 export type McpOAuthTokens = StoredTokens;
 export type McpOAuthStorageOptions = AuthStorageOptions;
 export interface McpOAuthTokenOptions {
   authStorageOptions?: McpOAuthStorageOptions;
   signal?: AbortSignal;
   skipIssuerMetadataValidation?: boolean;
+  /** Explicit refresh configuration; never loaded from ambient config or stored with tokens. */
+  definition?: Pick<ServerEntry, "headers" | "oauth">;
 }
 export type McpOAuthTokenStatus =
   | { status: "present"; tokens: McpOAuthTokens }

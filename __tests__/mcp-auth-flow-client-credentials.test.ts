@@ -150,16 +150,17 @@ describe("mcp-auth-flow explicit auth", () => {
   });
 
   it("uses configured authorization-server metadata instead of protected-resource discovery", async () => {
-    const metadataUrl = "https://auth.example.com/oauth2/default/.well-known/openid-configuration";
+    const controller = new AbortController();
+    const metadataUrl = "https://auth.example.test/oauth2/default/.well-known/openid-configuration";
     const metadata = {
-      issuer: "https://auth.example.com/oauth2/default",
-      authorization_endpoint: "https://auth.example.com/oauth2/default/authorize",
-      token_endpoint: "https://auth.example.com/oauth2/default/token",
+      issuer: "https://auth.example.test/oauth2/default",
+      authorization_endpoint: "https://auth.example.test/oauth2/default/authorize",
+      token_endpoint: "https://auth.example.test/oauth2/default/token",
       response_types_supported: ["code"],
     };
     mocks.fetch
       .mockResolvedValueOnce(new Response(null, {
-        headers: { "www-authenticate": 'Bearer resource_metadata="https://other.example.com/.well-known/oauth-protected-resource"' },
+        headers: { "www-authenticate": 'Bearer resource_metadata="https://other.example.test/.well-known/oauth-protected-resource"' },
       }))
       .mockResolvedValueOnce(new Response(JSON.stringify(metadata), {
         headers: { "content-type": "application/json" },
@@ -168,25 +169,30 @@ describe("mcp-auth-flow explicit auth", () => {
       await expect(provider.discoveryState()).resolves.toMatchObject({
         authorizationServerUrl: metadata.issuer,
         authorizationServerMetadata: metadata,
-        resourceMetadata: { resource: "https://api.example.com/mcp" },
+        resourceMetadata: { resource: "https://api.example.test/mcp" },
       });
       return "AUTHORIZED";
     });
     const { startAuth } = await import("../mcp-auth-flow.ts");
 
-    await expect(startAuth("metadata-override", "https://api.example.com/mcp", {
+    await expect(startAuth("metadata-override", "https://api.example.test/mcp", {
       auth: "oauth",
+      headers: { "x-service-auth": "synthetic-service" },
       oauth: { authServerMetadataUrl: metadataUrl },
-    })).resolves.toEqual({ authorizationUrl: "" });
+    }, { signal: controller.signal })).resolves.toEqual({ authorizationUrl: "" });
 
-    expect(mocks.fetch).toHaveBeenNthCalledWith(
-      2,
-      metadataUrl,
-      expect.objectContaining({ headers: { accept: "application/json" } }),
-    );
+    const [metadataInput, metadataInit] = mocks.fetch.mock.calls[1]!;
+    expect(metadataInput).toBe(metadataUrl);
+    expect(new Headers(metadataInit.headers).get("accept")).toBe("application/json");
+    expect(new Headers(metadataInit.headers).has("x-service-auth")).toBe(false);
+    expect(new Headers(mocks.fetch.mock.calls[0]![1].headers).get("x-service-auth")).toBe("synthetic-service");
+    expect(metadataInit.signal).toBeInstanceOf(AbortSignal);
+    expect(metadataInit.signal.aborted).toBe(false);
+    controller.abort();
+    expect(metadataInit.signal.aborted).toBe(true);
     expect(mocks.sdkAuth).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ serverUrl: "https://api.example.com/mcp" }),
+      expect.objectContaining({ serverUrl: "https://api.example.test/mcp" }),
     );
   });
 

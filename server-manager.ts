@@ -66,6 +66,7 @@ import {
   traceTransportKind,
   wrapTransportWithMcpTrace,
 } from "./mcp-trace.ts";
+import { createOAuthFetch, resolveOAuthHeaders } from "./mcp-auth-fetch.ts";
 import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
@@ -1193,10 +1194,13 @@ export class McpServerManager {
     // mutating the persisted configuration.
     const hasCommandHeader = Object.values(definition.headers ?? {})
       .some(value => value.startsWith("!") && !value.startsWith("!!"));
-    const headers = resolveCommandSecretsRecord(
-      definition.headers,
-      key => `MCP server "${serverName}" HTTP header "${key}"`,
-    ) ?? {};
+    const oauthEnabled = supportsOAuth(definition);
+    const headers = oauthEnabled
+      ? Object.fromEntries(resolveOAuthHeaders(definition.headers))
+      : resolveCommandSecretsRecord(
+        definition.headers,
+        key => `MCP server "${serverName}" HTTP header "${key}"`,
+      ) ?? {};
 
     // Resolve bearer auth before creating requestInit so every attempted
     // transport receives the same headers.
@@ -1221,18 +1225,33 @@ export class McpServerManager {
       }
     }
 
-    const requestInit = Object.keys(headers).length > 0 ? { headers } : undefined;
-    const requestFetch = definition.requestHeadersCommand
+    // Do not give origin-bound headers to SDK requestInit: it reuses those
+    // defaults for discovered OAuth endpoints, including other origins.
+    const requestInit = !oauthEnabled && Object.keys(headers).length > 0 ? { headers } : undefined;
+    const commandFetch = definition.requestHeadersCommand
       ? createRequestHeadersCommandFetch(definition.requestHeadersCommand)
       : undefined;
-    const createAuthProvider = (): McpOAuthProvider => new McpOAuthProvider(
-      serverName,
-      serverUrl,
-      extractOAuthConfig(definition),
-      { onRedirect: async () => {} },
-      this.authStorageOptions,
-      this.oauthRuntime?.signal,
-    );
+    const serviceHeaders = oauthEnabled ? new Headers(headers) : new Headers();
+    const requestFetch = oauthEnabled
+      ? createOAuthFetch(serverUrl, () => serviceHeaders, this.oauthRuntime?.signal, {
+        // MCP streams outlive individual auth requests; retain SDK request deadlines.
+        timeout: false,
+        ...(commandFetch ? { delegate: commandFetch } : {}),
+      })
+      : commandFetch;
+    const createAuthProvider = (): McpOAuthProvider => {
+      const provider = new McpOAuthProvider(
+        serverName,
+        serverUrl,
+        extractOAuthConfig(definition),
+        { onRedirect: async () => {} },
+        this.authStorageOptions,
+        this.oauthRuntime?.signal,
+      );
+      provider.setAuthFetch(createOAuthFetch(serverUrl, () => serviceHeaders,
+        combineAbortSignals(this.oauthRuntime?.signal, signal)));
+      return provider;
+    };
 
     // Explicit OAuth checks secure storage immediately. Implicit OAuth keeps
     // anonymous servers provider-free unless URL-bound credentials are already

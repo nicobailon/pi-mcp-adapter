@@ -40,7 +40,8 @@ import {
   type StoredTokens,
 } from "./mcp-auth.ts"
 import { isServerDisabled, type ServerEntry } from "./types.ts"
-import { formatTerminalError, interpolateEnvRecord, interpolateEnvVars } from "./utils.ts"
+import { formatTerminalError, interpolateEnvVars } from "./utils.ts"
+import { createOAuthFetch, oauthHeaderResolver, resolveOAuthHeaders } from "./mcp-auth-fetch.ts"
 import { abortable, throwIfAborted } from "./abort.ts"
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts"
 
@@ -61,6 +62,7 @@ export interface AuthenticateOptions {
   signal?: AbortSignal
   runtime?: McpOAuthRuntime
   skipIssuerMetadataValidation?: boolean
+  definition?: Pick<ServerEntry, "headers" | "oauth">
 }
 
 type AuthDiscovery = Pick<AuthOptions, "resourceMetadataUrl" | "scope" | "skipIssuerMetadataValidation">
@@ -81,6 +83,7 @@ type PendingAuth = {
   manualRedirect: boolean
   manualCompletionController?: AbortController
   discovery: AuthDiscovery
+  headers: Record<string, string> | undefined
   authStorageOptions: AuthStorageOptions
 }
 
@@ -271,13 +274,11 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
   return config
 }
 
-async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, signal?: AbortSignal): Promise<AuthDiscovery> {
-  // Discovery must not execute config commands or send their source text.
-  const discoveryHeaders = definition?.headers
-    ? Object.fromEntries(Object.entries(definition.headers).filter(([, value]) => !value.startsWith("!") || value.startsWith("!!")))
-    : undefined
-  const headers = new Headers(interpolateEnvRecord(discoveryHeaders))
-  headers.set("content-type", "application/json")
+async function probeAuthDiscovery(serverUrl: string, definition?: Pick<ServerEntry, "headers">, signal?: AbortSignal): Promise<AuthDiscovery> {
+  // The preliminary probe is command-free; real SDK discovery resolves commands.
+  const serviceHeaders = resolveOAuthHeaders(definition?.headers, false)
+  const probeFetch = createOAuthFetch(serverUrl, () => serviceHeaders, signal, { timeout: false })
+  const headers = new Headers({ "content-type": "application/json" })
 
   const controller = new AbortController()
   const discoverySignal = combineAbortSignals(signal, controller.signal)
@@ -286,7 +287,7 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
   try {
     headers.set("accept", "application/json, text/event-stream")
 
-    const response = await fetch(new URL(serverUrl), {
+    const response = await probeFetch(new URL(serverUrl), {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -309,30 +310,6 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
     return {}
   } finally {
     clearTimeout(timer)
-  }
-}
-
-/** Default timeout for each outbound HTTP request the SDK issues during OAuth. */
-const DEFAULT_OAUTH_REQUEST_TIMEOUT_MS = 30_000
-const MAX_OAUTH_REQUEST_TIMEOUT_MS = 2_147_483_647
-
-function resolveOAuthRequestTimeoutMs(): number {
-  const raw = process.env.PI_MCP_OAUTH_REQUEST_TIMEOUT_MS
-  const parsed = raw === undefined ? Number.NaN : Number(raw)
-  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_OAUTH_REQUEST_TIMEOUT_MS ? parsed : DEFAULT_OAUTH_REQUEST_TIMEOUT_MS
-}
-
-/**
- * fetch bound to both the owning runtime/options signal and a per-request
- * timeout. The MCP SDK issues discovery, dynamic client registration,
- * token-exchange, and refresh requests through this during OAuth; without a
- * bound timeout a stalled endpoint hangs until the OS TCP timeout (~2 minutes).
- */
-function authFetch(signal: AbortSignal | undefined): (url: string | URL, init?: RequestInit) => Promise<Response> {
-  return (url, init) => {
-    const timeoutSignal = AbortSignal.timeout(resolveOAuthRequestTimeoutMs())
-    const combined = combineAbortSignals(signal, timeoutSignal, init?.signal ?? undefined)
-    return fetch(url, { ...init, ...(combined ? { signal: combined } : {}) })
   }
 }
 
@@ -457,9 +434,11 @@ export async function startAuth(
       },
     }, authStorageOptions, runtime.signal)
     try {
+      const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers), signal)
+      authProvider.setAuthFetch(fetchFn)
       const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
       throwIfAborted(signal)
-      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn: authFetch(signal) }), signal)
+      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
       throwIfAborted(signal)
       if (result !== "AUTHORIZED") {
         throw new UnauthorizedError("Failed to authorize")
@@ -540,9 +519,11 @@ export async function startAuth(
 
     throwIfAborted(signal)
 
+    const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers), signal)
+    authProvider.setAuthFetch(fetchFn)
     const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
     throwIfAborted(signal)
-    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn: authFetch(signal) }), signal)
+    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
     throwIfAborted(signal)
     if (result === "AUTHORIZED") {
       authProvider.deactivate()
@@ -562,6 +543,7 @@ export async function startAuth(
       manualRedirect,
       ...(manualRedirect ? { manualCompletionController: new AbortController() } : {}),
       discovery,
+      headers: definition?.headers ? { ...definition.headers } : undefined,
       authStorageOptions,
     }, oauthState, signal, generation)
     return { authorizationUrl: capturedUrl.toString() }
@@ -859,6 +841,8 @@ export async function completeAuth(
   let keepPendingForRetry = false
   let caughtError: unknown
   try {
+    const fetchFn = createOAuthFetch(pendingAuth.serverUrl, oauthHeaderResolver(pendingAuth.headers), signal)
+    pendingAuth.authProvider.setAuthFetch(fetchFn)
     const discoveryState = await pendingAuth.authProvider.discoveryState()
     const metadata = discoveryState?.authorizationServerMetadata
     const expectedIssuer = metadata?.issuer ?? discoveryState?.authorizationServerUrl
@@ -880,7 +864,7 @@ export async function completeAuth(
       authorizationCode: code,
       ...(iss !== undefined ? { iss } : {}),
       ...pendingAuth.discovery,
-      fetchFn: authFetch(signal),
+      fetchFn,
     }), signal)
     throwIfAborted(signal)
     if (result !== "AUTHORIZED") {
@@ -1056,11 +1040,14 @@ export async function getValidToken(
     console.log(`MCP Auth: Token expired for ${serverName}, attempting refresh`)
 
     try {
-      const authProvider = new McpOAuthProvider(serverName, serverUrl, {}, {
+      const config = options.definition ? extractOAuthConfig(options.definition) : {}
+      const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(options.definition?.headers), signal)
+      const authProvider = new McpOAuthProvider(serverName, serverUrl, config, {
         onRedirect: async () => {},
       }, authStorageOptions, runtime.signal)
 
       try {
+        authProvider.setAuthFetch(fetchFn)
         const clientInfo = await authProvider.clientInformation()
         throwIfAborted(signal)
         if (!clientInfo) {
@@ -1068,13 +1055,13 @@ export async function getValidToken(
           return null
         }
 
-        const discovery = await probeAuthDiscovery(serverUrl, undefined, signal)
+        const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, options.definition, signal), config)
         throwIfAborted(signal)
         const result = await abortable(runSdkAuth(authProvider, {
           serverUrl,
           ...discovery,
           ...(options.skipIssuerMetadataValidation === true ? { skipIssuerMetadataValidation: true } : {}),
-          fetchFn: authFetch(signal),
+          fetchFn,
         }), signal)
         throwIfAborted(signal)
         if (result !== "AUTHORIZED") {
@@ -1088,7 +1075,7 @@ export async function getValidToken(
       }
     } catch (error) {
       if (isAbortError(error, signal) || error instanceof OAuthCredentialStoreError) throw error
-      console.error(`MCP Auth: Token refresh failed for ${serverName}`, { error })
+      console.error(`MCP Auth: Token refresh failed for ${serverName}`)
       return null
     }
   }

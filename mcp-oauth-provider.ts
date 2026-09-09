@@ -7,6 +7,7 @@
 
 import {
   UnauthorizedError,
+  type FetchLike,
   type AddClientAuthentication,
   type OAuthClientInformationContext,
   type OAuthClientProvider,
@@ -30,6 +31,7 @@ import {
   type StoredClientInfo,
 } from "./mcp-auth.ts"
 import { OAuthMetadataSchema, OpenIdProviderDiscoveryMetadataSchema } from "@modelcontextprotocol/core"
+import { createOAuthFetch, type OAuthFetch } from "./mcp-auth-fetch.ts"
 import { resolveCommandSecret } from "./utils.ts"
 import { getAppClientUri, getAppName } from "./agent-dir.ts"
 
@@ -213,11 +215,10 @@ async function loadConfiguredDiscoveryState(
   metadataUrl: string,
   serverUrl: string,
   skipIssuerValidation: boolean,
-  signal?: AbortSignal,
+  fetchFn: FetchLike,
 ): Promise<OAuthDiscoveryState> {
-  const response = await fetch(metadataUrl, {
+  const response = await fetchFn(metadataUrl, {
     headers: { accept: "application/json" },
-    ...(signal !== undefined ? { signal } : {}),
   })
   if (!response.ok) {
     await response.text().catch(() => {})
@@ -248,6 +249,7 @@ async function loadConfiguredDiscoveryState(
  */
 export class McpOAuthProvider implements OAuthClientProvider {
   private readonly redirectUrlSnapshot: string | undefined
+  private authFetch: OAuthFetch
   private active = true
   private flowClientInfo: StoredClientInfo | undefined
   private flowCodeVerifier: string | undefined
@@ -270,10 +272,15 @@ export class McpOAuthProvider implements OAuthClientProvider {
     private runtimeSignal?: AbortSignal,
     initialState?: string,
   ) {
+    this.authFetch = createOAuthFetch(serverUrl, undefined, runtimeSignal)
     this.flowState = initialState
     this.redirectUrlSnapshot = config.grantType === "client_credentials"
       ? undefined
       : config.redirectUri ?? `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}`
+  }
+
+  setAuthFetch(fetchFn: OAuthFetch): void {
+    this.authFetch = fetchFn
   }
 
   private get usesClientCredentials(): boolean {
@@ -316,6 +323,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private throwIfInactive(): void {
     if (!this.active) throw new Error("OAuth flow is no longer active")
     this.runtimeSignal?.throwIfAborted()
+    // The SDK can swallow refresh fetch errors and attempt browser authorization.
+    // A failed service credential must stop that fallback and token persistence.
+    this.authFetch.throwIfHeaderResolutionFailed()
   }
 
   /**
@@ -620,7 +630,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.config.authServerMetadataUrl,
         this.serverUrl,
         this.config.skipIssuerMetadataValidation === true,
-        this.runtimeSignal,
+        this.authFetch,
       )
     }
     return this.flowDiscoveryState ? structuredClone(this.flowDiscoveryState) : undefined

@@ -198,11 +198,13 @@ describe("McpOAuthProvider discovery state", () => {
   });
 
   it("loads configured authorization-server metadata and binds it to the resource", async () => {
-    const metadataUrl = "https://auth.example.com/oauth2/default/.well-known/openid-configuration";
+    const serverUrl = "https://service.example.test/mcp";
+    const controller = new AbortController();
+    const metadataUrl = "https://auth.example.test/oauth2/default/.well-known/openid-configuration";
     const metadata = {
-      issuer: "https://auth.example.com/oauth2/default",
-      authorization_endpoint: "https://auth.example.com/oauth2/default/authorize",
-      token_endpoint: "https://auth.example.com/oauth2/default/token",
+      issuer: "https://auth.example.test/oauth2/default",
+      authorization_endpoint: "https://auth.example.test/oauth2/default/authorize",
+      token_endpoint: "https://auth.example.test/oauth2/default/token",
       response_types_supported: ["code"],
     };
     const response = () => new Response(JSON.stringify(metadata), {
@@ -217,6 +219,8 @@ describe("McpOAuthProvider discovery state", () => {
         serverUrl,
         { authServerMetadataUrl: metadataUrl },
         { onRedirect: async () => {} },
+        {},
+        controller.signal,
       );
 
       await expect(provider.discoveryState()).resolves.toMatchObject({
@@ -224,10 +228,14 @@ describe("McpOAuthProvider discovery state", () => {
         authorizationServerMetadata: metadata,
         resourceMetadata: { resource: serverUrl },
       });
-      expect(fetchMock).toHaveBeenCalledWith(
-        metadataUrl,
-        expect.objectContaining({ headers: { accept: "application/json" } }),
-      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [input, init] = fetchMock.mock.calls[0]!;
+      expect(input).toBe(metadataUrl);
+      expect(Object.fromEntries(new Headers(init.headers))).toEqual({ accept: "application/json" });
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(init.signal.aborted).toBe(false);
+      controller.abort();
+      expect(init.signal.aborted).toBe(true);
     } finally {
       vi.unstubAllGlobals();
     }

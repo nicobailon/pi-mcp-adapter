@@ -488,4 +488,34 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(mocks.httpTransports).toHaveLength(1);
     expect(mocks.clients[0].connect).toHaveBeenCalledWith(mocks.httpTransports[0], { timeout: 5000 });
   });
+
+  it("scopes transport OAuth defaults instead of forwarding requestInit headers to discovered origins", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const originalFetch = globalThis.fetch;
+    const seen: Headers[] = [];
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      seen.push(new Headers(init?.headers));
+      return new Response("{}", { headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const manager = new McpServerManager();
+    try {
+      await manager.connect("scoped", {
+        url: "https://service.example.test/mcp",
+        auth: "oauth",
+        headers: { "x-service-auth": "synthetic-service", Authorization: "service-authorization" },
+      });
+      const options = mocks.httpTransports.at(-1)!.options;
+      expect(options.requestInit).toBeUndefined();
+      await options.fetch!("https://service.example.test/token", { headers: { authorization: "Basic sdk" } });
+      await options.fetch!("https://identity.example.test/token", { headers: { authorization: "Basic sdk" } });
+      expect(seen[0]!.get("x-service-auth")).toBe("synthetic-service");
+      expect(seen[0]!.get("authorization")).toBe("Basic sdk");
+      expect(seen[1]!.get("x-service-auth")).toBeNull();
+      expect(seen[1]!.get("authorization")).toBe("Basic sdk");
+    } finally {
+      globalThis.fetch = originalFetch;
+      await manager.closeAll();
+    }
+  });
+
 });
