@@ -10,6 +10,7 @@ import type {
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import type { UiStreamMode, UiStreamSummary } from "./ui-stream-types.ts";
 import type { UiToolVisibility } from "./ui-tool-visibility.ts";
+import { createHash } from "node:crypto";
 
 export type Transport = McpTransport;
 
@@ -518,14 +519,29 @@ export interface McpOutputGuardSettings {
 export type ToolPrefix = "server" | "none" | "short" | "mcp";
 
 const ENCODED_SERVER_NAMESPACE_MARKER = "_mcpns_";
+// Provider tool-name limit (64 for Bedrock, Anthropic, OpenAI) minus the `mcp__` proxy prefix.
+const MAX_SERVER_NAMESPACE_LENGTH = 59;
 
 export function formatServerNamespace(serverName: string): string {
   const normalized = serverName.replace(/-/g, "_");
-  if (normalized === "" || (/^[A-Za-z0-9_]+$/.test(normalized) && !normalized.startsWith(ENCODED_SERVER_NAMESPACE_MARKER))) {
-    return normalized;
-  }
-  const codePoints = Array.from(normalized, character => character.codePointAt(0)!.toString(16)).join("_");
-  return `${ENCODED_SERVER_NAMESPACE_MARKER}${codePoints}`;
+  const safe = /^[A-Za-z0-9_]*$/.test(normalized) && !normalized.startsWith(ENCODED_SERVER_NAMESPACE_MARKER);
+  const body = safe ? normalized : encodeServerNamespace(normalized);
+  const namespace = safe ? body : `${ENCODED_SERVER_NAMESPACE_MARKER}${body}`;
+  if (namespace.length <= MAX_SERVER_NAMESPACE_LENGTH) return namespace;
+  // Hash the ASCII encoding, not the raw name: lone surrogates and U+FFFD share UTF-8 bytes.
+  const digest = createHash("sha256").update(namespace, "utf8").digest("hex").slice(0, 16);
+  // `_h_` cannot start an encoded body: `h` is neither `_` nor a hexadecimal digit.
+  const hashPrefix = `${ENCODED_SERVER_NAMESPACE_MARKER}_h_`;
+  const head = body.slice(0, MAX_SERVER_NAMESPACE_LENGTH - hashPrefix.length - digest.length - 1);
+  return `${hashPrefix}${head}_${digest}`;
+}
+
+// `_` becomes `__`, so `__` and `_<hex>_` form a prefix code and the encoding stays injective.
+function encodeServerNamespace(name: string): string {
+  return Array.from(name, character => {
+    if (character === "_") return "__";
+    return /^[A-Za-z0-9]$/.test(character) ? character : `_${character.codePointAt(0)!.toString(16)}_`;
+  }).join("");
 }
 export type HostConfigDiscovery = "off" | "prompt" | "on";
 export type McpFooterStatus = "full" | "compact" | "off";

@@ -43,6 +43,36 @@ describe("namespaceProxyName", () => {
   it("uses the runtime namespace proxy convention", () => {
     expect(namespaceProxyName("context-mode")).toBe("mcp__context_mode");
   });
+
+  it("encodes only unsafe characters so dotted names stay under provider limits", () => {
+    const name = namespaceProxyName("awslabs.aws-documentation-mcp-server");
+    expect(name).toBe("mcp___mcpns_awslabs_2e_aws__documentation__mcp__server");
+    expect(name.length).toBeLessThanOrEqual(64);
+  });
+
+  it("keeps encoded names injective", () => {
+    expect(namespaceProxyName("_mcpns_.")).not.toBe(namespaceProxyName("_mcpns__2e_"));
+    expect(namespaceProxyName("a.b")).not.toBe(namespaceProxyName("a_2e_b"));
+  });
+
+  it("caps over-long names at 64 characters with a distinguishing digest", () => {
+    const cjk = namespaceProxyName("数据库数据库数据库");
+    const ascii = namespaceProxyName("a".repeat(70));
+    for (const name of [cjk, ascii]) {
+      expect(name.length).toBeLessThanOrEqual(64);
+      expect(name).toMatch(/^mcp___mcpns_[A-Za-z0-9_]+$/);
+    }
+    expect(namespaceProxyName("a".repeat(70))).not.toBe(namespaceProxyName("a".repeat(71)));
+    const base = "a".repeat(60);
+    expect(namespaceProxyName(`${base}\uD800`)).not.toBe(namespaceProxyName(`${base}\uFFFD`));
+  });
+
+  it("reserves the hash discriminator so literal names cannot mimic long hashes", () => {
+    const name = namespaceProxyName("a".repeat(70));
+    expect(name).toMatch(/^mcp___mcpns__h_[A-Za-z0-9_]+_[0-9a-f]{16}$/);
+    expect(name.length).toBeLessThanOrEqual(64);
+    expect(namespaceProxyName(name.slice("mcp__".length))).not.toBe(name);
+  });
 });
 
 describe("resolveMcpToolReferences", () => {
@@ -149,7 +179,24 @@ describe("resolveMcpToolReferences", () => {
 
     const result = resolveMcpToolReferences(["mcp:数", "mcp:_6570_"], config, cache);
 
-    expect(result).toEqual({ names: ["mcp___mcpns_6570", "mcp___6570_"], diagnostics: [] });
+    expect(result).toEqual({ names: ["mcp___mcpns__6570_", "mcp___6570_"], diagnostics: [] });
+  });
+
+  it("keeps hashed namespace references distinct from ordinary encoded names", () => {
+    const a = "a_2e_" + "b".repeat(29) + "_" + "x".repeat(30);
+    const b = "a." + "b".repeat(29) + "_" + namespaceProxyName(a).slice(-16);
+    const first: ServerEntry = { command: "one" };
+    const second: ServerEntry = { command: "two" };
+    const config = configFor({ [a]: first, [b]: second });
+    const cache = cacheFor([
+      [a, { definition: first, tools: [{ name: "search" }] }],
+      [b, { definition: second, tools: [{ name: "search" }] }],
+    ]);
+
+    const result = resolveMcpToolReferences([`mcp:${a}`, `mcp:${b}`], config, cache);
+
+    expect(result).toEqual({ names: [namespaceProxyName(a), namespaceProxyName(b)], diagnostics: [] });
+    expect(result.names[0]).not.toBe(result.names[1]);
   });
 
   it("skips namespace proxies that collide with direct tool names", () => {

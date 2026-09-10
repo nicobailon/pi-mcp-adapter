@@ -55,9 +55,9 @@ describe("namespaceProxyName", () => {
 
   it("uses provider-safe namespace names without encoded-form collisions", async () => {
     const { namespaceProxyName } = await importSync();
-    expect(namespaceProxyName("数")).toBe("mcp___mcpns_6570");
+    expect(namespaceProxyName("数")).toBe("mcp___mcpns__6570_");
     expect(namespaceProxyName("_6570_")).toBe("mcp___6570_");
-    expect(namespaceProxyName("_mcpns_6570")).toBe("mcp___mcpns_5f_6d_63_70_6e_73_5f_36_35_37_30");
+    expect(namespaceProxyName("_mcpns_6570")).toBe("mcp___mcpns___mcpns__6570");
     expect(namespaceProxyName("数")).toMatch(/^[A-Za-z0-9_]+$/);
   });
 });
@@ -461,7 +461,7 @@ describe("syncNamespaceProxyTools", () => {
       getPiTools: () => [],
     });
 
-    expect(registered.has("mcp___mcpns_6570")).toBe(true);
+    expect(registered.has("mcp___mcpns__6570_")).toBe(true);
     expect(registered.has("mcp___6570_")).toBe(true);
   });
 
