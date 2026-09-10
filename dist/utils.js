@@ -6,10 +6,8 @@ export function parseJsonWithComments(raw) {
     return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
 }
 export function stableStringify(value) {
-    if (value === null || value === undefined || typeof value !== "object") {
-        const serialized = JSON.stringify(value);
-        return serialized === undefined ? "undefined" : serialized;
-    }
+    if (value === null || typeof value !== "object")
+        return JSON.stringify(value) ?? "undefined";
     if (Array.isArray(value)) {
         return `[${value.map(item => stableStringify(item)).join(",")}]`;
     }

@@ -2766,8 +2766,7 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     await Promise.resolve();
     await Promise.resolve();
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
-    const directTool = (name: string) => api.registerTool.mock.calls.find((call: any[]) => call[0].name === name)?.[0];
-    return { api, activeTools, proxyTool, directTool };
+    return { api, activeTools, proxyTool };
   }
 
   it("registers lazy tools but holds them out of the active set", async () => {

@@ -10,10 +10,7 @@ export function parseJsonWithComments(raw: string): unknown {
 }
 
 export function stableStringify(value: unknown): string {
-  if (value === null || value === undefined || typeof value !== "object") {
-    const serialized = JSON.stringify(value);
-    return serialized === undefined ? "undefined" : serialized;
-  }
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "undefined";
   if (Array.isArray(value)) {
     return `[${value.map(item => stableStringify(item)).join(",")}]`;
   }
