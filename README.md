@@ -325,6 +325,10 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `trace` | Enable metadata-only JSONL protocol tracing for this server; payloads, prompts, tool arguments/results, authorization data, and URLs are never persisted |
 | `disabled` | Keep the server visible in config and status, but prevent connections, authentication, tools, and resource calls (only literal `true` disables it) |
 
+#### Custom HTTPS trust
+
+`caFile` works with Streamable HTTP, SSE, and per-request header commands. Requests using this trust reject all redirects; configure the final HTTPS endpoint directly. Other origins and servers retain default trust. Layered configuration drops inherited trust when replacing the URL or switching away from HTTP. This option covers the MCP transport origin, not the separate interactive OAuth flow or private-CA authorization servers on other origins. Thanks to [@desmonna](https://github.com/desmonna) for #527.
+
 #### Protocol version negotiation
 
 The adapter defaults to `protocolVersion: "legacy"`. Omitting the field uses the classic MCP initialize sequence without `server/discover` or 2026 headers, preserving compatibility with deployed 2025-era servers.
@@ -350,8 +354,6 @@ Environment interpolation remains intentional. `${VAR}`, `$env:VAR`, and `{env:V
 - npm/npx cache resolution and cache-population subprocesses;
 - `!command` secret helpers used by stdio `env` (and other secret fields); and
 - the HTTP `requestHeadersCommand` helper.
-
-Custom CA trust (`caFile`) works with Streamable HTTP and SSE, including per-request header commands, on Node >=20. Requests using this trust reject all redirects; configure the final HTTPS endpoint directly. Other origins keep default trust, and other servers are unaffected. Trust is removed when a layered configuration replaces the URL or switches away from HTTP. Initial support covers the MCP transport origin, not the separate interactive OAuth flow or private-CA authorization servers on other origins. No certificate-verification bypass is provided. Thanks to [@desmonna](https://github.com/desmonna) for #527.
 
 For tighter use, configure a direct executable instead of npm/npx and avoid `!command` secret helpers. This option limits stdio child inheritance only; it does not provide complete multi-agent or helper-process isolation.
 

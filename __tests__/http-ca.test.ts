@@ -127,7 +127,7 @@ describe("per-origin custom CA", () => {
     expect(destroy.mock.contexts[0].destroyed).toBe(true);
   });
 
-  it("destroys the dispatcher on failed connection without TLS fallback", async () => {
+  it("destroys the dispatcher after TLS connection failure", async () => {
     const destroy = vi.spyOn(Agent.prototype, "destroy");
     let requests = 0;
     const url = await listen((_req, res) => { requests++; res.end(); });
