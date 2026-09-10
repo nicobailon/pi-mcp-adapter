@@ -1,6 +1,19 @@
 import { spawnSync } from "node:child_process";
 import { homedir, platform } from "node:os";
 import { extname, isAbsolute, join } from "node:path";
+import stripJsonComments from "strip-json-comments";
+export function parseJsonWithComments(raw) {
+    return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
+}
+export function stableStringify(value) {
+    if (value === null || typeof value !== "object")
+        return JSON.stringify(value) ?? "undefined";
+    if (Array.isArray(value)) {
+        return `[${value.map(item => stableStringify(item)).join(",")}]`;
+    }
+    const object = value;
+    return `{${Object.keys(object).sort().map(key => `${JSON.stringify(key)}:${stableStringify(object[key])}`).join(",")}}`;
+}
 async function execOpen(pi, target, browser, signal) {
     const os = platform();
     if (os === "darwin") {

@@ -1,7 +1,7 @@
 import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent, type Stats } from "node:fs";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
-import stripJsonComments from "strip-json-comments";
 import { formatServerNamespace, type ClaudePluginConfig, type McpConfig, type ServerEntry } from "./types.ts";
+import { parseJsonWithComments } from "./utils.ts";
 
 interface ClaudePluginManifest {
   name: string;
@@ -122,7 +122,7 @@ function readPluginManifest(pluginRoot: string): ClaudePluginManifest | null | f
 
   let raw: unknown;
   try {
-    raw = parseJson(manifestText);
+    raw = parseJsonWithComments(manifestText);
   } catch (error) {
     console.warn(`Claude plugin manifest contains invalid JSON at ${manifestPath}: ${formatError(error)}`);
     return false;
@@ -245,7 +245,7 @@ function readPluginMcpConfig(
   try {
     const configText = safeReadFile(configPath, `Claude plugin "${pluginName}" MCP config`, pluginRoot);
     if (configText === null) return { mcpServers: {} };
-    raw = parseJson(configText);
+    raw = parseJsonWithComments(configText);
   } catch (error) {
     console.warn(`Claude plugin "${pluginName}" has invalid MCP config at ${configPath}: ${formatError(error)}`);
     return { mcpServers: {} };
@@ -301,10 +301,6 @@ function replaceStrings(value: unknown, replace: (value: string) => string): unk
 function isContainedPath(root: string, path: string): boolean {
   const rel = relative(root, path);
   return rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep) && !isAbsolute(rel));
-}
-
-function parseJson(raw: string): unknown {
-  return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
 }
 
 function safeStat(path: string, description: string): Stats | null {

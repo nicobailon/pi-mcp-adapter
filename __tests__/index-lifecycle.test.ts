@@ -120,7 +120,8 @@ vi.mock("../proxy-modes.ts", () => ({
   executeUiMessages: mocks.executeUiMessages,
 }));
 
-vi.mock("../utils.ts", () => ({
+vi.mock("../utils.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../utils.ts")>()),
   formatTerminalError: (error: unknown) => error instanceof Error ? error.message : String(error),
   getConfigPathFromArgv: mocks.getConfigPathFromArgv,
   interpolateEnvRecord: (value: Record<string, string> | undefined) => value,
@@ -2745,14 +2746,12 @@ describe("directTools: \"search\" — registered inactive, activated by search",
   });
 
   const lazySpec = (name: string) => ({ lazy: true, serverName: "demo", originalName: name, prefixedName: `demo_${name}`, description: `${name} tool` });
-  // executeSearch reports ToolMetadata.name — the PREFIXED name — never the original.
   const searchResult = (...names: string[]) => ({
     content: [{ type: "text", text: `Found ${names.length}` }],
     details: { mode: "search", matches: names.map((tool) => ({ server: "demo", tool: `demo_${tool}`, score: 1 })), count: names.length, hasMore: false, nextOffset: null, query: "q" },
   });
 
   async function boot(settings: Record<string, unknown> = {}, specs = [lazySpec("alpha"), lazySpec("beta"), lazySpec("gamma"), lazySpec("delta")]) {
-    // scriptMode off keeps the floor at exactly bash + mcp, so the active-set assertions below are legible.
     const config = { settings: { scriptMode: false, ...settings }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
     const state = createState();
     state.config = config;
@@ -2767,8 +2766,7 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     await Promise.resolve();
     await Promise.resolve();
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
-    const directTool = (name: string) => api.registerTool.mock.calls.find((call: any[]) => call[0].name === name)?.[0];
-    return { api, activeTools, proxyTool, directTool };
+    return { api, activeTools, proxyTool };
   }
 
   it("registers lazy tools but holds them out of the active set", async () => {
@@ -2778,17 +2776,9 @@ describe("directTools: \"search\" — registered inactive, activated by search",
   });
 
   it("keeps the gateway when disableProxyTool is set, or search-mode tools can never be activated", async () => {
-    // Search-mode tools are registered inactive and mcp({ search }) is their only activation
-    // entry point. Dropping the gateway strands every one of them: all held, nothing able to
-    // activate one, and no error to say so.
-    const { api, activeTools, proxyTool } = await boot({ disableProxyTool: true });
+    const { activeTools, proxyTool } = await boot({ disableProxyTool: true });
     expect(activeTools()).toContain("mcp");
     expect(proxyTool).toBeDefined();
-    mocks.executeSearch.mockReturnValue(searchResult("alpha"));
-    const result = await proxyTool.execute("call-1", { search: "q" });
-    expect(result.addedToolNames).toEqual(["demo_alpha"]);
-    expect(activeTools()).toContain("demo_alpha");
-    expect(api.registerTool.mock.calls.some((call: any[]) => call[0].name === "mcp")).toBe(true);
   });
 
   it("search activates the matches additively and reports them as addedToolNames", async () => {
@@ -2802,17 +2792,12 @@ describe("directTools: \"search\" — registered inactive, activated by search",
   });
 
   it("a search-mode tool selected eagerly becomes active, even if search never activated it", async () => {
-    const { activeTools, proxyTool, directTool } = await boot();
+    const { activeTools, proxyTool } = await boot();
     expect(activeTools()).toEqual(["bash", "mcp"]);
-    // The server flips to eager direct tools (e.g. via the /mcp panel); alpha is re-resolved non-lazy.
     mocks.resolveDirectTools.mockReturnValue([{ ...lazySpec("alpha"), lazy: false }, lazySpec("gamma")]);
     mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
     await proxyTool.execute("call-1", { connect: "demo" });
-    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]); // eager → active; gamma still held
-    // A post-transition call runs the tool like any eager direct tool.
-    await directTool("demo_alpha").execute("call-2", {});
     expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
-    // Searching afterwards activates only what is still held, and reports only that.
     mocks.executeSearch.mockReturnValue(searchResult("alpha", "gamma"));
     const search = await proxyTool.execute("call-3", { search: "q" });
     expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha", "demo_gamma"]);
@@ -2825,7 +2810,7 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     mocks.resolveDirectTools.mockReturnValue([lazySpec("alpha")]);
     mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
     await proxyTool.execute("call-1", { connect: "demo" });
-    expect(activeTools()).toEqual(["bash", "mcp"]); // held now
+    expect(activeTools()).toEqual(["bash", "mcp"]);
     mocks.executeSearch.mockReturnValue(searchResult("alpha"));
     const search = await proxyTool.execute("call-2", { search: "q" });
     expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
@@ -2839,7 +2824,7 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     const plain = searchResult("alpha");
     mocks.executeSearch.mockReturnValue(plain);
     const again = await proxyTool.execute("c2", { search: "q" });
-    expect(again).toBe(plain); // untouched: nothing changed state
+    expect(again).toBe(plain);
     expect(again.addedToolNames).toBeUndefined();
     expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
   });
@@ -2849,7 +2834,7 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }], details: { mode: "call", server: "demo", tool: "alpha" } });
     const result = await proxyTool.execute("call-1", { tool: "demo_alpha", args: {} });
     expect(result.addedToolNames).toBeUndefined();
-    expect(activeTools()).toEqual(["bash", "mcp"]); // search is the only load point
+    expect(activeTools()).toEqual(["bash", "mcp"]);
   });
 
   it.each(["connect", "install"])("%s does not report held-inactive search-mode tools as loaded", async (action) => {

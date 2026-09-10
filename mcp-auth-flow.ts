@@ -385,10 +385,6 @@ function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
   }
 
   const port = Number.parseInt(url.port, 10)
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw new Error("OAuth localhost redirectUri must include an explicit numeric port")
-  }
-
   const callbackHost = hostname === "[::1]" ? "::1" : hostname
   return {
     mode: "local",

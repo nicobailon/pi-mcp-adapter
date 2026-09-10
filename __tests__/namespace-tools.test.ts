@@ -283,7 +283,6 @@ describe("syncNamespaceProxyTools", () => {
     });
 
     const tool = registered.get("mcp__context_mode")!;
-    expect(tool.parameters).toBeDefined();
     expect(tool.parameters).toMatchObject({
       properties: {
         tool: expect.anything(),

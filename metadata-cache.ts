@@ -28,6 +28,7 @@ import {
   resolveBearerToken,
   resolveConfigPath,
   resolveServerUrl,
+  stableStringify,
 } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 
@@ -360,19 +361,6 @@ export function reconstructPromptMetadata(
       arguments: args,
     };
   });
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || value === undefined || typeof value !== "object") {
-    const serialized = JSON.stringify(value);
-    return serialized === undefined ? "undefined" : serialized;
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(v => stableStringify(v)).join(",")}]`;
-  }
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  return `{${keys.map(k => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
 
 function tryGetToolUiResourceUri(tool: McpTool): string | undefined {

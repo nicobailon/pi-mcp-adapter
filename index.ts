@@ -828,7 +828,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     } catch {
       return;
     }
-    if (!sessionManager || sessionManager !== currentState.sessionManager) return;
+    if (sessionManager !== currentState.sessionManager) return;
 
     restoreCurrentSessionApprovals(currentState);
   });

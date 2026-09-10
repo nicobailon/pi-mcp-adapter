@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.js";
 import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
-import { extractToolUiStreamMode, interpolateEnvRecord, interpolateEnvVars, resolveBearerToken, resolveConfigPath, resolveServerUrl, } from "./utils.js";
+import { extractToolUiStreamMode, interpolateEnvRecord, interpolateEnvVars, resolveBearerToken, resolveConfigPath, resolveServerUrl, stableStringify, } from "./utils.js";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.js";
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -297,18 +297,6 @@ export function reconstructPromptMetadata(serverName, prompts, prefix, definitio
             arguments: args,
         };
     });
-}
-function stableStringify(value) {
-    if (value === null || value === undefined || typeof value !== "object") {
-        const serialized = JSON.stringify(value);
-        return serialized === undefined ? "undefined" : serialized;
-    }
-    if (Array.isArray(value)) {
-        return `[${value.map(v => stableStringify(v)).join(",")}]`;
-    }
-    const obj = value;
-    const keys = Object.keys(obj).sort();
-    return `{${keys.map(k => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
 function tryGetToolUiResourceUri(tool) {
     try {

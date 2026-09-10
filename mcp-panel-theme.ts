@@ -1,13 +1,6 @@
 import { DynamicBorder, type Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 
-/**
- * A width-aware frame shared by the MCP panel views.
- *
- * DynamicBorder owns the horizontal sizing; the panel supplies the corners so
- * each view can retain its existing frame shape without hand-building a
- * border-width-dependent ANSI line.
- */
 export class McpPanelFrame implements Component {
   private readonly border: DynamicBorder;
 
@@ -56,14 +49,6 @@ export class McpPanelFrame implements Component {
   }
 }
 
-/**
- * Semantic styles shared by the MCP panels.
- *
- * The adapter deliberately keeps the panel roles independent from Pi's theme
- * token names. This lets the panel preserve its existing hierarchy while
- * consuming the active host theme, and gives the setup panel a small boundary
- * to adopt in its follow-up migration.
- */
 export interface McpPanelTheme {
   border(text: string): string;
   title(text: string): string;
@@ -98,13 +83,6 @@ const PLAIN_THEME: McpPanelTheme = {
   inverse: identity,
 };
 
-/**
- * Build panel styles from the theme supplied to `ctx.ui.custom()`.
- *
- * When the panel is constructed directly (for example by an integration test
- * or an older embedding), plain text remains a safe fallback. No ANSI palette
- * is owned by the adapter anymore.
- */
 export function createMcpPanelTheme(theme?: Theme): McpPanelTheme {
   if (!theme) return PLAIN_THEME;
 

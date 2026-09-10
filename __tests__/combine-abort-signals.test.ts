@@ -11,16 +11,15 @@ function withoutNativeAny() {
   vi.stubGlobal("AbortSignal", LegacyAbortSignal);
 }
 
+it("preserves empty and single-signal fast paths", () => {
+  const signal = new AbortController().signal;
+  expect(combineAbortSignals()).toBeUndefined();
+  expect(combineAbortSignals(undefined, undefined)).toBeUndefined();
+  expect(combineAbortSignals(undefined, signal, undefined)).toBe(signal);
+});
+
 for (const fallback of [false, true]) {
   describe(fallback ? "fallback signal combination" : "runtime signal combination", () => {
-    it("preserves empty and single-signal fast paths", () => {
-      if (fallback) withoutNativeAny();
-      const signal = new AbortController().signal;
-      expect(combineAbortSignals()).toBeUndefined();
-      expect(combineAbortSignals(undefined, undefined)).toBeUndefined();
-      expect(combineAbortSignals(undefined, signal, undefined)).toBe(signal);
-    });
-
     it("uses input order for already-aborted reasons without adding listeners", () => {
       if (fallback) withoutNativeAny();
       const live = new AbortController();
