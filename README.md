@@ -663,6 +663,8 @@ Per-server `directTools` overrides the global setting. The example above registe
 
 The model starts each turn seeing only the `mcp` proxy (and any eager direct tools). When it searches, matching tools from search-mode servers become active direct tools, reported on the result as `addedToolNames` so Pi treats that point as their load point. What it activates are real tools with real schemas, not a proxy call.
 
+Activation is additive: the active set grows as searches match new tools and holds them for the life of the process. Bounding it is left to a later change.
+
 Activation happens at exactly one point: a successful `mcp({ search })` whose matches include the tool. Nothing else activates a search-mode tool — not a `mcp({ tool })` call, not a `connect`, not a session restart — and nothing deactivates one; the active set only grows within a process. Activation state lives in the running process: a new process (a restart, or a resumed session) starts with every search-mode tool held again until a search matches it, so the model may need to search once more after a resume. Selecting a server's tools eagerly (`directTools: true`, in config or from the `/mcp` panel) activates any of its tools that were held, and switching a server to `"search"` holds its tools again. The search result lists what it activated, and the search text follows unchanged. Search-mode tools do not count toward the 75-tool advisory.
 
 To expose only a subset of a noisy server, add `includeTools` on the server. Values can be exact original names, generated resource names such as `read_<resource>`, prefixed names, or simple glob patterns:
