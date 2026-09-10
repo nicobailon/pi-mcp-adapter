@@ -568,6 +568,7 @@ export function updateMetadataCache(
   serverName: string,
   options: { preserveEmptyResources?: boolean } = {},
 ): void {
+  if (state.provisionalInstalls?.has(serverName)) return;
   const connection = state.manager.getConnection(serverName);
   if (!connection || connection.status !== "connected") return;
 

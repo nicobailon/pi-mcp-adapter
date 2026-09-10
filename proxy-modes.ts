@@ -3,7 +3,7 @@ import { UrlElicitationRequiredError, type Client, type Progress, type RequestOp
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
-import { getServerPrefix, isServerDisabled, parseUiPromptHandoff } from "./types.ts";
+import { getServerPrefix, isServerDisabled, parseUiPromptHandoff, type ServerEntry } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
@@ -14,7 +14,7 @@ import { resolveMcpResultContent, transformMcpContent, transformMcpResourceConte
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, formatMcpStatus, normalizeToolArguments, resolveServerUrl, truncateAtWord } from "./utils.ts";
-import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
+import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
@@ -33,6 +33,8 @@ const REGEX_SAFETY_CHECK_PARAMS = {
   incubationTimeout: 50,
   timeout: 250,
 } as const;
+
+const backgroundAuthWatchers = new WeakMap<McpExtensionState, Map<string, Promise<void>>>();
 
 type AutoAuthResult =
   | { status: "skipped" }
@@ -128,6 +130,76 @@ function disabledResult(mode: string, serverName: string): ProxyToolResult {
   };
 }
 
+function emitAuthStatus(state: McpExtensionState, serverName: string, status: "authenticated" | "failed", message: string): void {
+  state.ui?.notify(message, status === "authenticated" ? "info" : "error");
+  state.sendMessage?.(
+    {
+      customType: "mcp-oauth-status",
+      content: [{ type: "text", text: message }],
+      display: message,
+      details: {
+        server: serverName,
+        status,
+        ...(status === "authenticated" ? { nextAction: { connect: serverName } } : {}),
+      },
+    },
+    { triggerTurn: true },
+  );
+}
+
+function ensureBackgroundAuthWatcher(
+  state: McpExtensionState,
+  serverName: string,
+  serverUrl: string,
+  definition: ServerEntry,
+): void {
+  let watchers = backgroundAuthWatchers.get(state);
+  if (!watchers) {
+    watchers = new Map();
+    backgroundAuthWatchers.set(state, watchers);
+  }
+  if (watchers.has(serverName)) return;
+
+  const authOptions = {
+    authStorageOptions: state.authStorageOptions,
+    runtime: state.oauthRuntime,
+    openAuthorizationUrl: state.openBrowser,
+  };
+  const watcher = authenticate(serverName, serverUrl, definition, authOptions).then(async (status) => {
+    throwIfAborted(state.owner.signal);
+    if (status !== "authenticated") throw new Error(`OAuth authentication ended with status: ${status}`);
+    await state.manager.close(serverName);
+    throwIfAborted(state.owner.signal);
+    clearFailure(state, serverName, "auth-background-complete");
+    updateStatusBar(state);
+    emitAuthStatus(
+      state,
+      serverName,
+      "authenticated",
+      `OAuth authentication completed for MCP server "${serverName}". Connect it now to load and verify its tools.`,
+    );
+  });
+  watchers.set(serverName, watcher);
+
+  void watcher.catch(async (error) => {
+    if (isAbortError(error, state.owner.signal)) return;
+    try {
+      if (await getAuthStatus(serverName, authOptions) === "authenticated") return;
+    } catch (statusError) {
+      if (isAbortError(statusError, state.owner.signal)) return;
+    }
+    if (state.owner.signal.aborted) return;
+    emitAuthStatus(
+      state,
+      serverName,
+      "failed",
+      `OAuth authentication failed for MCP server "${serverName}". Start authorization again or inspect trusted logs.`,
+    );
+  }).finally(() => {
+    if (watchers?.get(serverName) === watcher) watchers.delete(serverName);
+  });
+}
+
 function getAuthRequiredMessage(
   state: McpExtensionState,
   serverName: string,
@@ -165,18 +237,20 @@ function formatManualAuthInstructions(serverName: string, authorizationUrl: stri
   const redirect = getRedirectDetails(authorizationUrl);
   const redirectNote = redirect.remote
     ? "The provider uses a pre-registered HTTPS callback. Copy its full URL from the browser address bar, even if the destination page reports an error."
-    : redirect.port
-      ? `The redirect URL will use local port ${redirect.port}. On a remote server it is expected for that localhost page to fail locally; copy the address bar URL anyway.`
-      : "";
+    : `The adapter is watching${redirect.port ? ` local port ${redirect.port}` : " the local callback"} and will report when authentication completes.`;
 
   return [
     `MCP OAuth required for "${serverName}".`,
     "",
-    "Open this URL in your local browser:",
+    redirect.remote
+      ? "The adapter is attempting to open this authorization URL in your local browser:"
+      : "The adapter is attempting to open this authorization URL and watching for its callback:",
     "",
     authorizationUrl,
     "",
-    "After approving, copy the full callback URL from your browser address bar and send it back with:",
+    redirect.remote
+      ? "After approving, copy the full callback URL from your browser address bar and send it back with:"
+      : "If the browser does not open or the callback is not detected, open the URL above and complete manually with:",
     `mcp({ action: "auth-complete", server: "${serverName}", args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" } })`,
     "",
     redirect.remote
@@ -464,6 +538,16 @@ export async function executeAuthStart(state: McpExtensionState, serverName: str
         content: [{ type: "text" as const, text: `OAuth authentication successful for "${serverName}".` }],
         details: { mode: "auth-start", server: serverName, authenticated: true },
       };
+    }
+
+    if (getRedirectDetails(authorizationUrl).remote) {
+      try {
+        await state.openBrowser(authorizationUrl);
+      } catch (error) {
+        if (isAbortError(error, ownedSignal)) throw error;
+      }
+    } else {
+      ensureBackgroundAuthWatcher(state, serverName, serverUrl, definition);
     }
 
     return {

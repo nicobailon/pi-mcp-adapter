@@ -54,6 +54,7 @@ export interface McpOAuthRuntime {
 
 export interface AuthenticateOptions {
   onAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>
+  openAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>
   onAuthorizationInput?: (
     authorizationUrl: string,
     signal: AbortSignal,
@@ -961,7 +962,11 @@ export async function authenticate(
         console.log(`MCP Auth: Open this URL to authenticate ${serverName}:\n${authorizationUrl}`)
       }
       try {
-        await abortable(open(authorizationUrl), signal)
+        await abortable(Promise.resolve(
+          options.openAuthorizationUrl
+            ? options.openAuthorizationUrl(authorizationUrl)
+            : open(authorizationUrl),
+        ), signal)
       } catch (error) {
         if (isAbortError(error, signal)) throw error
         console.warn(`MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`, { error })

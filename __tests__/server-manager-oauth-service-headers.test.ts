@@ -180,6 +180,9 @@ it("signs connection-owned cross-origin token and MCP requests, but not provider
       requestHeadersCommand: { command: process.execPath, args: [script] },
     });
     expect(connection.status).toBe("connected");
+    // The SDK opens its GET stream asynchronously. Let its signer reach fetch
+    // before teardown can cancel it between logging and request observation.
+    await expect.poll(() => seen.some(request => request.url === `${origin}/mcp` && request.method === "GET")).toBe(true);
     await manager.closeAll();
     const metadata = seen.filter(request => request.url === metadataUrl);
     expect(metadata.length).toBeGreaterThan(0);

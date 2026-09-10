@@ -43,6 +43,8 @@ export interface McpExtensionState {
   serverInstructions: Map<string, string>;
   config: McpConfig;
   programmaticConfig?: boolean;
+  /** Install validations must not publish durable cache entries before config persistence. */
+  provisionalInstalls?: Set<string>;
   oauthRuntime: McpOAuthRuntime;
   authStorageOptions: AuthStorageOptions;
   failureTracker: Map<string, number>;

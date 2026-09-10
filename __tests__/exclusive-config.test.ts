@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +8,7 @@ import {
   findAvailableImportConfigs,
   getMcpDiscoverySummary,
   loadMcpConfig,
+  writeSharedServerEntry,
 } from "../config.ts";
 
 const roots: string[] = [];
@@ -17,6 +19,22 @@ afterEach(async () => {
 });
 
 describe("exclusive MCP config", () => {
+  it.each(["exclusive", "merge"])("reloads queued URL writes at the active project path in %s mode", async (mode) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-mcp-install-reload-"));
+    roots.push(root);
+    const destination = join(root, ".mcp.json");
+    vi.stubEnv("PI_CODING_AGENT_DIR", join(root, "agent"));
+    vi.stubEnv("PI_MCP_CONFIG_MODE", mode);
+    const prior = { url: "https://prior.example/mcp", headers: { "X-Service": "retained" } };
+    await writeConfig(destination, { custom: { retained: true }, mcpServers: { prior } });
+    const installed = { first: { url: "https://first.example/mcp" }, second: { url: "https://second.example/mcp" } };
+    await Promise.all(Object.entries(installed).map(([name, entry]) =>
+      withFileMutationQueue(destination, async () => { writeSharedServerEntry(destination, name, entry); }),
+    ));
+    expect(loadMcpConfig(destination, root).mcpServers).toMatchObject({ prior, ...installed });
+    expect(JSON.parse(await readFile(destination, "utf8"))).toEqual({ custom: { retained: true }, mcpServers: { prior, ...installed } });
+  });
+
   it("loads the private agent config by default and honors an explicit override", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-mcp-exclusive-"));
     roots.push(root);

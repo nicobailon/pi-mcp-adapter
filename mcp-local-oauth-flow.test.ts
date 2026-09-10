@@ -4,6 +4,7 @@ import { createServer } from "node:http"
 import { after, before, describe, it } from "node:test"
 
 import {
+  authenticate,
   completeAuth,
   initializeOAuth,
   shutdownOAuth,
@@ -193,6 +194,36 @@ describe("local OAuth authorization-code flow", () => {
     assert.ok(secureStorePayload.includes("example-refresh-token"))
     assert.ok(!secureStorePayload.includes(codeVerifier))
     assert.ok(!secureStorePayload.includes(state))
+  })
+
+  it("opens the authorization URL and completes from the watched loopback callback", async () => {
+    const watchedServerName = `${serverName}-watched`
+    let openedAuthorizationUrl: string | undefined
+
+    try {
+      const status = await authenticate(watchedServerName, serverUrl, {
+        url: serverUrl,
+        auth: "oauth",
+        oauth: { redirectUri: "http://127.0.0.1:{port}/callback", scope: "mcp:read" },
+      }, {
+        openAuthorizationUrl: async (authorizationUrl) => {
+          openedAuthorizationUrl = authorizationUrl
+          const authorizationRequest = new URL(authorizationUrl)
+          const callbackUrl = new URL(authorizationRequest.searchParams.get("redirect_uri")!)
+          callbackUrl.searchParams.set("code", "watched-authorization-code")
+          callbackUrl.searchParams.set("state", authorizationRequest.searchParams.get("state")!)
+          callbackUrl.searchParams.set("iss", origin)
+          const response = await fetch(callbackUrl)
+          assert.strictEqual(response.status, 200)
+        },
+      })
+
+      assert.strictEqual(status, "authenticated")
+      assert.ok(openedAuthorizationUrl)
+      assert.strictEqual(tokenRequest?.get("code"), "watched-authorization-code")
+    } finally {
+      clearAllCredentials(watchedServerName)
+    }
   })
 
   it("re-registers a stale dynamic client after a refresh invalid_grant", async () => {

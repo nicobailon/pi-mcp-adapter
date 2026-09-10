@@ -122,6 +122,7 @@
     "mcp-code.ts",
     "mcp-script-worker.mjs",
     "mcp-probe.ts",
+    "mcp-install.ts",
     "agent-plugin-loader.ts",
     "resource-tools.ts",
     "lifecycle.ts",
