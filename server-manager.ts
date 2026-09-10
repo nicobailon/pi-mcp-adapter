@@ -1268,8 +1268,7 @@ export class McpServerManager {
         : { status: "explicit", provider: createAuthProvider() }
       : { status: "disabled" };
 
-    const caFetch = createCaFetch(definition);
-    let transferred = false;
+    let caFetch = createCaFetch(definition);
     try {
     const commandFetch = definition.requestHeadersCommand
       ? createRequestHeadersCommandFetch(definition.requestHeadersCommand, caFetch?.fetch)
@@ -1331,20 +1330,21 @@ export class McpServerManager {
     for (;;) {
       const result = await attempt(kind);
       if (result.status === "connected") {
-        if (caFetch) {
+        const ownedCa = caFetch;
+        if (ownedCa) {
           const close = result.transport.close.bind(result.transport);
           const onclose = result.transport.onclose;
           result.transport.onclose = () => {
-            void caFetch.close().catch(error => {
+            void ownedCa.close().catch(error => {
               logger.debug(`MCP: CA dispatcher cleanup failed for ${serverName}: ${String(error)}`);
             });
             onclose?.();
           };
           result.transport.close = async () => {
-            try { await close(); } finally { await caFetch.close(); }
+            try { await close(); } finally { await ownedCa.close(); }
           };
+          caFetch = undefined;
         }
-        transferred = true;
         return { ...result, credentialsInvalidated: invalidated };
       }
       if (result.error instanceof AggregateError
@@ -1380,7 +1380,7 @@ export class McpServerManager {
       throw result.error;
     }
     } finally {
-      if (!transferred) await caFetch?.close();
+      await caFetch?.close();
     }
   }
 

@@ -125,6 +125,9 @@ describe("per-origin custom CA", () => {
     await manager.close("tls");
     expect(new Set(destroy.mock.contexts).size).toBe(1);
     expect(destroy.mock.contexts[0].destroyed).toBe(true);
+    const destroyCalls = destroy.mock.calls.length;
+    await connection.transport.close();
+    expect(destroy.mock.calls).toHaveLength(destroyCalls);
   });
 
   it("destroys the dispatcher after TLS connection failure", async () => {
