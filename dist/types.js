@@ -82,8 +82,10 @@ export function formatServerNamespace(serverName) {
         return namespace;
     // Hash the ASCII encoding, not the raw name: lone surrogates and U+FFFD share UTF-8 bytes.
     const digest = createHash("sha256").update(namespace, "utf8").digest("hex").slice(0, 16);
-    const head = body.slice(0, MAX_SERVER_NAMESPACE_LENGTH - ENCODED_SERVER_NAMESPACE_MARKER.length - digest.length - 1);
-    return `${ENCODED_SERVER_NAMESPACE_MARKER}${head}_${digest}`;
+    // `_h_` cannot start an encoded body: `h` is neither `_` nor a hexadecimal digit.
+    const hashPrefix = `${ENCODED_SERVER_NAMESPACE_MARKER}_h_`;
+    const head = body.slice(0, MAX_SERVER_NAMESPACE_LENGTH - hashPrefix.length - digest.length - 1);
+    return `${hashPrefix}${head}_${digest}`;
 }
 // `_` becomes `__`, so `__` and `_<hex>_` form a prefix code and the encoding stays injective.
 function encodeServerNamespace(name) {
