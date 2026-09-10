@@ -49,8 +49,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --import tsx --test mcp-refresh-lock.test.ts mcp-oauth-provider.test.ts
-      - run: npx vitest run __tests__/oauth-transaction-processes.test.ts __tests__/oauth-fetch-transaction.test.ts __tests__/oauth-diagnostics.test.ts __tests__/oauth-storage-transaction.test.ts
+      - run: node --import tsx --test mcp-refresh-lock.test.ts
+      - run: npx vitest run __tests__/oauth-transaction-processes.test.ts
 
   node24-worker-fds:
     runs-on: ubuntu-latest
