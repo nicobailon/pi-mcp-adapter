@@ -82,7 +82,9 @@ export function createOAuthFetch(
       })
     } catch (error) {
       combined?.throwIfAborted()
-      if (protectedRequest) throw new TypeError("OAuth HTTP request failed (credential-bearing redirects are not allowed)")
+      // Fetch failures also include DNS, TLS, and connection errors. Do not
+      // misdiagnose them as redirects or expose a potentially secret-bearing cause.
+      if (protectedRequest) throw new TypeError("OAuth HTTP request failed")
       throw error
     }
   }

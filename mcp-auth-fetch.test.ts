@@ -125,6 +125,23 @@ describe("origin-scoped OAuth fetch", () => {
     assert.equal(command.invocations(), 2)
   })
 
+  it("does not misdiagnose protected DNS, TLS, or connection failures as redirects", async () => {
+    for (const code of ["ENOTFOUND", "CERT_HAS_EXPIRED", "ECONNREFUSED"]) {
+      const cause = Object.assign(new Error(`${code}: ${service}`), { code })
+      const fetchFn = createOAuthFetch(serverUrl, () => new Headers({ "x-service-auth": service }), undefined, {
+        delegate: async () => { throw new TypeError("fetch failed", { cause }) },
+      })
+      await assert.rejects(fetchFn(serverUrl), error => {
+        assert(error instanceof TypeError)
+        assert.equal(error.message, "OAuth HTTP request failed")
+        assert.equal(error.cause, undefined)
+        assert(!String(error.stack).includes(service))
+        assert(!error.message.toLowerCase().includes("redirect"))
+        return true
+      })
+    }
+  })
+
   it("redacts delegate failures and honors caller and request cancellation", async () => {
     const failure = createOAuthFetch(serverUrl, () => new Headers({ x: service }), undefined, {
       delegate: async () => { throw new Error(service) },
@@ -162,8 +179,8 @@ describe("origin-scoped OAuth fetch", () => {
     const localOrigin = `http://127.0.0.1:${(source.address() as import("node:net").AddressInfo).port}`
     try {
       const fetchFn = createOAuthFetch(localOrigin, () => new Headers({ "x-service-auth": service }))
-      await assert.rejects(fetchFn(`${localOrigin}/same`), /redirects are not allowed/)
-      await assert.rejects(fetchFn(`${localOrigin}/cross`), /redirects are not allowed/)
+      await assert.rejects(fetchFn(`${localOrigin}/same`), { name: "TypeError", message: "OAuth HTTP request failed" })
+      await assert.rejects(fetchFn(`${localOrigin}/cross`), { name: "TypeError", message: "OAuth HTTP request failed" })
       assert.equal(targetHits, 0)
     } finally {
       source.closeAllConnections(); target.closeAllConnections()
