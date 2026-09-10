@@ -6,9 +6,11 @@ import {
   SdkError,
   SdkErrorCode,
   SdkHttpError,
+  SseError,
   SSEClientTransport,
   StreamableHTTPClientTransport,
   UnauthorizedError,
+  type FetchLike,
   type GetPromptResult,
   type ListToolsResult,
   type ReadResourceResult,
@@ -1325,9 +1327,21 @@ export class McpServerManager {
       | { status: "failed"; client: Client; transport: Transport; error: unknown }
     > => {
       const authProvider = "provider" in authState ? authState.provider : undefined;
+      let sseFetchFailure: unknown;
+      const transportFetch: FetchLike | undefined = kind === "sse" && process.platform === "darwin" && isLiteralLocalAddress(serverUrl)
+        ? async (input, init) => {
+          try {
+            return await (requestFetch ?? globalThis.fetch)(input, init);
+          } catch (error) {
+            // EventSource discards the fetch cause before the SDK creates SseError.
+            if (localNetworkFailureCodes(error).length > 0) sseFetchFailure = error;
+            throw error;
+          }
+        }
+        : requestFetch;
       const transportOptions = {
         ...(requestInit !== undefined ? { requestInit } : {}),
-        ...(requestFetch !== undefined ? { fetch: requestFetch } : {}),
+        ...(transportFetch !== undefined ? { fetch: transportFetch } : {}),
         ...(authProvider !== undefined ? { authProvider } : {}),
         ...(authProvider !== undefined
           && definition.oauth !== false
@@ -1347,6 +1361,9 @@ export class McpServerManager {
         await this.connectClientWithAbort(client, transport, requestOptions, signal);
         return { status: "connected", client, transport };
       } catch (error) {
+        if (error instanceof SseError && sseFetchFailure !== undefined) {
+          error = new AggregateError([error, sseFetchFailure], error.message);
+        }
         const abortCleanupFailed = error instanceof AggregateError
           && error.message === "MCP connection abort cleanup failed";
         if (!abortCleanupFailed) {

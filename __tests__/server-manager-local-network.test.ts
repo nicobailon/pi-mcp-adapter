@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SseError } from "@modelcontextprotocol/client";
 import { McpServerManager } from "../server-manager.ts";
 
 afterEach(() => {
@@ -27,6 +28,51 @@ async function connectFailure(host: string, code = "EHOSTUNREACH", platform = "d
 }
 
 describe("macOS LAN connection diagnostics", () => {
+  it.each([
+    ["darwin", "192.168.10.7", "EHOSTUNREACH", true],
+    ["darwin", "192.168.10.7", "ENETUNREACH", true],
+    ["darwin", "192.168.10.7", "EACCES", true],
+    ["darwin", "192.168.10.7", "ECONNREFUSED", false],
+    ["darwin", "8.8.8.8", "EHOSTUNREACH", false],
+    ["darwin", "127.0.0.1", "EHOSTUNREACH", false],
+    ["linux", "192.168.10.7", "EHOSTUNREACH", false],
+  ] as const)("enriches only qualifying SSE failures: %s / %s / %s", async (platform, host, code, qualifies) => {
+    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+    const original = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("network detail"), { code }),
+    });
+    const fetch = vi.fn().mockRejectedValue(original);
+    vi.stubGlobal("fetch", fetch);
+    const manager = new McpServerManager();
+    try {
+      await manager.connect("lan", {
+        url: `https://${host}/mcp`, oauth: false, httpTransport: "sse",
+      });
+      expect.fail("connection unexpectedly succeeded");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      if (!(error instanceof Error)) throw error;
+      if (!qualifies) {
+        expect(error).toBeInstanceOf(SseError);
+        expect(error.message).toBe("SSE error: TypeError: fetch failed: network detail");
+        expect(error.cause).toBeUndefined();
+        expect(fetch).toHaveBeenCalledTimes(2);
+        return;
+      }
+      expect(error.message).toContain("macOS Local Network Privacy may be blocking access");
+      expect(error.message).toContain(code);
+      expect(error.cause).toBeInstanceOf(AggregateError);
+      if (!(error.cause instanceof AggregateError)) throw error;
+      const [sdkError, fetchError] = error.cause.errors;
+      expect(sdkError).toBeInstanceOf(SseError);
+      expect(error.message.startsWith(`${sdkError.message} — `)).toBe(true);
+      expect(fetchError).toBe(original);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      await manager.closeAll();
+    }
+  });
+
   it.each([
     ["192.168.10.7", "EHOSTUNREACH"], ["10.0.0.2", "ENETUNREACH"],
     ["172.16.0.1", "EACCES"], ["172.31.255.254", "EHOSTUNREACH"],
