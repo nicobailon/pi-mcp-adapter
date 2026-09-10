@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import stripJsonComments from "strip-json-comments";
 import { getAgentDir, getConfigDirName } from "./agent-dir.ts";
 import type { McpConfig, ServerEntry } from "./types.ts";
+import { parseJsonWithComments } from "./utils.ts";
 
 interface PackageSetting {
   source: string;
@@ -130,7 +130,7 @@ function readMcpConfig(path: string, packageName: string): McpConfig | null {
 
 function readRequiredJson(path: string, description: string): unknown {
   try {
-    return JSON.parse(stripJsonComments(readFileSync(path, "utf8"), { trailingCommas: true }));
+    return parseJsonWithComments(readFileSync(path, "utf8"));
   } catch (error) {
     throw new Error(`${description} ${path} contains invalid JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
