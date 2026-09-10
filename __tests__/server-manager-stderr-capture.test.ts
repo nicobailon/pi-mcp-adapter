@@ -197,6 +197,20 @@ describe("McpServerManager stderr capture", () => {
     );
   });
 
+  it("leaves macOS stdio network failures unchanged without HTTP requests", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const original = new Error("connection failed", {
+      cause: Object.assign(new Error("connect 192.168.10.7"), { code: "EHOSTUNREACH" }),
+    });
+    mocks.connectImpl = async () => { throw original; };
+    await expect(manager.connect("stdio", { command: "node" })).rejects.toBe(original);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("bounds captured stderr and keeps only its final three lines", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();

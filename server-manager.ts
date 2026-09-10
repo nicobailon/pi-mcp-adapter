@@ -96,19 +96,19 @@ function isLiteralLocalAddress(url: string): boolean {
   return local.check(hostname, family === 6 ? "ipv6" : "ipv4");
 }
 
-function localNetworkFailureDetails(error: unknown, seen = new Set<object>()): string[] {
+function localNetworkFailureCodes(error: unknown, seen = new Set<object>()): string[] {
   if (typeof error !== "object" || error === null || seen.has(error)) return [];
   seen.add(error);
-  const details: string[] = [];
+  const codes: string[] = [];
   if ("code" in error && typeof error.code === "string"
     && ["EHOSTUNREACH", "ENETUNREACH", "EACCES"].includes(error.code)) {
-    details.push(error instanceof Error ? `${error.code}: ${error.message}` : error.code);
+    codes.push(error.code);
   }
-  if ("cause" in error) details.push(...localNetworkFailureDetails(error.cause, seen));
+  if ("cause" in error) codes.push(...localNetworkFailureCodes(error.cause, seen));
   if (error instanceof AggregateError) {
-    for (const nested of error.errors) details.push(...localNetworkFailureDetails(nested, seen));
+    for (const nested of error.errors) codes.push(...localNetworkFailureCodes(nested, seen));
   }
-  return details;
+  return [...new Set(codes)];
 }
 
 function isUnauthorizedHttpError(error: unknown): boolean {
@@ -1016,9 +1016,9 @@ export class McpServerManager {
   private async enrichHttpConnectionError(definition: ServerDefinition, error: unknown): Promise<Error> {
     const originalMessage = error instanceof Error ? error.message : String(error);
     if (process.platform === "darwin") {
-      const details = localNetworkFailureDetails(error);
-      if (details.length > 0 && isLiteralLocalAddress(resolveServerUrl(definition)!)) {
-        return new Error(`${originalMessage} — ${details.join("; ")} — macOS Local Network Privacy may be blocking access. Check System Settings > Privacy & Security > Local Network for the app hosting Pi; enable access if listed and restart it. Try launching Pi from Terminal.app or SSH. Routing or firewall problems can also cause this error.`, { cause: error });
+      const codes = localNetworkFailureCodes(error);
+      if (codes.length > 0 && isLiteralLocalAddress(resolveServerUrl(definition)!)) {
+        return new Error(`${originalMessage} — ${codes.join(", ")} — macOS Local Network Privacy may be blocking access. Check System Settings > Privacy & Security > Local Network for the app hosting Pi; enable access if listed and restart it. Try launching Pi from Terminal.app or SSH. Routing or firewall problems can also cause this error.`, { cause: error });
       }
     }
     if (isTransientHttpConnectError(error)) {
