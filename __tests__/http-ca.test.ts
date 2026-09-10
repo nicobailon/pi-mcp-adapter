@@ -1,4 +1,5 @@
 import https from "node:https";
+import http from "node:http";
 import type { ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -10,7 +11,7 @@ import type { ServerEntry } from "../types.ts";
 
 const fixture = (name: string) => fileURLToPath(new URL(`./fixtures/ca/${name}.pem`, import.meta.url));
 const caFile = fixture("server");
-const servers: https.Server[] = [];
+const servers: http.Server[] = [];
 const owners: Array<{ close: () => Promise<unknown> }> = [];
 afterEach(async () => {
   await Promise.all(owners.splice(0).map(owner => owner.close()));
@@ -138,6 +139,116 @@ describe("per-origin custom CA", () => {
     expect(new Set(destroy.mock.contexts).size).toBe(1);
     expect(destroy.mock.contexts[0].destroyed).toBe(true);
     expect(requests).toBe(0);
+  });
+
+  it.each(["same-origin", "off-origin"] as const)("uses connection CA trust for provider-owned OAuth metadata with %s tokens", async tokenLocation => {
+    vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "memory");
+    const destroy = vi.spyOn(Agent.prototype, "destroy");
+    const seen: string[] = [];
+    let tokenEndpoint: string;
+    let tokenRequests = 0;
+    let challenge = false;
+    const handler: http.RequestListener = async (req, res) => {
+      seen.push(req.url!);
+      const offOrigin = req.url === "/token" && tokenLocation === "off-origin";
+      expect(req.headers["x-service"]).toBe(offOrigin ? undefined : "service-secret");
+      if (!offOrigin && req.headers["x-service"] !== "service-secret") {
+        res.writeHead(403).end(); return;
+      }
+      if (req.url === "/metadata") {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ issuer: url, token_endpoint: tokenEndpoint,
+          authorization_endpoint: `${url}/authorize`, response_types_supported: ["code"],
+          grant_types_supported: ["client_credentials"], token_endpoint_auth_methods_supported: ["client_secret_basic"] }));
+        return;
+      }
+      if (req.url === "/token") {
+        tokenRequests++;
+        expect(req.headers.authorization).toBe(`Basic ${Buffer.from("client:secret").toString("base64")}`);
+        expect(req.headers["content-type"]).toContain("application/x-www-form-urlencoded");
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        expect(new URLSearchParams(body).get("grant_type")).toBe("client_credentials");
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ access_token: "oauth-token", token_type: "Bearer", expires_in: 3600 }));
+        return;
+      }
+      if (req.headers.authorization !== "Bearer oauth-token" || challenge) {
+        challenge = false;
+        res.writeHead(401).end(); return;
+      }
+      if (req.method !== "POST") { res.writeHead(405).end(); return; }
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const message = JSON.parse(body);
+      if (message.id === undefined) { res.writeHead(202).end(); return; }
+      const result = message.method === "initialize"
+        ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "oauth-tls", version: "1" } }
+        : { tools: [] };
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+    };
+    const url = await listen(handler);
+    tokenEndpoint = `${url}/token`;
+    if (tokenLocation === "off-origin") {
+      // Plain loopback needs no custom CA and lets us observe header isolation.
+      const tokenServer = http.createServer(handler);
+      servers.push(tokenServer);
+      await new Promise<void>(resolve => tokenServer.listen(0, "127.0.0.1", resolve));
+      const address = tokenServer.address();
+      if (!address || typeof address === "string") throw new Error("no token server address");
+      tokenEndpoint = `http://127.0.0.1:${address.port}/token`;
+    }
+    const manager = new McpServerManager();
+    owners.push({ close: () => manager.close("oauth-ca") });
+    const connection = await manager.connect("oauth-ca", {
+      url: `${url}/mcp`, caFile, auth: "oauth",
+      headers: { "x-service": "service-secret", Authorization: "service-authorization" },
+      oauth: { grantType: "client_credentials", clientId: "client", clientSecret: "secret", authServerMetadataUrl: `${url}/metadata` },
+    });
+    expect(connection.status).toBe("connected");
+    expect(connection.tools).toEqual([]);
+    expect(seen).toContain("/metadata");
+    expect(seen).toContain("/token");
+    challenge = true;
+    expect(await connection.client.listTools()).toMatchObject({ tools: [] });
+    expect(tokenRequests).toBe(2);
+    expect(destroy).not.toHaveBeenCalled();
+    await manager.close("oauth-ca");
+    expect(new Set(destroy.mock.contexts).size).toBe(1);
+    expect(destroy.mock.contexts[0].destroyed).toBe(true);
+    const calls = destroy.mock.calls.length;
+    await connection.transport.close();
+    expect(destroy.mock.calls).toHaveLength(calls);
+  });
+
+  it.each(["off-origin", "redirect"] as const)("does not extend provider CA trust through %s metadata", async location => {
+    vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "memory");
+    const destroy = vi.spyOn(Agent.prototype, "destroy");
+    let destinationHits = 0;
+    const other = await listen((_req, res) => { destinationHits++; res.end("{}"); });
+    const url = await listen((req, res) => {
+      if (req.url === "/metadata") res.writeHead(302, { location: `${other}/metadata` }).end();
+      else res.writeHead(401).end();
+    });
+    await expect(new McpServerManager().connect(`oauth-${location}`, {
+      url: `${url}/mcp`, caFile, auth: "oauth", headers: { "x-service": "secret" },
+      oauth: { grantType: "client_credentials", clientId: "client",
+        authServerMetadataUrl: `${location === "off-origin" ? other : url}/metadata` },
+    })).rejects.toThrow();
+    expect(destinationHits).toBe(0);
+    expect(new Set(destroy.mock.contexts).size).toBe(1);
+    expect(destroy.mock.contexts[0].destroyed).toBe(true);
+  });
+
+  it("destroys CA resources when provider configuration fails", async () => {
+    const destroy = vi.spyOn(Agent.prototype, "destroy");
+    await expect(new McpServerManager().connect("bad-provider", {
+      url: "https://localhost/mcp", caFile, auth: "oauth",
+      oauth: { authServerMetadataUrl: "not-a-url" },
+    })).rejects.toThrow(/authServerMetadataUrl/);
+    expect(new Set(destroy.mock.contexts).size).toBe(1);
+    expect(destroy.mock.contexts[0].destroyed).toBe(true);
   });
 
   // Existing manager signal composition uses AbortSignal.any (Node >=20.3).

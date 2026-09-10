@@ -1231,6 +1231,8 @@ export class McpServerManager {
     // defaults for discovered OAuth endpoints, including other origins.
     const requestInit = !oauthEnabled && Object.keys(headers).length > 0 ? { headers } : undefined;
     const serviceHeaders = oauthEnabled ? new Headers(headers) : new Headers();
+    let caFetch = createCaFetch(definition);
+    try {
     const createAuthProvider = (): McpOAuthProvider => {
       const provider = new McpOAuthProvider(
         serverName,
@@ -1241,7 +1243,9 @@ export class McpServerManager {
         this.oauthRuntime?.signal,
       );
       provider.setAuthFetch(createOAuthFetch(serverUrl, () => serviceHeaders,
-        combineAbortSignals(this.oauthRuntime?.signal, signal)));
+        combineAbortSignals(this.oauthRuntime?.signal, signal), {
+          ...(caFetch ? { delegate: caFetch.fetch } : {}),
+        }));
       return provider;
     };
 
@@ -1268,8 +1272,6 @@ export class McpServerManager {
         : { status: "explicit", provider: createAuthProvider() }
       : { status: "disabled" };
 
-    let caFetch = createCaFetch(definition);
-    try {
     const commandFetch = definition.requestHeadersCommand
       ? createRequestHeadersCommandFetch(definition.requestHeadersCommand, caFetch?.fetch)
       : caFetch?.fetch;
