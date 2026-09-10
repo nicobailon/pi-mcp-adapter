@@ -52,7 +52,22 @@ export function combineAbortSignals(...signals: Array<AbortSignal | undefined>):
   const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
   if (active.length === 0) return undefined;
   if (active.length === 1) return active[0];
-  return AbortSignal.any(active);
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(active);
+
+  // AbortSignal.any was added after Node 20.0.0, our minimum supported version.
+  const controller = new AbortController();
+  const alreadyAborted = active.find(signal => signal.aborted);
+  if (alreadyAborted) {
+    controller.abort(alreadyAborted.reason);
+    return controller.signal;
+  }
+
+  const onAbort = (event: Event) => {
+    for (const signal of active) signal.removeEventListener("abort", onAbort);
+    controller.abort((event.target as AbortSignal).reason);
+  };
+  for (const signal of active) signal.addEventListener("abort", onAbort, { once: true });
+  return controller.signal;
 }
 
 /** Fence session-bound UI calls after the owning extension runtime stops. */
