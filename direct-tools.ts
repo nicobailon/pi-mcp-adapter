@@ -1,5 +1,5 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/client";
+import { UrlElicitationRequiredError, type Client, type Progress, type RequestOptions } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpConfig, McpContent, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
@@ -27,6 +27,7 @@ type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 export const DIRECT_TOOLS_ADVISORY_THRESHOLD = 75;
+const MAX_DIRECT_PROGRESS_TEXT_LENGTH = 8 * 1024;
 
 type DirectAutoAuthResult =
   | { status: "skipped" }
@@ -339,12 +340,39 @@ type DirectToolExecute = (
   ctx: ExtensionContext,
 ) => Promise<AgentToolResult<Record<string, unknown>>>;
 
+function withDirectToolProgress(
+  options: RequestOptions | undefined,
+  onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined,
+  toolCallId: string,
+  spec: DirectToolSpec,
+): RequestOptions | undefined {
+  if (!onUpdate) return options;
+  return {
+    ...options,
+    onprogress: (progress: Progress) => {
+      const ratio = `${progress.progress}${progress.total === undefined ? "" : `/${progress.total}`}`;
+      const text = (progress.message ? `${progress.message} (${ratio})` : ratio).slice(0, MAX_DIRECT_PROGRESS_TEXT_LENGTH);
+      onUpdate({
+        content: [{ type: "text", text }],
+        details: {
+          progress: true,
+          toolCallId,
+          server: spec.serverName,
+          tool: spec.originalName,
+          current: progress.progress,
+          ...(progress.total !== undefined ? { total: progress.total } : {}),
+        },
+      });
+    },
+  };
+}
+
 export function createDirectToolExecutor(
   getState: () => McpExtensionState | null,
   getInitPromise: () => Promise<McpExtensionState> | null,
   spec: DirectToolSpec
 ): DirectToolExecute {
-  return async function execute(_toolCallId, params, signal) {
+  return async function execute(toolCallId, params, signal, onUpdate) {
     throwIfAborted(signal);
     let state = getState();
     const initPromise = getInitPromise();
@@ -447,7 +475,12 @@ export function createDirectToolExecutor(
     }
 
     let uiSession: UiSessionRuntime | null = null;
-    const requestOptions = state.manager.getRequestOptions?.(spec.serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
+    const requestOptions = withDirectToolProgress(
+      state.manager.getRequestOptions?.(spec.serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined),
+      onUpdate,
+      toolCallId,
+      spec,
+    );
 
     const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
     const recoverAuthConnection = async () => {

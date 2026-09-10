@@ -33,7 +33,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     return client;
   }),
   StreamableHTTPClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => {
-    const transport = { url, options, close: vi.fn(async () => undefined) };
+    const transport = { url, options, hasPerRequestStream: true, close: vi.fn(async () => undefined) };
     mocks.httpTransports.push(transport);
     return transport;
   }),

@@ -27,7 +27,7 @@ vi.mock("@modelcontextprotocol/client", async importOriginal => ({
     listPrompts: vi.fn(async () => { const error = mocks.listPromptsErrors.shift(); if (error) throw error; return { prompts: [] }; }),
     getServerCapabilities: vi.fn(() => mocks.capabilities), getInstructions: vi.fn(() => undefined), close: vi.fn(async () => undefined),
   })),
-  StreamableHTTPClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => ({ url, options, close: vi.fn(async () => undefined) })),
+  StreamableHTTPClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => ({ url, options, hasPerRequestStream: true, close: vi.fn(async () => undefined) })),
   SSEClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => ({ url, options, close: vi.fn(async () => undefined) })),
 }));
 vi.mock("@modelcontextprotocol/client/stdio", () => ({ StdioClientTransport: vi.fn() }));

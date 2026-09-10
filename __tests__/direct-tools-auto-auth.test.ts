@@ -108,7 +108,7 @@ describe("direct tools auto auth", () => {
       name: "namespace.tool",
       arguments: { q: "hello" },
       _meta: undefined,
-    }, { timeout: 4321 });
+    }, { timeout: 4321, onprogress: expect.any(Function) });
     expect(result.content[0].text).toContain("ok");
   });
 

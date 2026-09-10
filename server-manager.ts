@@ -20,6 +20,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { UnixSocketClientTransport } from "./unix-socket-transport.ts";
+import { StreamableHttpRequestAbortTransport } from "./streamable-http-request-abort.ts";
 import { probeMcpEndpoint } from "./mcp-probe.ts";
 import {
   isServerDisabled,
@@ -1275,7 +1276,7 @@ export class McpServerManager {
           : {}),
       };
       const baseTransport: Transport = kind === "streamable-http"
-        ? new StreamableHTTPClientTransport(url, transportOptions)
+        ? new StreamableHttpRequestAbortTransport(new StreamableHTTPClientTransport(url, transportOptions))
         : new SSEClientTransport(url, transportOptions);
       const transport = traceObserver
         ? wrapTransportWithMcpTrace(baseTransport, serverName, kind, traceObserver)

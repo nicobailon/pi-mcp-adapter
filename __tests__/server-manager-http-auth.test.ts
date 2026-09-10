@@ -61,7 +61,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     return client;
   }),
   StreamableHTTPClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => {
-    const transport = { url, options, close: vi.fn(async () => undefined) };
+    const transport = { url, options, hasPerRequestStream: true, close: vi.fn(async () => undefined) };
     mocks.httpTransports.push(transport);
     return transport;
   }),
@@ -486,6 +486,6 @@ describe("McpServerManager HTTP bearer auth", () => {
 
     expect(mocks.clients).toHaveLength(1);
     expect(mocks.httpTransports).toHaveLength(1);
-    expect(mocks.clients[0].connect).toHaveBeenCalledWith(mocks.httpTransports[0], { timeout: 5000 });
+    expect(mocks.clients[0].connect).toHaveBeenCalledWith(expect.anything(), { timeout: 5000 });
   });
 });

@@ -111,6 +111,7 @@
     "server-manager.ts",
     "request-headers-command.ts",
     "unix-socket-transport.ts",
+    "streamable-http-request-abort.ts",
     "json-schema-validator.ts",
     "session-recovery.ts",
     "sampling-handler.ts",
