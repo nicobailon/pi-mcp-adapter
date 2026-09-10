@@ -12,7 +12,7 @@ export function sharedRefreshLockRoot(): string {
   return join(userInfo().homedir, ".pi-mcp-adapter");
 }
 
-export interface RefreshLock {
+interface RefreshLock {
   release(): void;
 }
 

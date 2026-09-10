@@ -12,7 +12,6 @@ import {
   type AuthOptions,
 } from "@modelcontextprotocol/client"
 import open from "open"
-export { createOAuthAwareFetch } from "./mcp-auth-fetch.ts"
 import {
   getOAuthCallbackPort,
   McpOAuthProvider,
@@ -30,7 +29,6 @@ import {
   getAuthForUrl,
   getAuthEntry,
   withAuthEntryTransaction,
-  isTokenExpired,
   clearAllCredentials,
   clearClientInfo,
   clearCodeVerifier,
@@ -1047,7 +1045,7 @@ export async function getValidToken(
     return null
   }
 
-  const expired = await isTokenExpired(serverName, authStorageOptions)
+  const expired = !!entry.tokens.expiresAt && entry.tokens.expiresAt < Date.now() / 1000
   if (expired === false) {
     return entry.tokens
   }

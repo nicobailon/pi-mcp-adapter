@@ -1,9 +1,9 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
-export type OAuthDiagnosticEvent = "oauth_transaction_waiting" | "oauth_transaction_acquired" | "oauth_transaction_completed" | "oauth_transaction_failed";
+type OAuthDiagnosticEvent = "oauth_transaction_waiting" | "oauth_transaction_acquired" | "oauth_transaction_completed" | "oauth_transaction_failed";
 
-export interface OAuthDiagnosticDetails {
+interface OAuthDiagnosticDetails {
   serverName: string;
   transactionId: string;
   durationMs?: number;

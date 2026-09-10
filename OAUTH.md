@@ -234,7 +234,7 @@ Ownership uses `fs-native-extensions` kernel advisory locks on permanent files u
 
 Waiting acquisition is cancellable. Deactivating a provider aborts its auth fetches but does not release ownership before the underlying operation settles. A rotated response already received is persisted before release. Auth fetches have the configured `PI_MCP_OAUTH_REQUEST_TIMEOUT_MS` deadline (30 seconds by default), including configured discovery; ordinary MCP streaming requests are not given that deadline.
 
-Concurrent processes may still perform successive refreshes after rereading the latest token. This serializes redemption; it does not claim cross-process deduplication. A process crash after remote rotation but before local persistence can still require reauthorization. Native lock support and cooperative access by all credential writers are required; public synchronous credential-store APIs are not a cross-process transaction API.
+Concurrent processes may still perform successive refreshes after rereading the latest token. This serializes redemption; it does not claim cross-process deduplication. A process crash after remote rotation but before local persistence can still require reauthorization. Native lock support and cooperative access by all credential writers are required; the public token writer participates in the same transaction boundary.
 
 This development branch pins SDK client/core previews to one immutable commit because `withAuthTransaction` is not yet released. Replace both preview dependencies with the supporting SDK release before publishing a stable adapter release.
 

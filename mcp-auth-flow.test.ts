@@ -140,6 +140,26 @@ describe("mcp-auth-flow", () => {
   })
 
   describe("getValidToken", () => {
+    it("uses one token snapshot for expiry and return decisions", async () => {
+      const serverName = "snapshot-refresh-test"
+      const serverUrl = "https://snapshot-refresh.example.com/mcp"
+      updateTokens(serverName, {
+        accessToken: "expired-token",
+        refreshToken: "refresh-token",
+        expiresAt: Date.now() / 1000 - 3600,
+      }, serverUrl)
+
+      const result = getValidToken(serverName, serverUrl)
+      queueMicrotask(() => updateTokens(serverName, {
+        accessToken: "replacement-token",
+        expiresAt: Date.now() / 1000 + 3600,
+      }, serverUrl))
+
+      assert.strictEqual(await result, null)
+      assert.strictEqual(getAuthForUrl(serverName, serverUrl)?.tokens?.accessToken, "replacement-token")
+      clearAllCredentials(serverName)
+    })
+
     it("should not attempt refresh or wipe credentials when stored client info is a config-pre-registered stub", async () => {
       const serverName = "stub-refresh-test"
       const serverUrl = "https://stub-refresh.example.com/mcp"

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
-import { createOAuthAwareFetch } from "../mcp-auth-flow.ts";
+import { createOAuthAwareFetch } from "../mcp-auth-fetch.ts";
 import { withAuthEntryTransaction } from "../mcp-auth.ts";
 import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
 
@@ -56,9 +56,8 @@ it("aborts an auth fetch on provider deactivation and releases after it settles"
     await createOAuthAwareFetch(base)("https://fake.test/token", { method: "POST" });
     return "AUTHORIZED";
   });
-  const failure = expect(auth).rejects.toThrow("no longer active");
   await begun;
   provider.deactivate();
-  await failure;
+  await expect(auth).rejects.toThrow("no longer active");
   expect(await withAuthEntryTransaction(name, async () => "reacquired")).toBe("reacquired");
 });
