@@ -303,7 +303,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `oauth.clientId` | Pre-registered OAuth client ID. MCP 2026 prefers pre-registered clients or Client ID Metadata Documents; this adapter falls back to Dynamic Client Registration when the ID is omitted and the server supports it. |
 | `oauth.clientSecret` | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!` |
 | `oauth.scope` | Requested OAuth scopes |
-| `oauth.redirectUri` | Redirect URI for browser OAuth. Local `http://` loopback URIs accept an explicit port or `{port}` for an OS-assigned port (for example, `http://127.0.0.1:{port}/callback`). Pre-registered `https://` callbacks use manual completion by pasting the full callback URL. |
+| `oauth.redirectUri` | Redirect URI for browser OAuth. Dynamic clients normally omit it and use an OS-assigned localhost callback port. Local `http://` loopback URIs accept an explicit port or `{port}` for an OS-assigned port (for example, `http://127.0.0.1:{port}/callback`). Pre-registered `https://` callbacks use manual completion by pasting the full callback URL. |
 | `oauth.clientName` | Client display name advertised during Dynamic Client Registration fallback |
 | `oauth.clientUri` | Client homepage URI advertised during Dynamic Client Registration fallback. Defaults to `piConfig.clientUri` from the host's manifest when set, and is omitted rather than guessed under a rebranded host |
 | `oauth.logoUri` | Client logo URL advertised during Dynamic Client Registration fallback (RFC 7591 `logo_uri`). Must be an absolute `http(s)` URL — consent screens fetch it server-side, so local paths render nothing. Omitted from the registration request when unset |
@@ -344,8 +344,6 @@ Use `"auto"` to probe for MCP 2026-07-28 and conservatively fall back to the cla
 Use `"2026-07-28"` to pin that revision. Pinning has no legacy or SSE fallback and fails if the server does not offer the requested version.
 
 The stable SDK handles era-specific request envelopes, result decoding, list-changed subscriptions, cancellation, and multi-round-trip sampling/elicitation. The SDK's embedded-input progress callback does not expose the originating tool or resource identity, so the adapter cannot maintain a durable per-tool waiting status row; interactive sessions keep the existing input dialog visible, and proxy calls show request progress when UI is available. The adapter keeps strict OAuth issuer validation in every mode. Adapter-level roots support, standard MCP logging presentation, and configuration/UI for protocol cache hints are not yet implemented.
-
-For pre-registered browser OAuth clients, set `oauth.redirectUri` to the callback registered with the provider, for example `"http://localhost:3118/callback"`. Providers that permit RFC 8252 dynamic loopback ports can use `"http://127.0.0.1:{port}/callback"`, `"http://[::1]:{port}/callback"`, or the equivalent `localhost` URI; the adapter binds that host on an OS-assigned port and sends the resolved URI in the authorization and token requests. Dynamic clients normally omit `redirectUri` and use a lazy OS-assigned `localhost` callback port. A configured `https://` callback runs in manual mode because the adapter cannot receive a callback on another host. After authorization, copy the full callback URL from the browser address bar and paste it into `/mcp-auth` or `mcp({ action: "auth-complete", ... })`.
 
 If an internal authorization server publishes mismatched OAuth metadata and cannot be fixed immediately, set `oauth.skipIssuerMetadataValidation: true` on that server only. This is security-weakening. It disables the RFC 8414 issuer echo check and should not be used for public or untrusted servers.
 
@@ -681,11 +679,7 @@ Per-server `directTools` overrides the global setting. The example above registe
 }
 ```
 
-The process starts with only the `mcp` proxy (and any eager direct tools). When the model searches, matching tools from search-mode servers become active direct tools, reported on the result as `addedToolNames` so Pi treats that point as their load point. Subsequent turns in that process also see tools activated by earlier searches. What search activates are real tools with real schemas, not a proxy call.
-
-Activation is additive: the active set grows as searches match new tools and holds them for the life of the process. Bounding it is left to a later change.
-
-Activation happens at exactly one point: a successful `mcp({ search })` whose matches include the tool. Nothing else activates a search-mode tool — not a `mcp({ tool })` call, not a `connect`, not a session restart — and nothing deactivates one; the active set only grows within a process. Activation state lives in the running process: a new process (a restart, or a resumed session) starts with every search-mode tool held again until a search matches it, so the model may need to search once more after a resume. Selecting a server's tools eagerly (`directTools: true`, in config or from the `/mcp` panel) activates any of its tools that were held, and switching a server to `"search"` holds its tools again. The search result lists what it activated, and the search text follows unchanged. Search-mode tools do not count toward the 75-tool advisory.
+A successful `mcp({ search })` activates matching search-mode tools additively for the process lifetime and reports newly activated names in `addedToolNames`; no other operation activates them. A restart or resumed session starts with them inactive again. Selecting `directTools: true` activates held tools, while switching back to `"search"` holds them again. Search-mode tools do not count toward the 75-tool advisory.
 
 To expose only a subset of a noisy server, add `includeTools` on the server. Values can be exact original names, generated resource names such as `read_<resource>`, prefixed names, or simple glob patterns:
 

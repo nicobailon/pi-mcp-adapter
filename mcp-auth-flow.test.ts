@@ -309,104 +309,29 @@ describe("mcp-auth-flow", () => {
       )
     })
 
-    it("should reject malformed OAuth redirectUri values", async () => {
-      await assert.rejects(
-        async () => await startAuth("bad-redirect", "https://api.example.com/mcp", {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          oauth: { redirectUri: "not a url" },
-        }),
-        /Invalid OAuth redirectUri/
-      )
-    })
-
-    it("should reject insecure non-local OAuth redirectUri values", async () => {
-      await assert.rejects(
-        async () => await startAuth("remote-redirect", "https://api.example.com/mcp", {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          oauth: { redirectUri: "http://example.com:3118/callback" },
-        }),
-        /https:\/\/ URI or an http:\/\/ localhost or loopback URI/
-      )
-    })
-
-    it("should reject non-local OAuth redirectUri values with invalid ports", async () => {
-      await assert.rejects(
-        async () => await startAuth("bad-remote-port", "https://api.example.com/mcp", {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          oauth: { redirectUri: "https://example.com:0/callback" },
-        }),
-        /positive numeric port/
-      )
-    })
-
-    it("should reject OAuth redirectUri values without an explicit port", async () => {
-      await assert.rejects(
-        async () => await startAuth("no-port-redirect", "https://api.example.com/mcp", {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          oauth: { redirectUri: "http://localhost/callback" },
-        }),
-        /explicit numeric port/
-      )
-    })
-
-    it("should reject a dynamic port placeholder outside the loopback URI port", async () => {
-      await assert.rejects(
-        async () => await startAuth("bad-dynamic-redirect", "https://api.example.com/mcp", {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          oauth: { redirectUri: "http://127.0.0.1/callback/{port}" },
-        }),
-        /\{port\} placeholder must be the loopback URI port/
-      )
-    })
-
-    it("should reject blank OAuth redirectUri values", async () => {
-      await assert.rejects(
-        async () => await startAuth("blank-redirect", "https://api.example.com/mcp", {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          oauth: { redirectUri: "  " },
-        }),
-        /redirectUri must not be empty/
-      )
-    })
-
-    it("should reject non-string OAuth redirectUri values", async () => {
-      await assert.rejects(
-        async () => await startAuth("typed-redirect", "https://api.example.com/mcp", {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          oauth: { redirectUri: 3118 as unknown as string },
-        }),
-        /redirectUri must be a string/
-      )
-    })
-
-    it("should reject OAuth redirectUri values with fragments", async () => {
-      await assert.rejects(
-        async () => await startAuth("fragment-redirect", "https://api.example.com/mcp", {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          oauth: { redirectUri: "http://localhost:3118/callback#fragment" },
-        }),
-        /redirectUri must not include a fragment/
-      )
-    })
-
-    it("should reject OAuth redirectUri values with username or password", async () => {
-      await assert.rejects(
-        async () => await startAuth("credential-redirect", "https://api.example.com/mcp", {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          oauth: { redirectUri: "http://user:pass@localhost:3118/callback" },
-        }),
-        /redirectUri must not include username or password/
-      )
-    })
+    const redirectUriCases: Array<[string, string, unknown, RegExp]> = [
+      ["should reject malformed OAuth redirectUri values", "bad-redirect", "not a url", /Invalid OAuth redirectUri/],
+      ["should reject insecure non-local OAuth redirectUri values", "remote-redirect", "http://example.com:3118/callback", /https:\/\/ URI or an http:\/\/ localhost or loopback URI/],
+      ["should reject non-local OAuth redirectUri values with invalid ports", "bad-remote-port", "https://example.com:0/callback", /positive numeric port/],
+      ["should reject OAuth redirectUri values without an explicit port", "no-port-redirect", "http://localhost/callback", /explicit numeric port/],
+      ["should reject a dynamic port placeholder outside the loopback URI port", "bad-dynamic-redirect", "http://127.0.0.1/callback/{port}", /\{port\} placeholder must be the loopback URI port/],
+      ["should reject blank OAuth redirectUri values", "blank-redirect", "  ", /redirectUri must not be empty/],
+      ["should reject non-string OAuth redirectUri values", "typed-redirect", 3118, /redirectUri must be a string/],
+      ["should reject OAuth redirectUri values with fragments", "fragment-redirect", "http://localhost:3118/callback#fragment", /redirectUri must not include a fragment/],
+      ["should reject OAuth redirectUri values with username or password", "credential-redirect", "http://user:pass@localhost:3118/callback", /redirectUri must not include username or password/],
+    ]
+    for (const [name, serverName, redirectUri, expectedError] of redirectUriCases) {
+      it(name, async () => {
+        await assert.rejects(
+          async () => await startAuth(serverName, "https://api.example.com/mcp", {
+            url: "https://api.example.com/mcp",
+            auth: "oauth",
+            oauth: { redirectUri: redirectUri as string },
+          }),
+          expectedError
+        )
+      })
+    }
 
     it("should reject non-string OAuth clientName and clientUri values", () => {
       assert.throws(

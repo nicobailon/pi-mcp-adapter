@@ -7,7 +7,7 @@ import type { ToolMetadata, PromptMetadata, McpConfig, UiSessionMessages, UiStre
 import type { UiResourceHandler } from "./ui-resource-handler.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
-import type { SessionApprovalEntry } from "./session-approvals.ts";
+import type { SessionApprovalWriter } from "./session-approvals.ts";
 
 export interface CompletedUiSession {
   serverName: string;
@@ -33,9 +33,7 @@ export interface McpExtensionState {
   manager: McpServerManager;
   lifecycle: McpLifecycleManager;
   toolMetadata: Map<string, ToolMetadata[]>;
-  /** Number of tools currently registered directly with Pi, by server. */
   directToolCounts: Map<string, number>;
-  /** Resource counts retained separately because tool metadata includes resource tools. */
   resourceCounts: Map<string, number>;
   promptMetadata: Map<string, PromptMetadata[]>;
   /** Servers whose prompt inventory came from successful live discovery. */
@@ -49,10 +47,9 @@ export interface McpExtensionState {
   authStorageOptions: AuthStorageOptions;
   failureTracker: Map<string, number>;
   failureMessages: Map<string, string>;
-  /** Session-only approvals keyed by server, tool definition, and arguments. */
   approvedToolCalls: Map<string, true>;
   /** Optional active-session sink for approval decisions. */
-  persistSessionApproval?: (record: SessionApprovalEntry) => void;
+  persistSessionApproval?: SessionApprovalWriter;
   /** Session manager used to reject stale session-tree contexts. */
   sessionManager?: ExtensionContext["sessionManager"];
   /** Shared event bus used by permission extensions to broker MCP approvals. */

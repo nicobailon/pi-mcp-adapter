@@ -3,13 +3,12 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
-import stripJsonComments from "strip-json-comments";
 import { getAgentPath, getConfigDirName } from "./agent-dir.js";
 import { getAgentPluginSummaries, loadAgentPluginConfigs } from "./agent-plugin-loader.js";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
 import { formatServerNamespace, isServerDisabled } from "./types.js";
-import { toStringRecord } from "./utils.js";
+import { parseJsonWithComments, toStringRecord } from "./utils.js";
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [
     join(homedir(), ".agents", "mcp.json"),
@@ -523,12 +522,9 @@ function resolveImportCandidates(importKind, cwd) {
         return candidate.startsWith(".") ? resolve(cwd, candidate) : candidate;
     });
 }
-function parseJsonConfig(raw) {
-    return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
-}
 function readImportedConfig(path) {
     const raw = readFileSync(path, "utf-8");
-    return path.endsWith(".toml") ? parseToml(raw) : parseJsonConfig(raw);
+    return path.endsWith(".toml") ? parseToml(raw) : parseJsonWithComments(raw);
 }
 function loadImportedConfig(importKind, cwd, warningPrefix) {
     if (importKind === "opencode") {
@@ -569,7 +565,7 @@ function readValidatedConfig(path, label) {
     if (!existsSync(path))
         return null;
     try {
-        return validateConfig(parseJsonConfig(readFileSync(path, "utf-8")));
+        return validateConfig(parseJsonWithComments(readFileSync(path, "utf-8")));
     }
     catch (error) {
         console.warn(`Failed to load ${label}:`, error);
@@ -849,7 +845,7 @@ function readRawConfigObject(filePath) {
     if (!existsSync(filePath))
         return {};
     try {
-        const raw = parseJsonConfig(readFileSync(filePath, "utf-8"));
+        const raw = parseJsonWithComments(readFileSync(filePath, "utf-8"));
         return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
     }
     catch {
@@ -883,7 +879,7 @@ export function writeProjectServerDisabledOverride(overridePath, cwd, serverName
     let raw = {};
     if (existsSync(filePath)) {
         try {
-            const parsed = parseJsonConfig(readFileSync(filePath, "utf-8"));
+            const parsed = parseJsonWithComments(readFileSync(filePath, "utf-8"));
             if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
                 throw new Error("root value must be an object");
             }
