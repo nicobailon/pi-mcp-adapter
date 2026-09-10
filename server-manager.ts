@@ -1,4 +1,5 @@
 import { mkdirSync, statSync } from "node:fs";
+import { BlockList, isIP } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 import {
   Client,
@@ -80,6 +81,35 @@ type HttpAuthProviderState =
   | { status: "implicit-stored"; provider: McpOAuthProvider }
   | { status: "explicit"; provider: McpOAuthProvider }
   | { status: "implicit-challenged"; provider: McpOAuthProvider };
+
+function isLiteralLocalAddress(url: string): boolean {
+  const hostname = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  const family = isIP(hostname);
+  if (!family) return false;
+  const local = new BlockList();
+  local.addSubnet("10.0.0.0", 8);
+  local.addSubnet("172.16.0.0", 12);
+  local.addSubnet("192.168.0.0", 16);
+  local.addSubnet("169.254.0.0", 16);
+  local.addSubnet("fc00::", 7, "ipv6");
+  local.addSubnet("fe80::", 10, "ipv6");
+  return local.check(hostname, family === 6 ? "ipv6" : "ipv4");
+}
+
+function localNetworkFailureDetails(error: unknown, seen = new Set<object>()): string[] {
+  if (typeof error !== "object" || error === null || seen.has(error)) return [];
+  seen.add(error);
+  const details: string[] = [];
+  if ("code" in error && typeof error.code === "string"
+    && ["EHOSTUNREACH", "ENETUNREACH", "EACCES"].includes(error.code)) {
+    details.push(error instanceof Error ? `${error.code}: ${error.message}` : error.code);
+  }
+  if ("cause" in error) details.push(...localNetworkFailureDetails(error.cause, seen));
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) details.push(...localNetworkFailureDetails(nested, seen));
+  }
+  return details;
+}
 
 function isUnauthorizedHttpError(error: unknown): boolean {
   return error instanceof UnauthorizedError || (error instanceof SdkHttpError && error.status === 401);
@@ -985,6 +1015,12 @@ export class McpServerManager {
 
   private async enrichHttpConnectionError(definition: ServerDefinition, error: unknown): Promise<Error> {
     const originalMessage = error instanceof Error ? error.message : String(error);
+    if (process.platform === "darwin") {
+      const details = localNetworkFailureDetails(error);
+      if (details.length > 0 && isLiteralLocalAddress(resolveServerUrl(definition)!)) {
+        return new Error(`${originalMessage} — ${details.join("; ")} — macOS Local Network Privacy may be blocking access. Check System Settings > Privacy & Security > Local Network for the app hosting Pi; enable access if listed and restart it. Try launching Pi from Terminal.app or SSH. Routing or firewall problems can also cause this error.`, { cause: error });
+      }
+    }
     if (isTransientHttpConnectError(error)) {
       return new Error(`${originalMessage} — endpoint is temporarily unavailable (HTTP 503)`, { cause: error });
     }
