@@ -467,7 +467,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `warnOnLargeDirectTools` | Show the advisory when 75 or more direct tools resolve (default: `true`). Set to `false` to suppress only this advisory. |
 | `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so metadata updates and explicit reconnects do not rebuild the system prompt. Proxy/search/cache metadata still refreshes. Default: false. |
 | `scriptMode` | Register the MCP-only `mcpScript` plain-JavaScript tool (default: true). Set to `false` to hide it. |
-| `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
+| `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. Ignored while any server uses `directTools: "search"`, whose tools are registered inactive and can only be activated through `mcp({ search })`. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
 | `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |

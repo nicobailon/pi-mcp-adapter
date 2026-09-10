@@ -2509,6 +2509,20 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     expect(activeTools()).toEqual(["bash", "mcp"]);
   });
 
+  it("keeps the gateway when disableProxyTool is set, or search-mode tools can never be activated", async () => {
+    // Search-mode tools are registered inactive and mcp({ search }) is their only activation
+    // entry point. Dropping the gateway strands every one of them: all held, nothing able to
+    // activate one, and no error to say so.
+    const { api, activeTools, proxyTool } = await boot({ disableProxyTool: true });
+    expect(activeTools()).toContain("mcp");
+    expect(proxyTool).toBeDefined();
+    mocks.executeSearch.mockReturnValue(searchResult("alpha"));
+    const result = await proxyTool.execute("call-1", { search: "q" });
+    expect(result.addedToolNames).toEqual(["demo_alpha"]);
+    expect(activeTools()).toContain("demo_alpha");
+    expect(api.registerTool.mock.calls.some((call: any[]) => call[0].name === "mcp")).toBe(true);
+  });
+
   it("search activates the matches additively and reports them as addedToolNames", async () => {
     const { activeTools, proxyTool } = await boot();
     mocks.executeSearch.mockReturnValue(searchResult("alpha", "gamma"));

@@ -1378,9 +1378,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       cache,
       envRaw === undefined || envRaw === "__none__" ? undefined : envDirectToolOverride,
     );
+    // Search-mode tools are registered INACTIVE and `mcp({ search })` is their only
+    // activation entry point, so dropping the gateway strands them: every tool held, nothing
+    // able to activate one. Keep it whenever any spec depends on it.
+    const hasSearchModeSpecs = directSpecs.some((spec) => spec.lazy === true);
     const shouldRegisterProxyTool =
       config.settings?.disableProxyTool !== true
       || directSpecs.length === 0
+      || hasSearchModeSpecs
       || missingConfiguredDirectToolServers.length > 0;
 
     if (shouldRegisterProxyTool) {
