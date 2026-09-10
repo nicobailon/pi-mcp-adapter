@@ -162,9 +162,12 @@ describe("mcp-auth-flow explicit auth", () => {
       .mockResolvedValueOnce(new Response(null, {
         headers: { "www-authenticate": 'Bearer resource_metadata="https://other.example.test/.well-known/oauth-protected-resource"' },
       }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(metadata), {
-        headers: { "content-type": "application/json" },
-      }));
+      .mockImplementationOnce((_input, init) => {
+        expect(init.signal.aborted).toBe(false);
+        return Promise.resolve(new Response(JSON.stringify(metadata), {
+          headers: { "content-type": "application/json" },
+        }));
+      });
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       await expect(provider.discoveryState()).resolves.toMatchObject({
         authorizationServerUrl: metadata.issuer,
@@ -187,8 +190,6 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(new Headers(metadataInit.headers).has("x-service-auth")).toBe(false);
     expect(new Headers(mocks.fetch.mock.calls[0]![1].headers).get("x-service-auth")).toBe("synthetic-service");
     expect(metadataInit.signal).toBeInstanceOf(AbortSignal);
-    expect(metadataInit.signal.aborted).toBe(false);
-    controller.abort();
     expect(metadataInit.signal.aborted).toBe(true);
     expect(mocks.sdkAuth).toHaveBeenCalledWith(
       expect.anything(),

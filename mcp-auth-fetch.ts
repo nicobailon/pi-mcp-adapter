@@ -1,4 +1,5 @@
 import type { FetchLike } from "@modelcontextprotocol/client"
+import { currentAuthTransaction } from "./mcp-auth.ts"
 import { combineAbortSignals } from "./runtime-owner.ts"
 import { interpolateEnvRecord, resolveCommandSecretsRecord } from "./utils.ts"
 
@@ -105,5 +106,20 @@ export function oauthHeaderResolver(values: Record<string, string> | undefined):
     }
     if ("error" in result) throw result.error
     return result.headers
+  }
+}
+
+export function authFetch(signal?: AbortSignal, baseFetch: FetchLike = fetch): FetchLike {
+  return (url, init) => {
+    const requestSignal = url instanceof Request ? url.signal : undefined
+    const combined = combineAbortSignals(signal, AbortSignal.timeout(resolveOAuthRequestTimeoutMs()), init?.signal ?? requestSignal)
+    return baseFetch(url, { ...init, ...(combined ? { signal: combined } : {}) })
+  }
+}
+
+export function createOAuthAwareFetch(baseFetch: FetchLike = fetch): FetchLike {
+  return (url, init) => {
+    const transaction = currentAuthTransaction()
+    return transaction ? authFetch(transaction.signal, baseFetch)(url, init) : baseFetch(url, init)
   }
 }

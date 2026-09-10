@@ -226,6 +226,24 @@ A Node.js HTTP server runs on a loopback callback endpoint and handles the activ
 - Validates state parameter for CSRF protection
 - Has a 5-minute timeout for pending authorizations
 
+## Shared credential transactions
+
+SDK auth invocations run inside a credential transaction, including discovery, refresh, invalidation/retry, and callback exchange. The transaction ends when auth returns `AUTHORIZED`, returns `REDIRECT`, or throws; it does not span browser consent. Startup cleanup and logout use short transactions against the same credential identity.
+
+Ownership uses `fs-native-extensions` kernel advisory locks on permanent files under the OS user's home (`.pi-mcp-adapter/refresh-locks-v2`). Lock identity follows the credential store's server-name account, not the configurable legacy OAuth import directory. Files are never deleted or reclaimed; process death releases ownership in the kernel. Every process sharing credentials must use this implementation. Old directory-lock builds do not coordinate with it and must be restarted.
+
+Waiting acquisition is cancellable. Deactivating a provider aborts its auth fetches but does not release ownership before the underlying operation settles. A rotated response already received is persisted before release. Auth fetches have the configured `PI_MCP_OAUTH_REQUEST_TIMEOUT_MS` deadline (30 seconds by default), including configured discovery; ordinary MCP streaming requests are not given that deadline.
+
+Concurrent processes may still perform successive refreshes after rereading the latest token. This serializes redemption; it does not claim cross-process deduplication. A process crash after remote rotation but before local persistence can still require reauthorization. Native lock support and cooperative access by all credential writers are required; the public token writer participates in the same transaction boundary.
+
+This development branch pins SDK client/core previews to one immutable commit because `withAuthTransaction` is not yet released. Replace both preview dependencies with the supporting SDK release before publishing a stable adapter release.
+
+### Opt-in diagnostics
+
+Set `PI_MCP_OAUTH_LOG` to an absolute JSONL file path before launching Pi. Records include PID, transaction ID, server name, wait/total duration, and terminal result. They exclude token values, client secrets, authorization codes, endpoint URLs, and raw error messages. Logging failure never changes authentication behavior.
+
+Events are `oauth_transaction_waiting`, `oauth_transaction_acquired`, `oauth_transaction_completed`, and `oauth_transaction_failed`. Check the completed event's `result` for `AUTHORIZED` or `REDIRECT`.
+
 ## Token Storage
 
 Persistent OAuth entries are stored per configured server name in the operating system credential store, using macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.

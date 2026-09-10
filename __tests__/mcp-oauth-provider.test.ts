@@ -342,6 +342,13 @@ describe("McpOAuthProvider discovery state", () => {
       access_token: "legacy-access",
       issuer: "https://auth.example.com",
     });
+    expect(getAuthForUrl("legacy-binding", serverUrl)?.tokens?.issuer).toBeUndefined();
+    expect(getAuthForUrl("legacy-binding", serverUrl)?.clientInfo?.issuer).toBeUndefined();
+    await provider.withAuthTransaction(async () => {
+      await provider.clientInformation({ issuer: "https://auth.example.com" });
+      await provider.tokens({ issuer: "https://auth.example.com" });
+      return "AUTHORIZED";
+    });
     expect(getAuthForUrl("legacy-binding", serverUrl)).toMatchObject({
       clientInfo: { issuer: "https://auth.example.com" },
       tokens: { issuer: "https://auth.example.com" },
@@ -458,6 +465,11 @@ describe("McpOAuthProvider discovery state", () => {
       client_id: "config-client",
       client_secret: "config-secret",
       issuer: "https://auth.example.com",
+    });
+    expect(getAuthForUrl("pre-registered-binding", serverUrl)?.clientInfo).toBeUndefined();
+    await provider.withAuthTransaction(async () => {
+      await provider.clientInformation({ issuer: "https://auth.example.com" });
+      return "AUTHORIZED";
     });
     expect(getAuthForUrl("pre-registered-binding", serverUrl)?.clientInfo).toEqual({
       clientId: "config-client",

@@ -43,6 +43,7 @@ import { logger } from "./logger.ts";
 import { RESOURCE_MIME_TYPE } from "./ui-app-bridge-helpers.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import { createOAuthAwareFetch } from "./mcp-auth-fetch.ts";
 import { inspectAuthForUrl, invalidateAuthEntryCache, type AuthStorageOptions } from "./mcp-auth.ts";
 import { getBearerTokenForUrl } from "./mcp-bearer-store.ts";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
@@ -1341,8 +1342,9 @@ export class McpServerManager {
         : requestFetch;
       const transportOptions = {
         ...(requestInit !== undefined ? { requestInit } : {}),
-        ...(transportFetch !== undefined ? { fetch: transportFetch } : {}),
-        ...(authProvider !== undefined ? { authProvider } : {}),
+        ...(authProvider !== undefined
+          ? { fetch: createOAuthAwareFetch(transportFetch), authProvider }
+          : transportFetch !== undefined ? { fetch: transportFetch } : {}),
         ...(authProvider !== undefined
           && definition.oauth !== false
           && definition.oauth?.skipIssuerMetadataValidation === true
