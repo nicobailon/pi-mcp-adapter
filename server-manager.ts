@@ -1,13 +1,16 @@
 import { mkdirSync, statSync } from "node:fs";
+import { BlockList, isIP } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 import {
   Client,
   SdkError,
   SdkErrorCode,
   SdkHttpError,
+  SseError,
   SSEClientTransport,
   StreamableHTTPClientTransport,
   UnauthorizedError,
+  type FetchLike,
   type GetPromptResult,
   type ListToolsResult,
   type ReadResourceResult,
@@ -80,6 +83,35 @@ type HttpAuthProviderState =
   | { status: "implicit-stored"; provider: McpOAuthProvider }
   | { status: "explicit"; provider: McpOAuthProvider }
   | { status: "implicit-challenged"; provider: McpOAuthProvider };
+
+function isLiteralLocalAddress(url: string): boolean {
+  const hostname = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  const family = isIP(hostname);
+  if (!family) return false;
+  const local = new BlockList();
+  local.addSubnet("10.0.0.0", 8);
+  local.addSubnet("172.16.0.0", 12);
+  local.addSubnet("192.168.0.0", 16);
+  local.addSubnet("169.254.0.0", 16);
+  local.addSubnet("fc00::", 7, "ipv6");
+  local.addSubnet("fe80::", 10, "ipv6");
+  return local.check(hostname, family === 6 ? "ipv6" : "ipv4");
+}
+
+function localNetworkFailureCodes(error: unknown, seen = new Set<object>()): string[] {
+  if (typeof error !== "object" || error === null || seen.has(error)) return [];
+  seen.add(error);
+  const codes: string[] = [];
+  if ("code" in error && typeof error.code === "string"
+    && ["EHOSTUNREACH", "ENETUNREACH", "EACCES"].includes(error.code)) {
+    codes.push(error.code);
+  }
+  if ("cause" in error) codes.push(...localNetworkFailureCodes(error.cause, seen));
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) codes.push(...localNetworkFailureCodes(nested, seen));
+  }
+  return [...new Set(codes)];
+}
 
 function isUnauthorizedHttpError(error: unknown): boolean {
   return error instanceof UnauthorizedError || (error instanceof SdkHttpError && error.status === 401);
@@ -985,6 +1017,12 @@ export class McpServerManager {
 
   private async enrichHttpConnectionError(definition: ServerDefinition, error: unknown): Promise<Error> {
     const originalMessage = error instanceof Error ? error.message : String(error);
+    if (process.platform === "darwin") {
+      const codes = localNetworkFailureCodes(error);
+      if (codes.length > 0 && isLiteralLocalAddress(resolveServerUrl(definition)!)) {
+        return new Error(`${originalMessage} — ${codes.join(", ")} — macOS Local Network Privacy may be blocking access. Check System Settings > Privacy & Security > Local Network for the app hosting Pi; enable access if listed and restart it. Try launching Pi from Terminal.app or SSH. Routing or firewall problems can also cause this error.`, { cause: error });
+      }
+    }
     if (isTransientHttpConnectError(error)) {
       return new Error(`${originalMessage} — endpoint is temporarily unavailable (HTTP 503)`, { cause: error });
     }
@@ -1289,9 +1327,21 @@ export class McpServerManager {
       | { status: "failed"; client: Client; transport: Transport; error: unknown }
     > => {
       const authProvider = "provider" in authState ? authState.provider : undefined;
+      let sseFetchFailure: unknown;
+      const transportFetch: FetchLike | undefined = kind === "sse" && process.platform === "darwin" && isLiteralLocalAddress(serverUrl)
+        ? async (input, init) => {
+          try {
+            return await (requestFetch ?? globalThis.fetch)(input, init);
+          } catch (error) {
+            // EventSource discards the fetch cause before the SDK creates SseError.
+            if (localNetworkFailureCodes(error).length > 0) sseFetchFailure = error;
+            throw error;
+          }
+        }
+        : requestFetch;
       const transportOptions = {
         ...(requestInit !== undefined ? { requestInit } : {}),
-        ...(requestFetch !== undefined ? { fetch: requestFetch } : {}),
+        ...(transportFetch !== undefined ? { fetch: transportFetch } : {}),
         ...(authProvider !== undefined ? { authProvider } : {}),
         ...(authProvider !== undefined
           && definition.oauth !== false
@@ -1311,6 +1361,9 @@ export class McpServerManager {
         await this.connectClientWithAbort(client, transport, requestOptions, signal);
         return { status: "connected", client, transport };
       } catch (error) {
+        if (error instanceof SseError && sseFetchFailure !== undefined) {
+          error = new AggregateError([error, sseFetchFailure], error.message);
+        }
         const abortCleanupFailed = error instanceof AggregateError
           && error.message === "MCP connection abort cleanup failed";
         if (!abortCleanupFailed) {

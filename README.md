@@ -329,6 +329,12 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 
 `caFile` works with Streamable HTTP, SSE, and per-request header commands. Requests using this trust reject all redirects; configure the final HTTPS endpoint directly. Other origins and servers retain default trust. Layered configuration drops inherited trust when replacing the URL or switching away from HTTP. This option covers the MCP origin, including connection-owned OAuth requests to that exact origin, but not the separate interactive OAuth flow or private-CA authorization servers on other origins. Thanks to [@desmonna](https://github.com/desmonna) for #527.
 
+#### macOS local-network access
+
+On macOS 15+, Local Network Privacy may deny access to a LAN MCP server depending on the app responsible for hosting Pi. For HTTP URLs with literal private/link-local IPv4 or IPv6 addresses, the adapter adds a hint to `EHOSTUNREACH`, `ENETUNREACH`, or `EACCES` connection errors while retaining the original cause. These codes can also mean routing or firewall trouble; the hint is not proof of a privacy denial. Hostnames are not resolved for this diagnostic.
+
+Check **System Settings > Privacy & Security > Local Network** for the hosting app, enable access if listed, then restart that app and Pi. If it is absent or access still fails, try launching Pi directly from Apple Terminal.app or over SSH (contexts Apple documents as exempt). Permission is attributed to responsible code, not necessarily Node or Pi; signing an unsigned CLI alone does not guarantee a permission prompt or fix host attribution. See [Apple TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).
+
 #### Protocol version negotiation
 
 The adapter defaults to `protocolVersion: "legacy"`. Omitting the field uses the classic MCP initialize sequence without `server/discover` or 2026 headers, preserving compatibility with deployed 2025-era servers.
