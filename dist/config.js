@@ -409,7 +409,7 @@ function mergeConfigs(base, next) {
 // different url, these MUST NOT be inherited from the lower-precedence entry —
 // otherwise the original endpoint's credentials would be shipped to the new
 // url. See the SECURITY note in mergeServerMaps.
-const URL_BOUND_AUTH_FIELDS = ["headers", "bearerToken", "bearerTokenEnv", "bearerTokenStore", "requestHeadersCommand"];
+const URL_BOUND_AUTH_FIELDS = ["headers", "bearerToken", "bearerTokenEnv", "bearerTokenStore", "requestHeadersCommand", "caFile"];
 function mergeServerMaps(base, next) {
     const merged = { ...base };
     for (const [name, definition] of Object.entries(next)) {
@@ -428,7 +428,7 @@ function mergeServerMaps(base, next) {
         if (existing && typeof definition.command === "string") {
             baseEntry = { ...existing };
             for (const field of [
-                "url", "headers", "requestHeadersCommand", "auth", "bearerToken",
+                "url", "headers", "requestHeadersCommand", "caFile", "auth", "bearerToken",
                 "bearerTokenEnv", "oauth", "httpTransport", "socket",
             ]) {
                 delete baseEntry[field];
@@ -446,7 +446,7 @@ function mergeServerMaps(base, next) {
             baseEntry = { ...existing };
             for (const field of [
                 "command", "args", "env", "cwd", "pluginDataDir", "literalEnv", "inheritEnv", "url",
-                "headers", "requestHeadersCommand", "auth", "bearerToken", "bearerTokenEnv",
+                "headers", "requestHeadersCommand", "caFile", "auth", "bearerToken", "bearerTokenEnv",
                 "oauth", "httpTransport",
             ]) {
                 delete baseEntry[field];

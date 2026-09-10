@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- HTTPS MCP servers can configure an origin-scoped `caFile` PEM trust bundle without disabling certificate verification, for Streamable HTTP and SSE. Thanks to [@desmonna](https://github.com/desmonna) for #527.
 - Script `tools.describe()` now exposes server-advertised output schemas for `data.structuredContent`, preserved through metadata caching and refresh. (#522)
 - Stdio MCP servers can opt out of arbitrary adapter environment inheritance with `inheritEnv: false`; SDK platform defaults and explicit `env` overlays remain. Thanks to [@zenolam](https://github.com/zenolam) for #509.
 - Local Claude plugin bundles can now be loaded from trusted configured directories, including bundled MCP servers and skills. Thanks to [@gugu91](https://github.com/gugu91) for PR #493.

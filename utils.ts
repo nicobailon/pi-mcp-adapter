@@ -97,7 +97,7 @@ export function interpolateEnvVars(value: string, environment: NodeJS.ProcessEnv
     .replace(/\{env:(\w+)\}/g, (_, name) => environment[name] ?? "");
 }
 
-function getMissingEnvVars(value: string, environment: NodeJS.ProcessEnv): string[] {
+export function getMissingEnvVars(value: string, environment: NodeJS.ProcessEnv = process.env): string[] {
   const missing = new Set<string>();
   for (const match of value.matchAll(/\$\{(\w+)\}|\$env:(\w+)|\{env:(\w+)\}/g)) {
     const name = match[1] ?? match[2] ?? match[3];

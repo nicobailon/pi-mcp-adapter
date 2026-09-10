@@ -272,6 +272,8 @@ export interface ServerEntry {
     inheritEnv?: boolean;
     cwd?: string;
     url?: string;
+    /** PEM CA bundle replacing default roots for this HTTPS MCP origin only. */
+    caFile?: string;
     headers?: Record<string, string>;
     /** Add or replace HTTP headers by running a trusted command for each request. */
     requestHeadersCommand?: HttpRequestHeadersCommand;

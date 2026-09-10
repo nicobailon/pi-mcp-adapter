@@ -1218,6 +1218,14 @@ describe("config discovery", () => {
     expect(JSON.stringify(entry)).not.toContain("REQUEST_SECRET");
   });
 
+  it.each([{ url: URL_B }, { command: "echo" }, { socket: "/tmp/mcp.sock" }])("drops inherited CA trust on endpoint replacement %j", async override => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-ca-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-ca-project-"));
+    writeBakedAndOverride(home, project, { url: URL_A, caFile: "private.pem" }, override);
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers.litellm.caFile).toBeUndefined();
+  });
+
   it("drops inherited oauth config when a url-only override repoints the server", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-oauth-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-oauth-project-"));

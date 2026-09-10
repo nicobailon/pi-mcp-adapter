@@ -297,6 +297,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `url` | HTTP endpoint (StreamableHTTP with SSE fallback); supports raw `${VAR}` and `$env:VAR` interpolation, and missing URL variables fail before any request is sent |
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the HTTP server connects or OAuth authenticates; use `!!` for a literal leading `!`. |
 | `requestHeadersCommand` | Trusted executable run for every HTTP request. It receives a versioned JSON envelope containing `method`, `url`, and the exact `bodyBase64` on stdin, and must return a JSON object of headers on stdout. `command`, `args`, and `env` support environment interpolation. Use for caller-bound request signatures; failures stop the request. |
+| `caFile` | HTTPS HTTP servers only: local PEM CA certificate/bundle, e.g. `"caFile": "~/certs/local-ca.pem"`. Replaces (does not add to) default roots for the resolved MCP origin. Supports environment interpolation and `~`; relative paths use the process working directory. Unreadable/invalid files fail closed; hostname and certificate-expiry verification remain enabled. |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
 | `oauth.clientId` | Pre-registered OAuth client ID. MCP 2026 prefers pre-registered clients or Client ID Metadata Documents; this adapter falls back to Dynamic Client Registration when the ID is omitted and the server supports it. |
@@ -349,6 +350,8 @@ Environment interpolation remains intentional. `${VAR}`, `$env:VAR`, and `{env:V
 - npm/npx cache resolution and cache-population subprocesses;
 - `!command` secret helpers used by stdio `env` (and other secret fields); and
 - the HTTP `requestHeadersCommand` helper.
+
+Custom CA trust (`caFile`) works with Streamable HTTP and SSE, including per-request header commands, on Node >=20. Requests using this trust reject all redirects; configure the final HTTPS endpoint directly. Other origins keep default trust, and other servers are unaffected. Trust is removed when a layered configuration replaces the URL or switches away from HTTP. Initial support covers the MCP transport origin, not the separate interactive OAuth flow or private-CA authorization servers on other origins. No certificate-verification bypass is provided. Thanks to [@desmonna](https://github.com/desmonna) for #527.
 
 For tighter use, configure a direct executable instead of npm/npx and avoid `!command` secret helpers. This option limits stdio child inheritance only; it does not provide complete multi-agent or helper-process isolation.
 

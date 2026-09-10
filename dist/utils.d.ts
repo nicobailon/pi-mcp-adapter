@@ -6,6 +6,7 @@ export declare function parallelLimit<T, R>(items: T[], limit: number, fn: (item
 export declare function getConfigPathFromArgv(): string | undefined;
 export declare function interpolateEnvVars(value: string): string;
 export declare function interpolateEnvVars(value: string, environment: NodeJS.ProcessEnv): string;
+export declare function getMissingEnvVars(value: string, environment?: NodeJS.ProcessEnv): string[];
 export declare function toStringRecord(value: unknown): Record<string, string> | undefined;
 export declare function interpolateEnvRecord(values: Record<string, string> | undefined, environment?: NodeJS.ProcessEnv): Record<string, string> | undefined;
 /** Resolve a secret value, executing only a single leading `!` command marker. */
