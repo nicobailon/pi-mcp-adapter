@@ -505,3 +505,37 @@ describe("mcp-auth-flow", () => {
     })
   })
 })
+
+for (const redirectUri of ["https://app.example/callback", "http://127.0.0.1:{port}/callback"]) {
+  it(`cancels public startAuth before the account holder releases (${redirectUri})`, async () => {
+    const { acquireRefreshLock, sharedRefreshLockRoot } = await import("./mcp-refresh-lock.ts")
+    const { createOAuthRuntime, hasPendingAuth } = await import("./mcp-auth-flow.ts")
+    const name = `public-cancel-${randomBytes(6).toString("hex")}`
+    const holder = await acquireRefreshLock(name, sharedRefreshLockRoot())
+    const runtime = createOAuthRuntime()
+    const controller = new AbortController()
+    const reason = new Error("caller cancelled while waiting")
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const pending = startAuth(name, "https://api.example/mcp", { oauth: { redirectUri } }, {
+      runtime, signal: controller.signal,
+    })
+    const rejected = assert.rejects(pending, error => error === reason)
+    try {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      controller.abort(reason)
+      await Promise.race([
+        rejected,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("startAuth waited for the holder after cancellation")), 1000)
+        }),
+      ])
+      assert.strictEqual(hasPendingAuth(name, undefined, runtime), false)
+      assert.strictEqual(isCallbackServerRunning(), false)
+    } finally {
+      clearTimeout(timer)
+      holder.release()
+      await rejected
+      await shutdownOAuth(runtime)
+    }
+  })
+}

@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - macOS HTTP connection failures to literal private/link-local IPs now retain network details and suggest Local Network Privacy checks without assuming a privacy denial. Thanks to [@tdhooghe](https://github.com/tdhooghe) for #543.
+- OAuth credential transactions now serialize across processes using kernel locks, release on failure and cancellation, and keep callback tokens bound to their issuing client. Optional `PI_MCP_OAUTH_LOG` diagnostics identify processes and transactions without logging credentials. Thanks to [@CharlesMcMillan](https://github.com/CharlesMcMillan) for PR #528.
 - MCP runtime cancellation now works on Node 20.0.0 when `AbortSignal.any` is unavailable. (#537)
 - OAuth now forwards configured service headers to same-origin discovery, registration, token exchange, and refresh requests, enabling authentication behind service-token gateways without leaking credentials to other origins. Thanks to [@ethanbrown3](https://github.com/ethanbrown3) for PR #533 and [@Davasny](https://github.com/Davasny) for reporting #530.
 - Script `mcp({ action: "auth-start" })` now opens the authorization URL and watches the loopback callback to complete OAuth automatically, while retaining pasted `auth-complete` as a fallback. Thanks to [@exoulster](https://github.com/exoulster) for PR #532.

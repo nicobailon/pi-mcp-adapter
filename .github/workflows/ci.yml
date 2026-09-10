@@ -32,6 +32,26 @@ jobs:
       - run: npm run test:conformance
       - run: npm pack --dry-run
 
+  oauth-coordination:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      PI_MCP_ADAPTER_TEST_AUTH_STORE: memory
+      PI_MCP_ADAPTER_DISABLE_AUTH_CACHE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test mcp-refresh-lock.test.ts mcp-oauth-provider.test.ts
+      - run: npx vitest run __tests__/oauth-transaction-processes.test.ts __tests__/oauth-fetch-transaction.test.ts __tests__/oauth-diagnostics.test.ts __tests__/oauth-storage-transaction.test.ts
+
   node24-worker-fds:
     runs-on: ubuntu-latest
     timeout-minutes: 10

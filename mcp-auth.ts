@@ -11,6 +11,7 @@
  */
 
 import { spawnSync } from 'child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'crypto';
 import { createRequire } from 'module';
 import { readFileSync, existsSync, rmSync } from 'fs';
@@ -18,6 +19,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { getAgentPath } from './agent-dir.ts';
 import { resolveConfiguredOAuthDir } from './config.ts';
+import { sharedRefreshLockRoot, withRefreshLock } from './mcp-refresh-lock.ts';
 
 const require = createRequire(import.meta.url);
 const AUTH_SECRET_SERVICE = 'pi-mcp-adapter.oauth';
@@ -726,7 +728,7 @@ function readAuthEntryFromStore(
     const entry = manifest
       ? readChunkedAuthEntry(store, serverName, account, manifest)
       : parseAuthEntryPayload(serverName, payload, 'OS secure credential store');
-    removeLegacyAuthEntry(serverName, options);
+    if (behavior.migrateLegacy !== false) removeLegacyAuthEntry(serverName, options);
     return entry;
   }
 
@@ -741,11 +743,11 @@ function readAuthEntryFromStore(
 function readAuthEntry(
   serverName: string,
   options?: AuthStorageOptions,
-  behavior: { migrateLegacy?: boolean } = {},
+  behavior: { migrateLegacy?: boolean; cache?: boolean } = {},
 ): AuthEntry | undefined {
   // Status-only reads deliberately bypass the cache because they do not
   // migrate legacy entries.
-  const cacheable = behavior.migrateLegacy !== false && isAuthEntryCacheEnabled();
+  const cacheable = (behavior.cache ?? behavior.migrateLegacy !== false) && isAuthEntryCacheEnabled();
   if (cacheable && authEntryCache.has(serverName)) {
     return cloneAuthEntry(authEntryCache.get(serverName));
   }
@@ -765,16 +767,16 @@ function readAuthEntry(
 /**
  * Get auth entry for a server.
  */
-export function getAuthEntry(serverName: string, options?: AuthStorageOptions): AuthEntry | undefined {
-  return readAuthEntry(serverName, options);
+export function getAuthEntry(serverName: string, options?: AuthStorageOptions, behavior: { migrateLegacy?: boolean } = {}): AuthEntry | undefined {
+  return readAuthEntry(serverName, options, behavior);
 }
 
 /**
  * Get auth entry and validate it's for the correct URL.
  * Returns undefined if URL has changed (credentials are invalid).
  */
-export function getAuthForUrl(serverName: string, serverUrl: string, options?: AuthStorageOptions): AuthEntry | undefined {
-  const entry = getAuthEntry(serverName, options);
+export function getAuthForUrl(serverName: string, serverUrl: string, options?: AuthStorageOptions, behavior: { migrateLegacy?: boolean; cache?: boolean } = {}): AuthEntry | undefined {
+  const entry = readAuthEntry(serverName, options, behavior);
   if (!entry) return undefined;
 
   // If no serverUrl is stored, this is from an old version - consider it invalid
@@ -853,6 +855,19 @@ export function removeAuthEntry(serverName: string, options?: AuthStorageOptions
  */
 export function invalidateAuthEntryCache(serverName: string): void {
   authEntryCache.delete(serverName);
+}
+
+const authTransactions = new AsyncLocalStorage<{ signal: AbortSignal | undefined }>();
+
+export function currentAuthTransaction(): { signal: AbortSignal | undefined } | undefined {
+  return authTransactions.getStore();
+}
+
+export async function withAuthEntryTransaction<T>(serverName: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return withRefreshLock(serverName, sharedRefreshLockRoot(), async () => {
+    invalidateAuthEntryCache(serverName);
+    return authTransactions.run({ signal }, operation);
+  }, signal);
 }
 
 /**

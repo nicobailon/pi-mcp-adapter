@@ -2,7 +2,7 @@
  * Tests for mcp-oauth-provider.ts - OAuth provider implementation
  */
 
-import { describe, it, before, after } from "node:test"
+import { describe, it, before, after, mock } from "node:test"
 import assert from "node:assert"
 import { existsSync, rmSync, mkdirSync, mkdtempSync, writeFileSync } from "fs"
 import { join } from "path"
@@ -444,6 +444,115 @@ describe("McpOAuthProvider", () => {
     })
   })
 
+  describe("auth transactions", () => {
+    it("persists callback tokens with their issuing client across overlapping browser flows", async () => {
+      const name = `callback-binding-${randomBytes(6).toString("hex")}`
+      const first = new McpOAuthProvider(name, serverUrl, {}, { onRedirect: async () => {} })
+      const second = new McpOAuthProvider(name, serverUrl, {}, { onRedirect: async () => {} })
+      await first.withAuthTransaction(async () => {
+        await first.saveClientInformation({ client_id: "fake-client-a", redirect_uris: [first.redirectUrl!] })
+        return "REDIRECT"
+      })
+      await second.withAuthTransaction(async () => {
+        await second.saveClientInformation({ client_id: "fake-client-b", redirect_uris: [second.redirectUrl!] })
+        return "REDIRECT"
+      })
+      await first.withAuthTransaction(async () => {
+        assert.strictEqual((await first.clientInformation())?.client_id, "fake-client-a")
+        await first.saveTokens({ access_token: "fake-a-access", refresh_token: "fake-a-refresh", token_type: "Bearer" })
+        return "AUTHORIZED"
+      })
+      const stored = getAuthForUrl(name, serverUrl)
+      assert.strictEqual(stored?.clientInfo?.clientId, "fake-client-a")
+      assert.strictEqual(stored?.tokens?.refreshToken, "fake-a-refresh")
+    })
+    it("keeps an existing stamped client bound to a pending browser flow", async () => {
+      const name = `stored-callback-${randomBytes(6).toString("hex")}`
+      saveAuthEntry(name, { clientInfo: { clientId: "fake-stored-a", issuer: "https://issuer.example", redirectUris: ["http://localhost:19876/callback"] }, serverUrl }, serverUrl)
+      const pending = new McpOAuthProvider(name, serverUrl, {}, { onRedirect: async () => {} }, {}, undefined, "fake-state")
+      await pending.withAuthTransaction(async () => {
+        assert.strictEqual((await pending.clientInformation())?.client_id, "fake-stored-a")
+        return "REDIRECT"
+      })
+      saveAuthEntry(name, { clientInfo: { clientId: "fake-new-b", issuer: "https://issuer.example", redirectUris: ["http://localhost:19876/callback"] }, serverUrl }, serverUrl)
+      await pending.withAuthTransaction(async () => {
+        assert.strictEqual((await pending.clientInformation())?.client_id, "fake-stored-a")
+        return "AUTHORIZED"
+      })
+    })
+
+    it("holds ownership across token saves, recovery, and callback failure", async () => {
+      const name = `transaction-${randomBytes(6).toString("hex")}`
+      const first = new McpOAuthProvider(name, serverUrl, {}, { onRedirect: async () => {} })
+      const second = new McpOAuthProvider(name, serverUrl, {}, { onRedirect: async () => {} })
+      let start!: () => void
+      let finish!: () => void
+      const begun = new Promise<void>(resolve => { start = resolve })
+      const gate = new Promise<void>(resolve => { finish = resolve })
+      const failure = new Error("callback failed")
+      const owning = first.withAuthTransaction(async () => {
+        await first.saveTokens({ access_token: "old", refresh_token: "old-refresh", token_type: "Bearer" })
+        await first.invalidateCredentials("tokens")
+        start()
+        await gate
+        throw failure
+      })
+      const rejected = assert.rejects(owning, error => error === failure)
+      await begun
+      let entered = false
+      const waiting = second.withAuthTransaction(async () => { entered = true; return "AUTHORIZED" })
+      try {
+        await new Promise(resolve => setTimeout(resolve, 150))
+        assert.strictEqual(entered, false)
+      } finally {
+        finish()
+        await rejected
+        assert.strictEqual(await waiting, "AUTHORIZED")
+      }
+    })
+
+    it("persists a minted refresh response before releasing a deactivated transaction", async () => {
+      const name = `transaction-cancel-${randomBytes(6).toString("hex")}`
+      const first = new McpOAuthProvider(name, serverUrl, {}, { onRedirect: async () => {} })
+      const second = new McpOAuthProvider(name, serverUrl, {}, { onRedirect: async () => {} })
+      let finish!: () => void
+      let start!: () => void
+      const gate = new Promise<void>(resolve => { finish = resolve })
+      const begun = new Promise<void>(resolve => { start = resolve })
+      const owning = first.withAuthTransaction(async () => {
+        start()
+        await gate
+        await first.saveTokens({ access_token: "minted", refresh_token: "rotated", token_type: "Bearer" })
+        return "AUTHORIZED"
+      })
+      await begun
+      first.deactivate()
+      let entered = false
+      const waiting = second.withAuthTransaction(async () => {
+        entered = true
+        assert.strictEqual((await second.tokens())?.refresh_token, "rotated")
+        return "AUTHORIZED"
+      })
+      try {
+        await new Promise(resolve => setTimeout(resolve, 150))
+        assert.strictEqual(entered, false)
+      } finally {
+        finish()
+        assert.strictEqual(await owning, "AUTHORIZED")
+        assert.strictEqual(await waiting, "AUTHORIZED")
+      }
+      await assert.rejects(first.saveTokens({ access_token: "late", token_type: "Bearer" }), /no longer active/)
+    })
+
+    it("releases ownership on missing-state fallback without retaining provider state", async () => {
+      const name = `transaction-state-${randomBytes(6).toString("hex")}`
+      const first = new McpOAuthProvider(name, serverUrl, {}, { onRedirect: async () => {} })
+      const second = new McpOAuthProvider(name, serverUrl, {}, { onRedirect: async () => {} })
+      await assert.rejects(first.withAuthTransaction(async () => { await first.state(); return "REDIRECT" }), UnauthorizedError)
+      assert.strictEqual(await second.withAuthTransaction(async () => "AUTHORIZED"), "AUTHORIZED")
+    })
+  })
+
   describe("redirectToAuthorization", () => {
     it("should call onRedirect with URL when a flow is in progress", async () => {
       const provider = new McpOAuthProvider("redirect-with-state", serverUrl, {}, {
@@ -728,4 +837,37 @@ describe("McpOAuthProvider", () => {
       assert.strictEqual((await staleProvider.tokens())?.access_token, "replacement-token")
     })
   })
+})
+
+it("runs runtime-bound transactions and configured discovery without AbortSignal.any", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any")
+  const runtime = new AbortController()
+  const provider = new McpOAuthProvider(`node20-${randomBytes(6).toString("hex")}`, "https://api.example", {
+    authServerMetadataUrl: "https://issuer.example/.well-known/oauth-authorization-server",
+  }, { onRedirect: async () => {} }, {}, runtime.signal)
+  let discoverySignal: AbortSignal | undefined
+  try {
+    Object.defineProperty(AbortSignal, "any", { configurable: true, value: undefined })
+    mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
+      discoverySignal = init?.signal ?? undefined
+      return Response.json({
+        issuer: "https://issuer.example",
+        authorization_endpoint: "https://issuer.example/authorize",
+        token_endpoint: "https://issuer.example/token",
+        response_types_supported: ["code"],
+      })
+    })
+    assert.strictEqual(await provider.withAuthTransaction(async () => {
+      assert.strictEqual((await provider.discoveryState())?.authorizationServerMetadata?.issuer, "https://issuer.example")
+      return "AUTHORIZED"
+    }), "AUTHORIZED")
+    assert.ok(discoverySignal)
+    provider.deactivate()
+    assert.strictEqual(discoverySignal.aborted, true)
+  } finally {
+    mock.restoreAll()
+    if (descriptor) Object.defineProperty(AbortSignal, "any", descriptor)
+    else Reflect.deleteProperty(AbortSignal, "any")
+    provider.deactivate()
+  }
 })
