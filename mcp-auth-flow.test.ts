@@ -323,7 +323,7 @@ describe("mcp-auth-flow", () => {
     for (const [name, serverName, redirectUri, expectedError] of redirectUriCases) {
       it(name, async () => {
         await assert.rejects(
-          async () => await startAuth(serverName, "https://api.example.com/mcp", {
+          () => startAuth(serverName, "https://api.example.com/mcp", {
             url: "https://api.example.com/mcp",
             auth: "oauth",
             oauth: { redirectUri: redirectUri as string },

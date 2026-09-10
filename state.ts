@@ -33,7 +33,9 @@ export interface McpExtensionState {
   manager: McpServerManager;
   lifecycle: McpLifecycleManager;
   toolMetadata: Map<string, ToolMetadata[]>;
+  /** Number of tools currently registered directly with Pi, by server. */
   directToolCounts: Map<string, number>;
+  /** Resource counts retained separately because tool metadata includes resource tools. */
   resourceCounts: Map<string, number>;
   promptMetadata: Map<string, PromptMetadata[]>;
   /** Servers whose prompt inventory came from successful live discovery. */
@@ -47,6 +49,7 @@ export interface McpExtensionState {
   authStorageOptions: AuthStorageOptions;
   failureTracker: Map<string, number>;
   failureMessages: Map<string, string>;
+  /** Session-only approvals keyed by server, tool definition, and arguments. */
   approvedToolCalls: Map<string, true>;
   /** Optional active-session sink for approval decisions. */
   persistSessionApproval?: SessionApprovalWriter;
