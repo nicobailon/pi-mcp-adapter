@@ -1,4 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { McpServerManager } from "../server-manager.ts";
 import { completeAuth, createOAuthRuntime, shutdownOAuth, startAuth } from "../mcp-auth-flow.ts";
@@ -123,5 +126,93 @@ it("requires both service authentication and OAuth for MCP, including refresh an
     await shutdownOAuth(runtime);
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+it("signs connection-owned cross-origin token and MCP requests, but not provider metadata", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "mcp-oauth-signing-"));
+  const log = join(directory, "requests.jsonl");
+  const script = join(directory, "sign.cjs");
+  writeFileSync(script, `
+    let input = "";
+    process.stdin.on("data", chunk => input += chunk);
+    process.stdin.on("end", () => {
+      require("node:fs").appendFileSync(${JSON.stringify(log)}, input + "\\n");
+      process.stdout.write(JSON.stringify({ "x-request-signature": "synthetic-signature", "x-precedence": "command" }));
+    });
+  `);
+  const originalFetch = globalThis.fetch;
+  const origin = "https://mcp.example.test";
+  const tokenUrl = "https://identity.example.test/token";
+  const metadataUrl = `${origin}/oauth-metadata`;
+  const seen: { url: string; method: string; bodyBase64: string; headers: Headers }[] = [];
+  const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const body = await request.text();
+    seen.push({ url: request.url, method: request.method, bodyBase64: Buffer.from(body).toString("base64"), headers: request.headers });
+    if (request.url === metadataUrl) return json({
+      issuer: origin, authorization_endpoint: `${origin}/authorize`, token_endpoint: tokenUrl,
+      response_types_supported: ["code"], grant_types_supported: ["client_credentials"],
+      token_endpoint_auth_methods_supported: ["client_secret_post"],
+    });
+    if (request.url === tokenUrl) {
+      expect(new URLSearchParams(body).get("grant_type")).toBe("client_credentials");
+      expect(request.headers.get("content-type")).toBe("application/x-www-form-urlencoded");
+      return json({ access_token: "synthetic-oauth", token_type: "Bearer", expires_in: 3600 });
+    }
+    expect(request.url).toBe(`${origin}/mcp`);
+    if (request.headers.get("authorization") !== "Bearer synthetic-oauth") return new Response(null, { status: 401 });
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const message = JSON.parse(body);
+    const result = message.method === "initialize"
+      ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "signed", version: "1" } }
+      : message.method === "tools/list" ? { tools: [] } : undefined;
+    return result ? json({ jsonrpc: "2.0", id: message.id, result }) : new Response(null, { status: 202 });
+  };
+  const manager = new McpServerManager();
+  managers.push(manager);
+  try {
+    const connection = await manager.connect("signed-oauth", {
+      url: `${origin}/mcp`, auth: "oauth",
+      headers: { "x-service-auth": "service", "x-precedence": "configured", Authorization: "service-auth" },
+      oauth: { grantType: "client_credentials", clientId: "client", clientSecret: "secret", authServerMetadataUrl: metadataUrl },
+      requestHeadersCommand: { command: process.execPath, args: [script] },
+    });
+    expect(connection.status).toBe("connected");
+    await manager.closeAll();
+    const metadata = seen.filter(request => request.url === metadataUrl);
+    expect(metadata.length).toBeGreaterThan(0);
+    for (const request of metadata) {
+      expect(request.headers.get("x-request-signature")).toBeNull();
+      expect(request.headers.get("x-service-auth")).toBe("service");
+    }
+    const signed = seen.filter(request => request.url !== metadataUrl);
+    expect(signed.some(request => request.url === tokenUrl)).toBe(true);
+    expect(signed.some(request => request.url === `${origin}/mcp` && request.headers.get("authorization") === "Bearer synthetic-oauth")).toBe(true);
+    for (const request of signed) {
+      expect(request.headers.get("x-request-signature")).toBe("synthetic-signature");
+      expect(request.headers.get("x-precedence")).toBe("command");
+      expect(request.headers.get("x-service-auth")).toBe(request.url === tokenUrl ? null : "service");
+    }
+    const expected = signed.map(({ url, method, bodyBase64 }) => ({ version: 1, url, method, bodyBase64 }));
+    const envelopeKey = ({ version, url, method, bodyBase64 }: typeof expected[number]) =>
+      JSON.stringify([version, url, method, bodyBase64]);
+    const compareEnvelopes = (a: typeof expected[number], b: typeof expected[number]) => {
+      const left = envelopeKey(a);
+      const right = envelopeKey(b);
+      return left < right ? -1 : left > right ? 1 : 0;
+    };
+    // SDK requests can overlap: preserve exact envelopes and counts, not arrival order.
+    expect(readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line)).sort(compareEnvelopes)).toEqual(
+      expected.sort(compareEnvelopes),
+    );
+  } finally {
+    try {
+      await manager.closeAll();
+    } finally {
+      globalThis.fetch = originalFetch;
+      rmSync(directory, { recursive: true, force: true });
+    }
   }
 });
