@@ -358,7 +358,7 @@ describe("tool approval", () => {
     await ensureToolCallApproved(state, "demo", tool, {}, undefined);
     await ensureToolCallApproved(state, "demo", tool, { query: "other" }, undefined);
 
-    expect(broker).toHaveBeenCalledTimes(2);
+    expect(broker).toHaveBeenCalledTimes(3);
     expect(state.approvedToolCalls.size).toBe(2);
     expect(persist).toHaveBeenCalledTimes(2);
   });

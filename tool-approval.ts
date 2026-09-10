@@ -137,12 +137,6 @@ export async function ensureToolCallApproved(
   origin: McpToolApprovalOrigin = toolMeta.resourceUri ? "resource" : "proxy",
   approvalMetadata?: ReadonlyMap<string, readonly ToolMetadata[]>,
 ): Promise<ToolCallApprovalResult> {
-  const { cacheKey } = getToolApprovalIdentity(serverName, toolMeta, args);
-  const approvedToolCalls = state.approvedToolCalls ??= new Map<string, true>();
-  if (approvedToolCalls.has(cacheKey)) {
-    return { ok: true };
-  }
-
   const brokerDecision = await requestBrokerApproval(state, serverName, toolMeta, args, origin, signal);
   if (brokerDecision === "allow_once") return { ok: true };
   if (brokerDecision === "allow_for_session") {
@@ -150,6 +144,12 @@ export async function ensureToolCallApproved(
     return { ok: true };
   }
   if (brokerDecision === "deny") return { ok: false, reason: "denied" };
+
+  const { cacheKey } = getToolApprovalIdentity(serverName, toolMeta, args);
+  const approvedToolCalls = state.approvedToolCalls ??= new Map<string, true>();
+  if (approvedToolCalls.has(cacheKey)) {
+    return { ok: true };
+  }
 
   if (!isToolCallApprovalRequired(state.config, serverName, toolMeta, approvalMetadata ?? state.toolMetadata)) {
     return { ok: true };
