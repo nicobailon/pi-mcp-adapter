@@ -299,7 +299,7 @@ export interface ServerEntry {
     idleTimeout?: number;
     requestTimeoutMs?: number;
     exposeResources?: boolean;
-    directTools?: boolean | string[];
+    directTools?: boolean | string[] | "search";
     toolPrefix?: ToolPrefix;
     includeTools?: string[];
     excludeTools?: string[];
@@ -382,7 +382,7 @@ export interface McpSettings {
     agentPluginPaths?: string[];
     idleTimeout?: number;
     requestTimeoutMs?: number;
-    directTools?: boolean;
+    directTools?: boolean | "search";
     /**
      * Validate direct-tool inputs against the advertised schema after recovering
      * one JSON string layer for object and array properties. Defaults to false.
@@ -481,6 +481,8 @@ export interface PromptMetadata {
     arguments: McpPromptArgument[];
 }
 export interface DirectToolSpec {
+    /** Registered inactive; `mcp({ search })` activates it (directTools: "search"). */
+    lazy?: boolean;
     serverName: string;
     originalName: string;
     prefixedName: string;

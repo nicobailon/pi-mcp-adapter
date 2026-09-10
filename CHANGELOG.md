@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - HTTPS MCP servers can configure an origin-scoped `caFile` PEM trust bundle without disabling certificate verification, for Streamable HTTP and SSE. Thanks to [@desmonna](https://github.com/desmonna) for #527.
-- `directTools: "search"` registers a server's tools as real direct tools but inactive; `mcp({ search })` activates the matches additively, reported as `addedToolNames`. Activation is per process and search is its only trigger. Search-mode tools do not count toward the 75-tool advisory.
+- `directTools: "search"` registers a server's tools as real direct tools but inactive; `mcp({ search })` activates the matches additively, reported as `addedToolNames`. Activation is per process and search is its only trigger. Search-mode tools do not count toward the 75-tool advisory. Thanks to [@chiptoe-svg](https://github.com/chiptoe-svg) for PR #525.
 - Script `tools.describe()` now exposes server-advertised output schemas for `data.structuredContent`, preserved through metadata caching and refresh. (#522)
 - Stdio MCP servers can opt out of arbitrary adapter environment inheritance with `inheritEnv: false`; SDK platform defaults and explicit `env` overlays remain. Thanks to [@zenolam](https://github.com/zenolam) for #509.
 - Local Claude plugin bundles can now be loaded from trusted configured directories, including bundled MCP servers and skills. Thanks to [@gugu91](https://github.com/gugu91) for PR #493.

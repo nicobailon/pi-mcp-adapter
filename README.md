@@ -661,7 +661,7 @@ Per-server `directTools` overrides the global setting. The example above registe
 }
 ```
 
-The model starts each turn seeing only the `mcp` proxy (and any eager direct tools). When it searches, matching tools from search-mode servers become active direct tools, reported on the result as `addedToolNames` so Pi treats that point as their load point. What it activates are real tools with real schemas, not a proxy call.
+The process starts with only the `mcp` proxy (and any eager direct tools). When the model searches, matching tools from search-mode servers become active direct tools, reported on the result as `addedToolNames` so Pi treats that point as their load point. Subsequent turns in that process also see tools activated by earlier searches. What search activates are real tools with real schemas, not a proxy call.
 
 Activation is additive: the active set grows as searches match new tools and holds them for the life of the process. Bounding it is left to a later change.
 
