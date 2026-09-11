@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Per-origin `caFile` trust now routes same-origin requests through the bundled undici fetch so the custom CA dispatcher matches the fetch implementation on newer Node releases (Node 26 ships undici v8 while the dependency pins undici v6); previously every `caFile` connection failed with `UND_ERR_INVALID_ARG`.
+
 ## [2.33.0] - 2026-09-10
 
 ### Highlights
