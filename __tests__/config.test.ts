@@ -1199,6 +1199,26 @@ describe("config discovery", () => {
     expect(entry.bearerTokenStore).toBeUndefined();
   });
 
+  it.each([{ command: "echo" }, { socket: "/tmp/mcp.sock" }])(
+    "drops inherited bearerTokenStore on transport switch %j",
+    async override => {
+      const home = mkdtempSync(join(tmpdir(), "pi-mcp-transport-bts-home-"));
+      const project = mkdtempSync(join(tmpdir(), "pi-mcp-transport-bts-project-"));
+      writeBakedAndOverride(
+        home,
+        project,
+        { url: URL_A, auth: "bearer", bearerTokenStore: true },
+        override,
+      );
+
+      const { loadMcpConfig } = await import("../config.ts");
+      const entry = loadMcpConfig().mcpServers.litellm;
+
+      expect(entry.bearerTokenStore).toBeUndefined();
+      expect(entry.url).toBeUndefined();
+    },
+  );
+
   it("drops an inherited request headers command when a url-only override repoints the server", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-rhc-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-rhc-project-"));

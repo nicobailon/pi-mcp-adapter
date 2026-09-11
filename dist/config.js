@@ -428,7 +428,7 @@ function mergeServerMaps(base, next) {
             baseEntry = { ...existing };
             for (const field of [
                 "url", "headers", "requestHeadersCommand", "caFile", "auth", "bearerToken",
-                "bearerTokenEnv", "oauth", "httpTransport", "socket",
+                "bearerTokenEnv", "bearerTokenStore", "oauth", "httpTransport", "socket",
             ]) {
                 delete baseEntry[field];
             }
@@ -446,7 +446,7 @@ function mergeServerMaps(base, next) {
             for (const field of [
                 "command", "args", "env", "cwd", "pluginDataDir", "literalEnv", "inheritEnv", "url",
                 "headers", "requestHeadersCommand", "caFile", "auth", "bearerToken", "bearerTokenEnv",
-                "oauth", "httpTransport",
+                "bearerTokenStore", "oauth", "httpTransport",
             ]) {
                 delete baseEntry[field];
             }
