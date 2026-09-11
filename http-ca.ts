@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { X509Certificate } from "node:crypto";
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 import type { ServerEntry } from "./types.ts";
 import { getMissingEnvVars, resolveConfigPath, resolveServerUrl } from "./utils.ts";
 
@@ -39,10 +39,15 @@ export function createCaFetch(definition: ServerEntry): { fetch: (input: URL | R
     fetch: (input, init) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.origin !== origin) return globalThis.fetch(input, init);
-      // Attach after header-command Request reconstruction. Never follow a redirect
-      // with this dispatcher, even to the same origin (no trust-bearing redirect hops).
+      // The Agent comes from the bundled undici copy, whose internals do not
+      // match the global fetch dispatcher contract on newer Node releases
+      // (Node 26 ships undici v8; the dependency pins undici v6). Route
+      // same-origin requests through the bundled fetch so dispatcher and
+      // Agent share an implementation. Never follow a redirect with this
+      // dispatcher, even to the same origin (no trust-bearing redirect hops).
+      // Attach after header-command Request reconstruction.
       const options: RequestInit & { dispatcher: Agent } = { ...init, dispatcher, redirect: "error" };
-      return globalThis.fetch(input, options);
+      return (undiciFetch as unknown as typeof globalThis.fetch)(input, options);
     },
     close: () => closed ??= dispatcher.destroy(),
   };
