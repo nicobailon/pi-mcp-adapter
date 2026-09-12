@@ -12,6 +12,7 @@ import {
   inspectAuthForUrl,
   OAuthCredentialStoreError,
   removeTestAuthSecretStoreEntry,
+  resetAuthEntryCache,
   resetTestAuthSecretStore,
   saveAuthEntry,
 } from "../mcp-auth.ts";
@@ -149,20 +150,25 @@ describe("mcp-auth storage paths", () => {
     rmSync(project, { recursive: true, force: true });
   });
 
-  it("chunks large secure-store entries and reads them back", () => {
+  it("keeps large records in a single entry when the host store has no Windows-sized limit", () => {
     const accessToken = "x".repeat(5000);
     saveAuthEntry("large-entry", { tokens: { accessToken } }, "https://example.com/mcp");
 
     expect(getAuthEntry("large-entry")?.tokens?.accessToken).toBe(accessToken);
     const entries = getTestAuthSecretStoreEntries();
-    const manifestEntry = entries.find(([account]) => !account.includes(".chunk."));
-    const chunkEntries = entries.filter(([account]) => account.includes(".chunk."));
-
-    expect(manifestEntry).toBeDefined();
-    const manifest = JSON.parse(manifestEntry![1]) as { __piMcpAdapterOAuthChunked?: number; chunkCount?: number };
-    expect(manifest.__piMcpAdapterOAuthChunked).toBe(1);
-    expect(chunkEntries).toHaveLength(manifest.chunkCount);
-    expect(chunkEntries.every(([, payload]) => payload.length <= AUTH_SECRET_VALUE_LIMIT)).toBe(true);
+    if (process.platform === "win32") {
+      const manifestEntry = entries.find(([account]) => !account.includes(".chunk."));
+      const chunkEntries = entries.filter(([account]) => account.includes(".chunk."));
+      expect(manifestEntry).toBeDefined();
+      const manifest = JSON.parse(manifestEntry![1]) as { __piMcpAdapterOAuthChunked?: number; chunkCount?: number };
+      expect(manifest.__piMcpAdapterOAuthChunked).toBe(1);
+      expect(chunkEntries).toHaveLength(manifest.chunkCount!);
+      expect(chunkEntries.every(([, payload]) => payload.length <= AUTH_SECRET_VALUE_LIMIT)).toBe(true);
+    } else {
+      expect(entries).toHaveLength(1);
+      expect(entries[0][0]).not.toContain(".chunk.");
+      expect(JSON.parse(entries[0][1]).__piMcpAdapterOAuthChunked).toBeUndefined();
+    }
   });
 
   it("persists records that exceed the strictest per-value store limit", () => {
@@ -209,6 +215,7 @@ describe("mcp-auth storage paths", () => {
   });
 
   it("returns unavailable status when a stored chunk cannot be read", () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
     saveAuthEntry("large-status", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
     const chunkAccount = getTestAuthSecretStoreEntries().find(([account]) => account.includes(".chunk."))?.[0];
     expect(chunkAccount).toBeDefined();
@@ -218,6 +225,7 @@ describe("mcp-auth storage paths", () => {
   });
 
   it("removes chunk payloads when credentials are cleared", () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
     saveAuthEntry("large-remove", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
     const storedAccounts = getTestAuthSecretStoreEntries().map(([account]) => account);
     expect(storedAccounts.some(account => account.includes(".chunk."))).toBe(true);
@@ -229,6 +237,7 @@ describe("mcp-auth storage paths", () => {
   });
 
   it("cleans stale chunks when a large entry is replaced by a small one", () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
     saveAuthEntry("large-to-small", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
     expect(getTestAuthSecretStoreEntries().some(([account]) => account.includes(".chunk."))).toBe(true);
 
@@ -238,6 +247,36 @@ describe("mcp-auth storage paths", () => {
     const entries = getTestAuthSecretStoreEntries();
     expect(entries).toHaveLength(1);
     expect(entries[0][0]).not.toContain(".chunk.");
+  });
+
+  it("compacts previously chunked records when the host store does not need Windows limits", () => {
+    if (process.platform === "win32") return;
+
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
+    const accessToken = "x".repeat(5000);
+    saveAuthEntry("compact-me", { tokens: { accessToken } }, "https://example.com/mcp");
+    expect(getTestAuthSecretStoreEntries().some(([account]) => account.includes(".chunk."))).toBe(true);
+
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    resetAuthEntryCache();
+    expect(getAuthEntry("compact-me")?.tokens?.accessToken).toBe(accessToken);
+    const entries = getTestAuthSecretStoreEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0][0]).not.toContain(".chunk.");
+  });
+
+  it("does not compact chunked records during status-only inspection", () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
+    const accessToken = "x".repeat(5000);
+    saveAuthEntry("status-chunks", { tokens: { accessToken } }, "https://example.com/mcp");
+    const before = getTestAuthSecretStoreEntries().length;
+    expect(before).toBeGreaterThan(1);
+
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    resetAuthEntryCache();
+    expect(inspectAuthForUrl("status-chunks", "https://example.com/mcp").status).toBe("present");
+    expect(getTestAuthSecretStoreEntries().some(([account]) => account.includes(".chunk."))).toBe(true);
+    expect(getTestAuthSecretStoreEntries()).toHaveLength(before);
   });
 
   it("routes revoked Linux keyring operations through the recovery helper", () => {
