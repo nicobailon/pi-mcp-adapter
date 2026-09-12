@@ -460,7 +460,7 @@ function buildSharedConfigNoticeLines(configOverridePath: string | undefined, cw
   const discovery = getMcpStandardConfigSummary(configOverridePath, cwd);
   const onboardingState = loadOnboardingState();
   const sharedSources = discovery.sources.filter((source) =>
-    (source.id === "shared-project" || source.id === "shared-global") && source.serverCount > 0,
+    (source.id === "shared-project" || source.id === "shared-project-ancestor" || source.id === "shared-global") && source.serverCount > 0,
   );
   if (sharedSources.length === 0 || onboardingState.sharedConfigHintShown) {
     return { lines: [], fingerprint: null };

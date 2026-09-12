@@ -1,7 +1,7 @@
 // config.ts - Config loading with import support
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { getAgentPath, getConfigDirName } from "./agent-dir.ts";
 import { getAgentPluginSummaries, loadAgentPluginConfigs, type AgentPluginSummary } from "./agent-plugin-loader.ts";
@@ -93,7 +93,7 @@ const IMPORT_PATHS: Record<ImportKind, string[]> = {
 };
 
 interface ConfigSourceSpec {
-  id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-global" | "shared-project" | "pi-project";
+  id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-global" | "shared-project-ancestor" | "pi-project-ancestor" | "shared-project" | "pi-project";
   label: string;
   readPath: string;
   writePath: string;
@@ -502,6 +502,46 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
     scope: "global",
   });
 
+  // Compare file identities so symlink aliases cannot reload a global source
+  // at ancestor precedence. Keep original paths for display and writes.
+  const seenPaths = new Set([
+    ...sources.map((source) => getConfigPathIdentity(source.readPath)),
+    getConfigPathIdentity(projectPath),
+    getConfigPathIdentity(projectPiPath),
+  ]);
+  // Read ancestors farthest-first, bounded at HOME. This limits discovery,
+  // not file ownership or symlink targets.
+  for (const dir of getAncestorProjectDirs(cwd)) {
+    const ancestorPath = getProjectConfigPath(dir);
+    const ancestorIdentity = getConfigPathIdentity(ancestorPath);
+    if (!seenPaths.has(ancestorIdentity) && existsSync(ancestorPath)) {
+      seenPaths.add(ancestorIdentity);
+      sources.push({
+        id: "shared-project-ancestor",
+        label: "ancestor standard MCP",
+        readPath: ancestorPath,
+        writePath: ancestorPath,
+        kind: "project",
+        shared: true,
+        scope: "project",
+      });
+    }
+    const ancestorPiPath = getProjectPiConfigPath(dir);
+    const ancestorPiIdentity = getConfigPathIdentity(ancestorPiPath);
+    if (!seenPaths.has(ancestorPiIdentity) && existsSync(ancestorPiPath)) {
+      seenPaths.add(ancestorPiIdentity);
+      sources.push({
+        id: "pi-project-ancestor",
+        label: "ancestor Pi override",
+        readPath: ancestorPiPath,
+        writePath: ancestorPiPath,
+        kind: "project",
+        shared: false,
+        scope: "project",
+      });
+    }
+  }
+
   if (projectPath !== userPath) {
     sources.push({
       id: "shared-project",
@@ -527,6 +567,41 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
   }
 
   return sources;
+}
+
+function getConfigPathIdentity(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    // Missing or inaccessible paths still participate in lexical deduplication.
+    return resolve(path);
+  }
+}
+
+function getAncestorProjectDirs(cwd: string): string[] {
+  const rawHome = homedir();
+  if (!rawHome) return [];
+  const home = resolve(rawHome);
+  const realHome = getConfigPathIdentity(home);
+  const isHome = (dir: string): boolean => dir === home || dir === realHome;
+  const isInsideHome = (dir: string): boolean => [home, realHome].some((base) => {
+    const path = relative(base, dir);
+    return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+  });
+
+  const start = resolve(cwd);
+  if (!isInsideHome(start) || isHome(start)) return [];
+
+  const dirs: string[] = [];
+  let current = dirname(start);
+  while (isInsideHome(current)) {
+    dirs.unshift(current);
+    if (isHome(current)) break;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return dirs;
 }
 
 function isExclusiveConfigMode(): boolean {

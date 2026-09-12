@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Existing ancestor `.mcp.json` and `<configDir>/mcp.json` (normally `.pi/mcp.json`) files are discovered up to `$HOME` inclusive, after global configs and before cwd configs, farthest first. No ancestors are discovered for cwd at or outside `$HOME`; this discovery boundary is not a file-ownership or symlink sandbox.
+
 ### Fixed
 - Switching a server between transports (HTTP to stdio command or socket) now drops an inherited `bearerTokenStore` flag alongside the other URL-bound credential fields. Thanks to [@zhulinchng](https://github.com/zhulinchng) for PR #552.
 - Per-origin `caFile` trust now routes same-origin requests through the bundled undici fetch so the custom CA dispatcher matches the fetch implementation on newer Node releases (Node 26 ships undici v8 while the dependency pins undici v6); previously every `caFile` connection failed with `UND_ERR_INVALID_ARG`. Thanks to [@zhulinchng](https://github.com/zhulinchng) for PR #550.

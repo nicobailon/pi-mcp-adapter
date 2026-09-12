@@ -71,6 +71,8 @@ Precedence is (later entries win):
 5. `.mcp.json`
 6. `.pi/mcp.json`
 
+Ancestor directories up to `$HOME` (inclusive) are also searched for existing `.mcp.json` and `<configDir>/mcp.json` (normally `.pi/mcp.json`). They load between steps 4 and 5, farthest first: nearer directories override farther ones, Pi overrides shared config within each directory, and cwd files win over ancestors. There is no ancestor discovery when cwd is `$HOME` or outside it. The HOME boundary limits discovery; it does not establish file ownership or sandbox symlinks. Only use configs you trust. `/mcp setup` write targets and project-local `/mcp disable` and `/mcp enable` overrides are unchanged.
+
 `/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
 
 Servers are **lazy by default** — they won't connect until you actually call one of their tools. The adapter caches tool metadata so search and describe work without live connections.
