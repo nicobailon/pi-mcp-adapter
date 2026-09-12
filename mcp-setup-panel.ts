@@ -329,7 +329,7 @@ class McpSetupPanelView implements Component {
           "2. ~/.agents/mcp.json",
           "3. ~/.agents/mcp/mcp.json",
           "4. <Pi agent dir>/mcp.json",
-          "5. ancestor directories within HOME (inclusive), farthest first",
+          "5. configured ancestor root to parent(cwd), farthest first (opt-in)",
           `   per directory: .mcp.json, then ${getConfigDirName()}/mcp.json`,
           "6. cwd/.mcp.json",
           `7. cwd/${getConfigDirName()}/mcp.json`,

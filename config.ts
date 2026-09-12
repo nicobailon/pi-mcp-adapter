@@ -1,5 +1,5 @@
 // config.ts - Config loading with import support
-import { existsSync, readFileSync, realpathSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -509,38 +509,32 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
     getConfigPathIdentity(projectPath),
     getConfigPathIdentity(projectPiPath),
   ]);
-  // Read ancestors farthest-first, bounded at HOME. This limits discovery,
-  // not file ownership or symlink targets. Reinsert aliases at their latest
-  // precedence position rather than keeping the first occurrence.
+  // Only user-global files (including an explicit override) may opt in to
+  // ancestor discovery. Project files cannot extend this trust boundary.
   const ancestorSources = new Map<string, ConfigSourceSpec>();
-  for (const dir of getAncestorProjectDirs(cwd)) {
-    const ancestorPath = getProjectConfigPath(dir);
-    const ancestorIdentity = getConfigPathIdentity(ancestorPath);
-    if (!reservedPaths.has(ancestorIdentity) && existsSync(ancestorPath)) {
-      ancestorSources.delete(ancestorIdentity);
-      ancestorSources.set(ancestorIdentity, {
-        id: "shared-project-ancestor",
-        label: "ancestor standard MCP",
-        readPath: ancestorPath,
-        writePath: ancestorPath,
-        kind: "project",
-        shared: true,
-        scope: "project",
-      });
-    }
-    const ancestorPiPath = getProjectPiConfigPath(dir);
-    const ancestorPiIdentity = getConfigPathIdentity(ancestorPiPath);
-    if (!reservedPaths.has(ancestorPiIdentity) && existsSync(ancestorPiPath)) {
-      ancestorSources.delete(ancestorPiIdentity);
-      ancestorSources.set(ancestorPiIdentity, {
-        id: "pi-project-ancestor",
-        label: "ancestor Pi override",
-        readPath: ancestorPiPath,
-        writePath: ancestorPiPath,
-        kind: "project",
-        shared: false,
-        scope: "project",
-      });
+  const descriptors = [
+    { id: "shared-project-ancestor", label: "ancestor standard MCP", path: getProjectConfigPath, shared: true },
+    { id: "pi-project-ancestor", label: "ancestor Pi override", path: getProjectPiConfigPath, shared: false },
+  ] as const;
+  const ancestorRoot = getConfiguredAncestorRoot(sources, cwd);
+  if (ancestorRoot) {
+    for (const dir of getAncestorProjectDirs(cwd, ancestorRoot)) {
+      for (const descriptor of descriptors) {
+        const path = descriptor.path(dir);
+        const identity = getConfigPathIdentity(path);
+        if (reservedPaths.has(identity) || !existsSync(path)) continue;
+        // Reinsert aliases at their nearest precedence position.
+        ancestorSources.delete(identity);
+        ancestorSources.set(identity, {
+          id: descriptor.id,
+          label: descriptor.label,
+          readPath: path,
+          writePath: path,
+          kind: "project",
+          shared: descriptor.shared,
+          scope: "project",
+        });
+      }
     }
   }
   sources.push(...ancestorSources.values());
@@ -581,25 +575,52 @@ function getConfigPathIdentity(path: string): string {
   }
 }
 
-function getAncestorProjectDirs(cwd: string): string[] {
-  const rawHome = homedir();
-  if (!rawHome) return [];
-  const home = resolve(rawHome);
-  const realHome = getConfigPathIdentity(home);
-  const isHome = (dir: string): boolean => dir === home || dir === realHome;
-  const isInsideHome = (dir: string): boolean => [home, realHome].some((base) => {
-    const path = relative(base, dir);
-    return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
-  });
+function isWithin(base: string, target: string): boolean {
+  const path = relative(base, target);
+  return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+}
 
-  const start = resolve(cwd);
-  if (!isInsideHome(start) || isHome(start)) return [];
+function getConfiguredAncestorRoot(globalSources: ConfigSourceSpec[], cwd: string): string | undefined {
+  let configured: unknown;
+  for (const source of globalSources) {
+    const roots = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`)?.settings?.ancestorConfigRoots;
+    if (roots !== undefined) configured = roots;
+  }
+  if (configured === undefined || (Array.isArray(configured) && configured.length === 0)) return undefined;
+  if (!Array.isArray(configured)) {
+    console.warn("Invalid settings.ancestorConfigRoots: expected an array of paths");
+    return undefined;
+  }
 
+  const home = getConfigPathIdentity(resolve(homedir()));
+  const canonicalCwd = getConfigPathIdentity(resolve(cwd));
+  const valid: string[] = [];
+  for (const entry of configured) {
+    const expanded = typeof entry === "string" && entry.startsWith("~/")
+      ? join(homedir(), entry.slice(2))
+      : entry;
+    if (typeof expanded !== "string" || !isAbsolute(expanded)) {
+      console.warn(`Invalid settings.ancestorConfigRoots entry ${JSON.stringify(entry)}: expected an absolute path or ~/...`);
+      continue;
+    }
+    try {
+      const root = realpathSync(expanded);
+      if (!statSync(root).isDirectory() || !isWithin(home, root) || !isWithin(root, canonicalCwd)) throw new Error();
+      valid.push(root);
+    } catch {
+      console.warn(`Invalid settings.ancestorConfigRoots entry ${JSON.stringify(entry)}: expected an existing directory under HOME containing cwd`);
+    }
+  }
+  return valid.sort((left, right) => right.length - left.length)[0];
+}
+
+function getAncestorProjectDirs(cwd: string, root: string): string[] {
+  const start = getConfigPathIdentity(resolve(cwd));
   const dirs: string[] = [];
   let current = dirname(start);
-  while (isInsideHome(current)) {
+  while (isWithin(root, current)) {
     dirs.unshift(current);
-    if (isHome(current)) break;
+    if (current === root) break;
     const parent = dirname(current);
     if (parent === current) break;
     current = parent;

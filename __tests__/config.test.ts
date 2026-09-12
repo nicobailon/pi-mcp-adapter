@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, parse, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 function writeJson(path: string, value: unknown): void {
@@ -65,7 +65,10 @@ describe("config discovery", () => {
       const { getConfigDiscoveryPaths, getMcpDiscoverySummary, getServerProvenance, loadMcpConfig } = await import("../config.ts");
       for (const [index, path] of layers.entries()) {
         const existing = index === 1 ? JSON.parse(readFileSync(path, "utf8")).mcpServers : {};
-        writeJson(path, { mcpServers: { ...existing, shared: { command: `layer-${index}` } } });
+        writeJson(path, {
+          ...(index === 0 ? { settings: { ancestorConfigRoots: [home] } } : {}),
+          mcpServers: { ...existing, shared: { command: `layer-${index}` } },
+        });
         expect(loadMcpConfig(undefined, cwd).mcpServers.shared.command).toBe(`layer-${index}`);
       }
       writeJson(join(dirname(cwd), ".pi", "mcp.json"), { mcpServers: {
@@ -85,6 +88,7 @@ describe("config discovery", () => {
     });
 
     it.each([".mcp.json", ".pi/mcp.json"])("keeps nearest ancestor aliases at their precedence position: %s", async (filename) => {
+      writeJson(join(home, ".pi", "agent", "mcp.json"), { settings: { ancestorConfigRoots: [home] }, mcpServers: {} });
       const farAlias = join(home, ".mcp.json");
       const intervening = join(home, ".pi", "mcp.json");
       const nearAlias = join(dirname(cwd), filename);
@@ -102,10 +106,13 @@ describe("config discovery", () => {
       expect(getServerProvenance(undefined, cwd).get("shared")).toEqual({ kind: "project", path: nearAlias });
     });
 
-    it.each(["same", "outside", "prefix-sibling"])("does not discover ancestors for %s HOME cwd", async (kind) => {
-      const target = kind === "same" ? home : join(root, kind === "outside" ? "outside" : "home-other", "project");
+    it.each(["absent", "empty", "project-declared"])("does not discover ancestors when opt-in is %s", async (kind) => {
+      const target = cwd;
+      const global = join(home, ".pi", "agent", "mcp.json");
+      if (kind !== "absent") writeJson(global, { settings: { ancestorConfigRoots: kind === "empty" ? [] : undefined }, mcpServers: {} });
+      if (kind === "project-declared") writeJson(join(target, ".mcp.json"), { settings: { ancestorConfigRoots: [home] }, mcpServers: {} });
       writeJson(join(root, ".mcp.json"), { mcpServers: { aboveHome: { command: "ignored" } } });
-      writeJson(join(home, ".mcp.json"), { mcpServers: {} });
+      writeJson(join(home, ".mcp.json"), { settings: { ancestorConfigRoots: [home] }, mcpServers: { ancestor: { command: "ignored" } } });
       writeJson(join(dirname(target), ".pi", "mcp.json"), { mcpServers: { ancestor: { command: "ignored" } } });
       mkdirSync(target, { recursive: true });
       const { getMcpStandardConfigSummary } = await import("../config.ts");
@@ -116,19 +123,42 @@ describe("config discovery", () => {
       const alias = join(root, "home-alias");
       symlinkSync(home, alias, "dir");
       vi.stubEnv("HOME", alias);
+      writeJson(join(home, ".pi", "agent", "mcp.json"), { settings: { ancestorConfigRoots: ["~/"] }, mcpServers: {} });
       writeJson(join(home, ".mcp.json"), { mcpServers: { inherited: { command: "home" } } });
       process.chdir(join(alias, "workspace", "project"));
       const { loadMcpConfig } = await import("../config.ts");
       expect(loadMcpConfig().mcpServers.inherited.command).toBe("home");
     });
 
-    it("discovers ancestors when HOME is the filesystem root", async () => {
-      vi.stubEnv("HOME", parse(root).root);
-      const ancestor = join(home, ".mcp.json");
-      writeJson(ancestor, { mcpServers: {} });
-      const { getConfigDiscoveryPaths } = await import("../config.ts");
-      expect(getConfigDiscoveryPaths(undefined, cwd).map((entry) => entry.path)).toContain(ancestor);
-      expect(getConfigDiscoveryPaths(undefined, parse(root).root).some((entry) => entry.label.startsWith("ancestor"))).toBe(false);
+    it("uses the deepest matching root and stops exactly there", async () => {
+      const deep = join(home, "workspace");
+      writeJson(join(home, ".pi", "agent", "mcp.json"), { settings: { ancestorConfigRoots: [home, deep] }, mcpServers: {} });
+      writeJson(join(home, ".mcp.json"), { mcpServers: { outside: { command: "ignored" } } });
+      writeJson(join(deep, ".mcp.json"), { mcpServers: { boundary: { command: "loaded" } } });
+      const { loadMcpConfig } = await import("../config.ts");
+      expect(loadMcpConfig(undefined, cwd).mcpServers).toMatchObject({ boundary: { command: "loaded" } });
+      expect(loadMcpConfig(undefined, cwd).mcpServers.outside).toBeUndefined();
+    });
+
+    it("honors ancestor roots from the explicitly selected config", async () => {
+      const explicit = join(root, "explicit.json");
+      writeJson(explicit, { settings: { ancestorConfigRoots: [join(home, "workspace")] }, mcpServers: {} });
+      writeJson(join(home, "workspace", ".mcp.json"), { mcpServers: { explicit: { command: "loaded" } } });
+      const { loadMcpConfig } = await import("../config.ts");
+      expect(loadMcpConfig(explicit, cwd).mcpServers.explicit.command).toBe("loaded");
+    });
+
+    it.each(["relative", "outside", "escaping", "missing", "file"])("rejects invalid configured root: %s", async (kind) => {
+      const file = join(home, "not-a-directory");
+      writeFileSync(file, "x");
+      mkdirSync(join(root, "outside"));
+      const configured = kind === "relative" ? "workspace" : kind === "outside" ? root : kind === "escaping" ? "~/../outside" : kind === "missing" ? join(home, "missing") : file;
+      writeJson(join(home, ".pi", "agent", "mcp.json"), { settings: { ancestorConfigRoots: [configured] }, mcpServers: {} });
+      writeJson(join(home, ".mcp.json"), { mcpServers: { ancestor: { command: "ignored" } } });
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { loadMcpConfig } = await import("../config.ts");
+      expect(loadMcpConfig(undefined, cwd).mcpServers.ancestor).toBeUndefined();
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining("Invalid settings.ancestorConfigRoots"));
     });
 
     it.each([false, true])("does not reload global paths or explicit overrides (symlinked HOME: %s)", async (symlinkedHome) => {
@@ -141,7 +171,7 @@ describe("config discovery", () => {
       const piGlobal = join(configuredHome, ".agents", "agent", "mcp.json");
       const branded = join(dirname(cwd), ".agents", "mcp.json");
       writeJson(sharedGlobal, { mcpServers: { shared: { command: "shared-global" } } });
-      writeJson(piGlobal, { mcpServers: { shared: { command: "pi-global" } } });
+      writeJson(piGlobal, { settings: { ancestorConfigRoots: [home] }, mcpServers: { shared: { command: "pi-global" } } });
       writeJson(branded, { mcpServers: { branded: { command: "ancestor" } } });
       const { getConfigDiscoveryPaths, getServerProvenance, loadMcpConfig } = await import("../config.ts");
       const paths = getConfigDiscoveryPaths(undefined, cwd).map((entry) => entry.path);
