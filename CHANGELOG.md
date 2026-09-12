@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Existing ancestor `.mcp.json` and `<configDir>/mcp.json` (normally `.pi/mcp.json`) files are discovered up to `$HOME` inclusive, after global configs and before cwd configs, farthest first. No ancestors are discovered for cwd at or outside `$HOME`; this discovery boundary is not a file-ownership or symlink sandbox.
+
 ## [2.33.0] - 2026-09-10
 
 ### Highlights
