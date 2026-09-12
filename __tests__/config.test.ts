@@ -84,6 +84,24 @@ describe("config discovery", () => {
       expect(loadMcpConfig(undefined, cwd).mcpServers).toEqual({ shared: { command: "layer-0" } });
     });
 
+    it.each([".mcp.json", ".pi/mcp.json"])("keeps nearest ancestor aliases at their precedence position: %s", async (filename) => {
+      const farAlias = join(home, ".mcp.json");
+      const intervening = join(home, ".pi", "mcp.json");
+      const nearAlias = join(dirname(cwd), filename);
+      writeJson(farAlias, { mcpServers: { shared: { command: "aliased" } } });
+      writeJson(intervening, { mcpServers: { shared: { command: "intervening" } } });
+      mkdirSync(dirname(nearAlias), { recursive: true });
+      symlinkSync(farAlias, nearAlias);
+      const { getMcpDiscoverySummary, getServerProvenance, loadMcpConfig } = await import("../config.ts");
+      expect(loadMcpConfig(undefined, cwd).mcpServers.shared.command).toBe("aliased");
+      const discovery = getMcpDiscoverySummary(undefined, cwd);
+      expect(discovery.sources.filter((source) => source.id.endsWith("-ancestor")).map((source) => source.path)).toEqual([intervening, nearAlias]);
+      expect(discovery.conflicts.find((conflict) => conflict.serverName === "shared")?.winner).toEqual({
+        kind: filename === ".mcp.json" ? "shared" : "pi", path: nearAlias,
+      });
+      expect(getServerProvenance(undefined, cwd).get("shared")).toEqual({ kind: "project", path: nearAlias });
+    });
+
     it.each(["same", "outside", "prefix-sibling"])("does not discover ancestors for %s HOME cwd", async (kind) => {
       const target = kind === "same" ? home : join(root, kind === "outside" ? "outside" : "home-other", "project");
       writeJson(join(root, ".mcp.json"), { mcpServers: { aboveHome: { command: "ignored" } } });

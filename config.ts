@@ -504,19 +504,21 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
 
   // Compare file identities so symlink aliases cannot reload a global source
   // at ancestor precedence. Keep original paths for display and writes.
-  const seenPaths = new Set([
+  const reservedPaths = new Set([
     ...sources.map((source) => getConfigPathIdentity(source.readPath)),
     getConfigPathIdentity(projectPath),
     getConfigPathIdentity(projectPiPath),
   ]);
   // Read ancestors farthest-first, bounded at HOME. This limits discovery,
-  // not file ownership or symlink targets.
+  // not file ownership or symlink targets. Reinsert aliases at their latest
+  // precedence position rather than keeping the first occurrence.
+  const ancestorSources = new Map<string, ConfigSourceSpec>();
   for (const dir of getAncestorProjectDirs(cwd)) {
     const ancestorPath = getProjectConfigPath(dir);
     const ancestorIdentity = getConfigPathIdentity(ancestorPath);
-    if (!seenPaths.has(ancestorIdentity) && existsSync(ancestorPath)) {
-      seenPaths.add(ancestorIdentity);
-      sources.push({
+    if (!reservedPaths.has(ancestorIdentity) && existsSync(ancestorPath)) {
+      ancestorSources.delete(ancestorIdentity);
+      ancestorSources.set(ancestorIdentity, {
         id: "shared-project-ancestor",
         label: "ancestor standard MCP",
         readPath: ancestorPath,
@@ -528,9 +530,9 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
     }
     const ancestorPiPath = getProjectPiConfigPath(dir);
     const ancestorPiIdentity = getConfigPathIdentity(ancestorPiPath);
-    if (!seenPaths.has(ancestorPiIdentity) && existsSync(ancestorPiPath)) {
-      seenPaths.add(ancestorPiIdentity);
-      sources.push({
+    if (!reservedPaths.has(ancestorPiIdentity) && existsSync(ancestorPiPath)) {
+      ancestorSources.delete(ancestorPiIdentity);
+      ancestorSources.set(ancestorPiIdentity, {
         id: "pi-project-ancestor",
         label: "ancestor Pi override",
         readPath: ancestorPiPath,
@@ -541,6 +543,7 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
       });
     }
   }
+  sources.push(...ancestorSources.values());
 
   if (projectPath !== userPath) {
     sources.push({
