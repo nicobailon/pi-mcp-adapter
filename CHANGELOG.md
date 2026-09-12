@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Existing ancestor `.mcp.json` and `<configDir>/mcp.json` (normally `.pi/mcp.json`) files are discovered up to `$HOME` inclusive, after global configs and before cwd configs, farthest first. No ancestors are discovered for cwd at or outside `$HOME`; this discovery boundary is not a file-ownership or symlink sandbox.
+- Existing ancestor `.mcp.json` and `<configDir>/mcp.json` (normally `.pi/mcp.json`) files are discovered up to `$HOME` inclusive, after global configs and before cwd configs, farthest first. No ancestors are discovered for cwd at or outside `$HOME`; this discovery boundary is not a file-ownership or symlink sandbox. Thanks to [@johnhenaot](https://github.com/johnhenaot) for PR #555.
 
 ### Fixed
 - Switching a server between transports (HTTP to stdio command or socket) now drops an inherited `bearerTokenStore` flag alongside the other URL-bound credential fields. Thanks to [@zhulinchng](https://github.com/zhulinchng) for PR #552.
