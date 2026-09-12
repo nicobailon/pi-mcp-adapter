@@ -34,6 +34,13 @@ const TEST_AUTH_STORE_ENV = 'PI_MCP_ADAPTER_TEST_AUTH_STORE';
 const AUTH_SECRET_CHUNK_SIZE = 1000;
 /** Largest single value the strictest supported credential store accepts. */
 const AUTH_SECRET_VALUE_LIMIT = 1280;
+/**
+ * macOS Keychain and Linux Secret Service accept far larger items than Windows
+ * Credential Manager. Chunking Atlassian-sized OAuth JSON (~8–10 KiB) across
+ * digest-addressed keychain items causes a prompt per chunk, and Always Allow
+ * cannot stick because each write creates new account names.
+ */
+const AUTH_SECRET_NATIVE_VALUE_LIMIT = 32_000;
 const KEYRING_RECOVERY_DISABLED_ENV = 'PI_MCP_ADAPTER_DISABLE_KEYRING_RECOVERY';
 const KEYRING_RECOVERY_KEYCTL_ENV = 'PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL';
 const KEYRING_RECOVERY_NODE_ENV = 'PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE';
@@ -598,6 +605,16 @@ function tryRemoveChunkPayloads(store: AuthSecretStore, account: string, manifes
   }
 }
 
+function getAuthSecretChunkThreshold(): number {
+  if (process.env[TEST_AUTH_STORE_ENV] === 'sizelimited') return AUTH_SECRET_CHUNK_SIZE;
+  if (process.platform === 'win32') return AUTH_SECRET_CHUNK_SIZE;
+  return AUTH_SECRET_NATIVE_VALUE_LIMIT;
+}
+
+function shouldChunkAuthPayload(payload: string): boolean {
+  return payload.length > getAuthSecretChunkThreshold();
+}
+
 function createChunkManifest(payload: string): AuthEntryChunkManifest {
   return {
     [AUTH_CHUNK_MANIFEST_KEY]: 1,
@@ -653,7 +670,7 @@ function writeSecureAuthEntryToStore(store: AuthSecretStore, serverName: string,
   const account = getAuthEntryAccount(serverName);
   const payload = JSON.stringify(entry);
   const previousManifest = readExistingChunkManifest(store, serverName, account);
-  const manifest = payload.length > AUTH_SECRET_CHUNK_SIZE ? createChunkManifest(payload) : undefined;
+  const manifest = shouldChunkAuthPayload(payload) ? createChunkManifest(payload) : undefined;
 
   try {
     if (manifest) {
@@ -728,7 +745,16 @@ function readAuthEntryFromStore(
     const entry = manifest
       ? readChunkedAuthEntry(store, serverName, account, manifest)
       : parseAuthEntryPayload(serverName, payload, 'OS secure credential store');
-    if (behavior.migrateLegacy !== false) removeLegacyAuthEntry(serverName, options);
+    if (behavior.migrateLegacy !== false) {
+      removeLegacyAuthEntry(serverName, options);
+      if (manifest && !shouldChunkAuthPayload(JSON.stringify(entry))) {
+        try {
+          writeSecureAuthEntryToStore(store, serverName, entry);
+        } catch {
+          // Compaction is best-effort; the assembled entry is still usable.
+        }
+      }
+    }
     return entry;
   }
 

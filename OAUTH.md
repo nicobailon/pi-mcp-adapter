@@ -248,6 +248,8 @@ Events are `oauth_transaction_waiting`, `oauth_transaction_acquired`, `oauth_tra
 
 Persistent OAuth entries are stored per configured server name in the operating system credential store, using macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
 
+Windows Credential Manager cannot hold a typical large OAuth JSON blob in one value, so those records are stored as a manifest plus chunks. macOS Keychain and Linux Secret Service keep a single item unless the payload is pathologically large. Splitting an Atlassian-sized record across digest-addressed keychain items causes a separate user prompt per chunk, and Always Allow cannot follow the next write because the chunk account names change. On first non-status read after upgrade, a chunked record that now fits in one item is rewritten compactly.
+
 The adapter fails closed when the OS credential store is unavailable. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth; the adapter does not silently fall back to plaintext token files.
 
 On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path requires `keyctl` and `node` on `PATH`; missing, locked, or otherwise unavailable credential stores still fail closed.
