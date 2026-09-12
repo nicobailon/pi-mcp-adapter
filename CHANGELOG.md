@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Switching a server between transports (HTTP to stdio command or socket) now drops an inherited `bearerTokenStore` flag alongside the other URL-bound credential fields. Thanks to [@zhulinchng](https://github.com/zhulinchng) for PR #552.
+
 ## [2.33.0] - 2026-09-10
 
 ### Highlights
