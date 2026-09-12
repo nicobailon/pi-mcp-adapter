@@ -8,7 +8,6 @@ const APP_INNER_SANDBOX = APP_PROXY_SANDBOX;
 
 export interface HostHtmlTemplateInput {
   sessionToken: string;
-  uiResourceToken: string;
   serverName: string;
   toolName: string;
   toolArgs: Record<string, unknown>;
@@ -25,7 +24,6 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
   const hostContext = input.hostContext ?? {};
 
   const sessionToken = safeInlineJSON(input.sessionToken);
-  const uiResourceToken = safeInlineJSON(input.uiResourceToken);
   const toolArgs = safeInlineJSON(input.toolArgs);
   const serverName = safeInlineJSON(input.serverName);
   const toolName = safeInlineJSON(input.toolName);
@@ -136,7 +134,6 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     import { AppBridge, PostMessageTransport } from ${moduleUrl};
 
     const SESSION_TOKEN = ${sessionToken};
-    const UI_RESOURCE_TOKEN = ${uiResourceToken};
     const SERVER_NAME = ${serverName};
     const TOOL_NAME = ${toolName};
     const TOOL_ARGS = ${toolArgs};
@@ -231,24 +228,19 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     );
 
     let sandboxResourceSent = false;
-    bridge.onsandboxready = async () => {
+    bridge.onsandboxready = () => {
       if (sandboxResourceSent) return;
       sandboxResourceSent = true;
-      try {
-        const response = await fetch("/ui-app?resource=" + encodeURIComponent(UI_RESOURCE_TOKEN), {
-          headers: { Accept: "text/html" },
-        });
-        if (!response.ok) throw new Error("UI resource request failed: HTTP " + response.status);
-        const html = await response.text();
-        await bridge.sendSandboxResourceReady({
-          html,
-          sandbox: INNER_SANDBOX,
-          ...(RESOURCE_CSP ? { csp: RESOURCE_CSP } : {}),
-          ...(RESOURCE_PERMISSIONS ? { permissions: RESOURCE_PERMISSIONS } : {}),
-        });
-      } catch (error) {
+      void bridge.sendSandboxResourceReady({
+        // The proxy performs a normal HTTP navigation to its session-bound
+        // resource route. Provider HTML never crosses this trusted document.
+        html: "",
+        sandbox: INNER_SANDBOX,
+        ...(RESOURCE_CSP ? { csp: RESOURCE_CSP } : {}),
+        ...(RESOURCE_PERMISSIONS ? { permissions: RESOURCE_PERMISSIONS } : {}),
+      }).catch((error) => {
         showError("Failed to load MCP App resource: " + String(error));
-      }
+      });
     };
 
     bridge.oncalltool = async (params) => {
@@ -448,6 +440,15 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
 }
 
 export function buildCspMetaContent(csp: UiResourceCsp | undefined): string {
+  return buildCspContent(csp, APP_SANDBOX);
+}
+
+/** CSP for provider HTML navigated on the isolated proxy origin. */
+export function buildSandboxResourceCsp(csp: UiResourceCsp | undefined): string {
+  return buildCspContent(csp, APP_INNER_SANDBOX);
+}
+
+function buildCspContent(csp: UiResourceCsp | undefined, sandbox: string): string {
   const resourceDomains = sanitizeCspDomains(csp?.resourceDomains);
   const connectDomains = sanitizeCspDomains(csp?.connectDomains);
   const frameDomains = sanitizeCspDomains(csp?.frameDomains);
@@ -455,7 +456,7 @@ export function buildCspMetaContent(csp: UiResourceCsp | undefined): string {
 
   return [
     "default-src 'none'",
-    `sandbox ${APP_SANDBOX}`,
+    `sandbox ${sandbox}`,
     toDirective("script-src", ["'self'", "'unsafe-inline'"], resourceDomains),
     toDirective("style-src", ["'self'", "'unsafe-inline'"], resourceDomains),
     toDirective("font-src", ["'self'"], resourceDomains),
