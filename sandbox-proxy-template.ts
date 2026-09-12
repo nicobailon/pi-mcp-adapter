@@ -16,7 +16,7 @@ export interface SandboxProxyTemplateInput {
 
 /**
  * Build the static document used by the trusted, second-origin sandbox proxy.
- * The only per-session value is the exact origin of the parent host.
+ * The per-session values are the exact parent host origin and opaque resource path.
  */
 export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string {
   const parentOrigin = safeInlineJSON(input.parentOrigin);

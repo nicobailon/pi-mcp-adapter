@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import http from "node:http";
+import net from "node:net";
 import { startUiServer, type UiServerOptions, type UiServerHandle } from "../ui-server.ts";
 import type { McpServerManager } from "../server-manager.ts";
 import type { ConsentManager } from "../consent-manager.ts";
@@ -49,6 +50,18 @@ async function request(
       req.write(JSON.stringify(options.body));
     }
     req.end();
+  });
+}
+
+async function rawHttp10WithoutHost(port: number, path = "/"): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port }, () => {
+      socket.end(`GET ${path} HTTP/1.0\r\n\r\n`);
+    });
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk) => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("error", reject);
   });
 }
 
@@ -353,6 +366,18 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(403);
       expect(res.body).toBe("Invalid host");
+    });
+
+    it("rejects raw HTTP/1.0 requests without Host on both listeners", async () => {
+      handle = await startUiServer(createServerOptions());
+
+      const hostResponse = await rawHttp10WithoutHost(handle.port);
+      const proxyResponse = await rawHttp10WithoutHost(handle.proxyPort, "/sandbox");
+
+      expect(hostResponse).toMatch(/^HTTP\/1\.1 400 /);
+      expect(hostResponse).toContain("Missing host");
+      expect(proxyResponse).toMatch(/^HTTP\/1\.1 400 /);
+      expect(proxyResponse).toContain("Missing host");
     });
 
     it("accepts bracketed IPv6 loopback Host headers", async () => {

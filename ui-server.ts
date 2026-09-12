@@ -317,8 +317,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     try {
       const method = req.method || "GET";
       const hostHeader = req.headers.host;
-      const url = new URL(req.url || "/", `http://${hostHeader || "127.0.0.1"}`);
-      if (hostHeader !== undefined && !isAllowedHost(url.hostname)) {
+      if (!hostHeader) {
+        sendText(res, 400, "Missing host");
+        return;
+      }
+      const url = new URL(req.url || "/", `http://${hostHeader}`);
+      if (!isAllowedHost(url.hostname)) {
         sendText(res, 403, "Invalid host");
         return;
       }
@@ -704,8 +708,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         try {
           const method = req.method || "GET";
           const hostHeader = req.headers.host;
-          const url = new URL(req.url || "/", `http://${hostHeader || "127.0.0.1"}`);
-          if (hostHeader !== undefined && !isAllowedHost(url.hostname)) {
+          if (!hostHeader) {
+            sendText(res, 400, "Missing host");
+            return;
+          }
+          const url = new URL(req.url || "/", `http://${hostHeader}`);
+          if (!isAllowedHost(url.hostname)) {
             sendText(res, 403, "Invalid host");
             return;
           }
