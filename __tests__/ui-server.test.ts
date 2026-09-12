@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import http from "node:http";
+import net from "node:net";
 import { startUiServer, type UiServerOptions, type UiServerHandle } from "../ui-server.ts";
 import type { McpServerManager } from "../server-manager.ts";
 import type { ConsentManager } from "../consent-manager.ts";
@@ -49,6 +50,18 @@ async function request(
       req.write(JSON.stringify(options.body));
     }
     req.end();
+  });
+}
+
+async function rawHttp10WithoutHost(port: number, path = "/"): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port }, () => {
+      socket.end(`GET ${path} HTTP/1.0\r\n\r\n`);
+    });
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk) => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("error", reject);
   });
 }
 
@@ -163,13 +176,13 @@ function createServerOptions(overrides: Partial<UiServerOptions> = {}): UiServer
   };
 }
 
-async function getUiAppUrl(handle: UiServerHandle): Promise<string> {
-  const host = await request(handle.url);
-  const match = typeof host.body === "string"
-    ? host.body.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/)
+async function getSandboxResourceUrl(handle: UiServerHandle): Promise<string> {
+  const relay = await request(handle.proxyUrl);
+  const match = typeof relay.body === "string"
+    ? relay.body.match(/const RESOURCE_PATH = "([^"]+)";/)
     : null;
-  if (!match?.[1]) throw new Error("UI resource token missing from host page");
-  return `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(match[1])}`;
+  if (!match?.[1]) throw new Error("Sandbox resource path missing from relay page");
+  return `${new URL(handle.proxyUrl).origin}${match[1]}`;
 }
 
 describe("UiServer", () => {
@@ -240,6 +253,8 @@ describe("UiServer", () => {
       expect(res.body).toContain("event.source === innerFrame.contentWindow && event.origin === window.location.origin");
       expect(res.body).not.toContain(handle.sessionToken);
       expect(res.body).not.toContain("UI_RESOURCE_TOKEN");
+      expect(res.body).not.toContain("<h1>Test App</h1>");
+      expect(res.body).not.toContain("document.write");
 
       expect((await request(`${handle.proxyUrl}/ui-app`)).status).toBe(404);
       expect((await request(`${handle.proxyUrl}/proxy/ui/heartbeat`, {
@@ -353,6 +368,18 @@ describe("UiServer", () => {
       expect(res.body).toBe("Invalid host");
     });
 
+    it("rejects raw HTTP/1.0 requests without Host on both listeners", async () => {
+      handle = await startUiServer(createServerOptions());
+
+      const hostResponse = await rawHttp10WithoutHost(handle.port);
+      const proxyResponse = await rawHttp10WithoutHost(handle.proxyPort, "/sandbox");
+
+      expect(hostResponse).toMatch(/^HTTP\/1\.1 400 /);
+      expect(hostResponse).toContain("Missing host");
+      expect(proxyResponse).toMatch(/^HTTP\/1\.1 400 /);
+      expect(proxyResponse).toContain("Missing host");
+    });
+
     it("accepts bracketed IPv6 loopback Host headers", async () => {
       handle = await startUiServer(createServerOptions());
       const url = `http://localhost:${handle.port}/`;
@@ -365,27 +392,27 @@ describe("UiServer", () => {
     });
   });
 
-  describe("GET /ui-app", () => {
-    it("does not accept the app resource token on privileged proxy routes", async () => {
+  describe("sandbox resource navigation", () => {
+    it("does not accept the resource nonce on privileged host routes", async () => {
       const manager = createMockManager();
       handle = await startUiServer(createServerOptions({ manager }));
-      const appUrl = new URL(await getUiAppUrl(handle));
-      const resourceToken = appUrl.searchParams.get("resource");
+      const resourceUrl = new URL(await getSandboxResourceUrl(handle));
+      const resourceNonce = resourceUrl.pathname.split("/").at(-1);
 
-      expect(resourceToken).toBeTruthy();
-      expect(resourceToken).not.toBe(handle.sessionToken);
-      expect((await request(`http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`)).status).toBe(403);
+      expect(resourceNonce).toBeTruthy();
+      expect(resourceNonce).not.toBe(handle.sessionToken);
+      expect((await request(`http://localhost:${handle.port}${resourceUrl.pathname}`)).status).toBe(404);
 
       const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
         method: "POST",
-        body: { token: resourceToken, params: { name: "some_tool", arguments: {} } },
+        body: { token: resourceNonce, params: { name: "some_tool", arguments: {} } },
       });
 
       expect(res.status).toBe(403);
       expect(manager.getConnection).not.toHaveBeenCalled();
     });
 
-    it("enforces metadata CSP and response-level sandboxing while preserving app HTML", async () => {
+    it("serves provider HTML under its declared response CSP", async () => {
       const appHtml = `<!-- decoy <head><meta http-equiv="Content-Security-Policy" content="default-src *"></head> -->
 <!doctype html>
 <html>
@@ -405,11 +432,12 @@ describe("UiServer", () => {
             csp: {
               resourceDomains: ["https://esm.sh"],
               connectDomains: ["https://api.excalidraw.com"],
+              frameDomains: ["https://frames.example.com"],
             },
           },
         }),
       }));
-      const url = await getUiAppUrl(handle);
+      const url = await getSandboxResourceUrl(handle);
 
       const res = await request(url);
       const cspHeader = res.headers["content-security-policy"];
@@ -419,11 +447,34 @@ describe("UiServer", () => {
       expect(cspHeader).toContain("default-src 'none'");
       expect(cspHeader).toContain("sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads");
       expect(cspHeader).not.toContain("allow-popups-to-escape-sandbox");
-      expect(cspHeader).not.toContain("allow-same-origin");
+      expect(cspHeader).toContain("allow-same-origin");
+      expect(cspHeader).not.toContain("allow-top-navigation");
       expect(cspHeader).toContain("script-src 'self' 'unsafe-inline' https://esm.sh");
       expect(cspHeader).toContain("style-src 'self' 'unsafe-inline' https://esm.sh");
       expect(cspHeader).toContain("connect-src https://api.excalidraw.com");
+      expect(cspHeader).toContain("frame-src https://frames.example.com");
+      expect(cspHeader).not.toContain("images.example.com");
+      expect(res.headers["cache-control"]).toBe("no-store");
+      expect(res.headers["x-content-type-options"]).toBe("nosniff");
+      expect(res.headers["referrer-policy"]).toBe("no-referrer");
       expect(res.body).toBe(appHtml);
+    });
+
+    it("rejects invalid method, path, nonce, and Host", async () => {
+      handle = await startUiServer(createServerOptions());
+      const url = await getSandboxResourceUrl(handle);
+      const origin = new URL(url).origin;
+
+      expect((await request(url, { method: "POST" })).status).toBe(404);
+      expect((await request(`${origin}/resource/not-the-session-nonce`)).status).toBe(404);
+      expect((await request(`${url}/extra`)).status).toBe(404);
+      expect((await request(url, { headers: { Host: "attacker.example" } })).status).toBe(403);
+
+      const head = await request(url, { method: "HEAD" });
+      expect(head.status).toBe(200);
+      expect(head.body).toBe("");
+      expect(head.headers["content-security-policy"]).toContain("default-src 'none'");
+      expect(head.headers["cache-control"]).toBe("no-store");
     });
 
     it("rejects malformed CSP metadata before writing the response header", async () => {
@@ -444,7 +495,7 @@ describe("UiServer", () => {
         }),
       }));
 
-      const res = await request(await getUiAppUrl(handle));
+      const res = await request(await getSandboxResourceUrl(handle));
 
       expect(res.status).toBe(200);
       expect(res.headers["content-security-policy"]).toContain("https://safe.example.com");
@@ -462,7 +513,7 @@ describe("UiServer", () => {
         }),
       }));
 
-      const res = await request(await getUiAppUrl(handle));
+      const res = await request(await getSandboxResourceUrl(handle));
 
       expect(res.status).toBe(200);
       expect(res.headers["content-security-policy"]).toContain("default-src 'none'");
@@ -472,7 +523,7 @@ describe("UiServer", () => {
 
     it("emits restrictive default CSP when metadata is undefined", async () => {
       handle = await startUiServer(createServerOptions());
-      const url = await getUiAppUrl(handle);
+      const url = await getSandboxResourceUrl(handle);
 
       const res = await request(url);
 

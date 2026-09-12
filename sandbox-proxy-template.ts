@@ -7,17 +7,20 @@ export const SANDBOX_PROXY_SANDBOX =
   "allow-scripts allow-forms allow-modals allow-popups allow-downloads allow-same-origin";
 export const SANDBOX_INNER_SANDBOX = SANDBOX_PROXY_SANDBOX;
 export const SANDBOX_PROXY_PATH = "/sandbox";
+export const SANDBOX_RESOURCE_PATH_PREFIX = "/resource/";
 
 export interface SandboxProxyTemplateInput {
   parentOrigin: string;
+  resourcePath: string;
 }
 
 /**
  * Build the static document used by the trusted, second-origin sandbox proxy.
- * The only per-session value is the exact origin of the parent host.
+ * The per-session values are the exact parent host origin and opaque resource path.
  */
 export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string {
   const parentOrigin = safeInlineJSON(input.parentOrigin);
+  const resourcePath = safeInlineJSON(input.resourcePath);
 
   return `<!doctype html>
 <html lang="en">
@@ -34,6 +37,7 @@ export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string 
   <iframe id="mcp-app" title="MCP App" sandbox="${SANDBOX_INNER_SANDBOX}" referrerpolicy="no-referrer"></iframe>
   <script>
     const EXPECTED_PARENT_ORIGIN = ${parentOrigin};
+    const RESOURCE_PATH = ${resourcePath};
     const SANDBOX_PROXY_READY_METHOD = "ui/notifications/sandbox-proxy-ready";
     const SANDBOX_RESOURCE_READY_METHOD = "ui/notifications/sandbox-resource-ready";
     const INNER_SANDBOX = ${safeInlineJSON(SANDBOX_INNER_SANDBOX)};
@@ -41,6 +45,10 @@ export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string 
     const innerFrame = document.getElementById("mcp-app");
     const pendingToInner = [];
     let innerReady = false;
+
+    innerFrame.addEventListener("load", () => {
+      if (innerFrame.getAttribute("src") === RESOURCE_PATH) flushPendingMessages();
+    });
 
     const isObject = (value) => value !== null && typeof value === "object";
     const isMessageFromParent = (event) =>
@@ -68,56 +76,6 @@ export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string 
       }
     };
 
-    const sanitizeDomains = (domains) => {
-      if (!Array.isArray(domains)) return [];
-      return [...new Set(domains.filter((domain) =>
-        typeof domain === "string" &&
-        domain.length > 0 &&
-        /^[\\x21-\\x7E]+$/.test(domain) &&
-        !/[;'\"]/.test(domain),
-      ))];
-    };
-
-    const toDirective = (name, trustedSources, domains) =>
-      name + " " + [...new Set([...trustedSources, ...domains])].join(" ");
-
-    const buildResourceCsp = (csp) => {
-      const resourceDomains = sanitizeDomains(csp?.resourceDomains);
-      const connectDomains = sanitizeDomains(csp?.connectDomains);
-      const frameDomains = sanitizeDomains(csp?.frameDomains);
-      const baseUriDomains = sanitizeDomains(csp?.baseUriDomains);
-      return [
-        "default-src 'none'",
-        "sandbox " + INNER_SANDBOX,
-        toDirective("script-src", ["'self'", "'unsafe-inline'"], resourceDomains),
-        toDirective("style-src", ["'self'", "'unsafe-inline'"], resourceDomains),
-        toDirective("font-src", ["'self'"], resourceDomains),
-        toDirective("img-src", ["'self'", "data:"], resourceDomains),
-        toDirective("media-src", ["'self'", "data:"], resourceDomains),
-        connectDomains.length > 0 ? "connect-src " + connectDomains.join(" ") : "connect-src 'none'",
-        frameDomains.length > 0 ? "frame-src " + frameDomains.join(" ") : "frame-src 'none'",
-        "worker-src 'none'",
-        "object-src 'none'",
-        baseUriDomains.length > 0 ? "base-uri " + baseUriDomains.join(" ") : "base-uri 'self'",
-      ].join("; ");
-    };
-
-    const escapeAttribute = (value) => value
-      .replace(/&/g, "&amp;")
-      .replace(/\"/g, "&quot;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-
-    const injectCsp = (html, csp) => {
-      const meta = '<meta http-equiv="Content-Security-Policy" content="' + escapeAttribute(csp) + '">';
-      const head = html.match(/<head(?:\\s[^>]*)?>/i);
-      if (head && head.index !== undefined) {
-        const end = head.index + head[0].length;
-        return html.slice(0, end) + meta + html.slice(end);
-      }
-      return meta + html;
-    };
-
     const safeSandbox = (requested) => {
       const requestedTokens = typeof requested === "string" ? requested.split(/\\s+/) : [];
       const allowedTokens = new Set(INNER_SANDBOX.split(" "));
@@ -142,17 +100,13 @@ export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string 
     };
 
     const loadResource = (params) => {
-      if (!isObject(params) || typeof params.html !== "string" || !innerFrame.contentDocument) return;
+      if (!isObject(params)) return;
       innerFrame.setAttribute("sandbox", safeSandbox(params.sandbox));
       const allow = buildAllowAttribute(params.permissions);
       if (allow) innerFrame.setAttribute("allow", allow);
       else innerFrame.removeAttribute("allow");
       innerReady = false;
-      const document = innerFrame.contentDocument;
-      document.open();
-      document.write(injectCsp(params.html, buildResourceCsp(params.csp)));
-      document.close();
-      flushPendingMessages();
+      innerFrame.setAttribute("src", RESOURCE_PATH);
     };
 
     window.addEventListener("message", (event) => {
@@ -188,8 +142,8 @@ export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string 
 
 /**
  * CSP for the proxy document itself. It contains only the inline relay script
- * and a nested about:blank frame; provider policy is applied separately after
- * the host sends the resource-ready notification.
+ * and a same-origin nested frame. Provider policy is applied on the resource
+ * navigation response, not inherited from this relay document.
  */
 export function buildSandboxProxyCsp(): string {
   return [

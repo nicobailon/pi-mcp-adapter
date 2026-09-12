@@ -21,6 +21,16 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - name: Verify Chrome browser regression prerequisite
+        run: |
+          if command -v google-chrome >/dev/null 2>&1; then
+            google-chrome --version
+          elif command -v google-chrome-stable >/dev/null 2>&1; then
+            google-chrome-stable --version
+          else
+            echo "::error::Chrome is required for the MCP App CSP browser regression on Linux CI"
+            exit 1
+          fi
       - name: Build interactive visualizer example
         run: |
           npm install --prefix examples/interactive-visualizer --no-package-lock --no-audit --no-fund
