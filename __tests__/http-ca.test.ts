@@ -61,6 +61,33 @@ describe("per-origin custom CA", () => {
     expect(hits).toBe(0);
   });
 
+  it("bridges same-origin global Request inputs without losing request or init semantics", async () => {
+    const seen: Array<{ method: string; header: string | undefined; body: string }> = [];
+    const url = await listen(async (req, res) => {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      seen.push({ method: req.method!, header: req.headers["x-source"] as string | undefined, body });
+      res.end("ok");
+    });
+    const trusted = own(url);
+    const inherited = new Request(`${url}/inherited`, {
+      method: "POST", headers: { "x-source": "request" }, body: "request-body",
+    });
+    expect(await (await trusted.fetch(inherited)).text()).toBe("ok");
+
+    const overridden = new Request(`${url}/overridden`, {
+      method: "POST", headers: { "x-source": "request" }, body: "request-body",
+    });
+    expect(await (await trusted.fetch(overridden, {
+      method: "PUT", headers: { "x-source": "init" }, body: "init-body",
+    })).text()).toBe("ok");
+    expect(overridden.bodyUsed).toBe(false);
+    expect(seen).toEqual([
+      { method: "POST", header: "request", body: "request-body" },
+      { method: "PUT", header: "init", body: "init-body" },
+    ]);
+  });
+
   it("preserves hostname verification", async () => {
     const url = await listen((_req, res) => res.end("ok"), "hostname");
     await expect(own(url, fixture("hostname")).fetch(url)).rejects.toMatchObject({ cause: { code: "ERR_TLS_CERT_ALTNAME_INVALID" } });
