@@ -66,7 +66,7 @@ export function createCaFetch(definition: ServerEntry): { fetch: (input: URL | R
             referrer: input.referrer,
             referrerPolicy: input.referrerPolicy,
             signal: input.signal,
-          })
+          } as unknown as UndiciRequestInit)
           : input;
         const options = {
           ...init,
