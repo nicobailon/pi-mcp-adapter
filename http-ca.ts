@@ -47,34 +47,37 @@ export function createCaFetch(definition: ServerEntry): { fetch: (input: URL | R
       // Agent share an implementation. Never follow a redirect with this
       // dispatcher, even to the same origin (no trust-bearing redirect hops).
       // Attach after header-command Request reconstruction.
-      if (input instanceof Request && input.body && init?.body == null
-        && /^(GET|HEAD)$/i.test(init?.method ?? input.method)) {
-        return Promise.reject(new TypeError("Request with GET/HEAD method cannot have body."));
+      try {
+        const bundledInput = input instanceof Request
+          ? new UndiciRequest(input.url, {
+            method: input.method,
+            headers: [...input.headers],
+            // Defer acquiring the source stream until bundled Request validation
+            // succeeds. An overriding body never consumes the original body.
+            ...(init?.body == null && input.body ? { body: (async function* () {
+              yield* input.body!;
+            })(), duplex: "half" as const } : {}),
+            cache: input.cache,
+            credentials: input.credentials,
+            integrity: input.integrity,
+            keepalive: input.keepalive,
+            mode: input.mode,
+            redirect: input.redirect,
+            referrer: input.referrer,
+            referrerPolicy: input.referrerPolicy,
+            signal: input.signal,
+          })
+          : input;
+        const options = {
+          ...init,
+          ...(init?.headers !== undefined ? { headers: [...new Headers(init.headers)] } : {}),
+          dispatcher,
+          redirect: "error" as const,
+        } as unknown as UndiciRequestInit;
+        return undiciFetch(bundledInput, options) as unknown as Promise<Response>;
+      } catch (error) {
+        return Promise.reject(error);
       }
-      const bundledInput = input instanceof Request
-        ? new UndiciRequest(input.url, {
-          method: input.method,
-          headers: [...input.headers],
-          // An overriding body must not consume the Request's original body.
-          ...(init?.body == null && input.body ? { body: input.body.values(), duplex: "half" as const } : {}),
-          cache: input.cache,
-          credentials: input.credentials,
-          integrity: input.integrity,
-          keepalive: input.keepalive,
-          mode: input.mode,
-          redirect: input.redirect,
-          referrer: input.referrer,
-          referrerPolicy: input.referrerPolicy,
-          signal: input.signal,
-        })
-        : input;
-      const options = {
-        ...init,
-        ...(init?.headers !== undefined ? { headers: [...new Headers(init.headers)] } : {}),
-        dispatcher,
-        redirect: "error" as const,
-      } as unknown as UndiciRequestInit;
-      return undiciFetch(bundledInput, options) as unknown as Promise<Response>;
     },
     close: () => closed ??= dispatcher.destroy(),
   };
