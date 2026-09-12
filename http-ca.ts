@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { X509Certificate } from "node:crypto";
-import { Agent } from "undici";
+import { Agent, Request as UndiciRequest, fetch as undiciFetch } from "undici";
+import type { RequestInit as UndiciRequestInit } from "undici";
 import type { ServerEntry } from "./types.ts";
 import { getMissingEnvVars, resolveConfigPath, resolveServerUrl } from "./utils.ts";
 
@@ -39,10 +40,44 @@ export function createCaFetch(definition: ServerEntry): { fetch: (input: URL | R
     fetch: (input, init) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.origin !== origin) return globalThis.fetch(input, init);
-      // Attach after header-command Request reconstruction. Never follow a redirect
-      // with this dispatcher, even to the same origin (no trust-bearing redirect hops).
-      const options: RequestInit & { dispatcher: Agent } = { ...init, dispatcher, redirect: "error" };
-      return globalThis.fetch(input, options);
+      // The Agent comes from the bundled undici copy, whose internals do not
+      // match the global fetch dispatcher contract on newer Node releases
+      // (Node 26 ships undici v8; the dependency pins undici v6). Route
+      // same-origin requests through the bundled fetch so dispatcher and
+      // Agent share an implementation. Never follow a redirect with this
+      // dispatcher, even to the same origin (no trust-bearing redirect hops).
+      // Attach after header-command Request reconstruction.
+      try {
+        const bundledInput = input instanceof Request
+          ? new UndiciRequest(input.url, {
+            method: input.method,
+            headers: [...input.headers],
+            // Defer acquiring the source stream until bundled Request validation
+            // succeeds. An overriding body never consumes the original body.
+            ...(init?.body == null && input.body ? { body: (async function* () {
+              yield* input.body!;
+            })(), duplex: "half" as const } : {}),
+            cache: input.cache,
+            credentials: input.credentials,
+            integrity: input.integrity,
+            keepalive: input.keepalive,
+            mode: input.mode,
+            redirect: input.redirect,
+            referrer: input.referrer,
+            referrerPolicy: input.referrerPolicy,
+            signal: input.signal,
+          } as unknown as UndiciRequestInit)
+          : input;
+        const options = {
+          ...init,
+          ...(init?.headers !== undefined ? { headers: [...new Headers(init.headers)] } : {}),
+          dispatcher,
+          redirect: "error" as const,
+        } as unknown as UndiciRequestInit;
+        return undiciFetch(bundledInput, options) as unknown as Promise<Response>;
+      } catch (error) {
+        return Promise.reject(error);
+      }
     },
     close: () => closed ??= dispatcher.destroy(),
   };

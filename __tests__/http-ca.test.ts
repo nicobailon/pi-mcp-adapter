@@ -61,6 +61,83 @@ describe("per-origin custom CA", () => {
     expect(hits).toBe(0);
   });
 
+  it("bridges same-origin global Request inputs without losing request or init semantics", async () => {
+    const seen: Array<{ method: string; header: string | undefined; body: string }> = [];
+    const url = await listen(async (req, res) => {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      seen.push({ method: req.method!, header: req.headers["x-source"] as string | undefined, body });
+      res.end("ok");
+    });
+    const trusted = own(url);
+    const inherited = new Request(`${url}/inherited`, {
+      method: "POST", headers: { "x-source": "request" }, body: "request-body",
+    });
+    expect(await (await trusted.fetch(inherited)).text()).toBe("ok");
+
+    const overridden = new Request(`${url}/overridden`, {
+      method: "POST", headers: { "x-source": "request" }, body: "request-body",
+    });
+    expect(await (await trusted.fetch(overridden, {
+      method: "PUT", headers: { "x-source": "init" }, body: "init-body",
+    })).text()).toBe("ok");
+    expect(overridden.bodyUsed).toBe(false);
+    expect(seen).toEqual([
+      { method: "POST", header: "request", body: "request-body" },
+      { method: "PUT", header: "init", body: "init-body" },
+    ]);
+  });
+
+  it.each(["GET", "HEAD"])("does not lock a Request body rejected by a %s override", async method => {
+    const url = "https://localhost";
+    const control = new Request(url, { method: "POST", body: "request-body" });
+    await expect(globalThis.fetch(control, { method })).rejects.toThrow(/GET|HEAD/);
+    const expectedState = { bodyUsed: control.bodyUsed, locked: control.body!.locked };
+    expect(expectedState).toEqual({ bodyUsed: false, locked: false });
+
+    const input = new Request(url, { method: "POST", body: "request-body" });
+    await expect(own(url).fetch(input, { method })).rejects.toThrow(/GET|HEAD/);
+    expect({ bodyUsed: input.bodyUsed, locked: input.body!.locked }).toEqual(expectedState);
+  });
+
+  it("does not lock a Request body before rejecting an invalid init method", async () => {
+    const url = "https://localhost";
+    const control = new Request(url, { method: "POST", body: "request-body" });
+    const controlResult = globalThis.fetch(control, { method: " GET " });
+    expect(controlResult).toBeInstanceOf(Promise);
+    await expect(controlResult).rejects.toThrow(TypeError);
+    const expectedState = { bodyUsed: control.bodyUsed, locked: control.body!.locked };
+    expect(expectedState).toEqual({ bodyUsed: false, locked: false });
+
+    const input = new Request(url, { method: "POST", body: "request-body" });
+    const result = own(url).fetch(input, { method: " GET " });
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow(TypeError);
+    expect({ bodyUsed: input.bodyUsed, locked: input.body!.locked }).toEqual(expectedState);
+  });
+
+  it.each(["consumed", "locked"] as const)("rejects a %s Request body asynchronously", async state => {
+    const url = "https://localhost";
+    const control = new Request(url, { method: "POST", body: "request-body" });
+    const controlReader = state === "locked" ? control.body!.getReader() : undefined;
+    if (state === "consumed") await control.text();
+    const controlResult = globalThis.fetch(control);
+    expect(controlResult).toBeInstanceOf(Promise);
+    await expect(controlResult).rejects.toThrow(TypeError);
+    const expectedState = { bodyUsed: control.bodyUsed, locked: control.body!.locked };
+
+    const input = new Request(url, { method: "POST", body: "request-body" });
+    const inputReader = state === "locked" ? input.body!.getReader() : undefined;
+    if (state === "consumed") await input.text();
+    let result: Promise<Response> | undefined;
+    expect(() => { result = own(url).fetch(input); }).not.toThrow();
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result!).rejects.toThrow(TypeError);
+    expect({ bodyUsed: input.bodyUsed, locked: input.body!.locked }).toEqual(expectedState);
+    controlReader?.releaseLock();
+    inputReader?.releaseLock();
+  });
+
   it("preserves hostname verification", async () => {
     const url = await listen((_req, res) => res.end("ok"), "hostname");
     await expect(own(url, fixture("hostname")).fetch(url)).rejects.toMatchObject({ cause: { code: "ERR_TLS_CERT_ALTNAME_INVALID" } });
