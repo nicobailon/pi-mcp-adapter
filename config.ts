@@ -1,7 +1,7 @@
 // config.ts - Config loading with import support
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { getAgentPath, getConfigDirName } from "./agent-dir.ts";
 import { getAgentPluginSummaries, loadAgentPluginConfigs, type AgentPluginSummary } from "./agent-plugin-loader.ts";
@@ -93,7 +93,7 @@ const IMPORT_PATHS: Record<ImportKind, string[]> = {
 };
 
 interface ConfigSourceSpec {
-  id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-global" | "shared-project" | "pi-project";
+  id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-global" | "shared-project-ancestor" | "pi-project-ancestor" | "shared-project" | "pi-project";
   label: string;
   readPath: string;
   writePath: string;
@@ -502,6 +502,43 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
     scope: "global",
   });
 
+  // Compare file identities so symlink aliases cannot reload a global source
+  // at ancestor precedence. Keep original paths for display and writes.
+  const reservedPaths = new Set([
+    ...sources.map((source) => getConfigPathIdentity(source.readPath)),
+    getConfigPathIdentity(projectPath),
+    getConfigPathIdentity(projectPiPath),
+  ]);
+  // Only user-global files (including an explicit override) may opt in to
+  // ancestor discovery. Project files cannot extend this trust boundary.
+  const ancestorSources = new Map<string, ConfigSourceSpec>();
+  const descriptors = [
+    { id: "shared-project-ancestor", label: "ancestor standard MCP", path: getProjectConfigPath, shared: true },
+    { id: "pi-project-ancestor", label: "ancestor Pi override", path: getProjectPiConfigPath, shared: false },
+  ] as const;
+  const ancestorRoot = getConfiguredAncestorRoot(sources, cwd);
+  if (ancestorRoot) {
+    for (const dir of getAncestorProjectDirs(cwd, ancestorRoot)) {
+      for (const descriptor of descriptors) {
+        const path = descriptor.path(dir);
+        const identity = getConfigPathIdentity(path);
+        if (reservedPaths.has(identity) || !existsSync(path)) continue;
+        // Reinsert aliases at their nearest precedence position.
+        ancestorSources.delete(identity);
+        ancestorSources.set(identity, {
+          id: descriptor.id,
+          label: descriptor.label,
+          readPath: path,
+          writePath: path,
+          kind: "project",
+          shared: descriptor.shared,
+          scope: "project",
+        });
+      }
+    }
+  }
+  sources.push(...ancestorSources.values());
+
   if (projectPath !== userPath) {
     sources.push({
       id: "shared-project",
@@ -527,6 +564,68 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
   }
 
   return sources;
+}
+
+function getConfigPathIdentity(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    // Missing or inaccessible paths still participate in lexical deduplication.
+    return resolve(path);
+  }
+}
+
+function isWithin(base: string, target: string): boolean {
+  const path = relative(base, target);
+  return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+}
+
+function getConfiguredAncestorRoot(globalSources: ConfigSourceSpec[], cwd: string): string | undefined {
+  let configured: unknown;
+  for (const source of globalSources) {
+    const roots = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`)?.settings?.ancestorConfigRoots;
+    if (roots !== undefined) configured = roots;
+  }
+  if (configured === undefined || (Array.isArray(configured) && configured.length === 0)) return undefined;
+  if (!Array.isArray(configured)) {
+    console.warn("Invalid settings.ancestorConfigRoots: expected an array of paths");
+    return undefined;
+  }
+
+  const home = getConfigPathIdentity(resolve(homedir()));
+  const canonicalCwd = getConfigPathIdentity(resolve(cwd));
+  const valid: string[] = [];
+  for (const entry of configured) {
+    const expanded = typeof entry === "string" && entry.startsWith("~/")
+      ? join(homedir(), entry.slice(2))
+      : entry;
+    if (typeof expanded !== "string" || !isAbsolute(expanded)) {
+      console.warn(`Invalid settings.ancestorConfigRoots entry ${JSON.stringify(entry)}: expected an absolute path or ~/...`);
+      continue;
+    }
+    try {
+      const root = realpathSync(expanded);
+      if (!statSync(root).isDirectory() || !isWithin(home, root) || !isWithin(root, canonicalCwd)) throw new Error();
+      valid.push(root);
+    } catch {
+      console.warn(`Invalid settings.ancestorConfigRoots entry ${JSON.stringify(entry)}: expected an existing directory under HOME containing cwd`);
+    }
+  }
+  return valid.sort((left, right) => right.length - left.length)[0];
+}
+
+function getAncestorProjectDirs(cwd: string, root: string): string[] {
+  const start = getConfigPathIdentity(resolve(cwd));
+  const dirs: string[] = [];
+  let current = dirname(start);
+  while (isWithin(root, current)) {
+    dirs.unshift(current);
+    if (current === root) break;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return dirs;
 }
 
 function isExclusiveConfigMode(): boolean {

@@ -8,7 +8,7 @@ export interface KnownServerPreset {
 }
 export declare const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[];
 interface ConfigSourceSpec {
-    id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-global" | "shared-project" | "pi-project";
+    id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-global" | "shared-project-ancestor" | "pi-project-ancestor" | "shared-project" | "pi-project";
     label: string;
     readPath: string;
     writePath: string;

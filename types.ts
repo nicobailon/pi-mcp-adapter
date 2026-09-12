@@ -584,6 +584,8 @@ export interface McpSettings {
   notifyOnStartupConnect?: boolean;
   /** Discover detected host-specific MCP configs only when explicitly enabled. */
   hostConfigDiscovery?: HostConfigDiscovery;
+  /** Trusted HOME-contained roots from which to discover ancestor project configs. */
+  ancestorConfigRoots?: string[];
   /** Agent Plugin package directories to load MCP servers from. */
   agentPluginPaths?: string[];
   idleTimeout?: number; // minutes, default 10, 0 to disable

@@ -329,8 +329,10 @@ class McpSetupPanelView implements Component {
           "2. ~/.agents/mcp.json",
           "3. ~/.agents/mcp/mcp.json",
           "4. <Pi agent dir>/mcp.json",
-          "5. .mcp.json",
-          `6. ${getConfigDirName()}/mcp.json`,
+          "5. configured ancestor root to parent(cwd), farthest first (opt-in)",
+          `   per directory: .mcp.json, then ${getConfigDirName()}/mcp.json`,
+          "6. cwd/.mcp.json",
+          `7. cwd/${getConfigDirName()}/mcp.json`,
           `Host discovery: ${state.discovery.hostConfigDiscovery}. Conflicts reported: ${state.discovery.conflicts.length}.`,
           ...state.discovery.conflicts.slice(0, 8).map((conflict) =>
             `${conflict.serverName}: ${conflict.sources.map((source) => source.path).join(" -> ")} (winner: ${conflict.winner.path})`,
