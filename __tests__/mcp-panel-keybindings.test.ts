@@ -349,7 +349,7 @@ describe("mcp-setup-panel custom keybindings", () => {
     expect(output).toContain("0. detected host configs (opt-in lowest-precedence fallback)");
     expect(output).toContain("2. ~/.agents/mcp.json");
     expect(output).toContain("3. ~/.agents/mcp/mcp.json");
-    expect(output).toContain("6. .pi/mcp.json");
+    expect(output).toContain("7. cwd/.pi/mcp.json");
     panel.dispose();
   });
 
@@ -377,7 +377,7 @@ describe("mcp-setup-panel custom keybindings", () => {
       panel.handleInput(DOWN);
       const output = panel.render(100).join("\n");
 
-      expect(output).toContain("6. .arc/mcp.json");
+      expect(output).toContain("7. cwd/.arc/mcp.json");
       panel.dispose();
     } finally {
       if (originalPackageDir === undefined) {
