@@ -88,6 +88,18 @@ describe("per-origin custom CA", () => {
     ]);
   });
 
+  it.each(["GET", "HEAD"])("does not lock a Request body rejected by a %s override", async method => {
+    const url = "https://localhost";
+    const control = new Request(url, { method: "POST", body: "request-body" });
+    await expect(globalThis.fetch(control, { method })).rejects.toThrow(/GET|HEAD/);
+    const expectedState = { bodyUsed: control.bodyUsed, locked: control.body!.locked };
+    expect(expectedState).toEqual({ bodyUsed: false, locked: false });
+
+    const input = new Request(url, { method: "POST", body: "request-body" });
+    await expect(own(url).fetch(input, { method })).rejects.toThrow(/GET|HEAD/);
+    expect({ bodyUsed: input.bodyUsed, locked: input.body!.locked }).toEqual(expectedState);
+  });
+
   it("preserves hostname verification", async () => {
     const url = await listen((_req, res) => res.end("ok"), "hostname");
     await expect(own(url, fixture("hostname")).fetch(url)).rejects.toMatchObject({ cause: { code: "ERR_TLS_CERT_ALTNAME_INVALID" } });

@@ -47,6 +47,10 @@ export function createCaFetch(definition: ServerEntry): { fetch: (input: URL | R
       // Agent share an implementation. Never follow a redirect with this
       // dispatcher, even to the same origin (no trust-bearing redirect hops).
       // Attach after header-command Request reconstruction.
+      if (input instanceof Request && input.body && init?.body == null
+        && /^(GET|HEAD)$/i.test(init?.method ?? input.method)) {
+        return Promise.reject(new TypeError("Request with GET/HEAD method cannot have body."));
+      }
       const bundledInput = input instanceof Request
         ? new UndiciRequest(input.url, {
           method: input.method,
