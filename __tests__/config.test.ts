@@ -54,6 +54,33 @@ describe("config discovery", () => {
       rmSync(root, { recursive: true, force: true });
     });
 
+    it.each([
+      ["empty", ""],
+      ["whitespace-only", "  \n\t"],
+      ["comments-only", "// created by sandbox\n/* no config */\n"],
+    ])("ignores a %s project .mcp.json without warning", async (_kind, contents) => {
+      writeJson(join(home, ".pi", "agent", "mcp.json"), { mcpServers: { global: { command: "global-server" } } });
+      writeText(join(cwd, ".mcp.json"), contents);
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { loadMcpConfig } = await import("../config.ts");
+
+      expect(loadMcpConfig(undefined, cwd).mcpServers.global).toEqual({ command: "global-server" });
+      expect(warning).not.toHaveBeenCalled();
+    });
+
+    it("warns for malformed nonblank project JSON while preserving the global layer", async () => {
+      writeJson(join(home, ".pi", "agent", "mcp.json"), { mcpServers: { global: { command: "global-server" } } });
+      writeText(join(cwd, ".mcp.json"), "{ malformed");
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { loadMcpConfig } = await import("../config.ts");
+
+      expect(loadMcpConfig(undefined, cwd).mcpServers.global).toEqual({ command: "global-server" });
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(`Failed to load MCP config from ${join(cwd, ".mcp.json")}:`),
+        expect.any(SyntaxError),
+      );
+    });
+
     it("loads HOME through cwd farthest-first with Pi precedence and strips inherited URL credentials", async () => {
       const global = join(home, ".pi", "agent", "mcp.json");
       const layers = [global, ...[home, dirname(cwd), cwd].flatMap((dir) => [join(dir, ".mcp.json"), join(dir, ".pi", "mcp.json")])];

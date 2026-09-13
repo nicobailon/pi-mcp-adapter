@@ -3,6 +3,7 @@ import { existsSync, readFileSync, realpathSync, statSync, writeFileSync, mkdirS
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import stripJsonComments from "strip-json-comments";
 import { getAgentPath, getConfigDirName } from "./agent-dir.ts";
 import { getAgentPluginSummaries, loadAgentPluginConfigs, type AgentPluginSummary } from "./agent-plugin-loader.ts";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
@@ -801,9 +802,7 @@ function loadImportedConfig(
     if (!existsSync(path)) continue;
 
     try {
-      const value = readImportedConfig(path);
-      if (value === undefined) continue;
-      return { path, value };
+      return { path, value: readImportedConfig(path) };
     } catch (error) {
       console.warn(warningPrefix, error);
     }
@@ -820,7 +819,9 @@ function readValidatedConfig(path: string, label: string): McpConfig | null {
   if (!existsSync(path)) return null;
 
   try {
-    return validateConfig(parseJsonWithComments(readFileSync(path, "utf-8")));
+    const text = readFileSync(path, "utf-8");
+    if (stripJsonComments(text, { trailingCommas: true }).trim() === "") return null;
+    return validateConfig(parseJsonWithComments(text));
   } catch (error) {
     console.warn(`Failed to load ${label}:`, error);
     return null;
@@ -1168,14 +1169,10 @@ export function writeProjectServerDisabledOverride(
   if (existsSync(filePath)) {
     try {
       const parsed = parseJsonWithComments(readFileSync(filePath, "utf-8"));
-      if (parsed === undefined) {
-        raw = {};
-      } else {
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          throw new Error("root value must be an object");
-        }
-        raw = parsed as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("root value must be an object");
       }
+      raw = parsed as Record<string, unknown>;
     } catch (error) {
       throw new Error(`Failed to read project MCP override at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
