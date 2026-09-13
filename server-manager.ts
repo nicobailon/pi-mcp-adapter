@@ -179,6 +179,8 @@ export interface ServerConnection {
   /** Monotonic guard against older refresh responses replacing newer notifications. */
   toolsRevision?: number;
   resources: McpResource[];
+  /** True when resources were advertised but resources/list failed. */
+  resourceDiscoveryFailed?: boolean;
   prompts: McpPrompt[];
   /** True when prompts were advertised but prompts/list failed. */
   promptDiscoveryFailed?: boolean;
@@ -212,6 +214,7 @@ export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refres
 
 type ToolListCacheHints = Partial<Pick<ListToolsResult, "ttlMs" | "cacheScope">>;
 type ToolListResult = { tools: McpTool[]; hints?: ToolListCacheHints };
+type ResourceListResult = { resources: McpResource[]; failed: boolean };
 
 const KEEP_ALIVE_REFRESH_TIMEOUT_MS = 5_000;
 const LISTEN_RETRY_DELAY_MS = 5_000;
@@ -766,7 +769,10 @@ export class McpServerManager {
       !isDeepStrictEqual(expectedConnection.tools, nextTools.tools) ||
       !isDeepStrictEqual(expectedConnection.toolListHints, nextTools.hints)
     )) ||
-      (nextResources !== undefined && !isDeepStrictEqual(expectedConnection.resources, nextResources)) ||
+      (nextResources !== undefined && (
+        !isDeepStrictEqual(expectedConnection.resources, nextResources.resources) ||
+        expectedConnection.resourceDiscoveryFailed !== nextResources.failed
+      )) ||
       (nextPrompts !== undefined && (
         !isDeepStrictEqual(expectedConnection.prompts, nextPrompts.prompts) ||
         expectedConnection.promptDiscoveryFailed !== false
@@ -783,7 +789,10 @@ export class McpServerManager {
       expectedConnection.toolListHints = nextTools.hints;
       expectedConnection.toolsRevision = (expectedConnection.toolsRevision ?? 0) + 1;
     }
-    if (nextResources !== undefined) expectedConnection.resources = nextResources;
+    if (nextResources !== undefined) {
+      expectedConnection.resources = nextResources.resources;
+      expectedConnection.resourceDiscoveryFailed = nextResources.failed;
+    }
     if (nextPrompts !== undefined) {
       expectedConnection.prompts = nextPrompts.prompts;
       expectedConnection.promptDiscoveryFailed = false;
@@ -1022,7 +1031,8 @@ export class McpServerManager {
       ]);
       connection.tools = toolResult.tools;
       connection.toolListHints = toolResult.hints;
-      connection.resources = resources;
+      connection.resources = resources.resources;
+      connection.resourceDiscoveryFailed = resources.failed;
       connection.prompts = promptResult.prompts;
       connection.promptDiscoveryFailed = promptResult.failed;
 
@@ -1251,6 +1261,7 @@ export class McpServerManager {
     const connection = this.connections.get(serverName);
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.resources = resources;
+    connection.resourceDiscoveryFailed = false;
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
     this.pendingMetadataPublications.delete(serverName);
   }
@@ -1567,9 +1578,9 @@ export class McpServerManager {
     }
   }
 
-  private async fetchAllResources(client: Client, requestOptions?: RequestOptions, strict = false): Promise<McpResource[]> {
+  private async fetchAllResources(client: Client, requestOptions?: RequestOptions, strict = false): Promise<ResourceListResult> {
     const capabilities = client.getServerCapabilities?.();
-    if (!capabilities?.resources) return [];
+    if (!capabilities?.resources) return { resources: [], failed: false };
 
     try {
       const allResources: McpResource[] = [];
@@ -1581,7 +1592,7 @@ export class McpServerManager {
         cursor = result.nextCursor;
       } while (cursor);
 
-      return allResources;
+      return { resources: allResources, failed: false };
     } catch (error) {
       if (requestOptions?.signal?.aborted) {
         throwIfAborted(requestOptions.signal);
@@ -1589,7 +1600,7 @@ export class McpServerManager {
       if (isUnauthorizedHttpError(error)) throw error;
       if (strict) throw error;
       // The server advertises resources but the listing failed
-      return [];
+      return { resources: [], failed: true };
     }
   }
 

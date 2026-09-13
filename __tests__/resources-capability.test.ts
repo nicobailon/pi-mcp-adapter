@@ -14,7 +14,7 @@ describe("resources capability negotiation", () => {
     const client = { getServerCapabilities: () => ({ tools: {} }), listResources };
     const manager = new McpServerManager({} as any);
 
-    await expect((manager as any).fetchAllResources(client)).resolves.toEqual([]);
+    await expect((manager as any).fetchAllResources(client)).resolves.toEqual({ resources: [], failed: false });
     expect(listResources).not.toHaveBeenCalled();
   });
 
@@ -24,8 +24,23 @@ describe("resources capability negotiation", () => {
     const client = { getServerCapabilities: () => ({ tools: {}, resources: {} }), listResources };
     const manager = new McpServerManager({} as any);
 
-    await expect((manager as any).fetchAllResources(client)).resolves.toEqual([resource]);
+    await expect((manager as any).fetchAllResources(client)).resolves.toEqual({ resources: [resource], failed: false });
     expect(listResources).toHaveBeenCalledTimes(1);
+  });
+
+  it("distinguishes failed discovery from an authoritative empty list", async () => {
+    const failedClient = {
+      getServerCapabilities: () => ({ resources: {} }),
+      listResources: vi.fn(async () => { throw new Error("unavailable"); }),
+    };
+    const emptyClient = {
+      getServerCapabilities: () => ({ resources: {} }),
+      listResources: vi.fn(async () => ({ resources: [] })),
+    };
+    const manager = new McpServerManager({} as any);
+
+    await expect((manager as any).fetchAllResources(failedClient)).resolves.toEqual({ resources: [], failed: true });
+    await expect((manager as any).fetchAllResources(emptyClient)).resolves.toEqual({ resources: [], failed: false });
   });
 
   it("returns an empty resource list for a tools-only server", async () => {

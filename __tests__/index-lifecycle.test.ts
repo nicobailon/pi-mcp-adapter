@@ -1152,6 +1152,13 @@ describe("mcpAdapter session lifecycle", () => {
           url: "https://demo.example.com/mcp",
           directTools: ["lookup", "read_guide"],
         },
+        fallback: {
+          url: "https://fallback.example.com/mcp",
+          directTools: ["read_manual"],
+        },
+        namespace: {
+          url: "https://namespace.example.com/mcp",
+        },
       },
     };
     const diskEntry = {
@@ -1161,8 +1168,14 @@ describe("mcpAdapter session lifecycle", () => {
       tools: [{ name: "lookup", description: "Lookup from disk" }],
       resources: [{ name: "guide", uri: "file://disk-guide" }],
     };
+    const fallbackEntry = {
+      configHash: actualCache.computeServerHash(config.mcpServers.fallback),
+      cachedAt: Date.now(),
+      tools: [],
+      resources: [{ name: "manual", uri: "file://cached-manual", description: "Cached manual" }],
+    };
     mocks.loadMcpConfig.mockReturnValue(config);
-    mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { demo: diskEntry } });
+    mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { demo: diskEntry, fallback: fallbackEntry } });
     mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
     mocks.getMissingConfiguredDirectToolServers.mockImplementation(actualDirectTools.getMissingConfiguredDirectToolServers);
 
@@ -1176,11 +1189,27 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.executeConnect.mockImplementation(async (currentState: any) => {
       connections.set("demo", {
         status: "connected",
+        definition: config.mcpServers.demo,
         tools: [
           { name: "lookup", description: "Lookup live", inputSchema: { type: "object" } },
           { name: "unselected", description: "Not selected" },
         ],
         resources: [{ name: "guide", uri: "file://live-guide", description: "Live guide" }],
+        toolListHints: { ttlMs: 0 },
+      });
+      connections.set("fallback", {
+        status: "connected",
+        definition: config.mcpServers.fallback,
+        tools: [],
+        resources: [],
+        resourceDiscoveryFailed: true,
+      });
+      connections.set("namespace", {
+        status: "connected",
+        definition: config.mcpServers.namespace,
+        tools: [{ name: "search", description: "Search live" }],
+        resources: [],
+        resourceDiscoveryFailed: false,
         toolListHints: { ttlMs: 0 },
       });
       await currentState.onToolMetadataUpdated?.("demo", "proxy-connect");
@@ -1201,21 +1230,39 @@ describe("mcpAdapter session lifecycle", () => {
 
     const first = await proxyTool.execute("call-1", { connect: "demo" });
     expect(first.addedToolNames).toEqual(["demo_lookup", "demo_read_guide"]);
-    expect(activeTools()).toEqual(["bash", "demo_lookup", "demo_read_guide"]);
+    expect(activeTools()).toEqual(["bash", "fallback_read_manual", "demo_lookup", "demo_read_guide", "mcp__namespace"]);
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "demo_unselected" }));
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
       name: "demo_read_guide",
       description: "Live guide",
     }));
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
+      name: "fallback_read_manual",
+      description: "Cached manual",
+    }));
 
     const second = await proxyTool.execute("call-2", { connect: "demo" });
     expect(second).not.toHaveProperty("addedToolNames");
-    expect(activeTools()).toEqual(["bash", "demo_lookup", "demo_read_guide"]);
+    expect(activeTools()).toEqual(["bash", "fallback_read_manual", "demo_lookup", "demo_read_guide", "mcp__namespace"]);
 
     const liveConnection = connections.get("demo")!;
-    liveConnection.tools = [{ name: "replacement", description: "Not selected" }];
     liveConnection.resources = [];
+    liveConnection.resourceDiscoveryFailed = true;
+    await state.onToolMetadataUpdated?.("demo", "resources-list-failed");
+    expect(activeTools()).toEqual(["bash", "fallback_read_manual", "demo_lookup", "mcp__namespace"]);
+
+    liveConnection.tools = [{ name: "replacement", description: "Not selected" }];
     await state.onToolMetadataUpdated?.("demo", "tools-list-changed");
+    expect(activeTools()).toEqual(["bash", "fallback_read_manual", "mcp__namespace"]);
+
+    const fallbackConnection = connections.get("fallback")!;
+    fallbackConnection.resourceDiscoveryFailed = false;
+    await state.onToolMetadataUpdated?.("fallback", "resources-list-changed");
+    expect(activeTools()).toEqual(["bash", "mcp__namespace", "mcp"]);
+
+    const namespaceConnection = connections.get("namespace")!;
+    namespaceConnection.tools = [];
+    await state.onToolMetadataUpdated?.("namespace", "tools-list-changed");
     expect(activeTools()).toEqual(["bash", "mcp"]);
   });
 

@@ -1,7 +1,7 @@
 import { withFileMutationQueue, type AgentToolUpdateCallback, type ExtensionAPI, type ExtensionContext, type ToolInfo } from "@earendil-works/pi-coding-agent";
 import { resolve } from "node:path";
 import type { McpExtensionState } from "./state.ts";
-import type { DirectToolSpec, McpAdapterOptions, McpConfig, PromptMetadata, ServerEntry } from "./types.ts";
+import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
@@ -10,7 +10,7 @@ import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getPiGlobalConfig
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tools.ts";
 import { clearFailure, flushMetadataCache, initializeMcp, updateMetadataCache, updateStatusBar } from "./init.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
-import { loadMetadataCache, markMetadataServersAuthoritative, parseDirectToolSelectors, serializeResources, serializeTools, type MetadataCache } from "./metadata-cache.ts";
+import { computeServerHash, isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, serializeResources, serializeTools, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
 import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeInstructions, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
@@ -497,33 +497,41 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const currentState = state;
     if (!currentState) return persistentCache;
 
-    const liveConnections = [...currentState.manager.getAllConnections()].filter(
-      ([serverName, connection]) => connection.status === "connected" && config.mcpServers[serverName] !== undefined,
-    );
+    const liveConnections = [...currentState.manager.getAllConnections()].filter(([serverName, connection]) => {
+      const definition = config.mcpServers[serverName];
+      return connection.status === "connected"
+        && definition !== undefined
+        && !isServerDisabled(definition)
+        && computeServerHash(connection.definition) === computeServerHash(definition);
+    });
     if (liveConnections.length === 0) return persistentCache;
 
     const servers = { ...(persistentCache?.servers ?? {}) };
-    const authoritativeServers = new Set<string>();
     for (const [serverName, connection] of liveConnections) {
       const definition = config.mcpServers[serverName];
       if (!definition) continue;
+      const persistentEntry = persistentCache?.servers[serverName];
+      const fallbackResources = persistentEntry && isServerCacheValid(persistentEntry, definition)
+        ? persistentEntry.resources ?? []
+        : [];
       servers[serverName] = {
-        // This entry exists only in this in-memory catalog. Its hash and TTL do
-        // not grant persistence validity; the authoritative marker below does.
-        configHash: "",
+        // This valid entry exists only for the current tool-surface sync. It is
+        // never written back, so zero-TTL metadata remains unusable on reload.
+        configHash: computeServerHash(definition),
         tools: serializeTools(connection.tools ?? []),
-        resources: definition.exposeResources === false ? [] : serializeResources(connection.resources ?? []),
-        ...(connection.toolListHints?.ttlMs !== undefined ? { ttlMs: connection.toolListHints.ttlMs } : {}),
-        ...(connection.toolListHints?.cacheScope !== undefined ? { cacheScope: connection.toolListHints.cacheScope } : {}),
+        resources: definition.exposeResources === false
+          ? []
+          : connection.resourceDiscoveryFailed
+            ? fallbackResources
+            : serializeResources(connection.resources ?? []),
         cachedAt: Date.now(),
       };
-      authoritativeServers.add(serverName);
     }
 
-    return markMetadataServersAuthoritative({
+    return {
       version: persistentCache?.version ?? 1,
       servers,
-    }, authoritativeServers);
+    };
   }
 
   function syncToolSurface(ctx?: ExtensionContext): void {
