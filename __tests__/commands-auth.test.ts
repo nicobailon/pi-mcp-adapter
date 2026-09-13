@@ -172,7 +172,6 @@ describe("authenticateServer", () => {
   it("keeps credentials when removal fails after disconnect", async () => {
     const events: string[] = [];
     let connected = true;
-    let credentialsPresent = true;
     mocks.removeAuth.mockImplementationOnce(async () => {
       events.push("remove");
       expect(connected).toBe(false);
@@ -194,19 +193,16 @@ describe("authenticateServer", () => {
     expect(result).toEqual({ ok: false, message: "simulated secure credential store unavailable" });
     expect(events).toEqual(["close", "remove"]);
     expect(connected).toBe(false);
-    expect(credentialsPresent).toBe(true);
     expect(ui.notify).toHaveBeenCalledWith(
       'Failed to clear OAuth credentials for "sentry": simulated secure credential store unavailable',
       "error",
     );
   });
 
-  it("keeps credentials when close fails before removal", async () => {
+  it("does not remove credentials when close fails", async () => {
     const events: string[] = [];
-    let credentialsPresent = true;
     mocks.removeAuth.mockImplementationOnce(async () => {
       events.push("remove");
-      credentialsPresent = false;
     });
     const ui = { notify: vi.fn() };
     const { logoutServer } = await import("../commands.ts");
@@ -223,7 +219,6 @@ describe("authenticateServer", () => {
 
     expect(result).toEqual({ ok: false, message: "close failed" });
     expect(events).toEqual(["close"]);
-    expect(credentialsPresent).toBe(true);
     expect(ui.notify).toHaveBeenCalledWith(
       'Failed to close OAuth server "sentry"; credentials were not cleared: close failed',
       "error",

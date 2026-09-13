@@ -91,6 +91,7 @@ type PendingAuth = {
 type RuntimeState = {
   controller: AbortController
   generation: number
+  authProviders: Map<string, Set<McpOAuthProvider>>
   pendingAuths: Map<string, PendingAuth>
   pendingAuthStates: Map<string, string>
   pendingAuthCleanupTimers: Map<string, ReturnType<typeof setTimeout>>
@@ -106,6 +107,7 @@ export function createOAuthRuntime(signal?: AbortSignal): McpOAuthRuntime {
   runtimeStates.set(runtime, {
     controller,
     generation: 0,
+    authProviders: new Map(),
     pendingAuths: new Map(),
     pendingAuthStates: new Map(),
     pendingAuthCleanupTimers: new Map(),
@@ -137,6 +139,43 @@ function getRuntimeState(runtime: McpOAuthRuntime): RuntimeState {
 
 function getPendingAuthKey(serverName: string, options: AuthStorageOptions): string {
   return `${serverName}|${getAuthBaseDir(options)}`
+}
+
+function trackAuthProvider(
+  runtime: McpOAuthRuntime,
+  serverName: string,
+  options: AuthStorageOptions,
+  provider: McpOAuthProvider,
+): McpOAuthProvider {
+  const providers = getRuntimeState(runtime).authProviders
+  const key = getPendingAuthKey(serverName, options)
+  const tracked = providers.get(key) ?? new Set<McpOAuthProvider>()
+  tracked.add(provider)
+  providers.set(key, tracked)
+  return provider
+}
+
+function releaseAuthProvider(
+  runtime: McpOAuthRuntime,
+  serverName: string,
+  options: AuthStorageOptions,
+  provider: McpOAuthProvider,
+): void {
+  const providers = getRuntimeState(runtime).authProviders
+  const key = getPendingAuthKey(serverName, options)
+  const tracked = providers.get(key)
+  tracked?.delete(provider)
+  if (tracked?.size === 0) providers.delete(key)
+  provider.deactivate()
+}
+
+function deactivateAuthProviders(runtime: McpOAuthRuntime, serverName: string, options: AuthStorageOptions): void {
+  const providers = getRuntimeState(runtime).authProviders
+  const key = getPendingAuthKey(serverName, options)
+  const tracked = providers.get(key)
+  if (!tracked) return
+  providers.delete(key)
+  for (const provider of tracked) provider.deactivate()
 }
 
 export function hasPendingAuth(serverName: string, options?: AuthStorageOptions, runtime?: McpOAuthRuntime): boolean {
@@ -425,11 +464,11 @@ export async function startAuth(
       await clearOAuthState(serverName, authStorageOptions)
     }
 
-    const authProvider = new McpOAuthProvider(serverName, serverUrl, config, {
+    const authProvider = trackAuthProvider(runtime, serverName, authStorageOptions, new McpOAuthProvider(serverName, serverUrl, config, {
       onRedirect: async () => {
         throw new Error("Browser redirect is not used for client_credentials flow")
       },
-    }, authStorageOptions, runtime.signal)
+    }, authStorageOptions, runtime.signal))
     try {
       const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers), signal)
       authProvider.setAuthFetch(fetchFn)
@@ -442,7 +481,7 @@ export async function startAuth(
       }
       return { authorizationUrl: "" }
     } finally {
-      authProvider.deactivate()
+      releaseAuthProvider(runtime, serverName, authStorageOptions, authProvider)
     }
   }
 
@@ -487,11 +526,11 @@ export async function startAuth(
   }
 
   let capturedUrl: URL | undefined
-  const authProvider = new McpOAuthProvider(serverName, serverUrl, config, {
+  const authProvider = trackAuthProvider(runtime, serverName, authStorageOptions, new McpOAuthProvider(serverName, serverUrl, config, {
     onRedirect: async (url) => {
       capturedUrl = url
     },
-  }, authStorageOptions, runtime.signal, oauthState)
+  }, authStorageOptions, runtime.signal, oauthState))
 
   try {
     const storedAuth = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
@@ -523,7 +562,7 @@ export async function startAuth(
     const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
     throwIfAborted(signal)
     if (result === "AUTHORIZED") {
-      authProvider.deactivate()
+      releaseAuthProvider(runtime, serverName, authStorageOptions, authProvider)
       releaseCallbackServer(oauthState)
       await clearOAuthState(serverName, authStorageOptions)
       await stopCallbackServerIfIdle()
@@ -545,7 +584,7 @@ export async function startAuth(
     }, oauthState, signal, generation)
     return { authorizationUrl: capturedUrl.toString() }
   } catch (error) {
-    authProvider.deactivate()
+    releaseAuthProvider(runtime, serverName, authStorageOptions, authProvider)
     try {
       await clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, authStorageOptions)
     } catch (cleanupError) {
@@ -606,7 +645,9 @@ async function clearPendingAuth(
   }
 
   pendingAuth?.manualCompletionController?.abort(reason)
-  pendingAuth?.authProvider.deactivate()
+  if (pendingAuth) {
+    releaseAuthProvider(runtime, serverName, authStorageOptions, pendingAuth.authProvider)
+  }
   state.pendingAuths.delete(key)
   state.pendingAuthStates.delete(key)
   const stateToRelease = pendingState ?? oauthState
@@ -1045,9 +1086,9 @@ export async function getValidToken(
     try {
       const config = options.definition ? extractOAuthConfig(options.definition) : {}
       const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(options.definition?.headers), signal)
-      const authProvider = new McpOAuthProvider(serverName, serverUrl, config, {
+      const authProvider = trackAuthProvider(runtime, serverName, authStorageOptions, new McpOAuthProvider(serverName, serverUrl, config, {
         onRedirect: async () => {},
-      }, authStorageOptions, runtime.signal)
+      }, authStorageOptions, runtime.signal))
 
       try {
         authProvider.setAuthFetch(fetchFn)
@@ -1074,7 +1115,7 @@ export async function getValidToken(
         throwIfAborted(signal)
         return refreshed?.tokens ?? null
       } finally {
-        authProvider.deactivate()
+        releaseAuthProvider(runtime, serverName, authStorageOptions, authProvider)
       }
     } catch (error) {
       if (isAbortError(error, signal) || error instanceof OAuthCredentialStoreError) throw error
@@ -1113,6 +1154,7 @@ export async function removeAuth(serverName: string, options: AuthenticateOption
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
   const authStorageOptions = options.authStorageOptions ?? {}
+  deactivateAuthProviders(runtime, serverName, authStorageOptions)
   const oauthState = await getOAuthState(serverName, authStorageOptions)
   throwIfAborted(signal)
   if (oauthState) {
@@ -1176,6 +1218,10 @@ export async function shutdownOAuth(runtime: McpOAuthRuntime = legacyRuntime): P
   if (state.controller.signal.aborted) return
   state.generation += 1
   state.controller.abort(new Error("OAuth runtime stopped"))
+  for (const providers of state.authProviders.values()) {
+    for (const provider of providers) provider.deactivate()
+  }
+  state.authProviders.clear()
   for (const callbackState of Array.from(state.pendingAuthStates.values())) cancelPendingCallback(callbackState)
   for (const pendingAuth of Array.from(state.pendingAuths.values())) {
     await clearPendingAuth(runtime, pendingAuth.serverName, undefined, pendingAuth.authStorageOptions)
