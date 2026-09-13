@@ -46,7 +46,7 @@ import {
 import { isServerDisabled, type ServerEntry } from "./types.ts"
 import { formatTerminalError, interpolateEnvVars } from "./utils.ts"
 import { createOAuthFetch, oauthHeaderResolver, resolveOAuthHeaders } from "./mcp-auth-fetch.ts"
-import { isBuiltInAgentPlugin } from "./agent-plugin-loader.ts"
+import { isBuiltInAgentPlugin } from "./agent-plugin-provenance.ts"
 import { abortable, throwIfAborted } from "./abort.ts"
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts"
 

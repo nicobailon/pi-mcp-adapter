@@ -41,7 +41,7 @@ import { resolveNpxBinary } from "./npx-resolver.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { logger } from "./logger.ts";
 import { RESOURCE_MIME_TYPE } from "./ui-app-bridge-helpers.ts";
-import { isBuiltInAgentPlugin } from "./agent-plugin-loader.ts";
+import { isBuiltInAgentPlugin } from "./agent-plugin-provenance.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import {

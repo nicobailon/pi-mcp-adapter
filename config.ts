@@ -5,7 +5,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAgentPath, getConfigDirName } from "./agent-dir.ts";
-import { getAgentPluginSummaries, isBuiltInAgentPlugin, loadAgentPluginConfigs, preserveBuiltInAgentPluginFields, type AgentPluginSummary } from "./agent-plugin-loader.ts";
+import { getAgentPluginSummaries, loadAgentPluginConfigs, type AgentPluginSummary } from "./agent-plugin-loader.ts";
+import { isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "./agent-plugin-provenance.ts";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.ts";
 import { formatServerNamespace, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
@@ -708,9 +709,7 @@ function mergeServerMaps(
       if (baseEntry === existing) baseEntry = { ...existing };
       delete baseEntry.literalEnv;
     }
-    const mergedDefinition = { ...baseEntry, ...definition };
-    preserveBuiltInAgentPluginFields(mergedDefinition, baseEntry, definition);
-    merged[name] = mergedDefinition;
+    merged[name] = mergeBuiltInAgentPluginEntries(baseEntry, definition);
   }
   return merged;
 }

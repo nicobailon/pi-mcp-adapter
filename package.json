@@ -124,6 +124,7 @@
     "mcp-probe.ts",
     "mcp-install.ts",
     "agent-plugin-loader.ts",
+    "agent-plugin-provenance.ts",
     "resource-tools.ts",
     "lifecycle.ts",
     "mcp-status.ts",

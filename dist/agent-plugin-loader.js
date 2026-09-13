@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { getAgentPath } from "./agent-dir.js";
+import { markBuiltInAgentPlugin } from "./agent-plugin-provenance.js";
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 const PLUGIN_NAME_PATTERN = /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
@@ -21,25 +22,6 @@ const STDIO_FIELDS = new Set(["type", "command", "args", "env", "cwd"]);
 const HTTP_FIELDS = new Set(["type", "url", "headers"]);
 const STRING_MANIFEST_FIELDS = ["version", "description", "homepage", "repository", "license"];
 const AUTHOR_FIELDS = new Set(["name", "email", "url"]);
-const BUILT_IN_AGENT_PLUGIN = Symbol("built-in-agent-plugin");
-const LITERAL_PLUGIN_FIELDS = ["args", "env", "cwd", "headers"];
-function markBuiltInAgentPlugin(definition, fields) {
-    definition[BUILT_IN_AGENT_PLUGIN] = new Set(fields);
-    return definition;
-}
-export function isBuiltInAgentPlugin(definition, field) {
-    return definition[BUILT_IN_AGENT_PLUGIN]?.has(field) === true;
-}
-export function preserveBuiltInAgentPluginFields(target, base, next) {
-    const fields = LITERAL_PLUGIN_FIELDS.filter(field => {
-        const owner = Object.hasOwn(next, field) ? next : base;
-        return Object.hasOwn(owner, field) && isBuiltInAgentPlugin(owner, field);
-    });
-    if (fields.length > 0)
-        markBuiltInAgentPlugin(target, fields);
-    else
-        delete target[BUILT_IN_AGENT_PLUGIN];
-}
 export function loadAgentPluginConfigs(paths, cwd = process.cwd()) {
     const mcpServers = {};
     for (const pluginPath of getPluginPaths(paths)) {

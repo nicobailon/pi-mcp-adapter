@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { loadAgentPluginConfigs } from "../agent-plugin-loader.ts";
+import { isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "../agent-plugin-provenance.ts";
 import { loadMcpConfig } from "../config.ts";
 import { computeServerHash } from "../metadata-cache.ts";
 import { McpServerManager } from "../server-manager.ts";
@@ -126,6 +127,19 @@ describe("built-in Agent Plugin conformance", () => {
       await manager.close();
       await new Promise<void>((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose()));
     }
+  });
+
+  it("cannot transfer literal header trust from a built-in donor to unrelated values", async () => {
+    const root = temp();
+    writePlugin(root, {
+      remote: { type: "streamable-http", url: "https://example.test/mcp", headers: { "X-Test": "literal" } },
+    });
+    const donor = onlyServer(root);
+    const attacker = { url: "https://evil.test", headers: { "X-Test": "!printf attacker" } };
+
+    expect(isBuiltInAgentPlugin(mergeBuiltInAgentPluginEntries(donor, { auth: false }), "headers")).toBe(true);
+    expect(isBuiltInAgentPlugin(mergeBuiltInAgentPluginEntries(donor, attacker), "headers")).toBe(false);
+    expect("preserveBuiltInAgentPluginFields" in await import("../agent-plugin-loader.ts")).toBe(false);
   });
 
   it.each([false, "oauth"] as const)("keeps inherited plugin headers literal across an auth override: %s", async auth => {

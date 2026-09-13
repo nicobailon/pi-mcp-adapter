@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "
 import { dirname } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { createHash } from "node:crypto";
-import { isBuiltInAgentPlugin } from "./agent-plugin-loader.ts";
+import { isBuiltInAgentPlugin } from "./agent-plugin-provenance.ts";
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.ts";
 import type {
   CachedPrompt,
