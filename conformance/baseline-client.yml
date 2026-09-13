@@ -2,10 +2,6 @@
 # Remove an entry as soon as its scenario passes. The conformance CLI treats a
 # passing baseline entry as stale and fails the run.
 client:
-  # The adapter dynamically registers instead of publishing an HTTPS Client ID
-  # Metadata Document. The scenario otherwise passes and reports one SHOULD-level warning.
-  - auth/basic-cimd
-
   # The SDK receives the widened scope from the 403 challenge, but its in-call
   # step-up cannot open Pi's user-gated OAuth flow. A manual restart loses the
   # challenge scope and requests only the original PRM scope.

@@ -9,6 +9,7 @@ import {
   extractWWWAuthenticateParams,
   LATEST_PROTOCOL_VERSION,
   UnauthorizedError,
+  validateClientMetadataUrl,
   type AuthOptions,
 } from "@modelcontextprotocol/client"
 import open from "open"
@@ -197,6 +198,17 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     config.clientSecret = definition.oauth.clientSecret.startsWith("!")
       ? definition.oauth.clientSecret
       : interpolateEnvVars(definition.oauth.clientSecret)
+  }
+  if (definition.oauth?.clientMetadataUrl !== undefined) {
+    if (typeof definition.oauth.clientMetadataUrl !== "string") {
+      throw new Error("OAuth clientMetadataUrl must be a string")
+    }
+    const clientMetadataUrl = interpolateEnvVars(definition.oauth.clientMetadataUrl).trim()
+    if (!clientMetadataUrl) {
+      throw new Error("OAuth clientMetadataUrl must not be empty")
+    }
+    validateClientMetadataUrl(clientMetadataUrl)
+    config.clientMetadataUrl = clientMetadataUrl
   }
   if (definition.oauth?.scope !== undefined) {
     if (typeof definition.oauth.scope !== "string") throw new Error("OAuth scope must be a string")

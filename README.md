@@ -304,8 +304,9 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `caFile` | HTTPS HTTP servers only: local PEM CA certificate/bundle, e.g. `"caFile": "~/certs/local-ca.pem"`. Replaces (does not add to) default roots for the resolved MCP origin. Supports environment interpolation and `~`; relative paths use the process working directory. Unreadable/invalid files fail closed; hostname and certificate-expiry verification remain enabled. |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
-| `oauth.clientId` | Pre-registered OAuth client ID. MCP 2026 prefers pre-registered clients or Client ID Metadata Documents; this adapter falls back to Dynamic Client Registration when the ID is omitted and the server supports it. |
+| `oauth.clientId` | Pre-registered OAuth client ID. Takes precedence over `oauth.clientMetadataUrl` when both are set. |
 | `oauth.clientSecret` | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!` |
+| `oauth.clientMetadataUrl` | Public HTTPS Client ID Metadata Document (CIMD) URL with a non-root path. Used as the `client_id` when the authorization server advertises CIMD support; otherwise the adapter falls back to Dynamic Client Registration. The URL must serve metadata matching this client's redirect URIs and other settings. |
 | `oauth.scope` | Requested OAuth scopes |
 | `oauth.redirectUri` | Redirect URI for browser OAuth. Dynamic clients normally omit it and use an OS-assigned localhost callback port. Local `http://` loopback URIs accept an explicit port or `{port}` for an OS-assigned port (for example, `http://127.0.0.1:{port}/callback`). Pre-registered `https://` callbacks use manual completion by pasting the full callback URL. |
 | `oauth.clientName` | Client display name advertised during Dynamic Client Registration fallback |
@@ -352,6 +353,8 @@ The stable SDK handles era-specific request envelopes, result decoding, list-cha
 If an internal authorization server publishes mismatched OAuth metadata and cannot be fixed immediately, set `oauth.skipIssuerMetadataValidation: true` on that server only. This is security-weakening. It disables the RFC 8414 issuer echo check and should not be used for public or untrusted servers.
 
 If an MCP server does not publish usable protected-resource metadata, set `oauth.authServerMetadataUrl` to its HTTPS OAuth/OIDC authorization-server metadata document. The configured document is used authoritatively, while issuer validation remains enabled by default. This is trusted configuration; use it only for a metadata endpoint you control or explicitly trust.
+
+To use a Client ID Metadata Document, publish the OAuth client metadata at a stable public HTTPS URL and set `oauth.clientMetadataUrl` to that exact URL. The adapter uses it as the URL-based `client_id` only when discovered authorization-server metadata contains `client_id_metadata_document_supported: true`; servers without CIMD support continue through Dynamic Client Registration. An explicit `oauth.clientId` always wins.
 
 #### Stdio environment boundaries
 

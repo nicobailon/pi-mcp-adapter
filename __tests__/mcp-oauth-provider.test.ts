@@ -28,6 +28,36 @@ describe("McpOAuthProvider clientMetadata scope", () => {
 
     expect(provider.clientMetadata).not.toHaveProperty("scope");
   });
+
+  it("exposes a valid CIMD URL unless a pre-registered client ID takes precedence", () => {
+    const clientMetadataUrl = "https://client.example.com/oauth/client.json";
+    const provider = new McpOAuthProvider(
+      "cimd-test",
+      "https://api.example.com/mcp",
+      { clientMetadataUrl },
+      { onRedirect: async () => {} },
+    );
+    const preRegistered = new McpOAuthProvider(
+      "cimd-preregistered-test",
+      "https://api.example.com/mcp",
+      { clientId: "registered-client", clientMetadataUrl },
+      { onRedirect: async () => {} },
+    );
+
+    expect(provider.clientMetadataUrl).toBe(clientMetadataUrl);
+    expect(preRegistered.clientMetadataUrl).toBeUndefined();
+  });
+
+  it("rejects a CIMD URL that is not HTTPS or has no document path", () => {
+    for (const clientMetadataUrl of ["http://client.example.com/client.json", "https://client.example.com/"]) {
+      expect(() => new McpOAuthProvider(
+        "invalid-cimd-test",
+        "https://api.example.com/mcp",
+        { clientMetadataUrl },
+        { onRedirect: async () => {} },
+      )).toThrow(/clientMetadataUrl must be a valid HTTPS URL with a non-root pathname/);
+    }
+  });
 });
 
 describe("McpOAuthProvider addClientAuthentication", () => {
@@ -197,6 +227,78 @@ describe("McpOAuthProvider discovery state", () => {
     } else {
       process.env.MCP_OAUTH_DIR = originalOAuthDir;
     }
+  });
+
+  it("prefers CIMD over stored DCR only when the authorization server advertises support", async () => {
+    const clientMetadataUrl = "https://client.example.com/oauth/client.json";
+    saveAuthEntry("cimd-preference", {
+      clientInfo: {
+        clientId: "old-dynamic-registration",
+        redirectUris: ["http://localhost:19876/callback"],
+      },
+      serverUrl,
+    }, serverUrl);
+    const provider = new McpOAuthProvider(
+      "cimd-preference",
+      serverUrl,
+      { clientMetadataUrl },
+      { onRedirect: async () => {} },
+    );
+
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: "https://auth.example.com",
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        client_id_metadata_document_supported: true,
+      },
+    });
+
+    expect(await provider.clientInformation()).toBeUndefined();
+    await provider.saveClientInformation({ client_id: clientMetadataUrl });
+    expect(await provider.clientInformation()).toMatchObject({ client_id: clientMetadataUrl });
+
+    // Pre-discovery reads used by refresh can recover a secretless CIMD entry.
+    // Once SDK discovery supplies a context, a server that did not opt in must
+    // not receive that URL as its client ID.
+    const storedCimdProvider = new McpOAuthProvider(
+      "cimd-preference",
+      serverUrl,
+      { clientMetadataUrl },
+      { onRedirect: async () => {} },
+    );
+    expect(await storedCimdProvider.clientInformation()).toMatchObject({ client_id: clientMetadataUrl });
+    expect(await storedCimdProvider.clientInformation({ issuer: "https://auth.example.com" })).toBeUndefined();
+
+    saveAuthEntry("cimd-fallback", {
+      clientInfo: {
+        clientId: "dynamic-registration",
+        redirectUris: ["http://localhost:19876/callback"],
+      },
+      serverUrl,
+    }, serverUrl);
+    const fallbackProvider = new McpOAuthProvider(
+      "cimd-fallback",
+      serverUrl,
+      { clientMetadataUrl },
+      { onRedirect: async () => {} },
+    );
+    await fallbackProvider.saveDiscoveryState({
+      authorizationServerUrl: "https://auth.example.com",
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        client_id_metadata_document_supported: false,
+      },
+    });
+
+    expect(await fallbackProvider.clientInformation()).toMatchObject({
+      client_id: "dynamic-registration",
+    });
   });
 
   it("loads configured authorization-server metadata and binds it to the resource", async () => {

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OAuth servers can use `oauth.clientMetadataUrl` for Client ID Metadata Documents (SEP-991). The adapter prefers the URL-based client ID when authorization-server metadata advertises support and otherwise retains Dynamic Client Registration fallback.
 - User-global or explicitly selected config can opt in to bounded ancestor `.mcp.json` and `<configDir>/mcp.json` discovery with `settings.ancestorConfigRoots`. Discovery is off by default; project files cannot enable or widen it, and the deepest matching existing directory under `$HOME` bounds farthest-first loading. Thanks to [@johnhenaot](https://github.com/johnhenaot) for PR #555.
 
 ### Fixed

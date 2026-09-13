@@ -391,6 +391,8 @@ export interface OAuthConfig {
   clientId?: string;
   /** Client secret for confidential clients */
   clientSecret?: string;
+  /** Public HTTPS Client ID Metadata Document URL (SEP-991); preferred over DCR when the authorization server supports it. */
+  clientMetadataUrl?: string;
   /** Requested OAuth scopes */
   scope?: string;
   /** Extra authorization URL parameters for provider-specific extensions. Flow-owned parameters cannot be overridden. */
