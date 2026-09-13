@@ -7,8 +7,8 @@ This document describes the OAuth 2.1 + PKCE authentication implementation for t
 The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, which provides:
 
 - **Automatic OAuth endpoint discovery** (RFC 9728) - No manual configuration needed
-- **Client ID Metadata Documents** (SEP-991) - Uses a configured public HTTPS metadata URL as `client_id` when the authorization server opts in
-- **Dynamic Client Registration fallback** (RFC 7591) - Used when neither a pre-registered client nor supported CIMD is available and the server supports registration
+- **Dynamic Client Registration** (RFC 7591) - The default for URL-only servers when no pre-registered `clientId` is configured and the server supports registration
+- **Client ID Metadata Documents** (SEP-991) - An advanced opt-in that uses an operator-supplied public HTTPS metadata URL as `client_id` when the authorization server opts in
 - **Automatic callback handling** - Built-in HTTP server handles callbacks automatically
 - **Automatic token refresh** - SDK handles token refresh transparently
 
@@ -17,8 +17,8 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 - **PKCE (S256)** - Mandatory code challenge method for OAuth 2.1
 - **Automatic Callback Server** - Local browser redirects automatically when available
 - **Manual Remote Flow** - Copy auth URLs and pasted redirect URLs/codes for headless SSH sessions
-- **Client ID Metadata Documents** - Prefers a configured URL-based client ID when the authorization server advertises support
-- **Dynamic Client Registration fallback** - Registers when neither a pre-registered client nor supported CIMD is available and the server supports registration
+- **Dynamic Client Registration** - Registers by default when no pre-registered client is configured and the server supports registration
+- **Client ID Metadata Documents** - Opts into a configured, operator-hosted URL-based client ID when the authorization server advertises support
 - **Auto-Discovery** - Discovers OAuth endpoints from server metadata
 - **Automatic Token Refresh** - SDK handles expired tokens automatically
 - **State Parameter Validation** - CSRF protection
@@ -43,9 +43,10 @@ For most MCP servers, you only need the URL:
 OAuth is automatically enabled for HTTP servers. The SDK will:
 - Auto-detect if the server requires OAuth
 - Discover OAuth endpoints from the server
-- Use a configured Client ID Metadata Document when the authorization server advertises support
-- Use Dynamic Client Registration fallback otherwise when no pre-registered client is configured and the server supports it
+- Use Dynamic Client Registration when no pre-registered client is configured and the server supports it
 - Handle the entire OAuth flow including callback
+
+Pi does not configure or host a Client ID Metadata Document by default. URL-only configurations continue to use Dynamic Client Registration. CIMD is available only through the advanced, operator-supplied `oauth.clientMetadataUrl` option below.
 
 ### Optional Configuration
 
@@ -77,8 +78,8 @@ You can optionally provide a pre-registered client:
 - `auth` - Set to `"oauth"` to force OAuth, `false` to disable, or omit to auto-detect
 - `oauth.grantType` - `"authorization_code"` (default, browser flow) or `"client_credentials"` (non-interactive)
 - `oauth.clientId` - Pre-registered client ID. Takes precedence over `oauth.clientMetadataUrl` when both are configured.
-- `oauth.clientSecret` - Client secret for confidential clients (optional)
-- `oauth.clientMetadataUrl` - Public HTTPS Client ID Metadata Document URL with a non-root path. The URL is used as `client_id` when the authorization server advertises `client_id_metadata_document_supported: true`; otherwise Dynamic Client Registration remains the fallback. The document must be publicly fetchable and match this client's metadata, especially `redirect_uris`.
+- `oauth.clientSecret` - Client secret for confidential clients (optional). When `oauth.clientMetadataUrl` is also set, an explicit `oauth.clientId` is required; the explicit client takes precedence.
+- `oauth.clientMetadataUrl` - Advanced opt-in for an operator-supplied public HTTPS Client ID Metadata Document URL with a non-root path. The URL is used as `client_id` when the authorization server advertises `client_id_metadata_document_supported: true`; otherwise Dynamic Client Registration remains the fallback. The document must be publicly fetchable and match this client's metadata, especially `redirect_uris`. The adapter does not provide a default URL or host this document.
 - `oauth.scope` - Requested OAuth scopes (optional)
 - `oauth.authorizationParams` - Extra authorization URL parameters for provider-specific extensions, such as Google's `{ "access_type": "offline", "prompt": "consent" }`. Flow-owned parameters like `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden.
 - `oauth.redirectUri` - Browser callback URI to advertise and bind, such as `http://localhost:3118/callback`. Use `{port}` in a loopback URI when the provider permits an OS-assigned RFC 8252 port, for example `http://127.0.0.1:{port}/callback` (optional)
@@ -127,7 +128,7 @@ Manual `/mcp-auth` is the default flow. If you set `settings.autoAuth: true`, pr
 This will:
 1. Start the callback server lazily on an OS-assigned local port, on an OS-assigned host-specific `{port}` callback, or on the exact `oauth.redirectUri` port for fixed callbacks
 2. Discover OAuth endpoints automatically
-3. Prefer the configured Client ID Metadata Document when supported, otherwise use Dynamic Client Registration fallback
+3. Use Dynamic Client Registration by default, or the explicitly configured Client ID Metadata Document when supported
 4. Open your browser for authentication
 5. Wait for the automatic callback
 6. Complete the OAuth flow
@@ -211,9 +212,9 @@ The SDK attempts to discover OAuth endpoints using:
 
 ### Client ID Metadata Documents and Dynamic Registration
 
-Set `oauth.clientMetadataUrl` to a stable, public HTTPS URL that serves this client's OAuth metadata. When authorization-server discovery advertises `client_id_metadata_document_supported: true`, the adapter and SDK use that URL directly as `client_id` and skip Dynamic Client Registration. The URL must have a non-root path. An explicit `oauth.clientId` takes precedence.
+CIMD is an advanced, explicit opt-in. Set `oauth.clientMetadataUrl` to a stable, operator-supplied public HTTPS URL that serves this client's OAuth metadata. When authorization-server discovery advertises `client_id_metadata_document_supported: true`, the adapter and SDK use that URL directly as `client_id` and skip Dynamic Client Registration. The URL must have a non-root path. An explicit `oauth.clientId` takes precedence. Combining `oauth.clientMetadataUrl` with `oauth.clientSecret` without an explicit `oauth.clientId` is rejected.
 
-The adapter does not host the public document: operators must publish it and keep fields such as `redirect_uris`, `grant_types`, `response_types`, and `token_endpoint_auth_method` consistent with the configured flow. When the server does not advertise CIMD support, or no metadata URL is configured, the SDK uses Dynamic Client Registration as a fallback if the server supports it:
+The adapter does not provide a default URL or host the public document: operators must publish it and keep fields such as `redirect_uris`, `grant_types`, `response_types`, and `token_endpoint_auth_method` consistent with the configured flow. URL-only/default Pi configurations therefore continue to use Dynamic Client Registration. When the server does not advertise CIMD support, or no metadata URL is configured, the SDK uses Dynamic Client Registration if the server supports it:
 
 1. Discovers the registration endpoint from OAuth metadata
 2. Registers a new client with:

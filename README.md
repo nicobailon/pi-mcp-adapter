@@ -305,8 +305,8 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
 | `oauth.clientId` | Pre-registered OAuth client ID. Takes precedence over `oauth.clientMetadataUrl` when both are set. |
-| `oauth.clientSecret` | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!` |
-| `oauth.clientMetadataUrl` | Public HTTPS Client ID Metadata Document (CIMD) URL with a non-root path. Used as the `client_id` when the authorization server advertises CIMD support; otherwise the adapter falls back to Dynamic Client Registration. The URL must serve metadata matching this client's redirect URIs and other settings. |
+| `oauth.clientSecret` | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!`. Combining it with `oauth.clientMetadataUrl` requires an explicit `oauth.clientId`. |
+| `oauth.clientMetadataUrl` | Advanced opt-in for an operator-supplied public HTTPS Client ID Metadata Document (CIMD) URL with a non-root path. Used as the `client_id` when the authorization server advertises CIMD support; otherwise the adapter falls back to Dynamic Client Registration. The adapter does not provide or host a default document. |
 | `oauth.scope` | Requested OAuth scopes |
 | `oauth.redirectUri` | Redirect URI for browser OAuth. Dynamic clients normally omit it and use an OS-assigned localhost callback port. Local `http://` loopback URIs accept an explicit port or `{port}` for an OS-assigned port (for example, `http://127.0.0.1:{port}/callback`). Pre-registered `https://` callbacks use manual completion by pasting the full callback URL. |
 | `oauth.clientName` | Client display name advertised during Dynamic Client Registration fallback |
@@ -354,7 +354,7 @@ If an internal authorization server publishes mismatched OAuth metadata and cann
 
 If an MCP server does not publish usable protected-resource metadata, set `oauth.authServerMetadataUrl` to its HTTPS OAuth/OIDC authorization-server metadata document. The configured document is used authoritatively, while issuer validation remains enabled by default. This is trusted configuration; use it only for a metadata endpoint you control or explicitly trust.
 
-To use a Client ID Metadata Document, publish the OAuth client metadata at a stable public HTTPS URL and set `oauth.clientMetadataUrl` to that exact URL. The adapter uses it as the URL-based `client_id` only when discovered authorization-server metadata contains `client_id_metadata_document_supported: true`; servers without CIMD support continue through Dynamic Client Registration. An explicit `oauth.clientId` always wins.
+URL-only/default Pi OAuth continues to use Dynamic Client Registration; there is no project-hosted default Client ID Metadata Document. To explicitly opt into CIMD as an advanced operator setting, publish the OAuth client metadata at a stable public HTTPS URL and set `oauth.clientMetadataUrl` to that exact URL. The adapter uses it as the URL-based `client_id` only when discovered authorization-server metadata contains `client_id_metadata_document_supported: true`; servers without CIMD support continue through Dynamic Client Registration. An explicit `oauth.clientId` always wins, and `oauth.clientSecret` without that explicit ID cannot be combined with `oauth.clientMetadataUrl`.
 
 #### Stdio environment boundaries
 

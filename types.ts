@@ -389,9 +389,9 @@ export interface OAuthConfig {
   grantType?: "authorization_code" | "client_credentials";
   /** Pre-registered client ID (optional, dynamic registration used if not provided) */
   clientId?: string;
-  /** Client secret for confidential clients */
+  /** Client secret for confidential clients; requires an explicit clientId when clientMetadataUrl is set. */
   clientSecret?: string;
-  /** Public HTTPS Client ID Metadata Document URL (SEP-991); preferred over DCR when the authorization server supports it. */
+  /** Operator-supplied public HTTPS Client ID Metadata Document URL (SEP-991); opt-in, with DCR remaining the default. */
   clientMetadataUrl?: string;
   /** Requested OAuth scopes */
   scope?: string;
