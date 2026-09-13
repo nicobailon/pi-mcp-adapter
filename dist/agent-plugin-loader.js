@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { getAgentPath } from "./agent-dir.js";
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
@@ -22,15 +22,25 @@ const HTTP_FIELDS = new Set(["type", "url", "headers"]);
 const STRING_MANIFEST_FIELDS = ["version", "description", "homepage", "repository", "license"];
 const AUTHOR_FIELDS = new Set(["name", "email", "url"]);
 const BUILT_IN_AGENT_PLUGIN = Symbol("built-in-agent-plugin");
-function markBuiltInAgentPlugin(definition) {
-    definition[BUILT_IN_AGENT_PLUGIN] = true;
+function markBuiltInAgentPlugin(definition, fields) {
+    definition[BUILT_IN_AGENT_PLUGIN] = new Set(fields);
     return definition;
 }
-export function isBuiltInAgentPlugin(definition) {
-    return definition[BUILT_IN_AGENT_PLUGIN] === true;
+export function isBuiltInAgentPlugin(definition, field) {
+    return definition[BUILT_IN_AGENT_PLUGIN]?.has(field) === true;
 }
 export function clearBuiltInAgentPlugin(definition) {
     delete definition[BUILT_IN_AGENT_PLUGIN];
+}
+export function preserveBuiltInAgentPluginFields(target, base, next) {
+    const fields = ["args", "env", "cwd", "headers"].filter(field => {
+        const owner = Object.hasOwn(next, field) ? next : base;
+        return Object.hasOwn(owner, field) && isBuiltInAgentPlugin(owner, field);
+    });
+    if (fields.length > 0)
+        markBuiltInAgentPlugin(target, fields);
+    else
+        clearBuiltInAgentPlugin(target);
 }
 export function loadAgentPluginConfigs(paths, cwd = process.cwd()) {
     const mcpServers = {};
@@ -241,7 +251,7 @@ function translateStdioServer(manifest, pluginRoot, serverName, raw) {
         cwd,
         pluginDataDir,
         literalEnv: true,
-    });
+    }, ["args", "env", "cwd"]);
 }
 function translateHttpServer(manifest, serverName, raw, type) {
     for (const key of Object.keys(raw)) {
@@ -259,7 +269,7 @@ function translateHttpServer(manifest, serverName, raw, type) {
         url: raw.url,
         httpTransport: type,
         ...(headers ? { headers } : {}),
-    });
+    }, headers ? ["headers"] : []);
 }
 function formatAgentPluginServerName(pluginName, serverName) {
     const pluginPart = pluginName.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^[_-]+|[_-]+$/g, "") || "plugin";
@@ -286,7 +296,7 @@ function translateEnv(value, manifest, serverName) {
         console.warn(`Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: env must be an object of strings`);
         return null;
     }
-    const env = {};
+    const entries = [];
     for (const [key, entry] of Object.entries(value)) {
         if (key === "PLUGIN_ROOT" || key === "PLUGIN_DATA") {
             console.warn(`Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: env must not define ${key}`);
@@ -296,9 +306,9 @@ function translateEnv(value, manifest, serverName) {
             console.warn(`Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: env values must be strings`);
             return null;
         }
-        env[key] = entry;
+        entries.push([key, entry]);
     }
-    return env;
+    return Object.fromEntries(entries);
 }
 function translateHeaders(value, manifest, serverName) {
     if (value === undefined)
@@ -307,7 +317,7 @@ function translateHeaders(value, manifest, serverName) {
         console.warn(`Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: headers must be an object of strings`);
         return null;
     }
-    const headers = {};
+    const entries = [];
     const seen = new Set();
     for (const [key, entry] of Object.entries(value)) {
         if (typeof entry !== "string") {
@@ -320,8 +330,9 @@ function translateHeaders(value, manifest, serverName) {
             return null;
         }
         seen.add(normalized);
-        headers[key] = entry;
+        entries.push([key, entry]);
     }
+    const headers = Object.fromEntries(entries);
     try {
         new Headers(headers);
     }
@@ -360,15 +371,43 @@ function resolvePluginCwd(value, pluginRoot, pluginDataDir) {
         return pluginRoot;
     if (typeof value !== "string")
         return null;
-    if (value.startsWith("./"))
-        return resolveRealContainedPath(pluginRoot, resolve(pluginRoot, value));
-    if (value === "${PLUGIN_ROOT}" || value.startsWith("${PLUGIN_ROOT}/")) {
-        return resolveRealContainedPath(pluginRoot, resolve(pluginRoot, value.replace("${PLUGIN_ROOT}", ".")));
+    const expanded = expandPluginPlaceholders(value, pluginRoot, pluginDataDir);
+    if (value.startsWith("./") || value === "${PLUGIN_ROOT}" || value.startsWith("${PLUGIN_ROOT}/")) {
+        return resolveRealContainedPath(pluginRoot, resolve(pluginRoot, expanded));
     }
-    if (value === "${PLUGIN_DATA}" || value.startsWith("${PLUGIN_DATA}/")) {
-        return resolveContainedPath(pluginDataDir, value.replace("${PLUGIN_DATA}", "."), pluginDataDir);
-    }
+    if (value === "${PLUGIN_DATA}" || value.startsWith("${PLUGIN_DATA}/"))
+        return resolvePluginDataCwd(pluginDataDir, expanded);
     return null;
+}
+function resolvePluginDataCwd(pluginDataDir, expanded) {
+    const candidate = resolve(pluginDataDir, expanded);
+    if (!resolveContainedPath(pluginDataDir, candidate, pluginDataDir))
+        return null;
+    try {
+        const dataRoot = dirname(pluginDataDir);
+        if (!existsSync(dataRoot))
+            return candidate;
+        const realDataRoot = realpathSync(dataRoot);
+        if (!existsSync(pluginDataDir))
+            return candidate;
+        const realPluginDataDir = realpathSync(pluginDataDir);
+        if (!resolveContainedPath(realDataRoot, realPluginDataDir, realDataRoot))
+            return null;
+        let existing = candidate;
+        while (!existsSync(existing)) {
+            const parent = dirname(existing);
+            if (parent === existing)
+                return null;
+            existing = parent;
+        }
+        const realExisting = realpathSync(existing);
+        if (!resolveContainedPath(realPluginDataDir, realExisting, realPluginDataDir))
+            return null;
+        return existsSync(candidate) ? realpathSync(candidate) : candidate;
+    }
+    catch {
+        return null;
+    }
 }
 function resolveRealContainedPath(root, path) {
     try {

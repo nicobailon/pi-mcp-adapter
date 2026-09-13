@@ -915,9 +915,11 @@ export class McpServerManager {
     if (definition.command) {
       client = this.createClient(name, definition);
       let command = definition.command;
-      const pluginDefinition = isBuiltInAgentPlugin(definition);
-      let args = pluginDefinition ? [...(definition.args ?? [])] : (definition.args ?? []).map((argument) => interpolateEnvVars(argument));
-      const cwd = (pluginDefinition ? definition.cwd : resolveConfigPath(definition.cwd)) ?? this.defaultCwd;
+      const literalArgs = isBuiltInAgentPlugin(definition, "args");
+      const literalCwd = isBuiltInAgentPlugin(definition, "cwd");
+      let args = literalArgs ? [...(definition.args ?? [])] : (definition.args ?? []).map((argument) => interpolateEnvVars(argument));
+      const cwd = (literalCwd ? definition.cwd : resolveConfigPath(definition.cwd)) ?? this.defaultCwd;
+      if (definition.pluginDataDir) mkdirSync(definition.pluginDataDir, { recursive: true });
       if (cwd !== undefined) {
         const cwdStats = statSync(cwd, { throwIfNoEntry: false });
         if (!cwdStats) throw new Error(`MCP server "${name}" configured cwd does not exist: "${cwd}"`);
@@ -934,14 +936,13 @@ export class McpServerManager {
       }
       throwIfAborted(signal);
 
-      if (definition.pluginDataDir) mkdirSync(definition.pluginDataDir, { recursive: true });
       const stdioTransport = new StdioClientTransport({
         command,
         args,
         env: resolveEnv(
           definition.env,
           name,
-          definition.literalEnv === true,
+          isBuiltInAgentPlugin(definition, "env") || definition.literalEnv === true,
           definition.inheritEnv !== false,
         ),
         ...(cwd !== undefined ? { cwd } : {}),
@@ -1329,15 +1330,15 @@ export class McpServerManager {
 
     // Resolve secret commands only for this connection attempt, without
     // mutating the persisted configuration.
-    const pluginDefinition = isBuiltInAgentPlugin(definition);
-    const hasCommandHeader = !pluginDefinition && Object.values(definition.headers ?? {})
+    const literalHeaders = isBuiltInAgentPlugin(definition, "headers");
+    const hasCommandHeader = !literalHeaders && Object.values(definition.headers ?? {})
       .some(value => value.startsWith("!") && !value.startsWith("!!"));
     const oauthEnabled = supportsOAuth(definition);
     let headers: Record<string, string>;
-    if (oauthEnabled) {
-      headers = Object.fromEntries(resolveOAuthHeaders(definition.headers));
-    } else if (pluginDefinition) {
+    if (literalHeaders) {
       headers = { ...definition.headers };
+    } else if (oauthEnabled) {
+      headers = Object.fromEntries(resolveOAuthHeaders(definition.headers));
     } else {
       headers = resolveCommandSecretsRecord(
         definition.headers,

@@ -11,6 +11,7 @@ server.setRequestHandler(CallToolRequestSchema, async () => ({
     argv: process.argv.slice(2),
     cwd: process.cwd(),
     literalEnv: process.env.PLUGIN_LITERAL_ENV,
+    protoEnv: process.env.__proto__,
   }) }],
 }));
 await server.connect(new StdioServerTransport());

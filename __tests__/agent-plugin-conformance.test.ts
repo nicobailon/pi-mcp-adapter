@@ -44,6 +44,7 @@ describe("built-in Agent Plugin conformance", () => {
     const parent = temp();
     const root = join(parent, "${PLUGIN_DATA}");
     process.env.HOME = temp("pi-agent-plugin-home-");
+    process.env.PI_CODING_AGENT_DIR = join(process.env.HOME, "agent");
     process.env.PLUGIN_DATA = "rescanned";
     process.env.PLUGIN_LITERAL_ENV_HOST = "leaked";
     writePlugin(root, {
@@ -51,7 +52,10 @@ describe("built-in Agent Plugin conformance", () => {
         type: "stdio",
         command: "node",
         args: [argvEchoServer, "${PLUGIN_ROOT}", "${PLUGIN_LITERAL_ENV_HOST}"],
-        env: { PLUGIN_LITERAL_ENV: "${PLUGIN_LITERAL_ENV_HOST}" },
+        env: Object.fromEntries([
+          ["PLUGIN_LITERAL_ENV", "${PLUGIN_LITERAL_ENV_HOST}"],
+          ["__proto__", "literal-proto-env"],
+        ]),
         cwd: "${PLUGIN_ROOT}",
       },
     });
@@ -66,6 +70,7 @@ describe("built-in Agent Plugin conformance", () => {
         argv: [realpathSync(root), "${PLUGIN_LITERAL_ENV_HOST}"],
         cwd: realpathSync(root),
         literalEnv: "${PLUGIN_LITERAL_ENV_HOST}",
+        protoEnv: "literal-proto-env",
       });
     } finally {
       await manager.close();
@@ -88,12 +93,60 @@ describe("built-in Agent Plugin conformance", () => {
       remote: {
         type: "streamable-http",
         url: `http://127.0.0.1:${address.port}/mcp`,
+        headers: Object.fromEntries([
+          ["X-Command", "!printf command-value"],
+          ["X-Env", "${PLUGIN_HTTP_SECRET}"],
+          ["__proto__", "literal-proto-header"],
+        ]),
+      },
+    });
+    const definition = onlyServer(root);
+    expect(Object.hasOwn(definition.headers!, "__proto__")).toBe(true);
+    expect(definition.headers!["__proto__"]).toBe("literal-proto-header");
+    const manager = new McpServerManager(root);
+    try {
+      await manager.connect("test_plugin__remote", definition).catch(() => undefined);
+      expect(seenHeaders.some(headers => headers["x-command"] === "!printf command-value")).toBe(true);
+      expect(seenHeaders.some(headers => headers["x-env"] === "${PLUGIN_HTTP_SECRET}")).toBe(true);
+    } finally {
+      await manager.close();
+      await new Promise<void>((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose()));
+    }
+  });
+
+  it.each([false, "oauth"] as const)("keeps inherited plugin headers literal across an auth override: %s", async auth => {
+    const home = temp("pi-agent-plugin-home-");
+    const project = temp("pi-agent-plugin-project-");
+    const root = join(project, "plugin");
+    process.env.HOME = home;
+    process.env.PLUGIN_HTTP_SECRET = "leaked";
+    process.chdir(project);
+    const seenHeaders: Array<Record<string, string | string[] | undefined>> = [];
+    const server = createServer((request, response) => {
+      seenHeaders.push(request.headers);
+      response.writeHead(500).end("stop");
+    });
+    await new Promise<void>(resolveListen => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test server address");
+    writePlugin(root, {
+      remote: {
+        type: "streamable-http",
+        url: `http://127.0.0.1:${address.port}/mcp`,
         headers: { "X-Command": "!printf command-value", "X-Env": "${PLUGIN_HTTP_SECRET}" },
       },
     });
-    const manager = new McpServerManager(root);
+    writeJson(join(project, ".mcp.json"), {
+      settings: { agentPluginPaths: [root] },
+      mcpServers: { test_plugin__remote: { auth } },
+    });
+
+    const manager = new McpServerManager(project);
     try {
-      await manager.connect("test_plugin__remote", onlyServer(root)).catch(() => undefined);
+      const definition = loadMcpConfig().mcpServers.test_plugin__remote;
+      expect(computeServerHash(definition, { PLUGIN_HTTP_SECRET: "one" }))
+        .toBe(computeServerHash(definition, { PLUGIN_HTTP_SECRET: "two" }));
+      await manager.connect("test_plugin__remote", definition).catch(() => undefined);
       expect(seenHeaders.some(headers => headers["x-command"] === "!printf command-value")).toBe(true);
       expect(seenHeaders.some(headers => headers["x-env"] === "${PLUGIN_HTTP_SECRET}")).toBe(true);
     } finally {
@@ -160,6 +213,54 @@ describe("built-in Agent Plugin conformance", () => {
     symlinkSync(join(root, "server"), join(root, "server-link"));
     symlinkSync(join(root, "cwd"), join(root, "cwd-link"));
     expect(onlyServer(root)).toMatchObject({ command: join(root, "server"), cwd: join(root, "cwd") });
+  });
+
+  it("rejects PLUGIN_DATA symlink escapes and allows missing or contained data cwd", async () => {
+    const home = temp("pi-agent-plugin-home-");
+    const root = temp();
+    process.env.PI_CODING_AGENT_DIR = join(home, "agent");
+    const dataBase = join(home, "agent", "agent-plugin-data");
+    const dataDir = join(dataBase, "test.plugin");
+    process.env.HOME = home;
+    mkdirSync(dataBase, { recursive: true });
+    symlinkSync(temp("pi-agent-plugin-outside-"), dataDir);
+    writePlugin(root, { escaped: { type: "stdio", command: "node", cwd: "${PLUGIN_DATA}" } });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(loadAgentPluginConfigs([root], root).mcpServers).toEqual({});
+
+    const childRoot = temp();
+    const childDataDir = join(dataBase, "child.plugin");
+    mkdirSync(childDataDir);
+    symlinkSync(temp("pi-agent-plugin-outside-child-"), join(childDataDir, "work"));
+    writePlugin(childRoot, { escaped: { type: "stdio", command: "node", cwd: "${PLUGIN_DATA}/work" } }, { name: "child.plugin" });
+    expect(loadAgentPluginConfigs([childRoot], childRoot).mcpServers).toEqual({});
+
+    const secondRoot = temp();
+    writePlugin(secondRoot, { valid: { type: "stdio", command: "node", args: [argvEchoServer], cwd: "${PLUGIN_DATA}/work" } }, { name: "second.plugin" });
+    const secondDataDir = join(dataBase, "second.plugin");
+    const definition = onlyServer(secondRoot);
+    expect(definition.cwd).toBe(join(secondDataDir, "work"));
+    mkdirSync(join(secondDataDir, "work"), { recursive: true });
+    const manager = new McpServerManager(secondRoot);
+    try {
+      const connection = await manager.connect("second_plugin__valid", definition);
+      const result = await connection.client.callTool({ name: "echo", arguments: {} });
+      expect(JSON.parse((result.content[0] as { text: string }).text).cwd).toBe(realpathSync(join(secondDataDir, "work")));
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it("expands every cwd placeholder once before containment", () => {
+    const home = temp("pi-agent-plugin-home-");
+    const root = temp();
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = join(home, "agent");
+    const dataDir = join(home, "agent", "agent-plugin-data", "test.plugin");
+    const expanded = `${root}/nested/${dataDir}`;
+    mkdirSync(expanded, { recursive: true });
+    writePlugin(root, { valid: { type: "stdio", command: "node", cwd: "${PLUGIN_ROOT}/nested/${PLUGIN_DATA}" } });
+    expect(onlyServer(root).cwd).toBe(realpathSync(expanded));
   });
 
   it.each([

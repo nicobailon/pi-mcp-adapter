@@ -46,6 +46,7 @@ import {
 import { isServerDisabled, type ServerEntry } from "./types.ts"
 import { formatTerminalError, interpolateEnvVars } from "./utils.ts"
 import { createOAuthFetch, oauthHeaderResolver, resolveOAuthHeaders } from "./mcp-auth-fetch.ts"
+import { isBuiltInAgentPlugin } from "./agent-plugin-loader.ts"
 import { abortable, throwIfAborted } from "./abort.ts"
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts"
 
@@ -89,6 +90,7 @@ type PendingAuth = {
   manualCompletionController?: AbortController
   discovery: AuthDiscovery
   headers: Record<string, string> | undefined
+  literalHeaders: boolean
   authStorageOptions: AuthStorageOptions
   authority: OAuthAuthority
 }
@@ -291,9 +293,9 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
   return config
 }
 
-async function probeAuthDiscovery(serverUrl: string, definition?: Pick<ServerEntry, "headers">, signal?: AbortSignal): Promise<AuthDiscovery> {
+async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, signal?: AbortSignal): Promise<AuthDiscovery> {
   // The preliminary probe is command-free; real SDK discovery resolves commands.
-  const serviceHeaders = resolveOAuthHeaders(definition?.headers, false)
+  const serviceHeaders = resolveOAuthHeaders(definition?.headers, false, definition ? isBuiltInAgentPlugin(definition, "headers") : false)
   const probeFetch = createOAuthFetch(serverUrl, () => serviceHeaders, signal, { timeout: false })
   const headers = new Headers({ "content-type": "application/json" })
 
@@ -452,7 +454,7 @@ export async function startAuth(
       },
     }, authStorageOptions, runtime.signal, undefined, authority)
     try {
-      const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers), signal)
+      const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers, definition ? isBuiltInAgentPlugin(definition, "headers") : false), signal)
       authProvider.setAuthFetch(fetchFn)
       const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
       authority()
@@ -545,7 +547,7 @@ export async function startAuth(
 
     throwIfAborted(signal)
 
-    const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers), signal)
+    const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers, definition ? isBuiltInAgentPlugin(definition, "headers") : false), signal)
     authProvider.setAuthFetch(fetchFn)
     const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
     authority()
@@ -573,6 +575,7 @@ export async function startAuth(
       ...(manualRedirect ? { manualCompletionController: new AbortController() } : {}),
       discovery,
       headers: definition?.headers ? { ...definition.headers } : undefined,
+      literalHeaders: definition ? isBuiltInAgentPlugin(definition, "headers") : false,
       authStorageOptions,
       authority,
     }, oauthState, signal, generation)
@@ -897,7 +900,7 @@ export async function completeAuth(
   let keepPendingForRetry = false
   let caughtError: unknown
   try {
-    const fetchFn = createOAuthFetch(pendingAuth.serverUrl, oauthHeaderResolver(pendingAuth.headers), signal)
+    const fetchFn = createOAuthFetch(pendingAuth.serverUrl, oauthHeaderResolver(pendingAuth.headers, pendingAuth.literalHeaders), signal)
     pendingAuth.authProvider.setAuthFetch(fetchFn)
     const discoveryState = await pendingAuth.authProvider.discoveryState()
     pendingAuth.authority()
@@ -1121,7 +1124,10 @@ export async function getValidToken(
 
     try {
       const config = options.definition ? extractOAuthConfig(options.definition) : {}
-      const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(options.definition?.headers), signal)
+      const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(
+        options.definition?.headers,
+        options.definition ? isBuiltInAgentPlugin(options.definition, "headers") : false,
+      ), signal)
       authority()
       const authProvider = new McpOAuthProvider(serverName, serverUrl, config, {
         onRedirect: async () => {},

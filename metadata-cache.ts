@@ -85,15 +85,14 @@ export function computeServerHash(definition: ServerEntry, environment: NodeJS.P
   // Hash only fields that affect server identity and tool/resource output.
   // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
   // that don't change which tools a server exposes.
-  const pluginDefinition = isBuiltInAgentPlugin(definition);
   const identity: Record<string, unknown> = {
     command: definition.command,
     args: definition.args,
     socket: resolveConfigPath(definition.socket, environment),
-    env: pluginDefinition ? definition.env : interpolateEnvRecord(definition.env, environment),
-    cwd: pluginDefinition ? definition.cwd : resolveConfigPath(definition.cwd, environment),
+    env: isBuiltInAgentPlugin(definition, "env") ? definition.env : interpolateEnvRecord(definition.env, environment),
+    cwd: isBuiltInAgentPlugin(definition, "cwd") ? definition.cwd : resolveConfigPath(definition.cwd, environment),
     url: resolveServerUrl(definition, environment),
-    headers: pluginDefinition ? definition.headers : interpolateEnvRecord(definition.headers, environment),
+    headers: isBuiltInAgentPlugin(definition, "headers") ? definition.headers : interpolateEnvRecord(definition.headers, environment),
     requestHeadersCommand: definition.requestHeadersCommand
       ? {
           command: interpolateEnvVars(definition.requestHeadersCommand.command, environment),
