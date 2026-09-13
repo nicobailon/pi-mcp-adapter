@@ -801,7 +801,9 @@ function loadImportedConfig(
     if (!existsSync(path)) continue;
 
     try {
-      return { path, value: readImportedConfig(path) };
+      const value = readImportedConfig(path);
+      if (value === undefined) continue;
+      return { path, value };
     } catch (error) {
       console.warn(warningPrefix, error);
     }
@@ -1166,10 +1168,14 @@ export function writeProjectServerDisabledOverride(
   if (existsSync(filePath)) {
     try {
       const parsed = parseJsonWithComments(readFileSync(filePath, "utf-8"));
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("root value must be an object");
+      if (parsed === undefined) {
+        raw = {};
+      } else {
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("root value must be an object");
+        }
+        raw = parsed as Record<string, unknown>;
       }
-      raw = parsed as Record<string, unknown>;
     } catch (error) {
       throw new Error(`Failed to read project MCP override at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }

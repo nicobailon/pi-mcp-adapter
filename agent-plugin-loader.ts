@@ -79,7 +79,9 @@ function loadAgentPluginMcpConfig(path: string, cwd: string): McpConfig | null {
 
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(mcpPath, "utf8"));
+    const text = readFileSync(mcpPath, "utf8");
+    if (text.trim() === "") return { mcpServers: {} };
+    raw = JSON.parse(text);
   } catch (error) {
     console.warn(`Agent Plugin ${manifest.name} has invalid MCP config: failed to parse mcp.json`, error);
     return { mcpServers: {} };
@@ -101,7 +103,12 @@ function readPluginManifest(pluginRoot: string, report: boolean): AgentPluginMan
 
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const text = readFileSync(manifestPath, "utf8");
+    if (text.trim() === "") {
+      if (report) console.warn(`Agent Plugin at ${pluginRoot} is invalid: plugin.json is empty`);
+      return null;
+    }
+    raw = JSON.parse(text);
   } catch (error) {
     if (report) console.warn(`Agent Plugin at ${pluginRoot} is invalid: failed to parse plugin.json`, error);
     return null;

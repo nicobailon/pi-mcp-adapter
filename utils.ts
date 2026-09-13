@@ -6,7 +6,9 @@ import stripJsonComments from "strip-json-comments";
 import type { McpConfig, ServerEntry } from "./types.ts";
 
 export function parseJsonWithComments(raw: string): unknown {
-  return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
+  const stripped = stripJsonComments(raw, { trailingCommas: true });
+  if (stripped.trim() === "") return undefined;
+  return JSON.parse(stripped);
 }
 
 export function stableStringify(value: unknown): string {

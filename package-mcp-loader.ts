@@ -111,6 +111,7 @@ function getManifestMcpPaths(value: unknown, packageName: string): string[] | nu
 
 function readMcpConfig(path: string, packageName: string): McpConfig | null {
   const config = readRequiredJson(path, `Pi package ${packageName} MCP config`);
+  if (config === undefined) return null;
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new Error(`Pi package ${packageName} MCP config ${path} must be a JSON object`);
   }

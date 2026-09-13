@@ -733,6 +733,7 @@ function readLegacyAuthEntry(serverName: string, options?: AuthStorageOptions): 
   const filePath = getAuthEntryFilePath(serverName, options);
   if (!existsSync(filePath)) return undefined;
   const data = readFileSync(filePath, 'utf-8');
+  if (data.trim() === '') return undefined;
   return parseAuthEntryPayload(serverName, data, filePath);
 }
 

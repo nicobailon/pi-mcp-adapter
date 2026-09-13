@@ -123,6 +123,7 @@ function readPluginManifest(pluginRoot: string): ClaudePluginManifest | null | f
   let raw: unknown;
   try {
     raw = parseJsonWithComments(manifestText);
+    if (raw === undefined) return null;
   } catch (error) {
     console.warn(`Claude plugin manifest contains invalid JSON at ${manifestPath}: ${formatError(error)}`);
     return false;
@@ -246,6 +247,7 @@ function readPluginMcpConfig(
     const configText = safeReadFile(configPath, `Claude plugin "${pluginName}" MCP config`, pluginRoot);
     if (configText === null) return { mcpServers: {} };
     raw = parseJsonWithComments(configText);
+    if (raw === undefined) return { mcpServers: {} };
   } catch (error) {
     console.warn(`Claude plugin "${pluginName}" has invalid MCP config at ${configPath}: ${formatError(error)}`);
     return { mcpServers: {} };
