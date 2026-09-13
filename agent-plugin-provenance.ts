@@ -17,6 +17,15 @@ export function isBuiltInAgentPlugin(definition: ServerEntry, field: LiteralPlug
 }
 
 /** @internal */
+export function cloneBuiltInAgentPluginEntry(source: ServerEntry): ServerEntry | undefined {
+  const fields = LITERAL_PLUGIN_FIELDS.filter(field => Object.hasOwn(source, field) && isBuiltInAgentPlugin(source, field));
+  if (fields.length === 0) return undefined;
+  const cloned = structuredClone(source);
+  markBuiltInAgentPlugin(cloned, fields.filter(field => Object.hasOwn(cloned, field)));
+  return cloned;
+}
+
+/** @internal */
 export function mergeBuiltInAgentPluginEntries(base: ServerEntry, next: ServerEntry): ServerEntry {
   const merged = { ...base, ...next };
   delete (merged as BuiltInAgentPluginEntry)[BUILT_IN_AGENT_PLUGIN];

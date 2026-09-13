@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { loadAgentPluginConfigs } from "../agent-plugin-loader.ts";
 import { isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "../agent-plugin-provenance.ts";
-import { loadMcpConfig } from "../config.ts";
+import { cloneMcpConfig, loadMcpConfig } from "../config.ts";
 import { computeServerHash } from "../metadata-cache.ts";
 import { McpServerManager } from "../server-manager.ts";
 
@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 describe("built-in Agent Plugin conformance", () => {
-  it("expands plugin placeholders once and keeps stdio values literal at runtime", async () => {
+  it("keeps cloned programmatic plugin stdio values literal at runtime", async () => {
     const parent = temp();
     const root = join(parent, "${PLUGIN_DATA}");
     process.env.HOME = temp("pi-agent-plugin-home-");
@@ -74,7 +74,7 @@ describe("built-in Agent Plugin conformance", () => {
       },
     });
 
-    const definition = onlyServer(root);
+    const definition = cloneMcpConfig({ mcpServers: { echo: onlyServer(root) } }).mcpServers.echo;
     const manager = new McpServerManager(root);
     try {
       const connection = await manager.connect("test_plugin__echo", definition);
@@ -91,7 +91,7 @@ describe("built-in Agent Plugin conformance", () => {
     }
   });
 
-  it("sends built-in plugin HTTP headers literally", async () => {
+  it("keeps cloned programmatic plugin headers literal and native headers dynamic", async () => {
     process.env.PLUGIN_HTTP_SECRET = "leaked";
     const seenHeaders: Array<Record<string, string | string[] | undefined>> = [];
     const server = createServer((request, response) => {
@@ -114,7 +114,7 @@ describe("built-in Agent Plugin conformance", () => {
         ]),
       },
     });
-    const definition = onlyServer(root);
+    const definition = cloneMcpConfig({ mcpServers: { remote: onlyServer(root) } }).mcpServers.remote;
     if (!definition.headers) throw new Error("expected Agent Plugin headers");
     expect(Object.hasOwn(definition.headers, "__proto__")).toBe(true);
     expect(definition.headers["__proto__"]).toBe("literal-proto-header");
@@ -123,6 +123,19 @@ describe("built-in Agent Plugin conformance", () => {
       await manager.connect("test_plugin__remote", definition).catch(() => undefined);
       expect(seenHeaders.some(headers => headers["x-command"] === "!printf command-value")).toBe(true);
       expect(seenHeaders.some(headers => headers["x-env"] === "${PLUGIN_HTTP_SECRET}")).toBe(true);
+
+      seenHeaders.length = 0;
+      const native = cloneMcpConfig({
+        mcpServers: {
+          native: {
+            url: `http://127.0.0.1:${address.port}/mcp`,
+            headers: { "X-Command": "!printf command-value", "X-Env": "${PLUGIN_HTTP_SECRET}" },
+          },
+        },
+      }).mcpServers.native;
+      await manager.connect("native", native).catch(() => undefined);
+      expect(seenHeaders.some(headers => headers["x-command"] === "command-value")).toBe(true);
+      expect(seenHeaders.some(headers => headers["x-env"] === "leaked")).toBe(true);
     } finally {
       await manager.close();
       await new Promise<void>((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose()));
@@ -171,7 +184,7 @@ describe("built-in Agent Plugin conformance", () => {
 
     const manager = new McpServerManager(project);
     try {
-      const definition = loadMcpConfig().mcpServers.test_plugin__remote;
+      const definition = cloneMcpConfig(loadMcpConfig()).mcpServers.test_plugin__remote;
       expect(computeServerHash(definition, { PLUGIN_HTTP_SECRET: "one" }))
         .toBe(computeServerHash(definition, { PLUGIN_HTTP_SECRET: "two" }));
       await manager.connect("test_plugin__remote", definition).catch(() => undefined);
@@ -188,12 +201,13 @@ describe("built-in Agent Plugin conformance", () => {
     const root = temp();
     const manager = new McpServerManager(root);
     try {
-      const connection = await manager.connect("native", {
+      const definition = cloneMcpConfig({ mcpServers: { native: {
         command: "node",
         args: [argvEchoServer, "${NATIVE_PLUGIN_TEST}"],
         env: { PLUGIN_LITERAL_ENV: "${NATIVE_PLUGIN_TEST}" },
         cwd: root,
-      });
+      } } }).mcpServers.native;
+      const connection = await manager.connect("native", definition);
       const result = await connection.client.callTool({ name: "echo", arguments: {} });
       const seen = JSON.parse(firstText(result));
       expect(seen.argv).toEqual(["expanded"]);

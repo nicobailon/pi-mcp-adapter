@@ -6,7 +6,7 @@ import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAgentPath, getConfigDirName } from "./agent-dir.js";
 import { getAgentPluginSummaries, loadAgentPluginConfigs } from "./agent-plugin-loader.js";
-import { isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "./agent-plugin-provenance.js";
+import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "./agent-plugin-provenance.js";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
 import { formatServerNamespace, isServerDisabled } from "./types.js";
@@ -200,7 +200,13 @@ export function getMcpDiscoverySummary(overridePath, cwd = process.cwd(), option
     };
 }
 export function cloneMcpConfig(config) {
-    return structuredClone(config);
+    const cloned = structuredClone(config);
+    for (const [name, source] of Object.entries(config.mcpServers)) {
+        const builtInClone = cloneBuiltInAgentPluginEntry(source);
+        if (builtInClone)
+            cloned.mcpServers[name] = builtInClone;
+    }
+    return cloned;
 }
 export function loadMcpConfig(overridePath, cwd = process.cwd()) {
     const sourceSpecs = getConfigSources(overridePath, cwd);
