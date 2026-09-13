@@ -369,7 +369,7 @@ export async function logoutServer(
     if (isAbortError(error, signal)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     if (ui) {
-      ui.notify(`Failed to disconnect OAuth server "${serverName}": ${sanitizeTerminalText(message)}`, "error");
+      ui.notify(`Failed to close OAuth server "${serverName}"; credentials were not cleared: ${sanitizeTerminalText(message)}`, "error");
     }
     return { ok: false, message };
   }

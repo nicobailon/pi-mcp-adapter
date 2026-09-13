@@ -201,9 +201,8 @@ describe("authenticateServer", () => {
     );
   });
 
-  it("keeps credentials when disconnect fails before removal", async () => {
+  it("keeps credentials when close fails before removal", async () => {
     const events: string[] = [];
-    let connected = true;
     let credentialsPresent = true;
     mocks.removeAuth.mockImplementationOnce(async () => {
       events.push("remove");
@@ -224,10 +223,9 @@ describe("authenticateServer", () => {
 
     expect(result).toEqual({ ok: false, message: "close failed" });
     expect(events).toEqual(["close"]);
-    expect(connected).toBe(true);
     expect(credentialsPresent).toBe(true);
     expect(ui.notify).toHaveBeenCalledWith(
-      'Failed to disconnect OAuth server "sentry": close failed',
+      'Failed to close OAuth server "sentry"; credentials were not cleared: close failed',
       "error",
     );
   });

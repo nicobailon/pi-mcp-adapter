@@ -3,11 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getAuthEntryFilePath, resetTestAuthSecretStore, saveAuthEntry } from "../mcp-auth.ts";
+import { clearAllCredentials, getAuthEntryFilePath, getAuthForUrl, resetTestAuthSecretStore, saveAuthEntry } from "../mcp-auth.ts";
 
 type OAuthProviderLike = {
   redirectUrl?: string;
   tokens?: () => Promise<unknown>;
+  saveTokens?: (tokens: { access_token: string; token_type: string }) => Promise<void>;
   clientMetadata?: {
     redirect_uris?: string[];
     client_name?: string;
@@ -311,6 +312,45 @@ describe("McpServerManager HTTP bearer auth", () => {
     const authProvider = mocks.httpTransports.at(-1)!.options.authProvider;
     expect(authProvider).toBeDefined();
     expect(await authProvider!.tokens?.()).toMatchObject({ access_token: "stored-token" });
+  });
+
+  it("deactivates the transport OAuth provider before closed credentials can be rewritten", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const serverUrl = "https://example.test/mcp";
+    saveAuthEntry("closed", { tokens: { accessToken: "old-token" } }, serverUrl);
+
+    const manager = new McpServerManager();
+    await manager.connect("closed", { url: serverUrl, auth: "oauth" });
+    const provider = mocks.httpTransports.at(-1)!.options.authProvider!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const delayedSave = (async () => {
+      await gate;
+      await provider.saveTokens?.({ access_token: "late-token", token_type: "Bearer" });
+    })();
+
+    await manager.close("closed");
+    clearAllCredentials("closed");
+    release();
+
+    await expect(delayedSave).rejects.toThrow("OAuth flow is no longer active");
+    expect(getAuthForUrl("closed", serverUrl)).toBeUndefined();
+  });
+
+  it("deactivates OAuth providers from failed connection attempts", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    mocks.connectErrors.push(new Error("connect failed"));
+    const manager = new McpServerManager();
+
+    await expect(manager.connect("failed", {
+      url: "https://example.test/mcp",
+      auth: "oauth",
+      httpTransport: "streamable-http",
+    })).rejects.toThrow("connect failed");
+
+    const provider = mocks.httpTransports.at(-1)!.options.authProvider!;
+    await expect(provider.saveTokens?.({ access_token: "late-token", token_type: "Bearer" }))
+      .rejects.toThrow("OAuth flow is no longer active");
   });
 
   it("keeps implicit OAuth deferred when the credential store is unavailable", async () => {
