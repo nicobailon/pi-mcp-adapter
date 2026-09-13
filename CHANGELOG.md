@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - User-global or explicitly selected config can opt in to bounded ancestor `.mcp.json` and `<configDir>/mcp.json` discovery with `settings.ancestorConfigRoots`. Discovery is off by default; project files cannot enable or widen it, and the deepest matching existing directory under `$HOME` bounds farthest-first loading. Thanks to [@johnhenaot](https://github.com/johnhenaot) for PR #555.
 
 ### Fixed
+- Configured direct tools now hot-load from fresh live catalogs even when a server advertises `ttlMs: 0`, while persisted zero-TTL metadata remains non-cacheable. (#561)
 - Switching a server between transports (HTTP to stdio command or socket) now drops an inherited `bearerTokenStore` flag alongside the other URL-bound credential fields. Thanks to [@zhulinchng](https://github.com/zhulinchng) for PR #552.
 - Per-origin `caFile` trust now routes same-origin requests through the bundled undici fetch so the custom CA dispatcher matches the fetch implementation on newer Node releases (Node 26 ships undici v8 while the dependency pins undici v6); previously every `caFile` connection failed with `UND_ERR_INVALID_ARG`. Thanks to [@zhulinchng](https://github.com/zhulinchng) for PR #550.
 - MCP Apps now load provider-declared asset, connection, and frame domains through a session-bound sandbox resource navigation with response-level CSP enforcement. Thanks to [@tekumara](https://github.com/tekumara) for #548.
