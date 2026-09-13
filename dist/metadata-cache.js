@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "
 import { dirname } from "node:path";
 import { getAgentPath } from "./agent-dir.js";
 import { createHash } from "node:crypto";
+import { isBuiltInAgentPlugin } from "./agent-plugin-loader.js";
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.js";
 import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
@@ -57,14 +58,15 @@ export function computeServerHash(definition, environment = process.env) {
     // Hash only fields that affect server identity and tool/resource output.
     // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
     // that don't change which tools a server exposes.
+    const pluginDefinition = isBuiltInAgentPlugin(definition);
     const identity = {
         command: definition.command,
         args: definition.args,
         socket: resolveConfigPath(definition.socket, environment),
-        env: interpolateEnvRecord(definition.env, environment),
-        cwd: resolveConfigPath(definition.cwd, environment),
+        env: pluginDefinition ? definition.env : interpolateEnvRecord(definition.env, environment),
+        cwd: pluginDefinition ? definition.cwd : resolveConfigPath(definition.cwd, environment),
         url: resolveServerUrl(definition, environment),
-        headers: interpolateEnvRecord(definition.headers, environment),
+        headers: pluginDefinition ? definition.headers : interpolateEnvRecord(definition.headers, environment),
         requestHeadersCommand: definition.requestHeadersCommand
             ? {
                 command: interpolateEnvVars(definition.requestHeadersCommand.command, environment),

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "
 import { dirname } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { createHash } from "node:crypto";
+import { isBuiltInAgentPlugin } from "./agent-plugin-loader.ts";
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.ts";
 import type {
   CachedPrompt,
@@ -84,14 +85,15 @@ export function computeServerHash(definition: ServerEntry, environment: NodeJS.P
   // Hash only fields that affect server identity and tool/resource output.
   // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
   // that don't change which tools a server exposes.
+  const pluginDefinition = isBuiltInAgentPlugin(definition);
   const identity: Record<string, unknown> = {
     command: definition.command,
     args: definition.args,
     socket: resolveConfigPath(definition.socket, environment),
-    env: interpolateEnvRecord(definition.env, environment),
-    cwd: resolveConfigPath(definition.cwd, environment),
+    env: pluginDefinition ? definition.env : interpolateEnvRecord(definition.env, environment),
+    cwd: pluginDefinition ? definition.cwd : resolveConfigPath(definition.cwd, environment),
     url: resolveServerUrl(definition, environment),
-    headers: interpolateEnvRecord(definition.headers, environment),
+    headers: pluginDefinition ? definition.headers : interpolateEnvRecord(definition.headers, environment),
     requestHeadersCommand: definition.requestHeadersCommand
       ? {
           command: interpolateEnvVars(definition.requestHeadersCommand.command, environment),

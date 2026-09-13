@@ -533,6 +533,7 @@ describe("config discovery", () => {
         },
       },
     });
+    writeText(join(plugin, "bin", "server"), "#!/bin/sh\n");
     writeJson(join(project, ".mcp.json"), {
       settings: { agentPluginPaths: ["./plugins/acme-tools"] },
       mcpServers: {},

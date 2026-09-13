@@ -1,4 +1,7 @@
-import type { McpConfig } from "./types.ts";
+import type { McpConfig, ServerEntry } from "./types.ts";
+export declare function markBuiltInAgentPlugin(definition: ServerEntry): ServerEntry;
+export declare function isBuiltInAgentPlugin(definition: ServerEntry): boolean;
+export declare function clearBuiltInAgentPlugin(definition: ServerEntry): void;
 export interface AgentPluginSummary {
     path: string;
     name?: string;

@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAgentPath, getConfigDirName } from "./agent-dir.ts";
-import { getAgentPluginSummaries, loadAgentPluginConfigs, type AgentPluginSummary } from "./agent-plugin-loader.ts";
+import { clearBuiltInAgentPlugin, getAgentPluginSummaries, isBuiltInAgentPlugin, loadAgentPluginConfigs, type AgentPluginSummary } from "./agent-plugin-loader.ts";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.ts";
 import { formatServerNamespace, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
@@ -651,6 +651,10 @@ function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
 // otherwise the original endpoint's credentials would be shipped to the new
 // url. See the SECURITY note in mergeServerMaps.
 const URL_BOUND_AUTH_FIELDS = ["headers", "bearerToken", "bearerTokenEnv", "bearerTokenStore", "requestHeadersCommand", "caFile"] as const;
+const AGENT_PLUGIN_VALUE_FIELDS = new Set([
+  "command", "args", "env", "cwd", "url", "headers", "socket", "auth", "oauth",
+  "httpTransport", "pluginDataDir", "literalEnv",
+]);
 
 function mergeServerMaps(
   base: Record<string, ServerEntry>,
@@ -704,7 +708,16 @@ function mergeServerMaps(
         delete baseEntry.oauth;
       }
     }
-    merged[name] = { ...baseEntry, ...definition };
+    const mergedDefinition = { ...baseEntry, ...definition };
+    const existingIsPlugin = existing ? isBuiltInAgentPlugin(existing) : false;
+    const definitionIsPlugin = isBuiltInAgentPlugin(definition);
+    const mixesPluginValues = existing && (definitionIsPlugin
+      ? !existingIsPlugin
+      : existingIsPlugin && Object.keys(definition).some(field => AGENT_PLUGIN_VALUE_FIELDS.has(field)));
+    if (mixesPluginValues) {
+      clearBuiltInAgentPlugin(mergedDefinition);
+    }
+    merged[name] = mergedDefinition;
   }
   return merged;
 }

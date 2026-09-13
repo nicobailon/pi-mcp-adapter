@@ -1,0 +1,211 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { loadAgentPluginConfigs } from "../agent-plugin-loader.ts";
+import { loadMcpConfig } from "../config.ts";
+import { computeServerHash } from "../metadata-cache.ts";
+import { McpServerManager } from "../server-manager.ts";
+
+const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
+const argvEchoServer = resolve(import.meta.dirname, "fixtures", "argv-echo-server.mjs");
+const originalCwd = process.cwd();
+const originalEnv = { ...process.env };
+
+function temp(prefix = "pi-agent-plugin-"): string {
+  return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+}
+
+function writeJson(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(value));
+}
+
+function writePlugin(root: string, servers: Record<string, unknown>, manifest: Record<string, unknown> = {}): void {
+  mkdirSync(root, { recursive: true });
+  writeJson(join(root, "plugin.json"), { $schema: PLUGIN_SCHEMA, name: "test.plugin", ...manifest });
+  writeJson(join(root, "mcp.json"), { $schema: MCP_SCHEMA, mcpServers: servers });
+}
+
+function onlyServer(root: string) {
+  return Object.values(loadAgentPluginConfigs([root], root).mcpServers)[0]!;
+}
+
+afterEach(() => {
+  process.chdir(originalCwd);
+  process.env = { ...originalEnv };
+  vi.restoreAllMocks();
+});
+
+describe("built-in Agent Plugin conformance", () => {
+  it("expands plugin placeholders once and keeps stdio values literal at runtime", async () => {
+    const parent = temp();
+    const root = join(parent, "${PLUGIN_DATA}");
+    process.env.HOME = temp("pi-agent-plugin-home-");
+    process.env.PLUGIN_DATA = "rescanned";
+    process.env.PLUGIN_LITERAL_ENV_HOST = "leaked";
+    writePlugin(root, {
+      echo: {
+        type: "stdio",
+        command: "node",
+        args: [argvEchoServer, "${PLUGIN_ROOT}", "${PLUGIN_LITERAL_ENV_HOST}"],
+        env: { PLUGIN_LITERAL_ENV: "${PLUGIN_LITERAL_ENV_HOST}" },
+        cwd: "${PLUGIN_ROOT}",
+      },
+    });
+
+    const definition = onlyServer(root);
+    const manager = new McpServerManager(root);
+    try {
+      const connection = await manager.connect("test_plugin__echo", definition);
+      const result = await connection.client.callTool({ name: "echo", arguments: {} });
+      const seen = JSON.parse((result.content[0] as { text: string }).text);
+      expect(seen).toEqual({
+        argv: [realpathSync(root), "${PLUGIN_LITERAL_ENV_HOST}"],
+        cwd: realpathSync(root),
+        literalEnv: "${PLUGIN_LITERAL_ENV_HOST}",
+      });
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it("sends built-in plugin HTTP headers literally", async () => {
+    process.env.PLUGIN_HTTP_SECRET = "leaked";
+    const seenHeaders: Array<Record<string, string | string[] | undefined>> = [];
+    const server = createServer((request, response) => {
+      seenHeaders.push(request.headers);
+      response.writeHead(500).end("stop");
+    });
+    await new Promise<void>(resolveListen => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test server address");
+
+    const root = temp();
+    writePlugin(root, {
+      remote: {
+        type: "streamable-http",
+        url: `http://127.0.0.1:${address.port}/mcp`,
+        headers: { "X-Command": "!printf command-value", "X-Env": "${PLUGIN_HTTP_SECRET}" },
+      },
+    });
+    const manager = new McpServerManager(root);
+    try {
+      await manager.connect("test_plugin__remote", onlyServer(root)).catch(() => undefined);
+      expect(seenHeaders.some(headers => headers["x-command"] === "!printf command-value")).toBe(true);
+      expect(seenHeaders.some(headers => headers["x-env"] === "${PLUGIN_HTTP_SECRET}")).toBe(true);
+    } finally {
+      await manager.close();
+      await new Promise<void>((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose()));
+    }
+  });
+
+  it("keeps native stdio interpolation unchanged", async () => {
+    process.env.NATIVE_PLUGIN_TEST = "expanded";
+    const root = temp();
+    const manager = new McpServerManager(root);
+    try {
+      const connection = await manager.connect("native", {
+        command: "node",
+        args: [argvEchoServer, "${NATIVE_PLUGIN_TEST}"],
+        env: { PLUGIN_LITERAL_ENV: "${NATIVE_PLUGIN_TEST}" },
+        cwd: root,
+      });
+      const result = await connection.client.callTool({ name: "echo", arguments: {} });
+      const seen = JSON.parse((result.content[0] as { text: string }).text);
+      expect(seen.argv).toEqual(["expanded"]);
+      expect(seen.literalEnv).toBe("expanded");
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it("rejects plugin files and paths that resolve outside the plugin root", () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const outside = temp();
+    writeJson(join(outside, "plugin.json"), { $schema: PLUGIN_SCHEMA, name: "escaped.plugin" });
+    writeJson(join(outside, "mcp.json"), { $schema: MCP_SCHEMA, mcpServers: { escaped: { type: "stdio", command: "node" } } });
+    writeFileSync(join(outside, "server"), "#!/bin/sh\n");
+    mkdirSync(join(outside, "cwd"));
+
+    const manifestRoot = temp();
+    symlinkSync(join(outside, "plugin.json"), join(manifestRoot, "plugin.json"));
+    writeJson(join(manifestRoot, "mcp.json"), { $schema: MCP_SCHEMA, mcpServers: {} });
+    expect(loadAgentPluginConfigs([manifestRoot], manifestRoot).mcpServers).toEqual({});
+
+    const mcpRoot = temp();
+    writeJson(join(mcpRoot, "plugin.json"), { $schema: PLUGIN_SCHEMA, name: "escaped.mcp" });
+    symlinkSync(join(outside, "mcp.json"), join(mcpRoot, "mcp.json"));
+    expect(loadAgentPluginConfigs([mcpRoot], mcpRoot).mcpServers).toEqual({});
+
+    const commandRoot = temp();
+    writePlugin(commandRoot, { escaped: { type: "stdio", command: "./server" } });
+    symlinkSync(join(outside, "server"), join(commandRoot, "server"));
+    expect(loadAgentPluginConfigs([commandRoot], commandRoot).mcpServers).toEqual({});
+
+    const cwdRoot = temp();
+    writePlugin(cwdRoot, { escaped: { type: "stdio", command: "node", cwd: "./cwd" } });
+    symlinkSync(join(outside, "cwd"), join(cwdRoot, "cwd"));
+    expect(loadAgentPluginConfigs([cwdRoot], cwdRoot).mcpServers).toEqual({});
+    expect(warning).toHaveBeenCalled();
+  });
+
+  it("allows symlinks whose resolved target remains inside the plugin root", () => {
+    const root = temp();
+    writePlugin(root, { valid: { type: "stdio", command: "./server-link", cwd: "./cwd-link" } });
+    writeFileSync(join(root, "server"), "#!/bin/sh\n");
+    mkdirSync(join(root, "cwd"));
+    symlinkSync(join(root, "server"), join(root, "server-link"));
+    symlinkSync(join(root, "cwd"), join(root, "cwd-link"));
+    expect(onlyServer(root)).toMatchObject({ command: join(root, "server"), cwd: join(root, "cwd") });
+  });
+
+  it.each([
+    ["version", 123],
+    ["keywords", "not-an-array"],
+    ["author", { unexpected: true }],
+  ])("rejects an invalid known manifest field %s", (field, value) => {
+    const root = temp();
+    writePlugin(root, { valid: { type: "stdio", command: "node" } }, { [field]: value });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(loadAgentPluginConfigs([root], root).mcpServers).toEqual({});
+  });
+
+  it("accepts non-semver string metadata and preserves permissive extension handling", () => {
+    const root = temp();
+    writePlugin(root, { valid: { type: "stdio", command: "node" } }, {
+      version: "not semver",
+      extensions: "ignored",
+      futureField: true,
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(Object.keys(loadAgentPluginConfigs([root], root).mcpServers)).toEqual(["test_plugin__valid"]);
+  });
+
+  it("hashes plugin literals without host interpolation and drops provenance on native overrides", () => {
+    const home = temp("pi-agent-plugin-home-");
+    const project = temp("pi-agent-plugin-project-");
+    const root = join(project, "plugin");
+    process.env.HOME = home;
+    process.chdir(project);
+    writePlugin(root, {
+      remote: { type: "streamable-http", url: "https://example.test/mcp", headers: { "X-Test": "${HASH_VALUE}" } },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      settings: { agentPluginPaths: [root] },
+      mcpServers: { test_plugin__remote: { disabled: false } },
+    });
+
+    let definition = loadMcpConfig().mcpServers.test_plugin__remote;
+    expect(computeServerHash(definition, { HASH_VALUE: "one" })).toBe(computeServerHash(definition, { HASH_VALUE: "two" }));
+
+    writeJson(join(project, ".mcp.json"), {
+      settings: { agentPluginPaths: [root] },
+      mcpServers: { test_plugin__remote: { headers: { "X-Test": "${HASH_VALUE}" } } },
+    });
+    definition = loadMcpConfig().mcpServers.test_plugin__remote;
+    expect(computeServerHash(definition, { HASH_VALUE: "one" })).not.toBe(computeServerHash(definition, { HASH_VALUE: "two" }));
+  });
+});

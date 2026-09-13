@@ -3,8 +3,9 @@ import { existsSync, readFileSync, realpathSync, statSync, writeFileSync, mkdirS
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import stripJsonComments from "strip-json-comments";
 import { getAgentPath, getConfigDirName } from "./agent-dir.js";
-import { getAgentPluginSummaries, loadAgentPluginConfigs } from "./agent-plugin-loader.js";
+import { clearBuiltInAgentPlugin, getAgentPluginSummaries, isBuiltInAgentPlugin, loadAgentPluginConfigs } from "./agent-plugin-loader.js";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
 import { formatServerNamespace, isServerDisabled } from "./types.js";
@@ -510,6 +511,10 @@ function mergeConfigs(base, next) {
 // otherwise the original endpoint's credentials would be shipped to the new
 // url. See the SECURITY note in mergeServerMaps.
 const URL_BOUND_AUTH_FIELDS = ["headers", "bearerToken", "bearerTokenEnv", "bearerTokenStore", "requestHeadersCommand", "caFile"];
+const AGENT_PLUGIN_VALUE_FIELDS = new Set([
+    "command", "args", "env", "cwd", "url", "headers", "socket", "auth", "oauth",
+    "httpTransport", "pluginDataDir", "literalEnv",
+]);
 function mergeServerMaps(base, next) {
     const merged = { ...base };
     for (const [name, definition] of Object.entries(next)) {
@@ -562,7 +567,16 @@ function mergeServerMaps(base, next) {
                 delete baseEntry.oauth;
             }
         }
-        merged[name] = { ...baseEntry, ...definition };
+        const mergedDefinition = { ...baseEntry, ...definition };
+        const existingIsPlugin = existing ? isBuiltInAgentPlugin(existing) : false;
+        const definitionIsPlugin = isBuiltInAgentPlugin(definition);
+        const mixesPluginValues = existing && (definitionIsPlugin
+            ? !existingIsPlugin
+            : existingIsPlugin && Object.keys(definition).some(field => AGENT_PLUGIN_VALUE_FIELDS.has(field)));
+        if (mixesPluginValues) {
+            clearBuiltInAgentPlugin(mergedDefinition);
+        }
+        merged[name] = mergedDefinition;
     }
     return merged;
 }
@@ -666,7 +680,10 @@ function readValidatedConfig(path, label) {
     if (!existsSync(path))
         return null;
     try {
-        return validateConfig(parseJsonWithComments(readFileSync(path, "utf-8")));
+        const text = readFileSync(path, "utf-8");
+        if (stripJsonComments(text, { trailingCommas: true }).trim() === "")
+            return null;
+        return validateConfig(parseJsonWithComments(text));
     }
     catch (error) {
         console.warn(`Failed to load ${label}:`, error);
