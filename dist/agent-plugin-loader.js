@@ -22,6 +22,7 @@ const HTTP_FIELDS = new Set(["type", "url", "headers"]);
 const STRING_MANIFEST_FIELDS = ["version", "description", "homepage", "repository", "license"];
 const AUTHOR_FIELDS = new Set(["name", "email", "url"]);
 const BUILT_IN_AGENT_PLUGIN = Symbol("built-in-agent-plugin");
+const LITERAL_PLUGIN_FIELDS = ["args", "env", "cwd", "headers"];
 function markBuiltInAgentPlugin(definition, fields) {
     definition[BUILT_IN_AGENT_PLUGIN] = new Set(fields);
     return definition;
@@ -29,18 +30,15 @@ function markBuiltInAgentPlugin(definition, fields) {
 export function isBuiltInAgentPlugin(definition, field) {
     return definition[BUILT_IN_AGENT_PLUGIN]?.has(field) === true;
 }
-export function clearBuiltInAgentPlugin(definition) {
-    delete definition[BUILT_IN_AGENT_PLUGIN];
-}
 export function preserveBuiltInAgentPluginFields(target, base, next) {
-    const fields = ["args", "env", "cwd", "headers"].filter(field => {
+    const fields = LITERAL_PLUGIN_FIELDS.filter(field => {
         const owner = Object.hasOwn(next, field) ? next : base;
         return Object.hasOwn(owner, field) && isBuiltInAgentPlugin(owner, field);
     });
     if (fields.length > 0)
         markBuiltInAgentPlugin(target, fields);
     else
-        clearBuiltInAgentPlugin(target);
+        delete target[BUILT_IN_AGENT_PLUGIN];
 }
 export function loadAgentPluginConfigs(paths, cwd = process.cwd()) {
     const mcpServers = {};
@@ -235,11 +233,11 @@ function translateStdioServer(manifest, pluginRoot, serverName, raw) {
         return null;
     const command = raw.command.startsWith("./") ? resolveRealContainedPath(pluginRoot, resolve(pluginRoot, raw.command)) : raw.command;
     if (command === null)
-        return skipServer(manifest, serverName, "command must stay inside the plugin directory");
+        return skipServer(manifest, serverName, "command must resolve to an accessible path inside the plugin directory");
     const pluginDataDir = getAgentPath("agent-plugin-data", manifest.name);
     const cwd = resolvePluginCwd(raw.cwd, pluginRoot, pluginDataDir);
     if (cwd === null)
-        return skipServer(manifest, serverName, "cwd must be plugin-relative, PLUGIN_ROOT-rooted, or PLUGIN_DATA-rooted");
+        return skipServer(manifest, serverName, "cwd must resolve from an allowed root and stay contained");
     return markBuiltInAgentPlugin({
         command,
         args: args.map(value => expandPluginPlaceholders(value, pluginRoot, pluginDataDir)),
@@ -381,7 +379,7 @@ function resolvePluginCwd(value, pluginRoot, pluginDataDir) {
 }
 function resolvePluginDataCwd(pluginDataDir, expanded) {
     const candidate = resolve(pluginDataDir, expanded);
-    if (!resolveContainedPath(pluginDataDir, candidate, pluginDataDir))
+    if (!resolveContainedPath(pluginDataDir, candidate))
         return null;
     try {
         const dataRoot = dirname(pluginDataDir);
@@ -391,7 +389,7 @@ function resolvePluginDataCwd(pluginDataDir, expanded) {
         if (!existsSync(pluginDataDir))
             return candidate;
         const realPluginDataDir = realpathSync(pluginDataDir);
-        if (!resolveContainedPath(realDataRoot, realPluginDataDir, realDataRoot))
+        if (!resolveContainedPath(realDataRoot, realPluginDataDir))
             return null;
         let existing = candidate;
         while (!existsSync(existing)) {
@@ -401,9 +399,9 @@ function resolvePluginDataCwd(pluginDataDir, expanded) {
             existing = parent;
         }
         const realExisting = realpathSync(existing);
-        if (!resolveContainedPath(realPluginDataDir, realExisting, realPluginDataDir))
+        if (!resolveContainedPath(realPluginDataDir, realExisting))
             return null;
-        return existsSync(candidate) ? realpathSync(candidate) : candidate;
+        return existing === candidate ? realExisting : candidate;
     }
     catch {
         return null;
@@ -411,15 +409,17 @@ function resolvePluginDataCwd(pluginDataDir, expanded) {
 }
 function resolveRealContainedPath(root, path) {
     try {
-        return resolveContainedPath(realpathSync(root), realpathSync(path), realpathSync(root));
+        const realRoot = realpathSync(root);
+        const realPath = realpathSync(path);
+        return resolveContainedPath(realRoot, realPath);
     }
     catch {
         return null;
     }
 }
-function resolveContainedPath(root, value, containmentRoot) {
+function resolveContainedPath(root, value) {
     const resolved = resolve(root, value);
-    const rel = relative(containmentRoot, resolved);
+    const rel = relative(root, resolved);
     if (rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep) && !isAbsolute(rel)))
         return resolved;
     return null;

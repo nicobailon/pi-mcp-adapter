@@ -7,8 +7,11 @@ import { interpolateEnvRecord, resolveCommandSecretsRecord } from "./utils.ts"
  * TypeError is fatal to the native SDK's fresh and cached discovery paths; ordinary
  * errors can be swallowed and allow authentication to continue without credentials.
  */
-export function resolveOAuthHeaders(values: Record<string, string> | undefined, commands = true, literal = false): Headers {
-  if (literal) return new Headers(values);
+type OAuthHeaderOptions = { commands?: boolean; literal?: boolean }
+
+export function resolveOAuthHeaders(values: Record<string, string> | undefined, options: OAuthHeaderOptions = {}): Headers {
+  const { commands = true, literal = false } = options
+  if (literal) return new Headers(values)
   const selected = Object.fromEntries(Object.entries(values ?? {}).filter(([, value]) =>
     commands || !value.startsWith("!") || value.startsWith("!!")))
   for (const value of Object.values(selected)) {
@@ -93,13 +96,13 @@ export function createOAuthFetch(
 }
 
 /** Cache success or failure only in the owning auth leg/connection, never in storage. */
-export function oauthHeaderResolver(values: Record<string, string> | undefined, literal = false): () => Headers {
+export function oauthHeaderResolver(values: Record<string, string> | undefined, options: Pick<OAuthHeaderOptions, "literal"> = {}): () => Headers {
   const snapshot = values ? { ...values } : undefined
   let result: { headers: Headers } | { error: unknown } | undefined
   return () => {
     if (!result) {
       try {
-        result = { headers: resolveOAuthHeaders(snapshot, true, literal) }
+        result = { headers: resolveOAuthHeaders(snapshot, options) }
       } catch (error) {
         result = { error }
       }

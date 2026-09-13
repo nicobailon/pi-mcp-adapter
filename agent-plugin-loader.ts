@@ -24,7 +24,8 @@ const HTTP_FIELDS = new Set(["type", "url", "headers"]);
 const STRING_MANIFEST_FIELDS = ["version", "description", "homepage", "repository", "license"] as const;
 const AUTHOR_FIELDS = new Set(["name", "email", "url"]);
 const BUILT_IN_AGENT_PLUGIN = Symbol("built-in-agent-plugin");
-type LiteralPluginField = "args" | "env" | "cwd" | "headers";
+const LITERAL_PLUGIN_FIELDS = ["args", "env", "cwd", "headers"] as const;
+type LiteralPluginField = typeof LITERAL_PLUGIN_FIELDS[number];
 type BuiltInAgentPluginEntry = ServerEntry & { [BUILT_IN_AGENT_PLUGIN]?: ReadonlySet<LiteralPluginField> };
 
 function markBuiltInAgentPlugin(definition: ServerEntry, fields: LiteralPluginField[]): ServerEntry {
@@ -36,17 +37,13 @@ export function isBuiltInAgentPlugin(definition: ServerEntry, field: LiteralPlug
   return (definition as BuiltInAgentPluginEntry)[BUILT_IN_AGENT_PLUGIN]?.has(field) === true;
 }
 
-export function clearBuiltInAgentPlugin(definition: ServerEntry): void {
-  delete (definition as BuiltInAgentPluginEntry)[BUILT_IN_AGENT_PLUGIN];
-}
-
 export function preserveBuiltInAgentPluginFields(target: ServerEntry, base: ServerEntry, next: ServerEntry): void {
-  const fields = (["args", "env", "cwd", "headers"] as const).filter(field => {
+  const fields = LITERAL_PLUGIN_FIELDS.filter(field => {
     const owner = Object.hasOwn(next, field) ? next : base;
     return Object.hasOwn(owner, field) && isBuiltInAgentPlugin(owner, field);
   });
   if (fields.length > 0) markBuiltInAgentPlugin(target, fields);
-  else clearBuiltInAgentPlugin(target);
+  else delete (target as BuiltInAgentPluginEntry)[BUILT_IN_AGENT_PLUGIN];
 }
 
 interface AgentPluginManifest {
@@ -257,11 +254,11 @@ function translateStdioServer(
   if (env === null) return null;
 
   const command = raw.command.startsWith("./") ? resolveRealContainedPath(pluginRoot, resolve(pluginRoot, raw.command)) : raw.command;
-  if (command === null) return skipServer(manifest, serverName, "command must stay inside the plugin directory");
+  if (command === null) return skipServer(manifest, serverName, "command must resolve to an accessible path inside the plugin directory");
 
   const pluginDataDir = getAgentPath("agent-plugin-data", manifest.name);
   const cwd = resolvePluginCwd(raw.cwd, pluginRoot, pluginDataDir);
-  if (cwd === null) return skipServer(manifest, serverName, "cwd must be plugin-relative, PLUGIN_ROOT-rooted, or PLUGIN_DATA-rooted");
+  if (cwd === null) return skipServer(manifest, serverName, "cwd must resolve from an allowed root and stay contained");
 
   return markBuiltInAgentPlugin({
     command,
@@ -407,7 +404,7 @@ function resolvePluginCwd(value: unknown, pluginRoot: string, pluginDataDir: str
 
 function resolvePluginDataCwd(pluginDataDir: string, expanded: string): string | null {
   const candidate = resolve(pluginDataDir, expanded);
-  if (!resolveContainedPath(pluginDataDir, candidate, pluginDataDir)) return null;
+  if (!resolveContainedPath(pluginDataDir, candidate)) return null;
 
   try {
     const dataRoot = dirname(pluginDataDir);
@@ -415,7 +412,7 @@ function resolvePluginDataCwd(pluginDataDir: string, expanded: string): string |
     const realDataRoot = realpathSync(dataRoot);
     if (!existsSync(pluginDataDir)) return candidate;
     const realPluginDataDir = realpathSync(pluginDataDir);
-    if (!resolveContainedPath(realDataRoot, realPluginDataDir, realDataRoot)) return null;
+    if (!resolveContainedPath(realDataRoot, realPluginDataDir)) return null;
 
     let existing = candidate;
     while (!existsSync(existing)) {
@@ -424,8 +421,8 @@ function resolvePluginDataCwd(pluginDataDir: string, expanded: string): string |
       existing = parent;
     }
     const realExisting = realpathSync(existing);
-    if (!resolveContainedPath(realPluginDataDir, realExisting, realPluginDataDir)) return null;
-    return existsSync(candidate) ? realpathSync(candidate) : candidate;
+    if (!resolveContainedPath(realPluginDataDir, realExisting)) return null;
+    return existing === candidate ? realExisting : candidate;
   } catch {
     return null;
   }
@@ -433,15 +430,17 @@ function resolvePluginDataCwd(pluginDataDir: string, expanded: string): string |
 
 function resolveRealContainedPath(root: string, path: string): string | null {
   try {
-    return resolveContainedPath(realpathSync(root), realpathSync(path), realpathSync(root));
+    const realRoot = realpathSync(root);
+    const realPath = realpathSync(path);
+    return resolveContainedPath(realRoot, realPath);
   } catch {
     return null;
   }
 }
 
-function resolveContainedPath(root: string, value: string, containmentRoot: string): string | null {
+function resolveContainedPath(root: string, value: string): string | null {
   const resolved = resolve(root, value);
-  const rel = relative(containmentRoot, resolved);
+  const rel = relative(root, resolved);
   if (rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep) && !isAbsolute(rel))) return resolved;
   return null;
 }

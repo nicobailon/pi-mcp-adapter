@@ -30,7 +30,20 @@ function writePlugin(root: string, servers: Record<string, unknown>, manifest: R
 }
 
 function onlyServer(root: string) {
-  return Object.values(loadAgentPluginConfigs([root], root).mcpServers)[0]!;
+  const server = Object.values(loadAgentPluginConfigs([root], root).mcpServers)[0];
+  if (!server) throw new Error("expected one Agent Plugin server");
+  return server;
+}
+
+function firstText(result: unknown): string {
+  if (!result || typeof result !== "object" || !("content" in result) || !Array.isArray(result.content)) {
+    throw new Error("expected a tool result with content");
+  }
+  const first = result.content[0];
+  if (!first || typeof first !== "object" || !("type" in first) || first.type !== "text" || !("text" in first) || typeof first.text !== "string") {
+    throw new Error("expected text tool content");
+  }
+  return first.text;
 }
 
 afterEach(() => {
@@ -65,7 +78,7 @@ describe("built-in Agent Plugin conformance", () => {
     try {
       const connection = await manager.connect("test_plugin__echo", definition);
       const result = await connection.client.callTool({ name: "echo", arguments: {} });
-      const seen = JSON.parse((result.content[0] as { text: string }).text);
+      const seen = JSON.parse(firstText(result));
       expect(seen).toEqual({
         argv: [realpathSync(root), "${PLUGIN_LITERAL_ENV_HOST}"],
         cwd: realpathSync(root),
@@ -101,8 +114,9 @@ describe("built-in Agent Plugin conformance", () => {
       },
     });
     const definition = onlyServer(root);
-    expect(Object.hasOwn(definition.headers!, "__proto__")).toBe(true);
-    expect(definition.headers!["__proto__"]).toBe("literal-proto-header");
+    if (!definition.headers) throw new Error("expected Agent Plugin headers");
+    expect(Object.hasOwn(definition.headers, "__proto__")).toBe(true);
+    expect(definition.headers["__proto__"]).toBe("literal-proto-header");
     const manager = new McpServerManager(root);
     try {
       await manager.connect("test_plugin__remote", definition).catch(() => undefined);
@@ -167,7 +181,7 @@ describe("built-in Agent Plugin conformance", () => {
         cwd: root,
       });
       const result = await connection.client.callTool({ name: "echo", arguments: {} });
-      const seen = JSON.parse((result.content[0] as { text: string }).text);
+      const seen = JSON.parse(firstText(result));
       expect(seen.argv).toEqual(["expanded"]);
       expect(seen.literalEnv).toBe("expanded");
     } finally {
@@ -245,7 +259,7 @@ describe("built-in Agent Plugin conformance", () => {
     try {
       const connection = await manager.connect("second_plugin__valid", definition);
       const result = await connection.client.callTool({ name: "echo", arguments: {} });
-      expect(JSON.parse((result.content[0] as { text: string }).text).cwd).toBe(realpathSync(join(secondDataDir, "work")));
+      expect(JSON.parse(firstText(result)).cwd).toBe(realpathSync(join(secondDataDir, "work")));
     } finally {
       await manager.close();
     }

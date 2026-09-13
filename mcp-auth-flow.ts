@@ -295,7 +295,10 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
 
 async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, signal?: AbortSignal): Promise<AuthDiscovery> {
   // The preliminary probe is command-free; real SDK discovery resolves commands.
-  const serviceHeaders = resolveOAuthHeaders(definition?.headers, false, definition ? isBuiltInAgentPlugin(definition, "headers") : false)
+  const serviceHeaders = resolveOAuthHeaders(definition?.headers, {
+    commands: false,
+    literal: definition ? isBuiltInAgentPlugin(definition, "headers") : false,
+  })
   const probeFetch = createOAuthFetch(serverUrl, () => serviceHeaders, signal, { timeout: false })
   const headers = new Headers({ "content-type": "application/json" })
 
@@ -454,7 +457,9 @@ export async function startAuth(
       },
     }, authStorageOptions, runtime.signal, undefined, authority)
     try {
-      const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers, definition ? isBuiltInAgentPlugin(definition, "headers") : false), signal)
+      const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers, {
+        literal: definition ? isBuiltInAgentPlugin(definition, "headers") : false,
+      }), signal)
       authProvider.setAuthFetch(fetchFn)
       const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
       authority()
@@ -547,7 +552,9 @@ export async function startAuth(
 
     throwIfAborted(signal)
 
-    const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers, definition ? isBuiltInAgentPlugin(definition, "headers") : false), signal)
+    const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(definition?.headers, {
+      literal: definition ? isBuiltInAgentPlugin(definition, "headers") : false,
+    }), signal)
     authProvider.setAuthFetch(fetchFn)
     const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
     authority()
@@ -900,7 +907,9 @@ export async function completeAuth(
   let keepPendingForRetry = false
   let caughtError: unknown
   try {
-    const fetchFn = createOAuthFetch(pendingAuth.serverUrl, oauthHeaderResolver(pendingAuth.headers, pendingAuth.literalHeaders), signal)
+    const fetchFn = createOAuthFetch(pendingAuth.serverUrl, oauthHeaderResolver(pendingAuth.headers, {
+      literal: pendingAuth.literalHeaders,
+    }), signal)
     pendingAuth.authProvider.setAuthFetch(fetchFn)
     const discoveryState = await pendingAuth.authProvider.discoveryState()
     pendingAuth.authority()
@@ -1126,7 +1135,7 @@ export async function getValidToken(
       const config = options.definition ? extractOAuthConfig(options.definition) : {}
       const fetchFn = createOAuthFetch(serverUrl, oauthHeaderResolver(
         options.definition?.headers,
-        options.definition ? isBuiltInAgentPlugin(options.definition, "headers") : false,
+        { literal: options.definition ? isBuiltInAgentPlugin(options.definition, "headers") : false },
       ), signal)
       authority()
       const authProvider = new McpOAuthProvider(serverName, serverUrl, config, {
