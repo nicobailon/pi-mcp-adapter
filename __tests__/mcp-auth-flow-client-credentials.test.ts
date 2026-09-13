@@ -454,6 +454,66 @@ describe("mcp-auth-flow explicit auth", () => {
     await expect(startAuth("overlap", definition.url, definition)).resolves.toEqual({ authorizationUrl: "" });
   });
 
+  it("detaches a pending flow before a failing credential-store read", async () => {
+    const reservedStates = new Set<string>();
+    mocks.ensureCallbackServer.mockImplementation(async ({ oauthState }) => {
+      reservedStates.add(oauthState);
+    });
+    mocks.cancelPendingCallback.mockImplementation(state => {
+      reservedStates.delete(state);
+    });
+    mocks.releaseCallbackServer.mockImplementation(state => {
+      reservedStates.delete(state);
+    });
+    let staleProvider: {
+      saveTokens(tokens: { access_token: string; token_type: string }): Promise<void>;
+    } | undefined;
+    mocks.sdkAuth
+      .mockImplementationOnce(async provider => {
+        staleProvider = provider;
+        await provider.redirectToAuthorization(new URL("https://auth.example.com/stale"));
+        return "REDIRECT";
+      })
+      .mockImplementationOnce(async provider => {
+        await provider.redirectToAuthorization(new URL("https://auth.example.com/fresh"));
+        return "REDIRECT";
+      });
+    const { hasPendingAuth, removeAuth, startAuth } = await import("../mcp-auth-flow.ts");
+    const serverName = "failing-store-detach";
+    const serverUrl = "https://api.example.com/mcp";
+    const previousCacheSetting = process.env.PI_MCP_ADAPTER_DISABLE_AUTH_CACHE;
+    process.env.PI_MCP_ADAPTER_DISABLE_AUTH_CACHE = "1";
+
+    try {
+      await expect(startAuth(serverName, serverUrl, { auth: "oauth" }))
+        .resolves.toEqual({ authorizationUrl: "https://auth.example.com/stale" });
+      expect(hasPendingAuth(serverName)).toBe(true);
+      expect(reservedStates.size).toBe(1);
+
+      process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+      await expect(removeAuth(serverName)).rejects.toMatchObject({
+        operation: "read",
+        message: expect.stringContaining("Failed to read OAuth credentials"),
+      });
+
+      expect(hasPendingAuth(serverName)).toBe(false);
+      expect(reservedStates.size).toBe(0);
+      await expect(staleProvider!.saveTokens({ access_token: "late-token", token_type: "Bearer" }))
+        .rejects.toThrow("OAuth flow is no longer active");
+
+      process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+      await expect(startAuth(serverName, serverUrl, { auth: "oauth" }))
+        .resolves.toEqual({ authorizationUrl: "https://auth.example.com/fresh" });
+      expect(hasPendingAuth(serverName)).toBe(true);
+      expect(reservedStates.size).toBe(1);
+      await removeAuth(serverName);
+    } finally {
+      process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+      if (previousCacheSetting === undefined) delete process.env.PI_MCP_ADAPTER_DISABLE_AUTH_CACHE;
+      else process.env.PI_MCP_ADAPTER_DISABLE_AUTH_CACHE = previousCacheSetting;
+    }
+  });
+
   it("invalidates the same server across runtimes and legacy directories without affecting another server", async () => {
     const { createOAuthRuntime, removeAuth } = await import("../mcp-auth-flow.ts");
     const { McpOAuthProvider } = await import("../mcp-oauth-provider.ts");

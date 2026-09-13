@@ -1198,9 +1198,9 @@ export async function removeAuth(serverName: string, options: AuthenticateOption
   const authStorageOptions = options.authStorageOptions ?? {}
   const releaseRevocation = beginOAuthRevocation(serverName)
   try {
+    detachPendingAuthsForServer(serverName, new Error("Authorization cancelled by logout"))
     const storedOAuthState = getOAuthState(serverName, authStorageOptions)
     if (storedOAuthState) cancelPendingCallback(storedOAuthState)
-    detachPendingAuthsForServer(serverName, new Error("Authorization cancelled by logout"))
     await stopCallbackServerIfIdle()
     throwIfAborted(signal)
     clearAllCredentials(serverName, authStorageOptions)
