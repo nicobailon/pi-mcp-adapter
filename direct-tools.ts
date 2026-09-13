@@ -5,7 +5,7 @@ import type { DirectToolSpec, McpConfig, McpContent, ToolPrefix } from "./types.
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
-import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
+import { isServerMetadataUsable, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpContent, transformMcpResourceContents } from "./tool-registrar.ts";
@@ -184,7 +184,7 @@ export function resolveDirectTools(
   for (const [serverName, definition] of Object.entries(config.mcpServers)) {
     if (isServerDisabled(definition)) continue;
     const serverCache = cache.servers[serverName];
-    if (!serverCache || !isServerCacheValid(serverCache, definition)) continue;
+    if (!serverCache || !isServerMetadataUsable(cache, serverName, definition)) continue;
 
     let toolFilter: true | string[] | false = false;
     let lazy = false;
@@ -217,7 +217,7 @@ export function resolveDirectTools(
       const candidates = new Set<string>();
       for (const [otherServerName, otherDefinition] of Object.entries(config.mcpServers)) {
         const otherCache = cache.servers[otherServerName];
-        if (!otherCache || !isServerCacheValid(otherCache, otherDefinition) || isServerDisabled(otherDefinition)) continue;
+        if (!otherCache || !isServerMetadataUsable(cache, otherServerName, otherDefinition) || isServerDisabled(otherDefinition)) continue;
         const otherPrefix = resolveToolPrefix(otherDefinition, prefix);
         for (const otherTool of otherCache.tools ?? []) {
           if (!isUiToolVisibleToModel(otherTool.uiVisibility)) continue;

@@ -6,6 +6,7 @@ import {
   computeServerHash,
   getMissingConfiguredDirectToolServers,
   isServerCacheValid,
+  markMetadataServersAuthoritative,
   type MetadataCache,
 } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
@@ -344,6 +345,48 @@ describe("metadata cache hashing", () => {
 });
 
 describe("direct tool metadata bootstrap", () => {
+  it("uses a zero-TTL catalog only when it is authoritative live metadata", () => {
+    const config: McpConfig = {
+      settings: { toolPrefix: "server" },
+      mcpServers: {
+        github: {
+          url: "https://example.test/mcp",
+          directTools: ["lookup", "read_guide"],
+        },
+      },
+    };
+    const entry = {
+      configHash: computeServerHash(config.mcpServers.github),
+      cachedAt: Date.now(),
+      ttlMs: 0,
+      tools: [
+        { name: "lookup", description: "Lookup" },
+        { name: "unselected", description: "Not selected" },
+      ],
+      resources: [{ name: "guide", uri: "file://guide", description: "Guide" }],
+    };
+    const diskCache: MetadataCache = { version: 1, servers: { github: entry } };
+
+    expect(isServerCacheValid(entry, config.mcpServers.github)).toBe(false);
+    expect(resolveDirectTools(config, diskCache, "server")).toEqual([]);
+    expect(getMissingConfiguredDirectToolServers(config, diskCache)).toEqual(["github"]);
+
+    const liveCache = markMetadataServersAuthoritative({
+      version: 1,
+      servers: { github: { ...entry } },
+    }, ["github"]);
+
+    expect(resolveDirectTools(config, liveCache, "server").map((tool) => ({
+      originalName: tool.originalName,
+      prefixedName: tool.prefixedName,
+      resourceUri: tool.resourceUri,
+    }))).toEqual([
+      { originalName: "lookup", prefixedName: "github_lookup", resourceUri: undefined },
+      { originalName: "read_guide", prefixedName: "github_read_guide", resourceUri: "file://guide" },
+    ]);
+    expect(getMissingConfiguredDirectToolServers(config, liveCache)).toEqual([]);
+  });
+
   it("omits cached direct tools from servers in active failure backoff", () => {
     const config: McpConfig = {
       settings: { toolPrefix: "server", directTools: true },

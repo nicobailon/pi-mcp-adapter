@@ -10,7 +10,7 @@ import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getPiGlobalConfig
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tools.ts";
 import { clearFailure, flushMetadataCache, initializeMcp, updateMetadataCache, updateStatusBar } from "./init.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
-import { loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
+import { loadMetadataCache, markMetadataServersAuthoritative, parseDirectToolSelectors, serializeResources, serializeTools, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
 import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeInstructions, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
@@ -492,9 +492,43 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   }
 
+  function loadToolSurfaceCache(config: McpConfig): MetadataCache | null {
+    const persistentCache = loadMetadataCache();
+    const currentState = state;
+    if (!currentState) return persistentCache;
+
+    const liveConnections = [...currentState.manager.getAllConnections()].filter(
+      ([serverName, connection]) => connection.status === "connected" && config.mcpServers[serverName] !== undefined,
+    );
+    if (liveConnections.length === 0) return persistentCache;
+
+    const servers = { ...(persistentCache?.servers ?? {}) };
+    const authoritativeServers = new Set<string>();
+    for (const [serverName, connection] of liveConnections) {
+      const definition = config.mcpServers[serverName];
+      if (!definition) continue;
+      servers[serverName] = {
+        // This entry exists only in this in-memory catalog. Its hash and TTL do
+        // not grant persistence validity; the authoritative marker below does.
+        configHash: "",
+        tools: serializeTools(connection.tools ?? []),
+        resources: definition.exposeResources === false ? [] : serializeResources(connection.resources ?? []),
+        ...(connection.toolListHints?.ttlMs !== undefined ? { ttlMs: connection.toolListHints.ttlMs } : {}),
+        ...(connection.toolListHints?.cacheScope !== undefined ? { cacheScope: connection.toolListHints.cacheScope } : {}),
+        cachedAt: Date.now(),
+      };
+      authoritativeServers.add(serverName);
+    }
+
+    return markMetadataServersAuthoritative({
+      version: persistentCache?.version ?? 1,
+      servers,
+    }, authoritativeServers);
+  }
+
   function syncToolSurface(ctx?: ExtensionContext): void {
     const config = state?.config ?? earlyConfig;
-    const cache = loadMetadataCache();
+    const cache = loadToolSurfaceCache(config);
     const result = syncDirectTools(config, cache);
     if (state) {
       const directToolCounts = state.directToolCounts ?? new Map<string, number>();

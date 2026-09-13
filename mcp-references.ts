@@ -1,6 +1,6 @@
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
-import { createCachedToolSelectorCandidateIndex, isServerCacheValid, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
+import { createCachedToolSelectorCandidateIndex, isServerMetadataUsable, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import {
   formatServerNamespace,
   formatToolName,
@@ -108,7 +108,7 @@ function hasNamespaceProxy(
 
 function resolveValidCache(definition: ServerEntry | undefined, cache: MetadataCache | null, serverName: string): ServerCacheEntry | undefined {
   const entry = cache?.servers[serverName];
-  if (!definition || !entry || !isServerCacheValid(entry, definition)) return undefined;
+  if (!definition || !cache || !entry || !isServerMetadataUsable(cache, serverName, definition)) return undefined;
   return entry;
 }
 

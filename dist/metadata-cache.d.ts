@@ -5,6 +5,13 @@ export declare function getMetadataCachePath(): string;
 export declare function loadMetadataCache(): MetadataCache | null;
 export declare function saveMetadataCache(cache: MetadataCache): void;
 export declare function computeServerHash(definition: ServerEntry, environment?: NodeJS.ProcessEnv): string;
+export declare function markMetadataServersAuthoritative(cache: MetadataCache, serverNames: Iterable<string>): MetadataCache;
+/**
+ * Whether a server entry can be used by the current metadata consumer.
+ * Persistent entries still obey cache validity; only an explicitly marked,
+ * runtime-only live overlay bypasses age and TTL checks.
+ */
+export declare function isServerMetadataUsable(cache: MetadataCache, serverName: string, definition: ServerEntry): boolean;
 export declare function isServerCacheValid(entry: ServerCacheEntry, definition: ServerEntry, maxAgeMs?: number, environment?: NodeJS.ProcessEnv): boolean;
 export declare function parseDirectToolSelectors(selectors: string[]): {
     servers: Set<string>;
