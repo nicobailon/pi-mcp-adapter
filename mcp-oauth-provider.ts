@@ -379,11 +379,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Returns undefined if no client info exists or if the server URL has changed.
    */
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    this.throwIfInactive()
     if (this.invalidatedClientId !== undefined) {
       invalidateAuthEntryCache(this.serverName)
     }
     const issuer = this.discoveredIssuer
     const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
+    this.throwIfInactive()
     this.assertStoredIssuerBindings(stored, issuer)
 
     // Check config first (pre-registered client). Store only its issuer binding.
@@ -393,6 +395,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         ? stored.clientInfo
         : undefined
       if (issuer && (storedClient?.issuer !== issuer || storedClient.configPreRegistered !== true)) {
+        this.throwIfInactive()
         updateClientInfo(
           this.serverName,
           { clientId: this.config.clientId, issuer, configPreRegistered: true },
@@ -445,6 +448,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       if (issuer && clientInfo.issuer === undefined) {
         clientInfo.issuer = issuer
         this.flowClientInfo = clientInfo
+        this.throwIfInactive()
         updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
       }
       // Keep a stale dynamic registration available for its refresh attempt,
@@ -518,6 +522,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Returns undefined if no tokens exist or if the server URL has changed.
    */
   async tokens(ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
+    this.throwIfInactive()
     // Once this provider rejects a token, bypass its process-local cache until
     // another process replaces that token in shared secure storage.
     if (this.invalidatedAccessToken !== undefined) {
@@ -526,12 +531,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
     // Use getAuthForUrl to validate tokens are for the current server URL.
     const entry = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
+    this.throwIfInactive()
     if (!entry?.tokens || entry.tokens.accessToken === this.invalidatedAccessToken) return undefined
     this.invalidatedAccessToken = undefined
     const issuer = this.discoveredIssuer
     this.assertStoredIssuerBindings(entry, issuer)
     if (issuer && entry.tokens.issuer === undefined) {
       entry.tokens.issuer = issuer
+      this.throwIfInactive()
       updateTokens(this.serverName, entry.tokens, this.serverUrl, this.storageOptions)
     }
     if (ctx !== undefined) {

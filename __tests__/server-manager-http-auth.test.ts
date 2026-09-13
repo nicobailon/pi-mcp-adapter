@@ -8,7 +8,9 @@ import { clearAllCredentials, getAuthEntryFilePath, getAuthForUrl, resetTestAuth
 type OAuthProviderLike = {
   redirectUrl?: string;
   tokens?: () => Promise<unknown>;
+  clientInformation?: () => Promise<unknown>;
   saveTokens?: (tokens: { access_token: string; token_type: string }) => Promise<void>;
+  saveDiscoveryState?: (state: { authorizationServerUrl: string }) => Promise<void>;
   clientMetadata?: {
     redirect_uris?: string[];
     client_name?: string;
@@ -335,6 +337,45 @@ describe("McpServerManager HTTP bearer auth", () => {
 
     await expect(delayedSave).rejects.toThrow("OAuth flow is no longer active");
     expect(getAuthForUrl("closed", serverUrl)).toBeUndefined();
+  });
+
+  it("rejects a configured client issuer write that resumes after provider close", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const serverUrl = "https://example.test/mcp";
+    const manager = new McpServerManager();
+    await manager.connect("configured-close", {
+      url: serverUrl,
+      auth: "oauth",
+      oauth: { clientId: "configured-client" },
+    });
+    const provider = mocks.httpTransports.at(-1)!.options.authProvider!;
+    await provider.saveDiscoveryState?.({ authorizationServerUrl: "https://auth.example.test" });
+
+    const pendingClient = provider.clientInformation?.();
+    const closing = manager.close("configured-close");
+    clearAllCredentials("configured-close");
+    await closing;
+
+    await expect(pendingClient).rejects.toThrow("OAuth flow is no longer active");
+    expect(getAuthForUrl("configured-close", serverUrl)).toBeUndefined();
+  });
+
+  it("rejects a token issuer-binding write that resumes after provider close", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const serverUrl = "https://example.test/mcp";
+    saveAuthEntry("token-close", { tokens: { accessToken: "old-token" } }, serverUrl);
+    const manager = new McpServerManager();
+    await manager.connect("token-close", { url: serverUrl, auth: "oauth" });
+    const provider = mocks.httpTransports.at(-1)!.options.authProvider!;
+    await provider.saveDiscoveryState?.({ authorizationServerUrl: "https://auth.example.test" });
+
+    const pendingTokens = provider.tokens?.();
+    const closing = manager.close("token-close");
+    clearAllCredentials("token-close");
+    await closing;
+
+    await expect(pendingTokens).rejects.toThrow("OAuth flow is no longer active");
+    expect(getAuthForUrl("token-close", serverUrl)).toBeUndefined();
   });
 
   it("deactivates OAuth providers from failed connection attempts", async () => {
