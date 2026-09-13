@@ -25,8 +25,10 @@ import {
   clearAllCredentials,
   clearCodeVerifier,
   invalidateAuthEntryCache,
+  captureOAuthAuthority,
   type AuthEntry,
   type AuthStorageOptions,
+  type OAuthAuthority,
   type StoredTokens,
   type StoredClientInfo,
 } from "./mcp-auth.ts"
@@ -262,6 +264,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private lastObservedClientId: string | undefined
   private lastSavedAccessToken: string | undefined
   private pendingAuthAccessToken: string | undefined
+  private readonly assertAuthority: OAuthAuthority
 
   constructor(
     private serverName: string,
@@ -271,7 +274,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
     private storageOptions: AuthStorageOptions = {},
     private runtimeSignal?: AbortSignal,
     initialState?: string,
+    authority?: OAuthAuthority,
   ) {
+    this.assertAuthority = authority ?? captureOAuthAuthority(serverName)
+    this.assertAuthority()
     this.authFetch = createOAuthFetch(serverUrl, undefined, runtimeSignal)
     this.flowState = initialState
     this.redirectUrlSnapshot = config.grantType === "client_credentials"
@@ -322,6 +328,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   private throwIfInactive(): void {
     if (!this.active) throw new Error("OAuth flow is no longer active")
+    this.assertAuthority()
     this.runtimeSignal?.throwIfAborted()
     // The SDK can swallow refresh fetch errors and attempt browser authorization.
     // A failed service credential must stop that fallback and token persistence.
@@ -633,14 +640,22 @@ export class McpOAuthProvider implements OAuthClientProvider {
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
     this.throwIfInactive()
     if (!this.flowDiscoveryState && this.config.authServerMetadataUrl !== undefined) {
-      this.flowDiscoveryState = await loadConfiguredDiscoveryState(
+      const discoveryState = await loadConfiguredDiscoveryState(
         this.config.authServerMetadataUrl,
         this.serverUrl,
         this.config.skipIssuerMetadataValidation === true,
         this.authFetch,
       )
+      this.throwIfInactive()
+      this.flowDiscoveryState = discoveryState
     }
+    this.throwIfInactive()
     return this.flowDiscoveryState ? structuredClone(this.flowDiscoveryState) : undefined
+  }
+
+  /** Internal connection-attempt identity check for manager cleanup. */
+  hasAuthority(authority: OAuthAuthority): boolean {
+    return this.assertAuthority === authority
   }
 
   /**

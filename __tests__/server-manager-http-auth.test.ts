@@ -38,6 +38,7 @@ type HttpTransportMock = {
 const mocks = vi.hoisted(() => ({
   afterConnect: undefined as (() => void) | undefined,
   clients: [] as any[],
+  connectGates: [] as Promise<void>[],
   connectErrors: [] as unknown[],
   httpTransports: [] as HttpTransportMock[],
   sseTransports: [] as HttpTransportMock[],
@@ -52,6 +53,8 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
       setRequestHandler: vi.fn(),
       setNotificationHandler: vi.fn(),
       connect: vi.fn(async () => {
+        const gate = mocks.connectGates.shift();
+        if (gate) await gate;
         const error = mocks.connectErrors.shift();
         if (error !== undefined) throw error;
         mocks.afterConnect?.();
@@ -97,6 +100,7 @@ describe("McpServerManager HTTP bearer auth", () => {
     resetTestAuthSecretStore();
     mocks.afterConnect = undefined;
     mocks.clients.length = 0;
+    mocks.connectGates.length = 0;
     mocks.connectErrors.length = 0;
     mocks.httpTransports.length = 0;
     mocks.sseTransports.length = 0;
@@ -316,6 +320,28 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(await authProvider!.tokens?.()).toMatchObject({ access_token: "stored-token" });
   });
 
+  it("does not let a deferred anonymous attempt acquire OAuth authority after logout", async () => {
+    let release!: () => void;
+    mocks.connectGates.push(new Promise<void>(resolve => { release = resolve; }));
+    mocks.connectErrors.push(new SdkHttpError(
+      SdkErrorCode.ClientHttpAuthentication,
+      "HTTP 401",
+      { status: 401 },
+    ));
+    const { removeAuth } = await import("../mcp-auth-flow.ts");
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+
+    const pending = manager.connect("deferred-logout", { url: "https://example.test/mcp" });
+    expect(mocks.httpTransports).toHaveLength(1);
+    expect(mocks.httpTransports[0].options.authProvider).toBeUndefined();
+    await removeAuth("deferred-logout");
+    release();
+
+    await expect(pending).rejects.toThrow("OAuth flow is no longer active");
+    expect(mocks.httpTransports).toHaveLength(1);
+  });
+
   it("deactivates the transport OAuth provider before closed credentials can be rewritten", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const serverUrl = "https://example.test/mcp";
@@ -392,6 +418,27 @@ describe("McpServerManager HTTP bearer auth", () => {
     const provider = mocks.httpTransports.at(-1)!.options.authProvider!;
     await expect(provider.saveTokens?.({ access_token: "late-token", token_type: "Bearer" }))
       .rejects.toThrow("OAuth flow is no longer active");
+  });
+
+  it("does not let a stale connection failure deactivate its replacement provider", async () => {
+    let rejectOld!: (error: Error) => void;
+    mocks.connectGates.push(new Promise<void>((_, reject) => { rejectOld = reject; }));
+    const { removeAuth } = await import("../mcp-auth-flow.ts");
+    const { McpServerManager } = await import("../server-manager.ts");
+    const { getAuthForUrl } = await import("../mcp-auth.ts");
+    const manager = new McpServerManager();
+    const serverUrl = "https://example.test/mcp";
+
+    const stale = manager.connect("replaced-attempt", { url: serverUrl });
+    await removeAuth("replaced-attempt");
+    await manager.connect("replaced-attempt", { url: serverUrl, auth: "oauth" });
+    const replacementProvider = mocks.httpTransports.at(-1)?.options.authProvider;
+    expect(replacementProvider).toBeDefined();
+    rejectOld(new Error("stale connection failed"));
+    await expect(stale).rejects.toThrow();
+
+    await replacementProvider?.saveTokens?.({ access_token: "replacement-token", token_type: "Bearer" });
+    expect(getAuthForUrl("replaced-attempt", serverUrl)?.tokens?.accessToken).toBe("replacement-token");
   });
 
   it("keeps implicit OAuth deferred when the credential store is unavailable", async () => {

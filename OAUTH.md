@@ -169,6 +169,12 @@ To clear stored OAuth credentials and force a fresh authorization:
 /mcp logout my-oauth-server
 ```
 
+Within one Pi process, logout is a linearizable boundary: OAuth work that began
+before logout cannot recreate credentials after they are cleared, and new OAuth
+work is admitted after logout finishes. Explicit token updates made through the
+public API retain last-writer semantics. Separate Pi processes are intentionally
+not coordinated, so concurrent cross-process credential operations can still race.
+
 ## How It Works
 
 ### Authentication Flow
