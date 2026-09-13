@@ -10,7 +10,9 @@ import {
   getAuthStorageOptions,
   getTestAuthSecretStoreEntries,
   inspectAuthForUrl,
+  markOAuthLogoutComplete,
   OAuthCredentialStoreError,
+  removeAuthEntry,
   removeTestAuthSecretStoreEntry,
   resetAuthEntryCache,
   resetTestAuthSecretStore,
@@ -22,6 +24,13 @@ import {
  * (2560 bytes) as UTF-16, so a single value cannot exceed 1280 characters.
  */
 const AUTH_SECRET_VALUE_LIMIT = 1280;
+const AUTH_SECRET_CHUNK_SIZE = 1000;
+const SERVER_URL = "https://example.com/mcp";
+
+function accessTokenForSerializedLength(length: number): string {
+  const envelopeLength = JSON.stringify({ tokens: { accessToken: "" }, serverUrl: SERVER_URL }).length;
+  return "x".repeat(length - envelopeLength);
+}
 
 describe("OAuth credential-store diagnostics", () => {
   it("recognizes a revoked Linux keyring through the error cause chain", () => {
@@ -150,9 +159,9 @@ describe("mcp-auth storage paths", () => {
     rmSync(project, { recursive: true, force: true });
   });
 
-  it("keeps large records in a single entry when the host store has no Windows-sized limit", () => {
-    const accessToken = "x".repeat(5000);
-    saveAuthEntry("large-entry", { tokens: { accessToken } }, "https://example.com/mcp");
+  it("stores an ordinary 9 KiB payload as one native item outside Windows", () => {
+    const accessToken = accessTokenForSerializedLength(9 * 1024);
+    saveAuthEntry("large-entry", { tokens: { accessToken } }, SERVER_URL);
 
     expect(getAuthEntry("large-entry")?.tokens?.accessToken).toBe(accessToken);
     const entries = getTestAuthSecretStoreEntries();
@@ -168,6 +177,27 @@ describe("mcp-auth storage paths", () => {
       expect(entries).toHaveLength(1);
       expect(entries[0][0]).not.toContain(".chunk.");
       expect(JSON.parse(entries[0][1]).__piMcpAdapterOAuthChunked).toBeUndefined();
+    }
+  });
+
+  it("uses the serialized 1000-character boundary for the size-limited store", () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
+
+    for (const [serverName, payloadLength, chunked] of [
+      ["size-limited-at-boundary", AUTH_SECRET_CHUNK_SIZE, false],
+      ["size-limited-over-boundary", AUTH_SECRET_CHUNK_SIZE + 1, true],
+    ] as const) {
+      resetTestAuthSecretStore();
+      const accessToken = accessTokenForSerializedLength(payloadLength);
+      saveAuthEntry(serverName, { tokens: { accessToken } }, SERVER_URL);
+
+      expect(getAuthEntry(serverName)?.tokens?.accessToken).toBe(accessToken);
+      const entries = getTestAuthSecretStoreEntries();
+      expect(entries.every(([, payload]) => payload.length <= AUTH_SECRET_VALUE_LIMIT)).toBe(true);
+      expect(entries.some(([account]) => account.includes(".chunk."))).toBe(chunked);
+      const primary = entries.find(([account]) => !account.includes(".chunk."));
+      expect(primary).toBeDefined();
+      expect(JSON.parse(primary![1]).__piMcpAdapterOAuthChunked === 1).toBe(chunked);
     }
   });
 
@@ -277,6 +307,53 @@ describe("mcp-auth storage paths", () => {
     expect(inspectAuthForUrl("status-chunks", "https://example.com/mcp").status).toBe("present");
     expect(getTestAuthSecretStoreEntries().some(([account]) => account.includes(".chunk."))).toBe(true);
     expect(getTestAuthSecretStoreEntries()).toHaveLength(before);
+
+    expect(getAuthEntry("status-chunks")?.tokens?.accessToken).toBe(accessToken);
+    const compacted = getTestAuthSecretStoreEntries();
+    expect(compacted).toHaveLength(1);
+    expect(compacted[0][0]).not.toContain(".chunk.");
+  });
+
+  it("preserves readable chunks and reports a failed primary compaction write", () => {
+    if (process.platform === "win32") return;
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
+    const accessToken = "x".repeat(5000);
+    saveAuthEntry("failed-compaction", { tokens: { accessToken } }, SERVER_URL);
+    const before = getTestAuthSecretStoreEntries();
+
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "writefailing";
+    resetAuthEntryCache();
+    expect(() => getAuthEntry("failed-compaction")).toThrow(/write OAuth credentials/);
+    expect(getTestAuthSecretStoreEntries()).toEqual(before);
+    expect(inspectAuthForUrl("failed-compaction", SERVER_URL).status).toBe("present");
+  });
+
+  it("commits the primary item before best-effort old-chunk cleanup", () => {
+    if (process.platform === "win32") return;
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
+    const accessToken = "x".repeat(5000);
+    saveAuthEntry("cleanup-failure", { tokens: { accessToken } }, SERVER_URL);
+
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "removefailing";
+    resetAuthEntryCache();
+    expect(getAuthEntry("cleanup-failure")?.tokens?.accessToken).toBe(accessToken);
+    const entries = getTestAuthSecretStoreEntries();
+    const primary = entries.find(([account]) => !account.includes(".chunk."));
+    expect(JSON.parse(primary![1]).tokens.accessToken).toBe(accessToken);
+    expect(entries.some(([account]) => account.includes(".chunk."))).toBe(true);
+  });
+
+  it("keeps logout's legacy-import tombstone authoritative for status and ordinary reads", () => {
+    const serverName = "logout-tombstone-storage";
+    removeAuthEntry(serverName);
+    markOAuthLogoutComplete(serverName);
+    const filePath = getAuthEntryFilePath(serverName);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, JSON.stringify({ tokens: { accessToken: "stale" }, serverUrl: SERVER_URL }), "utf8");
+
+    expect(inspectAuthForUrl(serverName, SERVER_URL).status).toBe("absent");
+    expect(getAuthEntry(serverName)).toBeUndefined();
+    expect(existsSync(filePath)).toBe(true);
   });
 
   it("routes revoked Linux keyring operations through the recovery helper", () => {

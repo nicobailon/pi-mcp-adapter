@@ -32,13 +32,6 @@ const TEST_AUTH_STORE_ENV = 'PI_MCP_ADAPTER_TEST_AUTH_STORE';
 const AUTH_SECRET_CHUNK_SIZE = 1000;
 /** Largest single value the strictest supported credential store accepts. */
 const AUTH_SECRET_VALUE_LIMIT = 1280;
-/**
- * macOS Keychain and Linux Secret Service accept far larger items than Windows
- * Credential Manager. Chunking Atlassian-sized OAuth JSON (~8–10 KiB) across
- * digest-addressed keychain items causes a prompt per chunk, and Always Allow
- * cannot stick because each write creates new account names.
- */
-const AUTH_SECRET_NATIVE_VALUE_LIMIT = 32_000;
 const KEYRING_RECOVERY_DISABLED_ENV = 'PI_MCP_ADAPTER_DISABLE_KEYRING_RECOVERY';
 const KEYRING_RECOVERY_KEYCTL_ENV = 'PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL';
 const KEYRING_RECOVERY_NODE_ENV = 'PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE';
@@ -260,6 +253,20 @@ const sizeLimitedAuthSecretStore: AuthSecretStore = {
   },
 };
 
+const writeFailingAuthSecretStore: AuthSecretStore = {
+  ...memoryAuthSecretStore,
+  write() {
+    throw new Error('simulated secure credential store write failure');
+  },
+};
+
+const removeFailingAuthSecretStore: AuthSecretStore = {
+  ...memoryAuthSecretStore,
+  remove() {
+    throw new Error('simulated secure credential store remove failure');
+  },
+};
+
 const unavailableAuthSecretStore: AuthSecretStore = {
   read() {
     testAuthSecretStoreReadCount++;
@@ -315,6 +322,8 @@ export function removeTestAuthSecretStoreEntry(account: string): void {
 function getAuthSecretStore(): AuthSecretStore {
   if (process.env[TEST_AUTH_STORE_ENV] === 'memory') return memoryAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'sizelimited') return sizeLimitedAuthSecretStore;
+  if (process.env[TEST_AUTH_STORE_ENV] === 'writefailing') return writeFailingAuthSecretStore;
+  if (process.env[TEST_AUTH_STORE_ENV] === 'removefailing') return removeFailingAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'unavailable') return unavailableAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'keyrevoked') return keyRevokedAuthSecretStore;
   return keyringAuthSecretStore;
@@ -654,14 +663,15 @@ function tryRemoveChunkPayloads(store: AuthSecretStore, account: string, manifes
   }
 }
 
-function getAuthSecretChunkThreshold(): number {
+function getAuthSecretChunkThreshold(): number | undefined {
   if (process.env[TEST_AUTH_STORE_ENV] === 'sizelimited') return AUTH_SECRET_CHUNK_SIZE;
   if (process.platform === 'win32') return AUTH_SECRET_CHUNK_SIZE;
-  return AUTH_SECRET_NATIVE_VALUE_LIMIT;
+  return undefined;
 }
 
 function shouldChunkAuthPayload(payload: string): boolean {
-  return payload.length > getAuthSecretChunkThreshold();
+  const threshold = getAuthSecretChunkThreshold();
+  return threshold !== undefined && payload.length > threshold;
 }
 
 function createChunkManifest(payload: string): AuthEntryChunkManifest {
@@ -775,7 +785,7 @@ function readAuthEntryFromStore(
   store: AuthSecretStore,
   serverName: string,
   options?: AuthStorageOptions,
-  behavior: { migrateLegacy?: boolean } = {},
+  behavior: { migrateLegacy?: boolean; compactChunked?: boolean } = {},
 ): AuthEntry | undefined {
   const account = getAuthEntryAccount(serverName);
   let payload: string | undefined;
@@ -794,15 +804,9 @@ function readAuthEntryFromStore(
     const entry = manifest
       ? readChunkedAuthEntry(store, serverName, account, manifest)
       : parseAuthEntryPayload(serverName, payload, 'OS secure credential store');
-    if (behavior.migrateLegacy !== false) {
-      removeLegacyAuthEntry(serverName, options);
-      if (manifest && !shouldChunkAuthPayload(JSON.stringify(entry))) {
-        try {
-          writeSecureAuthEntryToStore(store, serverName, entry);
-        } catch {
-          // Compaction is best-effort; the assembled entry is still usable.
-        }
-      }
+    removeLegacyAuthEntry(serverName, options);
+    if (manifest && behavior.compactChunked !== false && !shouldChunkAuthPayload(JSON.stringify(entry))) {
+      writeSecureAuthEntryToStore(store, serverName, entry);
     }
     return entry;
   }
@@ -819,7 +823,7 @@ function readAuthEntryFromStore(
 function readAuthEntry(
   serverName: string,
   options?: AuthStorageOptions,
-  behavior: { migrateLegacy?: boolean } = {},
+  behavior: { migrateLegacy?: boolean; compactChunked?: boolean } = {},
 ): AuthEntry | undefined {
   // Status-only reads deliberately bypass the cache because they do not
   // migrate legacy entries.
@@ -875,7 +879,7 @@ export function inspectAuthForUrl(
   options?: AuthStorageOptions,
 ): OAuthCredentialStatus {
   try {
-    const entry = readAuthEntry(serverName, options, { migrateLegacy: false });
+    const entry = readAuthEntry(serverName, options, { migrateLegacy: false, compactChunked: false });
     if (!entry?.serverUrl || entry.serverUrl !== serverUrl) return { status: 'absent' };
     return { status: 'present', entry };
   } catch (error) {

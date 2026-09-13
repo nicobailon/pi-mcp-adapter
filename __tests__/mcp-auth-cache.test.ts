@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   type AuthEntry,
   getAuthEntry,
+  getTestAuthSecretStoreEntries,
   getTestAuthSecretStoreReadCount,
   inspectAuthForUrl,
   invalidateAuthEntryCache,
@@ -190,6 +191,33 @@ describe("OAuth credential-entry cache — coherence", () => {
     expect(getTestAuthSecretStoreReadCount()).toBe(afterFirst);
   });
 
+  it("does not cache a failed conversion and caches only after compaction succeeds", () => {
+    if (process.platform === "win32") return;
+    process.env[STORE_ENV] = "sizelimited";
+    const token = "x".repeat(5000);
+    saveAuthEntry("conversion-cache", { tokens: { accessToken: token } }, SERVER_URL);
+    enableAuthEntryCache();
+    resetAuthEntryCache();
+
+    process.env[STORE_ENV] = "memory";
+    expect(inspectAuthForUrl("conversion-cache", SERVER_URL).status).toBe("present");
+    expect(getTestAuthSecretStoreEntries().some(([account]) => account.includes(".chunk."))).toBe(true);
+
+    process.env[STORE_ENV] = "writefailing";
+    const beforeFailures = getTestAuthSecretStoreReadCount();
+    expect(() => getAuthEntry("conversion-cache")).toThrow(/write OAuth credentials/);
+    expect(() => getAuthEntry("conversion-cache")).toThrow(/write OAuth credentials/);
+    expect(getTestAuthSecretStoreReadCount() - beforeFailures).toBeGreaterThan(2);
+    expect(getTestAuthSecretStoreEntries().some(([account]) => account.includes(".chunk."))).toBe(true);
+
+    process.env[STORE_ENV] = "memory";
+    expect(getAuthEntry("conversion-cache")?.tokens?.accessToken).toBe(token);
+    expect(getTestAuthSecretStoreEntries()).toHaveLength(1);
+    const afterSuccess = getTestAuthSecretStoreReadCount();
+    expect(getAuthEntry("conversion-cache")?.tokens?.accessToken).toBe(token);
+    expect(getTestAuthSecretStoreReadCount()).toBe(afterSuccess);
+  });
+
 
   it("leaves every read going to the store when the gate is off", () => {
     saveAuthEntry("gated", { tokens: { accessToken: "a" } }, SERVER_URL);
@@ -240,6 +268,7 @@ describe("OAuth credential-entry cache — invalidation", () => {
     invalidateAuthEntryCache("appearing");
     expect(getAuthEntry("appearing")?.tokens?.accessToken).toBe("created");
 
+    process.env[STORE_ENV] = "sizelimited";
     const token = "x".repeat(5000);
     saveAuthEntry("chunked", { tokens: { accessToken: token } }, SERVER_URL);
     invalidateAuthEntryCache("chunked");
