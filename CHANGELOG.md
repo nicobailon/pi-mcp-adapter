@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Cross-process OAuth credential transaction serialization is temporarily withdrawn until matching official MCP client/core registry releases support the required hook and deduplication semantics. Registry-only dependencies restore default npm 12 installs and avoid the standalone native-addon dependency.
+
 ### Added
 
 - User-global or explicitly selected config can opt in to bounded ancestor `.mcp.json` and `<configDir>/mcp.json` discovery with `settings.ancestorConfigRoots`. Discovery is off by default; project files cannot enable or widen it, and the deepest matching existing directory under `$HOME` bounds farthest-first loading. Thanks to [@johnhenaot](https://github.com/johnhenaot) for PR #555.

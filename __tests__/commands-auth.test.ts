@@ -37,7 +37,6 @@ describe("authenticateServer", () => {
   const originalStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
 
   afterEach(() => {
-    mocks.removeAuth.mockReset();
     if (originalStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
     else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = originalStore;
   });
@@ -183,15 +182,14 @@ describe("authenticateServer", () => {
     } as any, { hasUI: true, mode: "tui", ui } as any);
 
     expect(result).toEqual({ ok: false, message: "simulated secure credential store unavailable" });
-    expect(close).toHaveBeenCalledWith("sentry");
-    expect(close.mock.invocationCallOrder[0]).toBeLessThan(mocks.removeAuth.mock.invocationCallOrder[0]!);
+    expect(close).not.toHaveBeenCalled();
     expect(ui.notify).toHaveBeenCalledWith(
-      'Failed to disconnect or clear OAuth credentials for "sentry": simulated secure credential store unavailable',
+      'Failed to clear OAuth credentials for "sentry": simulated secure credential store unavailable',
       "error",
     );
   });
 
-  it("preserves credentials when the transport cannot be quiesced for logout", async () => {
+  it("reports a close failure accurately after credentials were removed", async () => {
     mocks.removeAuth.mockResolvedValueOnce(undefined);
     const ui = { notify: vi.fn() };
     const { logoutServer } = await import("../commands.ts");
@@ -203,9 +201,8 @@ describe("authenticateServer", () => {
     } as any, { hasUI: true, mode: "tui", ui } as any);
 
     expect(result).toEqual({ ok: false, message: "close failed" });
-    expect(mocks.removeAuth).not.toHaveBeenCalled();
     expect(ui.notify).toHaveBeenCalledWith(
-      'Failed to disconnect or clear OAuth credentials for "sentry": close failed',
+      'OAuth credentials were cleared for "sentry", but its connection could not be closed: close failed',
       "error",
     );
   });

@@ -2,7 +2,6 @@ import { getValidToken } from "./mcp-auth-flow.ts";
 import {
   inspectAuthForUrl,
   updateTokens,
-  withAuthEntryTransaction,
   type AuthStorageOptions,
   type StoredTokens,
 } from "./mcp-auth.ts";
@@ -43,13 +42,11 @@ export function inspectMcpOAuthTokensForUrl(
     : { status: "absent" };
 }
 
-export async function updateMcpOAuthTokensForUrl(
+export function updateMcpOAuthTokensForUrl(
   serverName: string,
   serverUrl: string,
   tokens: McpOAuthTokens,
   options?: McpOAuthStorageOptions,
-): Promise<void> {
-  await withAuthEntryTransaction(serverName, async () => {
-    updateTokens(serverName, tokens, serverUrl, options);
-  });
+): void {
+  updateTokens(serverName, tokens, serverUrl, options);
 }
