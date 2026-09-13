@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { UnauthorizedError } from "@modelcontextprotocol/client";
+import { auth as runSdkAuth, UnauthorizedError } from "@modelcontextprotocol/client";
 import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
 import { getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
 
@@ -229,9 +229,74 @@ describe("McpOAuthProvider discovery state", () => {
     }
   });
 
-  it("prefers CIMD over stored DCR only when the authorization server advertises support", async () => {
+  it("preserves a stored DCR refresh pair before transitioning to CIMD after invalidation", async () => {
     const clientMetadataUrl = "https://client.example.com/oauth/client.json";
-    saveAuthEntry("cimd-preference", {
+    const oldClientId = "old-dynamic-registration";
+    saveAuthEntry("cimd-migration", {
+      clientInfo: {
+        clientId: oldClientId,
+        redirectUris: ["http://localhost:19876/callback"],
+      },
+      tokens: {
+        accessToken: "expired-dcr-access",
+        refreshToken: "dcr-refresh-token",
+        expiresAt: Date.now() / 1000 - 60,
+      },
+      serverUrl,
+    }, serverUrl);
+
+    let authorizationUrl: URL | undefined;
+    const provider = new McpOAuthProvider(
+      "cimd-migration",
+      serverUrl,
+      { clientMetadataUrl },
+      { onRedirect: async url => { authorizationUrl = url; } },
+      {},
+      undefined,
+      "migration-state",
+    );
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: "https://auth.example.com",
+      resourceMetadata: { resource: serverUrl },
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        client_id_metadata_document_supported: true,
+      },
+    });
+
+    const tokenBodies: string[] = [];
+    const fetchFn = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("https://auth.example.com/token");
+      expect(getAuthForUrl("cimd-migration", serverUrl)).toMatchObject({
+        clientInfo: { clientId: oldClientId },
+        tokens: { accessToken: "expired-dcr-access", refreshToken: "dcr-refresh-token" },
+      });
+      tokenBodies.push(String(init?.body));
+      return new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    await expect(runSdkAuth(provider, { serverUrl, fetchFn })).resolves.toBe("REDIRECT");
+
+    expect(tokenBodies).toHaveLength(1);
+    const refreshParams = new URLSearchParams(tokenBodies[0]);
+    expect(refreshParams.get("grant_type")).toBe("refresh_token");
+    expect(refreshParams.get("refresh_token")).toBe("dcr-refresh-token");
+    expect(refreshParams.get("client_id")).toBe(oldClientId);
+    expect(authorizationUrl?.searchParams.get("client_id")).toBe(clientMetadataUrl);
+    expect(getAuthForUrl("cimd-migration", serverUrl)?.clientInfo).toMatchObject({
+      clientId: clientMetadataUrl,
+    });
+  });
+
+  it("selects CIMD immediately when stored DCR has no refresh pair to preserve", async () => {
+    const clientMetadataUrl = "https://client.example.com/oauth/client.json";
+    saveAuthEntry("cimd-no-refresh", {
       clientInfo: {
         clientId: "old-dynamic-registration",
         redirectUris: ["http://localhost:19876/callback"],
@@ -239,12 +304,11 @@ describe("McpOAuthProvider discovery state", () => {
       serverUrl,
     }, serverUrl);
     const provider = new McpOAuthProvider(
-      "cimd-preference",
+      "cimd-no-refresh",
       serverUrl,
       { clientMetadataUrl },
       { onRedirect: async () => {} },
     );
-
     await provider.saveDiscoveryState({
       authorizationServerUrl: "https://auth.example.com",
       authorizationServerMetadata: {
@@ -256,22 +320,11 @@ describe("McpOAuthProvider discovery state", () => {
       },
     });
 
-    expect(await provider.clientInformation()).toBeUndefined();
-    await provider.saveClientInformation({ client_id: clientMetadataUrl });
-    expect(await provider.clientInformation()).toMatchObject({ client_id: clientMetadataUrl });
+    expect(await provider.clientInformation({ issuer: "https://auth.example.com" })).toBeUndefined();
+  });
 
-    // Pre-discovery reads used by refresh can recover a secretless CIMD entry.
-    // Once SDK discovery supplies a context, a server that did not opt in must
-    // not receive that URL as its client ID.
-    const storedCimdProvider = new McpOAuthProvider(
-      "cimd-preference",
-      serverUrl,
-      { clientMetadataUrl },
-      { onRedirect: async () => {} },
-    );
-    expect(await storedCimdProvider.clientInformation()).toMatchObject({ client_id: clientMetadataUrl });
-    expect(await storedCimdProvider.clientInformation({ issuer: "https://auth.example.com" })).toBeUndefined();
-
+  it("retains DCR when the authorization server does not advertise CIMD", async () => {
+    const clientMetadataUrl = "https://client.example.com/oauth/client.json";
     saveAuthEntry("cimd-fallback", {
       clientInfo: {
         clientId: "dynamic-registration",

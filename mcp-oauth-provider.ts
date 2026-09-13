@@ -438,15 +438,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
     const clientMetadataUrl = this.clientMetadataUrl
     const supportsClientMetadataDocument = this.flowDiscoveryState
       ?.authorizationServerMetadata?.client_id_metadata_document_supported === true
-    if (clientMetadataUrl !== undefined) {
-      // Let the SDK select CIMD only when the discovered AS opts into it. This
-      // also replaces an older DCR registration as soon as CIMD becomes
-      // available, while retaining that registration as the fallback for an AS
-      // that does not advertise URL-based client IDs.
-      if (supportsClientMetadataDocument && clientInfo?.clientId !== clientMetadataUrl) {
+    if (clientMetadataUrl !== undefined && ctx !== undefined) {
+      if (supportsClientMetadataDocument
+        && clientInfo?.clientId !== clientMetadataUrl
+        && stored?.tokens?.refreshToken === undefined) {
+        // With no DCR refresh pair to preserve, let the SDK select CIMD now.
         return undefined
       }
-      if (ctx !== undefined && !supportsClientMetadataDocument && clientInfo?.clientId === clientMetadataUrl) {
+      if (!supportsClientMetadataDocument && clientInfo?.clientId === clientMetadataUrl) {
         return undefined
       }
     }
@@ -749,6 +748,17 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.pendingAuthAccessToken = undefined
         if (this.staleRedirectClientId !== undefined) {
           this.invalidatedClientId = this.staleRedirectClientId
+        }
+        // A newly configured CIMD URL must not displace a stored DCR client
+        // before that client's refresh token gets its normal attempt. Once the
+        // SDK invalidates that pair, suppress the DCR client locally so its
+        // retry can transition to the configured URL-based client ID.
+        if (this.clientMetadataUrl !== undefined
+          && this.flowDiscoveryState?.authorizationServerMetadata
+            ?.client_id_metadata_document_supported === true
+          && this.lastObservedClientId !== undefined
+          && this.lastObservedClientId !== this.clientMetadataUrl) {
+          this.invalidatedClientId = this.lastObservedClientId
         }
         invalidateAuthEntryCache(this.serverName)
         break
