@@ -25,7 +25,7 @@ describe("public OAuth token API", () => {
 
   it("reads and updates URL-bound tokens through the package export", async () => {
     const expiresAt = Date.now() / 1000 + 3600;
-    updateMcpOAuthTokensForUrl("jira", "https://jira.example.com/mcp", {
+    await updateMcpOAuthTokensForUrl("jira", "https://jira.example.com/mcp", {
       accessToken: "access-1",
       refreshToken: "refresh-1",
       expiresAt,
@@ -50,7 +50,7 @@ describe("public OAuth token API", () => {
   });
 
   it("does not return tokens for a different URL", async () => {
-    updateMcpOAuthTokensForUrl("jira", "https://jira.example.com/mcp", { accessToken: "access-1" });
+    await updateMcpOAuthTokensForUrl("jira", "https://jira.example.com/mcp", { accessToken: "access-1" });
 
     assert.strictEqual(await getMcpOAuthTokensForUrl("jira", "https://other.example.com/mcp"), undefined);
     assert.deepStrictEqual(inspectMcpOAuthTokensForUrl("jira", "https://other.example.com/mcp"), {
@@ -104,6 +104,16 @@ describe("public OAuth token API", () => {
         () => getMcpOAuthTokensForUrl("jira", "https://jira.example.com/mcp"),
         /Failed to read OAuth credentials.*OS secure credential store/,
       );
+      let updatePromise!: Promise<void>;
+      assert.doesNotThrow(() => {
+        updatePromise = updateMcpOAuthTokensForUrl(
+          "jira",
+          "https://jira.example.com/mcp",
+          { accessToken: "access-1" },
+        );
+      });
+      assert(updatePromise instanceof Promise);
+      await assert.rejects(updatePromise, /Failed to read OAuth credentials.*OS secure credential store/);
       const status = inspectMcpOAuthTokensForUrl("jira", "https://jira.example.com/mcp");
       assert.strictEqual(status.status, "unavailable");
     } finally {
@@ -125,7 +135,7 @@ describe("public OAuth token API", () => {
       serverUrl: "https://old.example.com/mcp",
     }, "https://old.example.com/mcp");
 
-    updateMcpOAuthTokensForUrl("jira", "https://new.example.com/mcp", { accessToken: "new-token" });
+    await updateMcpOAuthTokensForUrl("jira", "https://new.example.com/mcp", { accessToken: "new-token" });
 
     assert.strictEqual(await getMcpOAuthTokensForUrl("jira", "https://old.example.com/mcp"), undefined);
     assert.deepStrictEqual(await getMcpOAuthTokensForUrl("jira", "https://new.example.com/mcp"), {

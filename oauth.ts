@@ -42,11 +42,11 @@ export function inspectMcpOAuthTokensForUrl(
     : { status: "absent" };
 }
 
-export function updateMcpOAuthTokensForUrl(
+export async function updateMcpOAuthTokensForUrl(
   serverName: string,
   serverUrl: string,
   tokens: McpOAuthTokens,
   options?: McpOAuthStorageOptions,
-): void {
+): Promise<void> {
   updateTokens(serverName, tokens, serverUrl, options);
 }
