@@ -1145,6 +1145,7 @@ describe("mcpAdapter session lifecycle", () => {
   it("hot-loads zero-TTL live tools and resources while leaving the disk entry non-cacheable", async () => {
     const actualDirectTools = await vi.importActual<typeof import("../direct-tools.ts")>("../direct-tools.ts");
     const actualCache = await vi.importActual<typeof import("../metadata-cache.ts")>("../metadata-cache.ts");
+    const actualInit = await vi.importActual<typeof import("../init.ts")>("../init.ts");
     const config = {
       settings: { disableProxyTool: true as const, scriptMode: false },
       mcpServers: {
@@ -1260,10 +1261,24 @@ describe("mcpAdapter session lifecycle", () => {
     await state.onToolMetadataUpdated?.("fallback", "resources-list-changed");
     expect(activeTools()).toEqual(["bash", "mcp__namespace", "mcp"]);
 
+    liveConnection.status = "connected";
+    liveConnection.tools = [{ name: "lookup", description: "Lookup reconnected" }];
+    await state.onToolMetadataUpdated?.("demo", "lifecycle-reconnect");
+    expect(activeTools()).toContain("demo_lookup");
+    state.toolMetadata.set("demo", [{ name: "demo_lookup" }]);
+    liveConnection.status = "closed";
+    actualInit.updateServerMetadata(state, "demo");
+    await state.onToolMetadataUpdated?.("demo", "remote-close");
+    expect(activeTools()).not.toContain("demo_lookup");
+    expect(state.toolMetadata.has("demo")).toBe(false);
+
     const namespaceConnection = connections.get("namespace")!;
-    namespaceConnection.tools = [];
-    await state.onToolMetadataUpdated?.("namespace", "tools-list-changed");
+    state.toolMetadata.set("namespace", [{ name: "namespace_search" }]);
+    namespaceConnection.status = "closed";
+    actualInit.updateServerMetadata(state, "namespace");
+    await state.onToolMetadataUpdated?.("namespace", "remote-close");
     expect(activeTools()).toEqual(["bash", "mcp"]);
+    expect(state.toolMetadata.has("namespace")).toBe(false);
   });
 
   it.each(["connect", "install"])("reports direct tools discovered by proxy %s as addedToolNames without rewriting active tools", async (action) => {

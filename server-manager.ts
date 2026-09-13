@@ -1019,6 +1019,7 @@ export class McpServerManager {
         if (this.connections.get(name) === connection) {
           connection.status = "closed";
           this.deactivateOAuthProvider(name);
+          this.metadataListChangedListener?.(name, "remote-close");
         }
       };
 

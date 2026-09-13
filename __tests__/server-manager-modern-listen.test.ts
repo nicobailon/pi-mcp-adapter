@@ -62,7 +62,7 @@ describe("McpServerManager modern subscriptions/listen", () => {
     manager.setMetadataListChangedListener((serverName, reason) => {
       reasons.push(reason);
       updateServerMetadata(state, serverName);
-      updateMetadataCache(state, serverName, { preserveEmptyResources: false });
+      updateMetadataCache(state, serverName);
     });
 
     try {

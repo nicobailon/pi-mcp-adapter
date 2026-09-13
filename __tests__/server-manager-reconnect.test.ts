@@ -98,6 +98,26 @@ describe("McpServerManager.reconnect", () => {
     expect(manager.getConnection("remote")).toBe(fresh);
   });
 
+  it("publishes remote close once without letting a stale client close affect its replacement", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const changes: Array<[string, string]> = [];
+    manager.setMetadataListChangedListener((name, reason) => changes.push([name, reason]));
+
+    const stale = await manager.connect("remote", def);
+    const staleOnClose = stale.client.onclose!;
+    await manager.close("remote");
+    const fresh = await manager.connect("remote", def);
+
+    staleOnClose();
+    expect(fresh.status).toBe("connected");
+    expect(changes).toEqual([]);
+
+    fresh.client.onclose!();
+    expect(fresh.status).toBe("closed");
+    expect(changes).toEqual([["remote", "remote-close"]]);
+  });
+
   it("keeps a shared reconnect alive when one caller aborts waiting", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();

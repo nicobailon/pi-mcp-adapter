@@ -422,7 +422,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     expect(ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("Failed to connect"), "error");
   });
 
-  it("does not preserve stale cached resources after authoritative list-change removal", async () => {
+  it("preserves valid cached resources only for failed discovery, not authoritative empty", async () => {
     const { initializeMcp, updateMetadataCache } = await import("../init.ts");
 
     const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
@@ -444,10 +444,13 @@ describe("lazy-keep-alive initializeMcp integration", () => {
       },
     };
 
+    mocks.isServerCacheValid.mockReturnValue(true);
+    state.manager.getConnection("srv").resourceDiscoveryFailed = true;
     updateMetadataCache(state, "srv");
     expect((mocks.cache?.servers.srv as any).resources).toEqual([{ uri: "ui://old", name: "Old resource" }]);
 
-    updateMetadataCache(state, "srv", { preserveEmptyResources: false });
+    state.manager.getConnection("srv").resourceDiscoveryFailed = false;
+    updateMetadataCache(state, "srv");
     expect((mocks.cache?.servers.srv as any).resources).toEqual([]);
   });
 

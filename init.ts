@@ -245,7 +245,7 @@ export async function initializeMcp(
   manager.setMetadataListChangedListener?.((serverName, reason) => {
     if (!owner.isActive()) return;
     updateServerMetadata(state, serverName);
-    updateMetadataCache(state, serverName, { preserveEmptyResources: false });
+    updateMetadataCache(state, serverName);
     notifyToolMetadataUpdated(state, serverName, reason);
     updateStatusBar(state);
   });
@@ -534,7 +534,12 @@ export function markKeepAliveAfterConnect(state: McpExtensionState, serverName: 
 
 export function updateServerMetadata(state: McpExtensionState, serverName: string): void {
   const connection = state.manager.getConnection(serverName);
-  if (!connection || connection.status !== "connected") return;
+  if (!connection || connection.status !== "connected") {
+    state.toolMetadata.delete(serverName);
+    state.resourceCounts?.delete(serverName);
+    state.directToolCounts?.delete(serverName);
+    return;
+  }
 
   const definition = state.config.mcpServers[serverName];
   if (!definition) return;
@@ -566,7 +571,6 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
 export function updateMetadataCache(
   state: McpExtensionState,
   serverName: string,
-  options: { preserveEmptyResources?: boolean } = {},
 ): void {
   if (state.provisionalInstalls?.has(serverName)) return;
   const connection = state.manager.getConnection(serverName);
@@ -587,10 +591,9 @@ export function updateMetadataCache(
 
   if (
     definition.exposeResources !== false &&
-    resources.length === 0 &&
+    connection.resourceDiscoveryFailed === true &&
     existingEntry?.resources?.length &&
-    existingEntry.configHash === configHash &&
-    options.preserveEmptyResources !== false
+    isServerCacheValid(existingEntry, definition)
   ) {
     resources = existingEntry.resources;
   }

@@ -3,8 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { McpServerManager } from "../server-manager.ts";
-import { computeServerHash, isServerCacheValid, loadMetadataCache } from "../metadata-cache.ts";
+import { computeServerHash, isServerCacheValid, loadMetadataCache, saveMetadataCache } from "../metadata-cache.ts";
 import { updateMetadataCache } from "../init.ts";
+import { resolveDirectTools } from "../direct-tools.ts";
 import type { ServerCacheEntry, ServerEntry } from "../types.ts";
 
 const BASE_TIME = 1_700_000_000_000;
@@ -91,5 +92,70 @@ describe("metadata cache ttl hints", () => {
     const cached = loadMetadataCache()?.servers.demo;
     expect(cached).toMatchObject({ ttlMs: 5_000, cacheScope: "private" });
     expect(cached?.tools[0]).toEqual({ name: "search" });
+  });
+
+  it("persists a successful empty resource list as authoritative across reload", () => {
+    const server = { ...definition(), directTools: true as const };
+    saveMetadataCache({
+      version: 1,
+      servers: {
+        demo: {
+          ...entry(server, 0),
+          resources: [{ name: "old", uri: "file://old" }],
+        },
+      },
+    });
+
+    updateMetadataCache({
+      config: { mcpServers: { demo: server } },
+      manager: {
+        getConnection: () => ({
+          status: "connected",
+          tools: [{ name: "search" }],
+          resources: [],
+          resourceDiscoveryFailed: false,
+          prompts: [],
+        }),
+      },
+    } as any, "demo");
+
+    const reloaded = loadMetadataCache()?.servers.demo;
+    expect(reloaded?.resources).toEqual([]);
+    expect(reloaded && isServerCacheValid(reloaded, server)).toBe(true);
+    expect(resolveDirectTools({ mcpServers: { demo: server } }, loadMetadataCache(), "server")
+      .map(tool => tool.originalName)).not.toContain("read_old");
+  });
+
+  it("does not revive invalid zero-TTL resources after failed discovery", () => {
+    const server = { ...definition(), directTools: true as const };
+    saveMetadataCache({
+      version: 1,
+      servers: {
+        demo: {
+          ...entry(server, 0, 0),
+          resources: [{ name: "old", uri: "file://old" }],
+        },
+      },
+    });
+
+    updateMetadataCache({
+      config: { mcpServers: { demo: server } },
+      manager: {
+        getConnection: () => ({
+          status: "connected",
+          tools: [{ name: "search" }],
+          resources: [],
+          resourceDiscoveryFailed: true,
+          prompts: [],
+        }),
+      },
+    } as any, "demo");
+
+    const reloaded = loadMetadataCache()?.servers.demo;
+    expect(reloaded?.resources).toEqual([]);
+    expect(reloaded).not.toHaveProperty("ttlMs");
+    expect(reloaded && isServerCacheValid(reloaded, server)).toBe(true);
+    expect(resolveDirectTools({ mcpServers: { demo: server } }, loadMetadataCache(), "server")
+      .map(tool => tool.originalName)).not.toContain("read_old");
   });
 });
