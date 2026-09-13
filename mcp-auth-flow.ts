@@ -1032,7 +1032,9 @@ export async function getValidToken(
     return null
   }
 
-  const expired = await isTokenExpired(serverName, authStorageOptions)
+  const expired = entry.tokens.expiresAt
+    ? entry.tokens.expiresAt < Date.now() / 1000
+    : false
   if (expired === false) {
     return entry.tokens
   }

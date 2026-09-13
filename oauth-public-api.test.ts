@@ -58,6 +58,24 @@ describe("public OAuth token API", () => {
     });
   });
 
+  it("uses one token snapshot for expiry and return decisions", async () => {
+    const serverUrl = "https://jira.example.com/mcp";
+    await updateMcpOAuthTokensForUrl("jira", serverUrl, {
+      accessToken: "expired-access",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() / 1000 - 60,
+    });
+
+    const pending = getMcpOAuthTokensForUrl("jira", serverUrl);
+    await updateMcpOAuthTokensForUrl("jira", serverUrl, {
+      accessToken: "current-access",
+      expiresAt: Date.now() / 1000 + 3600,
+    });
+
+    assert.strictEqual(await pending, undefined);
+    assert.strictEqual((await getMcpOAuthTokensForUrl("jira", serverUrl))?.accessToken, "current-access");
+  });
+
   it("does not expose client info or OAuth flow secrets", () => {
     saveAuthEntry("jira", {
       tokens: { accessToken: "access-1" },

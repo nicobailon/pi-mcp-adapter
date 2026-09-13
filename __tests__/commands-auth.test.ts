@@ -169,12 +169,22 @@ describe("authenticateServer", () => {
     }
   });
 
-  it("reports credential removal failures without escaping the logout command boundary", async () => {
-    mocks.removeAuth.mockRejectedValueOnce(new Error("simulated secure credential store unavailable"));
+  it("keeps credentials when removal fails after disconnect", async () => {
+    const events: string[] = [];
+    let connected = true;
+    let credentialsPresent = true;
+    mocks.removeAuth.mockImplementationOnce(async () => {
+      events.push("remove");
+      expect(connected).toBe(false);
+      throw new Error("simulated secure credential store unavailable");
+    });
     const ui = { notify: vi.fn() };
     const { logoutServer } = await import("../commands.ts");
 
-    const close = vi.fn();
+    const close = vi.fn(async () => {
+      events.push("close");
+      connected = false;
+    });
     const result = await logoutServer("sentry", {
       config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
       authStorageOptions: {},
@@ -182,27 +192,42 @@ describe("authenticateServer", () => {
     } as any, { hasUI: true, mode: "tui", ui } as any);
 
     expect(result).toEqual({ ok: false, message: "simulated secure credential store unavailable" });
-    expect(close).not.toHaveBeenCalled();
+    expect(events).toEqual(["close", "remove"]);
+    expect(connected).toBe(false);
+    expect(credentialsPresent).toBe(true);
     expect(ui.notify).toHaveBeenCalledWith(
       'Failed to clear OAuth credentials for "sentry": simulated secure credential store unavailable',
       "error",
     );
   });
 
-  it("reports a close failure accurately after credentials were removed", async () => {
-    mocks.removeAuth.mockResolvedValueOnce(undefined);
+  it("keeps credentials when disconnect fails before removal", async () => {
+    const events: string[] = [];
+    let connected = true;
+    let credentialsPresent = true;
+    mocks.removeAuth.mockImplementationOnce(async () => {
+      events.push("remove");
+      credentialsPresent = false;
+    });
     const ui = { notify: vi.fn() };
     const { logoutServer } = await import("../commands.ts");
 
+    const close = vi.fn(async () => {
+      events.push("close");
+      throw new Error("close failed");
+    });
     const result = await logoutServer("sentry", {
       config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
       authStorageOptions: {},
-      manager: { close: vi.fn(async () => { throw new Error("close failed"); }) },
+      manager: { close },
     } as any, { hasUI: true, mode: "tui", ui } as any);
 
     expect(result).toEqual({ ok: false, message: "close failed" });
+    expect(events).toEqual(["close"]);
+    expect(connected).toBe(true);
+    expect(credentialsPresent).toBe(true);
     expect(ui.notify).toHaveBeenCalledWith(
-      'OAuth credentials were cleared for "sentry", but its connection could not be closed: close failed',
+      'Failed to disconnect OAuth server "sentry": close failed',
       "error",
     );
   });
