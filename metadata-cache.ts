@@ -35,6 +35,12 @@ import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visib
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Runtime-only provenance for catalogs assembled from active MCP connections.
+// A WeakMap keeps the marker impossible to serialize into mcp-cache.json: a
+// server's live response may be authoritative now even when ttlMs: 0 makes the
+// persisted copy deliberately unusable on the next cache read.
+const authoritativeMetadataServers = new WeakMap<MetadataCache, ReadonlySet<string>>();
+
 export type { CachedPrompt, CachedResource, CachedTool, MetadataCache, ServerCacheEntry } from "./types.ts";
 
 export function getMetadataCachePath(): string {
@@ -112,6 +118,30 @@ export function computeServerHash(definition: ServerEntry, environment: NodeJS.P
   return createHash("sha256").update(normalized).digest("hex");
 }
 
+export function markMetadataServersAuthoritative(
+  cache: MetadataCache,
+  serverNames: Iterable<string>,
+): MetadataCache {
+  authoritativeMetadataServers.set(cache, new Set(serverNames));
+  return cache;
+}
+
+/**
+ * Whether a server entry can be used by the current metadata consumer.
+ * Persistent entries still obey cache validity; only an explicitly marked,
+ * runtime-only live overlay bypasses age and TTL checks.
+ */
+export function isServerMetadataUsable(
+  cache: MetadataCache,
+  serverName: string,
+  definition: ServerEntry,
+): boolean {
+  const entry = cache.servers[serverName];
+  if (!entry) return false;
+  return authoritativeMetadataServers.get(cache)?.has(serverName) === true
+    || isServerCacheValid(entry, definition);
+}
+
 export function isServerCacheValid(
   entry: ServerCacheEntry,
   definition: ServerEntry,
@@ -182,8 +212,7 @@ export function getMissingConfiguredDirectToolServers(
 
     if (!hasDirectTools) continue;
 
-    const serverCache = cache?.servers?.[serverName];
-    if (!serverCache || !isServerCacheValid(serverCache, definition)) {
+    if (!cache || !isServerMetadataUsable(cache, serverName, definition)) {
       missing.push(serverName);
     }
   }
@@ -273,7 +302,7 @@ export function createCachedToolSelectorCandidateIndex(
   const candidates = new Set<string>();
   for (const [serverName, definition] of Object.entries(configuredServers)) {
     const entry = cache.servers[serverName];
-    if (!entry || !isServerCacheValid(entry, definition) || isServerDisabled(definition)) continue;
+    if (!entry || !isServerMetadataUsable(cache, serverName, definition) || isServerDisabled(definition)) continue;
     const effectivePrefix = resolveToolPrefix(definition, prefix);
     for (const tool of entry.tools ?? []) {
       if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;

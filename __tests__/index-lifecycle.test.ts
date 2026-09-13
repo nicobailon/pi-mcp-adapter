@@ -1142,6 +1142,83 @@ describe("mcpAdapter session lifecycle", () => {
     expect(result.details).toMatchObject({ mode: "install", error: "validation_failed" });
   });
 
+  it("hot-loads zero-TTL live tools and resources while leaving the disk entry non-cacheable", async () => {
+    const actualDirectTools = await vi.importActual<typeof import("../direct-tools.ts")>("../direct-tools.ts");
+    const actualCache = await vi.importActual<typeof import("../metadata-cache.ts")>("../metadata-cache.ts");
+    const config = {
+      settings: { disableProxyTool: true as const, scriptMode: false },
+      mcpServers: {
+        demo: {
+          url: "https://demo.example.com/mcp",
+          directTools: ["lookup", "read_guide"],
+        },
+      },
+    };
+    const diskEntry = {
+      configHash: actualCache.computeServerHash(config.mcpServers.demo),
+      cachedAt: Date.now(),
+      ttlMs: 0,
+      tools: [{ name: "lookup", description: "Lookup from disk" }],
+      resources: [{ name: "guide", uri: "file://disk-guide" }],
+    };
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { demo: diskEntry } });
+    mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
+    mocks.getMissingConfiguredDirectToolServers.mockImplementation(actualDirectTools.getMissingConfiguredDirectToolServers);
+
+    const connections = new Map<string, any>();
+    const state = createState();
+    state.config = config;
+    state.manager.getAllConnections = () => new Map(connections);
+    state.manager.getConnection.mockImplementation((name: string) => connections.get(name));
+    mocks.initializeMcp.mockResolvedValue(state);
+    const connectResult = { content: [{ type: "text", text: "connected" }], details: { mode: "connect" } };
+    mocks.executeConnect.mockImplementation(async (currentState: any) => {
+      connections.set("demo", {
+        status: "connected",
+        tools: [
+          { name: "lookup", description: "Lookup live", inputSchema: { type: "object" } },
+          { name: "unselected", description: "Not selected" },
+        ],
+        resources: [{ name: "guide", uri: "file://live-guide", description: "Live guide" }],
+        toolListHints: { ttlMs: 0 },
+      });
+      await currentState.onToolMetadataUpdated?.("demo", "proxy-connect");
+      return connectResult;
+    });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(actualCache.isServerCacheValid(diskEntry, config.mcpServers.demo)).toBe(false);
+    expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "demo_lookup" }));
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+
+    const first = await proxyTool.execute("call-1", { connect: "demo" });
+    expect(first.addedToolNames).toEqual(["demo_lookup", "demo_read_guide"]);
+    expect(activeTools()).toEqual(["bash", "demo_lookup", "demo_read_guide"]);
+    expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "demo_unselected" }));
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
+      name: "demo_read_guide",
+      description: "Live guide",
+    }));
+
+    const second = await proxyTool.execute("call-2", { connect: "demo" });
+    expect(second).not.toHaveProperty("addedToolNames");
+    expect(activeTools()).toEqual(["bash", "demo_lookup", "demo_read_guide"]);
+
+    const liveConnection = connections.get("demo")!;
+    liveConnection.tools = [{ name: "replacement", description: "Not selected" }];
+    liveConnection.resources = [];
+    await state.onToolMetadataUpdated?.("demo", "tools-list-changed");
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+  });
+
   it.each(["connect", "install"])("reports direct tools discovered by proxy %s as addedToolNames without rewriting active tools", async (action) => {
     const config = {
       mcpServers: {
