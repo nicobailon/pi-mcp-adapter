@@ -40,7 +40,7 @@ describe("McpOAuthProvider clientMetadata scope", () => {
     const preRegistered = new McpOAuthProvider(
       "cimd-preregistered-test",
       "https://api.example.com/mcp",
-      { clientId: "registered-client", clientMetadataUrl },
+      { clientId: "registered-client", clientSecret: "secret", clientMetadataUrl },
       { onRedirect: async () => {} },
     );
 
@@ -57,6 +57,18 @@ describe("McpOAuthProvider clientMetadata scope", () => {
         { onRedirect: async () => {} },
       )).toThrow(/clientMetadataUrl must be a valid HTTPS URL with a non-root pathname/);
     }
+  });
+
+  it("rejects a client secret with CIMD unless an explicit client ID takes precedence", () => {
+    expect(() => new McpOAuthProvider(
+      "ambiguous-cimd-secret",
+      "https://api.example.com/mcp",
+      {
+        clientMetadataUrl: "https://client.example.com/oauth/client.json",
+        clientSecret: "secret",
+      },
+      { onRedirect: async () => {} },
+    )).toThrow(/clientSecret requires an explicit clientId/);
   });
 });
 

@@ -282,6 +282,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.assertAuthority = authority ?? captureOAuthAuthority(serverName)
     this.assertAuthority()
     validateClientMetadataUrl(config.clientMetadataUrl)
+    if (config.clientMetadataUrl !== undefined && config.clientSecret !== undefined && !config.clientId) {
+      throw new Error("OAuth clientSecret requires an explicit clientId when clientMetadataUrl is configured")
+    }
     if (config.clientId === undefined && config.clientMetadataUrl !== undefined) {
       this.clientMetadataUrl = config.clientMetadataUrl
     }

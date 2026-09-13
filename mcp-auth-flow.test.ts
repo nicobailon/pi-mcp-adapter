@@ -417,6 +417,33 @@ describe("mcp-auth-flow", () => {
       }
     })
 
+    it("should reject clientMetadataUrl with clientSecret unless clientId is explicit", () => {
+      for (const grantType of ["authorization_code", "client_credentials"] as const) {
+        assert.throws(
+          () => extractOAuthConfig({
+            url: "https://api.example.com/mcp",
+            auth: "oauth",
+            oauth: {
+              grantType,
+              clientMetadataUrl: "https://client.example.com/oauth/client.json",
+              clientSecret: "secret",
+            },
+          }),
+          /clientSecret requires an explicit clientId when clientMetadataUrl is configured/,
+        )
+      }
+
+      assert.doesNotThrow(() => extractOAuthConfig({
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: {
+          clientId: "registered-client",
+          clientMetadataUrl: "https://client.example.com/oauth/client.json",
+          clientSecret: "secret",
+        },
+      }))
+    })
+
     it("should reject malformed OAuth clientMetadataUrl values", () => {
       for (const clientMetadataUrl of ["", "  ", "http://client.example.com/client.json", "https://client.example.com/", "not a url"]) {
         assert.throws(

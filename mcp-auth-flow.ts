@@ -210,6 +210,9 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     validateClientMetadataUrl(clientMetadataUrl)
     config.clientMetadataUrl = clientMetadataUrl
   }
+  if (config.clientMetadataUrl !== undefined && config.clientSecret !== undefined && !config.clientId) {
+    throw new Error("OAuth clientSecret requires an explicit clientId when clientMetadataUrl is configured")
+  }
   if (definition.oauth?.scope !== undefined) {
     if (typeof definition.oauth.scope !== "string") throw new Error("OAuth scope must be a string")
     config.scope = interpolateEnvVars(definition.oauth.scope)
