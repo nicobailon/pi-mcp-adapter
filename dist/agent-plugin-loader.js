@@ -22,7 +22,7 @@ const HTTP_FIELDS = new Set(["type", "url", "headers"]);
 const STRING_MANIFEST_FIELDS = ["version", "description", "homepage", "repository", "license"];
 const AUTHOR_FIELDS = new Set(["name", "email", "url"]);
 const BUILT_IN_AGENT_PLUGIN = Symbol("built-in-agent-plugin");
-export function markBuiltInAgentPlugin(definition) {
+function markBuiltInAgentPlugin(definition) {
     definition[BUILT_IN_AGENT_PLUGIN] = true;
     return definition;
 }

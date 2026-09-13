@@ -26,7 +26,7 @@ const AUTHOR_FIELDS = new Set(["name", "email", "url"]);
 const BUILT_IN_AGENT_PLUGIN = Symbol("built-in-agent-plugin");
 type BuiltInAgentPluginEntry = ServerEntry & { [BUILT_IN_AGENT_PLUGIN]?: true };
 
-export function markBuiltInAgentPlugin(definition: ServerEntry): ServerEntry {
+function markBuiltInAgentPlugin(definition: ServerEntry): ServerEntry {
   (definition as BuiltInAgentPluginEntry)[BUILT_IN_AGENT_PLUGIN] = true;
   return definition;
 }
