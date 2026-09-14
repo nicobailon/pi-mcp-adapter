@@ -3,7 +3,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { markBuiltInAgentPlugin } from "./agent-plugin-provenance.ts";
 import type { McpConfig, ServerEntry } from "./types.ts";
-import { resolveRealContainedPath } from "./path-utils.ts";
+import { resolveRealContainedPath } from "./utils.ts";
 
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";

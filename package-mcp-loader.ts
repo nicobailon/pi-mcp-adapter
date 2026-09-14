@@ -2,8 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { getAgentDir, getConfigDirName } from "./agent-dir.ts";
 import type { McpConfig, ServerEntry } from "./types.ts";
-import { parseJsonWithComments } from "./utils.ts";
-import { resolveContainedPath, resolveRealContainedPath } from "./path-utils.ts";
+import { parseJsonWithComments, resolveContainedPath, resolveRealContainedPath } from "./utils.ts";
 
 interface PackageSetting {
   source: string;
