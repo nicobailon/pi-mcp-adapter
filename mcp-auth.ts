@@ -260,13 +260,6 @@ const writeFailingAuthSecretStore: AuthSecretStore = {
   },
 };
 
-const removeFailingAuthSecretStore: AuthSecretStore = {
-  ...memoryAuthSecretStore,
-  remove() {
-    throw new Error('simulated secure credential store remove failure');
-  },
-};
-
 const unavailableAuthSecretStore: AuthSecretStore = {
   read() {
     testAuthSecretStoreReadCount++;
@@ -327,7 +320,6 @@ function getAuthSecretStore(): AuthSecretStore {
   if (process.env[TEST_AUTH_STORE_ENV] === 'memory') return memoryAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'sizelimited') return sizeLimitedAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'writefailing') return writeFailingAuthSecretStore;
-  if (process.env[TEST_AUTH_STORE_ENV] === 'removefailing') return removeFailingAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'unavailable') return unavailableAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'keyrevoked') return keyRevokedAuthSecretStore;
   return keyringAuthSecretStore;
@@ -667,15 +659,9 @@ function tryRemoveChunkPayloads(store: AuthSecretStore, account: string, manifes
   }
 }
 
-function getAuthSecretChunkThreshold(): number | undefined {
-  if (process.env[TEST_AUTH_STORE_ENV] === 'sizelimited') return AUTH_SECRET_CHUNK_SIZE;
-  if (process.platform === 'win32') return AUTH_SECRET_CHUNK_SIZE;
-  return undefined;
-}
-
 function shouldChunkAuthPayload(payload: string): boolean {
-  const threshold = getAuthSecretChunkThreshold();
-  return threshold !== undefined && payload.length > threshold;
+  return payload.length > AUTH_SECRET_CHUNK_SIZE
+    && (process.platform === 'win32' || process.env[TEST_AUTH_STORE_ENV] === 'sizelimited');
 }
 
 function getAuthEntryChunkDigest(payload: string): string {
@@ -703,27 +689,23 @@ function createChunkManifest(payload: string, chunkCount: number): AuthEntryChun
 }
 
 function readChunkedAuthEntry(store: AuthSecretStore, serverName: string, account: string, manifest: AuthEntryChunkManifest): AuthEntry {
-  const chunks = getAuthEntryChunkAccounts(account, manifest).map((chunkAccount) => {
-    try {
+  let payload: string;
+  try {
+    payload = getAuthEntryChunkAccounts(account, manifest).map((chunkAccount) => {
       const chunk = store.read(chunkAccount);
       if (chunk === undefined) {
         throw new Error(`Missing OAuth credential chunk ${chunkAccount} for ${serverName}`);
       }
       return chunk;
-    } catch (error) {
-      throw new OAuthCredentialStoreError(
-        `Failed to read OAuth credentials for ${serverName} from the OS secure credential store`,
-        'read',
-        error,
-      );
+    }).join('');
+    if (getAuthEntryChunkDigest(payload) !== manifest.chunkDigest) {
+      throw new Error('OAuth credential chunk integrity check failed');
     }
-  });
-  const payload = chunks.join('');
-  if (getAuthEntryChunkDigest(payload) !== manifest.chunkDigest) {
+  } catch (error) {
     throw new OAuthCredentialStoreError(
       `Failed to read OAuth credentials for ${serverName} from the OS secure credential store`,
       'read',
-      new Error('OAuth credential chunk integrity check failed'),
+      error,
     );
   }
   return parseAuthEntryPayload(serverName, payload, 'OS secure credential store chunks');
@@ -813,7 +795,7 @@ function readAuthEntryFromStore(
   store: AuthSecretStore,
   serverName: string,
   options?: AuthStorageOptions,
-  behavior: { migrateLegacy?: boolean; compactChunked?: boolean } = {},
+  behavior: { migrateLegacy?: boolean } = {},
 ): AuthEntry | undefined {
   const account = getAuthEntryAccount(serverName);
   let payload: string | undefined;
@@ -833,7 +815,7 @@ function readAuthEntryFromStore(
       ? readChunkedAuthEntry(store, serverName, account, manifest)
       : parseAuthEntryPayload(serverName, payload, 'OS secure credential store');
     removeLegacyAuthEntry(serverName, options);
-    if (manifest && behavior.compactChunked !== false && !shouldChunkAuthPayload(JSON.stringify(entry))) {
+    if (manifest && behavior.migrateLegacy !== false && !shouldChunkAuthPayload(JSON.stringify(entry))) {
       writeSecureAuthEntryToStore(store, serverName, entry);
     }
     return entry;
@@ -851,7 +833,7 @@ function readAuthEntryFromStore(
 function readAuthEntry(
   serverName: string,
   options?: AuthStorageOptions,
-  behavior: { migrateLegacy?: boolean; compactChunked?: boolean } = {},
+  behavior: { migrateLegacy?: boolean } = {},
 ): AuthEntry | undefined {
   // Status-only reads deliberately bypass the cache because they do not
   // migrate legacy entries.
@@ -907,7 +889,7 @@ export function inspectAuthForUrl(
   options?: AuthStorageOptions,
 ): OAuthCredentialStatus {
   try {
-    const entry = readAuthEntry(serverName, options, { migrateLegacy: false, compactChunked: false });
+    const entry = readAuthEntry(serverName, options, { migrateLegacy: false });
     if (!entry?.serverUrl || entry.serverUrl !== serverUrl) return { status: 'absent' };
     return { status: 'present', entry };
   } catch (error) {
