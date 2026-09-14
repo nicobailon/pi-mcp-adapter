@@ -403,6 +403,68 @@ describe("mcp-auth-flow", () => {
       )
     })
 
+    it("should accept, interpolate, and trim an HTTPS OAuth clientMetadataUrl", () => {
+      process.env.PI_MCP_TEST_CIMD_HOST = "client.example.com"
+      try {
+        const config = extractOAuthConfig({
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { clientMetadataUrl: "  https://${PI_MCP_TEST_CIMD_HOST}/oauth/client.json  " },
+        })
+        assert.strictEqual(config.clientMetadataUrl, "https://client.example.com/oauth/client.json")
+      } finally {
+        delete process.env.PI_MCP_TEST_CIMD_HOST
+      }
+    })
+
+    it("should reject clientMetadataUrl with clientSecret unless clientId is explicit", () => {
+      for (const grantType of ["authorization_code", "client_credentials"] as const) {
+        assert.throws(
+          () => extractOAuthConfig({
+            url: "https://api.example.com/mcp",
+            auth: "oauth",
+            oauth: {
+              grantType,
+              clientMetadataUrl: "https://client.example.com/oauth/client.json",
+              clientSecret: "secret",
+            },
+          }),
+          /clientSecret requires an explicit clientId when clientMetadataUrl is configured/,
+        )
+      }
+
+      assert.doesNotThrow(() => extractOAuthConfig({
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: {
+          clientId: "registered-client",
+          clientMetadataUrl: "https://client.example.com/oauth/client.json",
+          clientSecret: "secret",
+        },
+      }))
+    })
+
+    it("should reject malformed OAuth clientMetadataUrl values", () => {
+      for (const clientMetadataUrl of ["", "  ", "http://client.example.com/client.json", "https://client.example.com/", "not a url"]) {
+        assert.throws(
+          () => extractOAuthConfig({
+            url: "https://api.example.com/mcp",
+            auth: "oauth",
+            oauth: { clientMetadataUrl },
+          }),
+          /clientMetadataUrl must (not be empty|be a valid HTTPS URL with a non-root pathname)/,
+        )
+      }
+      assert.throws(
+        () => extractOAuthConfig({
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { clientMetadataUrl: 123 as unknown as string },
+        }),
+        /clientMetadataUrl must be a string/,
+      )
+    })
+
     it("should accept and trim an absolute https OAuth authServerMetadataUrl", () => {
       const config = extractOAuthConfig({
         url: "https://api.example.com/mcp",

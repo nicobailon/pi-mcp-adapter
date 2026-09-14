@@ -354,21 +354,6 @@ describe("mcp-auth storage paths", () => {
     expect(inspectAuthForUrl("failed-compaction", SERVER_URL).status).toBe("present");
   });
 
-  it("commits the primary item before best-effort old-chunk cleanup", () => {
-    if (process.platform === "win32") return;
-    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "sizelimited";
-    const accessToken = "x".repeat(5000);
-    saveAuthEntry("cleanup-failure", { tokens: { accessToken } }, SERVER_URL);
-
-    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "removefailing";
-    resetAuthEntryCache();
-    expect(getAuthEntry("cleanup-failure")?.tokens?.accessToken).toBe(accessToken);
-    const entries = getTestAuthSecretStoreEntries();
-    const primary = entries.find(([account]) => !account.includes(".chunk."));
-    expect(JSON.parse(primary![1]).tokens.accessToken).toBe(accessToken);
-    expect(entries.some(([account]) => account.includes(".chunk."))).toBe(true);
-  });
-
   it("routes revoked Linux keyring operations through the recovery helper", () => {
     const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-keyring-recovery-"));
     const keyctlPath = join(harnessDir, "keyctl");

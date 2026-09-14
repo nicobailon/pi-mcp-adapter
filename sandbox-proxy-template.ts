@@ -12,6 +12,7 @@ export const SANDBOX_RESOURCE_PATH_PREFIX = "/resource/";
 export interface SandboxProxyTemplateInput {
   parentOrigin: string;
   resourcePath: string;
+  allowAttribute: string;
 }
 
 /**
@@ -21,6 +22,7 @@ export interface SandboxProxyTemplateInput {
 export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string {
   const parentOrigin = safeInlineJSON(input.parentOrigin);
   const resourcePath = safeInlineJSON(input.resourcePath);
+  const allowAttribute = escapeHtmlAttribute(input.allowAttribute);
 
   return `<!doctype html>
 <html lang="en">
@@ -34,13 +36,12 @@ export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string 
   </style>
 </head>
 <body>
-  <iframe id="mcp-app" title="MCP App" sandbox="${SANDBOX_INNER_SANDBOX}" referrerpolicy="no-referrer"></iframe>
+  <iframe id="mcp-app" title="MCP App" sandbox="${SANDBOX_INNER_SANDBOX}" allow="${allowAttribute}" referrerpolicy="no-referrer"></iframe>
   <script>
     const EXPECTED_PARENT_ORIGIN = ${parentOrigin};
     const RESOURCE_PATH = ${resourcePath};
     const SANDBOX_PROXY_READY_METHOD = "ui/notifications/sandbox-proxy-ready";
     const SANDBOX_RESOURCE_READY_METHOD = "ui/notifications/sandbox-resource-ready";
-    const INNER_SANDBOX = ${safeInlineJSON(SANDBOX_INNER_SANDBOX)};
     const MAX_PENDING_MESSAGES = 64;
     const innerFrame = document.getElementById("mcp-app");
     const pendingToInner = [];
@@ -76,45 +77,13 @@ export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string 
       }
     };
 
-    const safeSandbox = (requested) => {
-      const requestedTokens = typeof requested === "string" ? requested.split(/\\s+/) : [];
-      const allowedTokens = new Set(INNER_SANDBOX.split(" "));
-      const tokens = requestedTokens.filter((token) => allowedTokens.has(token));
-      // Provider HTML needs both script execution and a real proxy-origin
-      // storage context. Never accept popup escape or top-navigation tokens.
-      return [...new Set([
-        "allow-scripts",
-        "allow-same-origin",
-        ...tokens,
-      ])].filter((token) => allowedTokens.has(token)).join(" ");
-    };
-
-    const buildAllowAttribute = (permissions) => {
-      if (!isObject(permissions) || Array.isArray(permissions)) return "";
-      const allowed = [];
-      if (permissions.camera) allowed.push("camera");
-      if (permissions.microphone) allowed.push("microphone");
-      if (permissions.geolocation) allowed.push("geolocation");
-      if (permissions.clipboardWrite) allowed.push("clipboard-write");
-      return allowed.join("; ");
-    };
-
-    const loadResource = (params) => {
-      if (!isObject(params)) return;
-      innerFrame.setAttribute("sandbox", safeSandbox(params.sandbox));
-      const allow = buildAllowAttribute(params.permissions);
-      if (allow) innerFrame.setAttribute("allow", allow);
-      else innerFrame.removeAttribute("allow");
-      innerReady = false;
-      innerFrame.setAttribute("src", RESOURCE_PATH);
-    };
-
     window.addEventListener("message", (event) => {
       if (isMessageFromParent(event)) {
         const data = event.data;
         if (!isObject(data)) return;
         if (data.method === SANDBOX_RESOURCE_READY_METHOD) {
-          loadResource(data.params);
+          innerReady = false;
+          innerFrame.setAttribute("src", RESOURCE_PATH);
           return;
         }
         if (data.method === SANDBOX_PROXY_READY_METHOD) return;
@@ -138,6 +107,10 @@ export function buildSandboxProxyHtml(input: SandboxProxyTemplateInput): string 
   </script>
 </body>
 </html>`;
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /**

@@ -124,6 +124,11 @@ if (context.client_id) {
     ...(context.client_secret ? { clientSecret: context.client_secret } : {}),
   }
 }
+if (scenario === "auth/basic-cimd") {
+  definition.oauth = {
+    clientMetadataUrl: "https://conformance-test.local/client-metadata.json",
+  }
+}
 if (scenario.startsWith("auth/client-credentials")) {
   definition.oauth = { ...(definition.oauth ?? {}), grantType: "client_credentials" }
 }

@@ -1,6 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { McpConfig, ServerEntry } from "./types.ts";
 export declare function parseJsonWithComments(raw: string): unknown;
+/** Resolve a candidate only when its real path stays within the real root. */
+export declare function resolveRealContainedPath(root: string, candidate: string, allowMissing?: boolean): string | null;
+export declare function resolveContainedPath(root: string, candidate: string): string | null;
 export declare function stableStringify(value: unknown): string;
 export declare function openUrl(pi: ExtensionAPI, url: string, browser?: string, signal?: AbortSignal): Promise<void>;
 export declare function openPath(pi: ExtensionAPI, targetPath: string): Promise<void>;

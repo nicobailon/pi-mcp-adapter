@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import { getAgentDir, getConfigDirName } from "./agent-dir.js";
-import { parseJsonWithComments } from "./utils.js";
+import { parseJsonWithComments, resolveContainedPath, resolveRealContainedPath } from "./utils.js";
 export function loadPackageMcpConfigs(cwd = process.cwd()) {
     const mcpServers = {};
     const seen = new Set();
@@ -129,23 +129,11 @@ function readOptionalJson(path, description) {
         return undefined;
     return readRequiredJson(path, description);
 }
-function resolveContainedPath(root, path) {
-    const resolved = resolve(root, path);
-    const rel = relative(root, resolved);
-    return rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep) && !isAbsolute(rel)) ? resolved : null;
-}
 function resolvePackageConfigPath(packageRoot, path) {
     const lexicalPath = resolveContainedPath(packageRoot, path);
     if (!lexicalPath || !existsSync(lexicalPath) || !statSync(lexicalPath).isFile())
         return null;
-    try {
-        const realPackageRoot = realpathSync(packageRoot);
-        const realConfigPath = realpathSync(lexicalPath);
-        return resolveContainedPath(realPackageRoot, realConfigPath);
-    }
-    catch {
-        return null;
-    }
+    return resolveRealContainedPath(packageRoot, lexicalPath);
 }
 function formatPackageName(name) {
     return name.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^[_-]+|[_-]+$/g, "") || "package";

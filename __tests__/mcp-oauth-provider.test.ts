@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { UnauthorizedError } from "@modelcontextprotocol/client";
+import { auth as runSdkAuth, UnauthorizedError } from "@modelcontextprotocol/client";
 import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
 import { getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
 
@@ -28,6 +28,26 @@ describe("McpOAuthProvider clientMetadata scope", () => {
 
     expect(provider.clientMetadata).not.toHaveProperty("scope");
   });
+
+  it("exposes a valid CIMD URL unless a pre-registered client ID takes precedence", () => {
+    const clientMetadataUrl = "https://client.example.com/oauth/client.json";
+    const provider = new McpOAuthProvider(
+      "cimd-test",
+      "https://api.example.com/mcp",
+      { clientMetadataUrl },
+      { onRedirect: async () => {} },
+    );
+    const preRegistered = new McpOAuthProvider(
+      "cimd-preregistered-test",
+      "https://api.example.com/mcp",
+      { clientId: "registered-client", clientSecret: "secret", clientMetadataUrl },
+      { onRedirect: async () => {} },
+    );
+
+    expect(provider.clientMetadataUrl).toBe(clientMetadataUrl);
+    expect(preRegistered.clientMetadataUrl).toBeUndefined();
+  });
+
 });
 
 describe("McpOAuthProvider addClientAuthentication", () => {
@@ -197,6 +217,131 @@ describe("McpOAuthProvider discovery state", () => {
     } else {
       process.env.MCP_OAUTH_DIR = originalOAuthDir;
     }
+  });
+
+  it("preserves a stored DCR refresh pair before transitioning to CIMD after invalidation", async () => {
+    const clientMetadataUrl = "https://client.example.com/oauth/client.json";
+    const oldClientId = "old-dynamic-registration";
+    saveAuthEntry("cimd-migration", {
+      clientInfo: {
+        clientId: oldClientId,
+        redirectUris: ["http://localhost:19876/callback"],
+      },
+      tokens: {
+        accessToken: "expired-dcr-access",
+        refreshToken: "dcr-refresh-token",
+        expiresAt: Date.now() / 1000 - 60,
+      },
+      serverUrl,
+    }, serverUrl);
+
+    let authorizationUrl: URL | undefined;
+    const provider = new McpOAuthProvider(
+      "cimd-migration",
+      serverUrl,
+      { clientMetadataUrl },
+      { onRedirect: async url => { authorizationUrl = url; } },
+      {},
+      undefined,
+      "migration-state",
+    );
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: "https://auth.example.com",
+      resourceMetadata: { resource: serverUrl },
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        client_id_metadata_document_supported: true,
+      },
+    });
+
+    const tokenBodies: string[] = [];
+    const fetchFn = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("https://auth.example.com/token");
+      expect(getAuthForUrl("cimd-migration", serverUrl)).toMatchObject({
+        clientInfo: { clientId: oldClientId },
+        tokens: { accessToken: "expired-dcr-access", refreshToken: "dcr-refresh-token" },
+      });
+      tokenBodies.push(String(init?.body));
+      return new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    await expect(runSdkAuth(provider, { serverUrl, fetchFn })).resolves.toBe("REDIRECT");
+
+    expect(tokenBodies).toHaveLength(1);
+    const refreshParams = new URLSearchParams(tokenBodies[0]);
+    expect(refreshParams.get("grant_type")).toBe("refresh_token");
+    expect(refreshParams.get("refresh_token")).toBe("dcr-refresh-token");
+    expect(refreshParams.get("client_id")).toBe(oldClientId);
+    expect(authorizationUrl?.searchParams.get("client_id")).toBe(clientMetadataUrl);
+    expect(getAuthForUrl("cimd-migration", serverUrl)?.clientInfo).toMatchObject({
+      clientId: clientMetadataUrl,
+    });
+  });
+
+  it("selects CIMD immediately when stored DCR has no refresh pair to preserve", async () => {
+    const clientMetadataUrl = "https://client.example.com/oauth/client.json";
+    saveAuthEntry("cimd-no-refresh", {
+      clientInfo: {
+        clientId: "old-dynamic-registration",
+        redirectUris: ["http://localhost:19876/callback"],
+      },
+      serverUrl,
+    }, serverUrl);
+    const provider = new McpOAuthProvider(
+      "cimd-no-refresh",
+      serverUrl,
+      { clientMetadataUrl },
+      { onRedirect: async () => {} },
+    );
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: "https://auth.example.com",
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        client_id_metadata_document_supported: true,
+      },
+    });
+
+    expect(await provider.clientInformation({ issuer: "https://auth.example.com" })).toBeUndefined();
+  });
+
+  it("retains DCR when the authorization server does not advertise CIMD", async () => {
+    const clientMetadataUrl = "https://client.example.com/oauth/client.json";
+    saveAuthEntry("cimd-fallback", {
+      clientInfo: {
+        clientId: "dynamic-registration",
+        redirectUris: ["http://localhost:19876/callback"],
+      },
+      serverUrl,
+    }, serverUrl);
+    const fallbackProvider = new McpOAuthProvider(
+      "cimd-fallback",
+      serverUrl,
+      { clientMetadataUrl },
+      { onRedirect: async () => {} },
+    );
+    await fallbackProvider.saveDiscoveryState({
+      authorizationServerUrl: "https://auth.example.com",
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        client_id_metadata_document_supported: false,
+      },
+    });
+
+    expect(await fallbackProvider.clientInformation()).toMatchObject({
+      client_id: "dynamic-registration",
+    });
   });
 
   it("loads configured authorization-server metadata and binds it to the resource", async () => {

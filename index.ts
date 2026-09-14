@@ -8,7 +8,7 @@ import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { buildProxyDescription, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
-import { computeServerHash, isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, serializeResources, serializeTools, type MetadataCache } from "./metadata-cache.ts";
+import { computeServerHash, isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
 import { formatTerminalError, getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
@@ -587,45 +587,21 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   function loadToolSurfaceCache(config: McpConfig): MetadataCache | null {
-    const persistentCache = loadMetadataCache();
+    const cache = loadMetadataCache();
     const currentState = state;
-    if (!currentState) return persistentCache;
-
-    const liveConnections = callReentrant(() => [...currentState.manager.getAllConnections()]).filter(([serverName, connection]) => {
+    if (!currentState || !cache) return cache;
+    const servers = { ...cache.servers };
+    const connections = callReentrant(() => [...currentState.manager.getAllConnections()]);
+    for (const [serverName, connection] of connections) {
       const definition = config.mcpServers[serverName];
-      return connection.status === "connected"
-        && definition !== undefined
-        && !isServerDisabled(definition)
-        && computeServerHash(connection.definition) === computeServerHash(definition);
-    });
-    if (liveConnections.length === 0) return persistentCache;
-
-    const servers = { ...(persistentCache?.servers ?? {}) };
-    for (const [serverName, connection] of liveConnections) {
-      const definition = config.mcpServers[serverName];
-      if (!definition) continue;
-      const persistentEntry = persistentCache?.servers[serverName];
-      const fallbackResources = persistentEntry && isServerCacheValid(persistentEntry, definition)
-        ? persistentEntry.resources ?? []
-        : [];
-      servers[serverName] = {
-        // This valid entry exists only for the current tool-surface sync. It is
-        // never written back, so zero-TTL metadata remains unusable on reload.
-        configHash: computeServerHash(definition),
-        tools: serializeTools(connection.tools ?? []),
-        resources: definition.exposeResources === false
-          ? []
-          : connection.resourceDiscoveryFailed
-            ? fallbackResources
-            : serializeResources(connection.resources ?? []),
-        cachedAt: Date.now(),
-      };
+      const entry = servers[serverName];
+      if (connection.status !== "connected" || !entry || !definition || isServerDisabled(definition)) continue;
+      const configHash = computeServerHash(definition);
+      if (computeServerHash(connection.definition) !== configHash || entry.configHash !== configHash) continue;
+      const { ttlMs: _liveTtl, ...liveEntry } = entry;
+      servers[serverName] = liveEntry;
     }
-
-    return {
-      version: persistentCache?.version ?? 1,
-      servers,
-    };
+    return { ...cache, servers };
   }
 
   function syncToolSurface(ctx?: ExtensionContext): void {

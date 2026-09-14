@@ -129,6 +129,7 @@ export interface McpOAuthConfig {
   grantType?: "authorization_code" | "client_credentials"
   clientId?: string
   clientSecret?: string
+  clientMetadataUrl?: string
   scope?: string
   authorizationParams?: Record<string, string>
   redirectUri?: string
@@ -250,6 +251,7 @@ async function loadConfiguredDiscoveryState(
  * Implements the OAuthClientProvider interface from the MCP SDK.
  */
 export class McpOAuthProvider implements OAuthClientProvider {
+  readonly clientMetadataUrl?: string
   private readonly redirectUrlSnapshot: string | undefined
   private authFetch: OAuthFetch
   private active = true
@@ -278,6 +280,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
   ) {
     this.assertAuthority = authority ?? captureOAuthAuthority(serverName)
     this.assertAuthority()
+    if (config.clientId === undefined && config.clientMetadataUrl !== undefined) {
+      this.clientMetadataUrl = config.clientMetadataUrl
+    }
     this.authFetch = createOAuthFetch(serverUrl, undefined, runtimeSignal)
     this.flowState = initialState
     this.redirectUrlSnapshot = config.grantType === "client_credentials"
@@ -427,6 +432,22 @@ export class McpOAuthProvider implements OAuthClientProvider {
     // another runtime writes the shared persistent entry for the same name.
     const clientInfo = this.flowClientInfo ?? stored?.clientInfo
     if (clientInfo?.clientId === this.invalidatedClientId) return undefined
+
+    const clientMetadataUrl = this.clientMetadataUrl
+    const supportsClientMetadataDocument = this.flowDiscoveryState
+      ?.authorizationServerMetadata?.client_id_metadata_document_supported
+    if (clientMetadataUrl !== undefined && supportsClientMetadataDocument !== undefined) {
+      if (supportsClientMetadataDocument === true
+        && clientInfo?.clientId !== clientMetadataUrl
+        && (stored?.tokens?.refreshToken === undefined || this.invalidatedAccessToken !== undefined)) {
+        // With no DCR refresh pair to preserve, let the SDK select CIMD now.
+        return undefined
+      }
+      if (supportsClientMetadataDocument !== true && clientInfo?.clientId === clientMetadataUrl) {
+        return undefined
+      }
+    }
+
     if (clientInfo) {
       this.invalidatedClientId = undefined
       // A stored SEP-2352 issuer stub for a config-pre-registered client
@@ -437,12 +458,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
       // would let a token refresh go out with a client_id but no secret,
       // causing invalid_client and credential invalidation. Return undefined
       // so callers treat this as "no client info".
+      const isConfiguredCimd = clientMetadataUrl !== undefined
+        && clientInfo.clientId === clientMetadataUrl
       const isConfigStub = clientInfo.configPreRegistered === true
         || (clientInfo.clientSecret === undefined
           && clientInfo.clientIdIssuedAt === undefined
           && clientInfo.clientSecretExpiresAt === undefined
           && clientInfo.redirectUris === undefined)
-      if (isConfigStub) {
+      if (isConfigStub && !isConfiguredCimd) {
         return undefined
       }
       // Check if client secret has expired
@@ -654,10 +677,6 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   /** Internal connection-attempt identity check for manager cleanup. */
-  hasAuthority(authority: OAuthAuthority): boolean {
-    return this.assertAuthority === authority
-  }
-
   /**
    * Save the OAuth state parameter for CSRF protection.
    */
