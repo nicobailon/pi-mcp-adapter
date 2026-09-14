@@ -9,10 +9,8 @@ import {
   UnauthorizedError,
   type FetchLike,
   type AddClientAuthentication,
-  type OAuthClientInformationContext,
   type OAuthClientProvider,
   type OAuthDiscoveryState,
-  validateClientMetadataUrl,
 } from "@modelcontextprotocol/client"
 import type {
   OAuthClientInformationMixed,
@@ -281,13 +279,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   ) {
     this.assertAuthority = authority ?? captureOAuthAuthority(serverName)
     this.assertAuthority()
-    validateClientMetadataUrl(config.clientMetadataUrl)
-    if (config.clientMetadataUrl !== undefined && config.clientSecret !== undefined && !config.clientId) {
-      throw new Error("OAuth clientSecret requires an explicit clientId when clientMetadataUrl is configured")
-    }
-    if (config.clientId === undefined && config.clientMetadataUrl !== undefined) {
-      this.clientMetadataUrl = config.clientMetadataUrl
-    }
+    this.clientMetadataUrl = config.clientId === undefined ? config.clientMetadataUrl : undefined
     this.authFetch = createOAuthFetch(serverUrl, undefined, runtimeSignal)
     this.flowState = initialState
     this.redirectUrlSnapshot = config.grantType === "client_credentials"
@@ -395,7 +387,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Get client information (for pre-registered or dynamically registered clients).
    * Returns undefined if no client info exists or if the server URL has changed.
    */
-  async clientInformation(ctx?: OAuthClientInformationContext): Promise<OAuthClientInformationMixed | undefined> {
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
     this.throwIfInactive()
     if (this.invalidatedClientId !== undefined) {
       invalidateAuthEntryCache(this.serverName)
@@ -440,15 +432,15 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
     const clientMetadataUrl = this.clientMetadataUrl
     const supportsClientMetadataDocument = this.flowDiscoveryState
-      ?.authorizationServerMetadata?.client_id_metadata_document_supported === true
-    if (clientMetadataUrl !== undefined && ctx !== undefined) {
-      if (supportsClientMetadataDocument
+      ?.authorizationServerMetadata?.client_id_metadata_document_supported
+    if (clientMetadataUrl !== undefined && supportsClientMetadataDocument !== undefined) {
+      if (supportsClientMetadataDocument === true
         && clientInfo?.clientId !== clientMetadataUrl
-        && stored?.tokens?.refreshToken === undefined) {
+        && (stored?.tokens?.refreshToken === undefined || this.invalidatedAccessToken !== undefined)) {
         // With no DCR refresh pair to preserve, let the SDK select CIMD now.
         return undefined
       }
-      if (!supportsClientMetadataDocument && clientInfo?.clientId === clientMetadataUrl) {
+      if (supportsClientMetadataDocument !== true && clientInfo?.clientId === clientMetadataUrl) {
         return undefined
       }
     }
@@ -751,17 +743,6 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.pendingAuthAccessToken = undefined
         if (this.staleRedirectClientId !== undefined) {
           this.invalidatedClientId = this.staleRedirectClientId
-        }
-        // A newly configured CIMD URL must not displace a stored DCR client
-        // before that client's refresh token gets its normal attempt. Once the
-        // SDK invalidates that pair, suppress the DCR client locally so its
-        // retry can transition to the configured URL-based client ID.
-        if (this.clientMetadataUrl !== undefined
-          && this.flowDiscoveryState?.authorizationServerMetadata
-            ?.client_id_metadata_document_supported === true
-          && this.lastObservedClientId !== undefined
-          && this.lastObservedClientId !== this.clientMetadataUrl) {
-          this.invalidatedClientId = this.lastObservedClientId
         }
         invalidateAuthEntryCache(this.serverName)
         break

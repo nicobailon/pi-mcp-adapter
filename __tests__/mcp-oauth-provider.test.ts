@@ -48,28 +48,6 @@ describe("McpOAuthProvider clientMetadata scope", () => {
     expect(preRegistered.clientMetadataUrl).toBeUndefined();
   });
 
-  it("rejects a CIMD URL that is not HTTPS or has no document path", () => {
-    for (const clientMetadataUrl of ["http://client.example.com/client.json", "https://client.example.com/"]) {
-      expect(() => new McpOAuthProvider(
-        "invalid-cimd-test",
-        "https://api.example.com/mcp",
-        { clientMetadataUrl },
-        { onRedirect: async () => {} },
-      )).toThrow(/clientMetadataUrl must be a valid HTTPS URL with a non-root pathname/);
-    }
-  });
-
-  it("rejects a client secret with CIMD unless an explicit client ID takes precedence", () => {
-    expect(() => new McpOAuthProvider(
-      "ambiguous-cimd-secret",
-      "https://api.example.com/mcp",
-      {
-        clientMetadataUrl: "https://client.example.com/oauth/client.json",
-        clientSecret: "secret",
-      },
-      { onRedirect: async () => {} },
-    )).toThrow(/clientSecret requires an explicit clientId/);
-  });
 });
 
 describe("McpOAuthProvider addClientAuthentication", () => {
