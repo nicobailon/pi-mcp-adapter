@@ -46,7 +46,6 @@ export type OAuthAuthority = () => void;
 type OAuthLifecycleRecord = {
   generation: object;
   revocations: number;
-  legacyImportBlocked: boolean;
 };
 
 const oauthLifecycleRecords = new Map<string, OAuthLifecycleRecord>();
@@ -54,7 +53,7 @@ const oauthLifecycleRecords = new Map<string, OAuthLifecycleRecord>();
 function getOAuthLifecycleRecord(serverName: string): OAuthLifecycleRecord {
   let record = oauthLifecycleRecords.get(serverName);
   if (!record) {
-    record = { generation: {}, revocations: 0, legacyImportBlocked: false };
+    record = { generation: {}, revocations: 0 };
     oauthLifecycleRecords.set(serverName, record);
   }
   return record;
@@ -85,11 +84,6 @@ export function beginOAuthRevocation(serverName: string): () => void {
     released = true;
     record.revocations -= 1;
   };
-}
-
-/** Prevent this process from importing unknown legacy plaintext after logout. */
-export function markOAuthLogoutComplete(serverName: string): void {
-  getOAuthLifecycleRecord(serverName).legacyImportBlocked = true;
 }
 
 /** OAuth token storage format */
@@ -821,7 +815,6 @@ function readAuthEntryFromStore(
     return entry;
   }
 
-  if (getOAuthLifecycleRecord(serverName).legacyImportBlocked) return undefined;
   const legacyEntry = readLegacyAuthEntry(serverName, options);
   if (!legacyEntry) return undefined;
   if (behavior.migrateLegacy === false) return legacyEntry;

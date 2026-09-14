@@ -591,31 +591,6 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(getAuthForUrl("explicit-order", serverUrl)?.tokens?.accessToken).toBe("after-logout");
   });
 
-  it("does not reimport legacy plaintext from another directory after local logout", async () => {
-    const { removeAuth } = await import("../mcp-auth-flow.ts");
-    const { getAuthEntryFilePath, getAuthForUrl, inspectAuthForUrl } = await import("../mcp-auth.ts");
-    const serverUrl = "https://api.example.com/mcp";
-    const legacyDir = join(authDir, "unknown-legacy-dir");
-
-    await removeAuth("legacy-tombstone");
-    const filePath = getAuthEntryFilePath("legacy-tombstone", { baseDir: legacyDir });
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, JSON.stringify({
-      serverUrl,
-      tokens: { accessToken: "legacy-token" },
-    }));
-
-    const previousDir = process.env.MCP_OAUTH_DIR;
-    delete process.env.MCP_OAUTH_DIR;
-    try {
-      expect(getAuthForUrl("legacy-tombstone", serverUrl, { baseDir: legacyDir })).toBeUndefined();
-      expect(inspectAuthForUrl("legacy-tombstone", serverUrl, { baseDir: legacyDir })).toEqual({ status: "absent" });
-    } finally {
-      if (previousDir === undefined) delete process.env.MCP_OAUTH_DIR;
-      else process.env.MCP_OAUTH_DIR = previousDir;
-    }
-  });
-
   it("clears stale dynamic client info before client_credentials auth", async () => {
     mocks.sdkAuth.mockImplementationOnce(async (provider) => {
       expect(await provider.clientInformation()).toBeUndefined();

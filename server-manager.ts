@@ -252,7 +252,6 @@ export class McpServerManager {
   private elicitationConfig: ServerElicitationConfig | undefined;
   private authStorageOptions: AuthStorageOptions = {};
   private oauthRuntime: McpOAuthRuntime | undefined;
-  private oauthProviders = new Map<string, McpOAuthProvider>();
   private acceptedUrlElicitations = new Map<string, Set<string>>();
   private defaultRequestTimeoutMs: number | undefined;
   private runtimeSignal: AbortSignal | undefined;
@@ -319,20 +318,6 @@ export class McpServerManager {
 
   setOAuthRuntime(runtime: McpOAuthRuntime): void {
     this.oauthRuntime = runtime;
-  }
-
-  private setOAuthProvider(name: string, provider: McpOAuthProvider): void {
-    const previous = this.oauthProviders.get(name);
-    if (previous !== provider) previous?.deactivate();
-    this.oauthProviders.set(name, provider);
-  }
-
-  private deactivateOAuthProvider(name: string, authority?: OAuthAuthority): void {
-    const provider = this.oauthProviders.get(name);
-    if (!provider) return;
-    if (authority && !provider.hasAuthority(authority)) return;
-    this.oauthProviders.delete(name);
-    provider.deactivate();
   }
 
   getRequestOptions(name: string, signal?: AbortSignal): RequestOptions | undefined {
@@ -440,9 +425,6 @@ export class McpServerManager {
         void this.ensureListen(name, connection);
       }
       return connection;
-    } catch (error) {
-      if (oauthAuthority) this.deactivateOAuthProvider(name, oauthAuthority);
-      throw error;
     } finally {
       if (this.connectPromises.get(name) === promise) this.connectPromises.delete(name);
       if (this.connectOAuthAuthorities.get(name) === oauthAuthority) {
@@ -1022,7 +1004,6 @@ export class McpServerManager {
         if (connection.status === "closed") return;
         connection.status = "closed";
         if (this.connections.get(name) !== connection) return;
-        this.deactivateOAuthProvider(name);
         this.metadataListChangedListener?.(name, "remote-close");
       };
 
@@ -1380,7 +1361,6 @@ export class McpServerManager {
         combineAbortSignals(this.oauthRuntime?.signal, signal), {
           ...(caFetch ? { delegate: caFetch.fetch } : {}),
         }));
-      this.setOAuthProvider(serverName, provider);
       return provider;
     };
 
@@ -1700,7 +1680,6 @@ export class McpServerManager {
   }
 
   async close(name: string): Promise<void> {
-    this.deactivateOAuthProvider(name);
     this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
     this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
     this.pendingMetadataPublications.delete(name);
@@ -1747,9 +1726,8 @@ export class McpServerManager {
 
   async closeAll(): Promise<void> {
     this.stopped = true;
-    const names = new Set([...this.connections.keys(), ...this.connectPromises.keys(), ...this.oauthProviders.keys()]);
+    const names = new Set([...this.connections.keys(), ...this.connectPromises.keys()]);
     for (const name of names) {
-      this.deactivateOAuthProvider(name);
       this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
       this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
     }

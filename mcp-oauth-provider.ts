@@ -9,6 +9,7 @@ import {
   UnauthorizedError,
   type FetchLike,
   type AddClientAuthentication,
+  type OAuthClientInformationContext,
   type OAuthClientProvider,
   type OAuthDiscoveryState,
 } from "@modelcontextprotocol/client"
@@ -279,7 +280,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
   ) {
     this.assertAuthority = authority ?? captureOAuthAuthority(serverName)
     this.assertAuthority()
-    this.clientMetadataUrl = config.clientId === undefined ? config.clientMetadataUrl : undefined
+    if (config.clientId === undefined && config.clientMetadataUrl !== undefined) {
+      this.clientMetadataUrl = config.clientMetadataUrl
+    }
     this.authFetch = createOAuthFetch(serverUrl, undefined, runtimeSignal)
     this.flowState = initialState
     this.redirectUrlSnapshot = config.grantType === "client_credentials"
@@ -674,10 +677,6 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   /** Internal connection-attempt identity check for manager cleanup. */
-  hasAuthority(authority: OAuthAuthority): boolean {
-    return this.assertAuthority === authority
-  }
-
   /**
    * Save the OAuth state parameter for CSRF protection.
    */

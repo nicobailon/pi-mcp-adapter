@@ -28,8 +28,7 @@ import {
 } from "./mcp-callback-server.ts"
 import {
   getAuthForUrl,
-  isTokenExpired,
-  hasStoredTokens,
+  getAuthEntry,
   clearAllCredentials,
   clearClientInfo,
   clearCodeVerifier,
@@ -38,7 +37,6 @@ import {
   getAuthBaseDir,
   beginOAuthRevocation,
   captureOAuthAuthority,
-  markOAuthLogoutComplete,
   OAuthCredentialStoreError,
   type AuthStorageOptions,
   type OAuthAuthority,
@@ -656,32 +654,36 @@ async function clearPendingAuth(
 ): Promise<void> {
   const state = getRuntimeState(runtime)
   const key = getPendingAuthKey(serverName, fallbackStorageOptions)
-  const pendingAuth = state.pendingAuths.get(key)
-  const authStorageOptions = pendingAuth?.authStorageOptions ?? fallbackStorageOptions
   const pendingState = state.pendingAuthStates.get(key)
   if (oauthState && pendingState !== oauthState) {
     cancelPendingCallback(oauthState)
     return
   }
 
-  const timer = state.pendingAuthCleanupTimers.get(key)
-  if (timer) {
-    clearTimeout(timer)
-    state.pendingAuthCleanupTimers.delete(key)
-  }
-
-  pendingAuth?.manualCompletionController?.abort(reason)
-  pendingAuth?.authProvider.deactivate()
-  state.pendingAuths.delete(key)
-  state.pendingAuthStates.delete(key)
+  const { pendingAuth } = detachPending(state, key, reason)
+  const authStorageOptions = pendingAuth?.authStorageOptions ?? fallbackStorageOptions
   const stateToRelease = pendingState ?? oauthState
   if (stateToRelease) {
-    cancelPendingCallback(stateToRelease)
+    if (!pendingState) cancelPendingCallback(stateToRelease)
     if (pendingAuth && hasOAuthAuthority(pendingAuth.authority)) {
       const storedState = getOAuthState(serverName, authStorageOptions)
       if (storedState === stateToRelease) clearOAuthState(serverName, authStorageOptions)
     }
   }
+}
+
+function detachPending(state: RuntimeState, key: string, reason: Error) {
+  const pendingAuth = state.pendingAuths.get(key)
+  const oauthState = state.pendingAuthStates.get(key)
+  const timer = state.pendingAuthCleanupTimers.get(key)
+  if (timer) clearTimeout(timer)
+  state.pendingAuthCleanupTimers.delete(key)
+  state.pendingAuths.delete(key)
+  state.pendingAuthStates.delete(key)
+  pendingAuth?.manualCompletionController?.abort(reason)
+  pendingAuth?.authProvider.deactivate()
+  if (oauthState) cancelPendingCallback(oauthState)
+  return { pendingAuth, oauthState }
 }
 
 async function clearPendingAuthAndReleaseIfIdle(
@@ -722,15 +724,7 @@ function detachPendingAuthsForServer(serverName: string, reason: Error): void {
     for (const [key, pendingAuth] of state.pendingAuths) {
       if (pendingAuth.serverName !== serverName) continue
       if (state.pendingAuths.get(key) !== pendingAuth) continue
-      const oauthState = state.pendingAuthStates.get(key)
-      const timer = state.pendingAuthCleanupTimers.get(key)
-      if (timer) clearTimeout(timer)
-      state.pendingAuthCleanupTimers.delete(key)
-      state.pendingAuths.delete(key)
-      state.pendingAuthStates.delete(key)
-      pendingAuth.manualCompletionController?.abort(reason)
-      pendingAuth.authProvider.deactivate()
-      if (oauthState) cancelPendingCallback(oauthState)
+      detachPending(state, key, reason)
     }
   }
 }
@@ -1205,11 +1199,9 @@ export async function getValidToken(
 export async function getAuthStatus(serverName: string, options: AuthenticateOptions = {}): Promise<AuthStatus> {
   getRuntime(options)
   const authStorageOptions = options.authStorageOptions ?? {}
-  const hasTokens = await hasStoredTokens(serverName, authStorageOptions)
-  if (!hasTokens) return "not_authenticated"
-
-  const expired = await isTokenExpired(serverName, authStorageOptions)
-  return expired ? "expired" : "authenticated"
+  const entry = getAuthEntry(serverName, authStorageOptions)
+  if (!entry?.tokens) return "not_authenticated"
+  return entry.tokens.expiresAt && entry.tokens.expiresAt < Date.now() / 1000 ? "expired" : "authenticated"
 }
 
 /**
@@ -1230,7 +1222,6 @@ export async function removeAuth(serverName: string, options: AuthenticateOption
     await stopCallbackServerIfIdle()
     throwIfAborted(signal)
     clearAllCredentials(serverName, authStorageOptions)
-    markOAuthLogoutComplete(serverName)
     console.log(`MCP Auth: Removed credentials for ${serverName}`)
   } finally {
     releaseRevocation()
