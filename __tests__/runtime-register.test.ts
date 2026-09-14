@@ -69,11 +69,15 @@ vi.mock("../metadata-cache.ts", () => ({
   loadMetadataCache: mocks.loadMetadataCache,
 }));
 
-vi.mock("../direct-tools.ts", () => ({
+vi.mock("../direct-tool-surface.ts", () => ({
   buildProxyDescription: mocks.buildProxyDescription,
-  createDirectToolExecutor: mocks.createDirectToolExecutor,
   getMissingConfiguredDirectToolServers: mocks.getMissingConfiguredDirectToolServers,
+  prepareDirectToolArguments: vi.fn((_schema: unknown, args: unknown) => args),
   resolveDirectTools: mocks.resolveDirectTools,
+}));
+
+vi.mock("../direct-tools.ts", () => ({
+  createDirectToolExecutor: mocks.createDirectToolExecutor,
 }));
 
 vi.mock("../commands.ts", () => ({

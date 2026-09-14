@@ -3,7 +3,6 @@ import { Type } from "typebox";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type McpConfig } from "./types.ts";
 import { isServerCacheValid, type MetadataCache } from "./metadata-cache.ts";
-import { executeCall } from "./proxy-modes.ts";
 import { createMcpProxyToolCallRenderer, createMcpToolResultRenderer, resolveMcpToolRenderOptions, type McpToolRenderOptions, type RenderTheme, type McpToolRenderContext } from "./tool-result-renderer.ts";
 export { namespaceProxyName } from "./mcp-references.ts";
 import { hasCallableCachedTargets, isMcpServerDirectlyRegistered, namespaceProxyName, type DirectToolSelectorOverride } from "./mcp-references.ts";
@@ -95,10 +94,22 @@ function resolveNamespaceProxyTools(
 export type GetState = () => McpExtensionState | null;
 export type GetInitPromise = () => Promise<McpExtensionState> | null;
 export type GetPiTools = () => ToolInfo[];
+export type EnsureNamespaceRuntime = (ctx: unknown) => Promise<McpExtensionState | null>;
+export type ExecuteNamespaceCall = (
+  state: McpExtensionState,
+  toolName: string,
+  args: Record<string, unknown>,
+  serverName: string,
+  getPiTools: GetPiTools,
+  signal: AbortSignal | undefined,
+  origin: "proxy",
+) => Promise<AgentToolResult<Record<string, unknown>>>;
 
 function namespaceExecute(
   getState: GetState,
   getInitPromise: GetInitPromise,
+  ensureRuntime: EnsureNamespaceRuntime | undefined,
+  executeCall: ExecuteNamespaceCall,
   serverName: string,
   getPiTools: GetPiTools,
 ) {
@@ -106,6 +117,8 @@ function namespaceExecute(
     _toolCallId: string,
     params: { tool?: string; args?: Record<string, unknown> },
     signal: AbortSignal | undefined,
+    _onUpdate: unknown,
+    ctx: unknown,
   ): Promise<AgentToolResult<Record<string, unknown>>> => {
     if (typeof params.tool !== "string" || params.tool.length === 0) {
       return {
@@ -114,6 +127,17 @@ function namespaceExecute(
       };
     }
     let state = getState();
+    if (!state && ensureRuntime) {
+      try {
+        state = await ensureRuntime(ctx);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text" as const, text: `MCP initialization failed for ${serverName}: ${message}` }],
+          details: { error: "init_failed", server: serverName, message },
+        };
+      }
+    }
     if (!state) {
       const initPromise = getInitPromise();
       if (initPromise) {
@@ -165,10 +189,14 @@ export interface SyncNamespaceProxyToolsInput {
   pi: ExtensionAPI;
   getState: GetState;
   getInitPromise: GetInitPromise;
+  ensureRuntime?: EnsureNamespaceRuntime;
+  executeCall?: ExecuteNamespaceCall;
   getPiTools: GetPiTools;
   renderOptions?: McpToolRenderOptions;
   renderShell?: "self" | "default";
   renderResult?: unknown;
+  guardReentrant?: () => void;
+  onToolRegistered?: (name: string) => void;
 }
 
 export interface SyncNamespaceProxyToolsResult {
@@ -187,6 +215,15 @@ function createNamespaceRenderCall(renderOptions: McpToolRenderOptions, serverNa
   }, theme, context);
 }
 
+let defaultProxyModesPromise: Promise<typeof import("./proxy-modes.ts")> | null = null;
+async function loadDefaultExecuteCall(): Promise<(typeof import("./proxy-modes.ts"))["executeCall"]> {
+  defaultProxyModesPromise ??= import("./proxy-modes.ts").catch((error) => {
+    defaultProxyModesPromise = null;
+    throw error;
+  });
+  return (await defaultProxyModesPromise).executeCall;
+}
+
 function registerNamespaceProxyTool(
   input: SyncNamespaceProxyToolsInput,
   spec: NamespaceProxySpec,
@@ -194,6 +231,17 @@ function registerNamespaceProxyTool(
   renderShell: "self" | "default",
   renderResult: unknown,
 ): void {
+  const executeCall = input.executeCall ?? (async (...args: Parameters<ExecuteNamespaceCall>) => {
+    const expectedState = args[0];
+    const loadedExecuteCall = await loadDefaultExecuteCall();
+    if (input.getState() !== expectedState || expectedState.owner?.isActive() === false) {
+      throw expectedState.owner?.signal.reason ?? new Error("MCP namespace operation belongs to a stale session");
+    }
+    return loadedExecuteCall(...args);
+  });
+
+  input.onToolRegistered?.(spec.toolName);
+  input.guardReentrant?.();
   (input.pi.registerTool as (tool: unknown) => unknown)({
     name: spec.toolName,
     label: `MCP: ${spec.serverName}`,
@@ -206,10 +254,13 @@ function registerNamespaceProxyTool(
     execute: namespaceExecute(
       input.getState,
       input.getInitPromise,
+      input.ensureRuntime,
+      executeCall,
       spec.serverName,
       input.getPiTools,
     ),
   });
+  input.guardReentrant?.();
 }
 
 function getActiveToolsForStaleCleanup(pi: ExtensionAPI, staleNames: string[]): string[] | undefined {
@@ -232,16 +283,23 @@ function deactivateStaleNamespaceTools(input: SyncNamespaceProxyToolsInput, next
     unregisterTool?: (name: string) => boolean;
   }).unregisterTool;
   for (const stale of staleNames) {
-    if (unregisterTool?.(stale)) deactivated.push(stale);
+    input.guardReentrant?.();
+    const removed = unregisterTool?.(stale);
+    input.guardReentrant?.();
+    if (removed) deactivated.push(stale);
   }
+  input.guardReentrant?.();
   const activeTools = getActiveToolsForStaleCleanup(input.pi, staleNames);
+  input.guardReentrant?.();
   if (!activeTools) return deactivated;
 
   const stale = new Set(staleNames);
   const nextActiveTools = activeTools.filter((name) => !stale.has(name));
   if (nextActiveTools.length === activeTools.length) return deactivated;
 
+  input.guardReentrant?.();
   input.pi.setActiveTools(nextActiveTools);
+  input.guardReentrant?.();
   for (const name of staleNames) {
     if (!deactivated.includes(name)) deactivated.push(name);
   }

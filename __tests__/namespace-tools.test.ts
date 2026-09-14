@@ -569,6 +569,42 @@ describe("syncNamespaceProxyTools", () => {
     expect(registered.get("mcp__my_server")?.label).toBe("MCP: my_server");
   });
 
+  it("rejects the fallback delayed call import after the namespace state changes", async () => {
+    vi.resetModules();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const executeCall = vi.fn();
+    vi.doMock("../proxy-modes.ts", async () => {
+      await gate;
+      return { executeCall };
+    });
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+    const state = {
+      owner: { isActive: () => true, signal: new AbortController().signal },
+    } as any;
+    let currentState = state;
+
+    syncNamespaceProxyTools({
+      config: { mcpServers: { demo: { command: "demo" } } },
+      cache: CACHE_SHAPE([["demo", { tools: [{ name: "search" }] }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => currentState,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    const pending = registered.get("mcp__demo")!.execute("call-1", { tool: "search" }, undefined);
+    currentState = null as any;
+    release();
+
+    await expect(pending).rejects.toThrow("stale session");
+    expect(executeCall).not.toHaveBeenCalled();
+  });
+
   it("preserves initialization error context", async () => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered } = makePi();

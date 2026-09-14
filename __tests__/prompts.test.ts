@@ -203,6 +203,19 @@ describe("formatPromptResult", () => {
 });
 
 describe("createPromptCommand handler", () => {
+  it("notifies and returns when deferred initialization fails", async () => {
+    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+    const notify = vi.fn();
+    const command = createPromptCommand(pi, () => null, meta(), {
+      ensureState: vi.fn().mockRejectedValue(new Error("startup failed")),
+    });
+
+    await expect(command.handler("ai", commandCtx({ hasUI: true, ui: { notify } as any }))).resolves.toBeUndefined();
+
+    expect(notify).toHaveBeenCalledWith("MCP initialization failed: startup failed", "error");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
   it("sends the resolved prompt text as a user message", async () => {
     const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
     const state = baseState(promptMetadata);
@@ -273,6 +286,57 @@ describe("createPromptCommand handler", () => {
 
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("no text content"), "warning");
+  });
+});
+
+describe("fallback prompt runtime loading", () => {
+  it("does not connect after a delayed fallback import outlives its state", async () => {
+    vi.resetModules();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const lazyConnect = vi.fn();
+    vi.doMock("../init.ts", async () => {
+      await gate;
+      return { lazyConnect };
+    });
+    const { createPromptCommand: createFreshPromptCommand } = await import("../prompts.ts");
+    const state = baseState(new Map([["demo", [meta()]]]));
+    let currentState: McpExtensionState | null = state;
+    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+    const command = createFreshPromptCommand(pi, () => currentState, meta());
+
+    const pending = command.handler("ai", commandCtx());
+    currentState = null;
+    release();
+    await pending;
+
+    expect(lazyConnect).not.toHaveBeenCalled();
+    expect(state.manager.getPrompt).not.toHaveBeenCalled();
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not notify stale UI when prompt execution fails after state replacement", async () => {
+    const notify = vi.fn();
+    let rejectPrompt!: (reason?: unknown) => void;
+    const getPrompt = vi.fn(() => new Promise<never>((_resolve, reject) => {
+      rejectPrompt = reject;
+    }));
+    const current = baseState(new Map([["demo", [meta()]]]));
+    current.manager.getPrompt = getPrompt;
+    let currentState: McpExtensionState | null = current;
+    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+    const command = createPromptCommand(pi, () => currentState, meta(), {
+      lazyConnect: vi.fn().mockResolvedValue(true),
+    });
+
+    const pending = command.handler("ai", commandCtx({ ui: { notify } as any }));
+    await vi.waitFor(() => expect(getPrompt).toHaveBeenCalled());
+    currentState = null;
+    rejectPrompt(new Error("prompt failed"));
+    await pending;
+
+    expect(notify).not.toHaveBeenCalled();
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
   });
 });
 
