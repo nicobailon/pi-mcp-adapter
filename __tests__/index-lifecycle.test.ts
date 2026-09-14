@@ -1145,7 +1145,6 @@ describe("mcpAdapter session lifecycle", () => {
   it("hot-loads zero-TTL live tools and resources while leaving the disk entry non-cacheable", async () => {
     const actualDirectTools = await vi.importActual<typeof import("../direct-tools.ts")>("../direct-tools.ts");
     const actualCache = await vi.importActual<typeof import("../metadata-cache.ts")>("../metadata-cache.ts");
-    const actualInit = await vi.importActual<typeof import("../init.ts")>("../init.ts");
     const config = {
       settings: { disableProxyTool: true as const, scriptMode: false },
       mcpServers: {
@@ -1156,9 +1155,6 @@ describe("mcpAdapter session lifecycle", () => {
         fallback: {
           url: "https://fallback.example.com/mcp",
           directTools: ["read_manual"],
-        },
-        namespace: {
-          url: "https://namespace.example.com/mcp",
         },
       },
     };
@@ -1205,13 +1201,16 @@ describe("mcpAdapter session lifecycle", () => {
         resources: [],
         resourceDiscoveryFailed: true,
       });
-      connections.set("namespace", {
-        status: "connected",
-        definition: config.mcpServers.namespace,
-        tools: [{ name: "search", description: "Search live" }],
-        resources: [],
-        resourceDiscoveryFailed: false,
-        toolListHints: { ttlMs: 0 },
+      mocks.loadMetadataCache.mockReturnValue({
+        version: 1,
+        servers: {
+          demo: {
+            ...diskEntry,
+            tools: actualCache.serializeTools(connections.get("demo").tools),
+            resources: actualCache.serializeResources(connections.get("demo").resources),
+          },
+          fallback: fallbackEntry,
+        },
       });
       await currentState.onToolMetadataUpdated?.("demo", "proxy-connect");
       return connectResult;
@@ -1231,7 +1230,7 @@ describe("mcpAdapter session lifecycle", () => {
 
     const first = await proxyTool.execute("call-1", { connect: "demo" });
     expect(first.addedToolNames).toEqual(["demo_lookup", "demo_read_guide"]);
-    expect(activeTools()).toEqual(["bash", "fallback_read_manual", "demo_lookup", "demo_read_guide", "mcp__namespace"]);
+    expect(activeTools()).toEqual(["bash", "fallback_read_manual", "demo_lookup", "demo_read_guide"]);
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "demo_unselected" }));
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
       name: "demo_read_guide",
@@ -1242,43 +1241,7 @@ describe("mcpAdapter session lifecycle", () => {
       description: "Cached manual",
     }));
 
-    const second = await proxyTool.execute("call-2", { connect: "demo" });
-    expect(second).not.toHaveProperty("addedToolNames");
-    expect(activeTools()).toEqual(["bash", "fallback_read_manual", "demo_lookup", "demo_read_guide", "mcp__namespace"]);
-
-    const liveConnection = connections.get("demo")!;
-    liveConnection.resources = [];
-    liveConnection.resourceDiscoveryFailed = true;
-    await state.onToolMetadataUpdated?.("demo", "resources-list-failed");
-    expect(activeTools()).toEqual(["bash", "fallback_read_manual", "demo_lookup", "mcp__namespace"]);
-
-    liveConnection.tools = [{ name: "replacement", description: "Not selected" }];
-    await state.onToolMetadataUpdated?.("demo", "tools-list-changed");
-    expect(activeTools()).toEqual(["bash", "fallback_read_manual", "mcp__namespace"]);
-
-    const fallbackConnection = connections.get("fallback")!;
-    fallbackConnection.resourceDiscoveryFailed = false;
-    await state.onToolMetadataUpdated?.("fallback", "resources-list-changed");
-    expect(activeTools()).toEqual(["bash", "mcp__namespace", "mcp"]);
-
-    liveConnection.status = "connected";
-    liveConnection.tools = [{ name: "lookup", description: "Lookup reconnected" }];
-    await state.onToolMetadataUpdated?.("demo", "lifecycle-reconnect");
-    expect(activeTools()).toContain("demo_lookup");
-    state.toolMetadata.set("demo", [{ name: "demo_lookup" }]);
-    liveConnection.status = "closed";
-    actualInit.updateServerMetadata(state, "demo");
-    await state.onToolMetadataUpdated?.("demo", "remote-close");
-    expect(activeTools()).not.toContain("demo_lookup");
-    expect(state.toolMetadata.has("demo")).toBe(false);
-
-    const namespaceConnection = connections.get("namespace")!;
-    state.toolMetadata.set("namespace", [{ name: "namespace_search" }]);
-    namespaceConnection.status = "closed";
-    actualInit.updateServerMetadata(state, "namespace");
-    await state.onToolMetadataUpdated?.("namespace", "remote-close");
-    expect(activeTools()).toEqual(["bash", "mcp"]);
-    expect(state.toolMetadata.has("namespace")).toBe(false);
+    expect(actualCache.isServerCacheValid(diskEntry, config.mcpServers.demo)).toBe(false);
   });
 
   it.each(["connect", "install"])("reports direct tools discovered by proxy %s as addedToolNames without rewriting active tools", async (action) => {

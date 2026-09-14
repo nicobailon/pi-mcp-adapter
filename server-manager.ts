@@ -297,21 +297,6 @@ export class McpServerManager {
     }
   }
 
-  private publishRemoteClose(name: string): void {
-    const reportFailure = (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.debug(`MCP: metadata publication failed for ${name} (remote-close): ${message}`);
-    };
-    try {
-      const publication = this.metadataListChangedListener?.(name, "remote-close") as void | Promise<void>;
-      if (publication && typeof publication.catch === "function") {
-        void publication.catch(reportFailure);
-      }
-    } catch (error) {
-      reportFailure(error);
-    }
-  }
-
   setElicitationConfig(config: ServerElicitationConfig | undefined): void {
     this.elicitationConfig = config;
   }
@@ -1038,7 +1023,7 @@ export class McpServerManager {
         connection.status = "closed";
         if (this.connections.get(name) !== connection) return;
         this.deactivateOAuthProvider(name);
-        this.publishRemoteClose(name);
+        this.metadataListChangedListener?.(name, "remote-close");
       };
 
       // Discover tools, resources, and prompts. Resource and prompt listing is

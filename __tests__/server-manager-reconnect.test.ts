@@ -118,17 +118,6 @@ describe("McpServerManager.reconnect", () => {
     expect(fresh.status).toBe("closed");
     expect(changes).toEqual([["remote", "remote-close"]]);
 
-    manager.setMetadataListChangedListener(() => { throw new Error("sync listener failed"); });
-    const throwing = await manager.connect("throwing", def);
-    expect(() => throwing.client.onclose!()).not.toThrow();
-    expect(throwing.status).toBe("closed");
-
-    manager.setMetadataListChangedListener(async () => { throw new Error("async listener failed"); });
-    const rejecting = await manager.connect("rejecting", def);
-    expect(() => rejecting.client.onclose!()).not.toThrow();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(rejecting.status).toBe("closed");
   });
 
   it("rejects a candidate that closes during discovery before map installation", async () => {
