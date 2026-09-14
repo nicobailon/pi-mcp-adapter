@@ -14,6 +14,9 @@ function run(script, scriptArgs = []) {
 
 if (args.length > 0) {
   run("test:vitest", args);
-} else if (run("test:vitest")) {
+} else if (
+  run("test:vitest", ["--exclude", "__tests__/ui-server-browser.test.ts"]) &&
+  run("test:vitest", ["__tests__/ui-server-browser.test.ts"])
+) {
   run("test:public-exports");
 }
