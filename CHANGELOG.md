@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows OpenSSH/network logons can explicitly select externally keyed AES-256-GCM OAuth credential files with `settings.oauthCredentialStore: "encrypted-file"`; error 1312 now points to this option, while the OS store remains the default with no automatic fallback. Thanks to [@pierreh](https://github.com/pierreh) for issue #574.
 - OAuth servers can explicitly opt into operator-hosted Client ID Metadata Documents (SEP-991) with `oauth.clientMetadataUrl`; URL-only/default configurations continue using Dynamic Client Registration. Existing DCR refresh credentials get their normal refresh attempt before migration to CIMD after invalidation. Thanks to [@dsluo](https://github.com/dsluo) for PR #571.
 - User-global or explicitly selected config can opt in to bounded ancestor `.mcp.json` and `<configDir>/mcp.json` discovery with `settings.ancestorConfigRoots`. Discovery is off by default; project files cannot enable or widen it, and the deepest matching existing directory under `$HOME` bounds farthest-first loading. Thanks to [@johnhenaot](https://github.com/johnhenaot) for PR #555.
 

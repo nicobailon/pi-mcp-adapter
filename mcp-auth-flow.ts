@@ -148,8 +148,14 @@ function getRuntimeState(runtime: McpOAuthRuntime): RuntimeState {
   return state
 }
 
+function getAuthStorageIdentity(options: AuthStorageOptions): ["encrypted-file"] | ["os", string] {
+  return options.credentialStore === "encrypted-file"
+    ? ["encrypted-file"]
+    : ["os", getAuthBaseDir(options)]
+}
+
 function getPendingAuthKey(serverName: string, options: AuthStorageOptions): string {
-  return `${serverName}|${getAuthBaseDir(options)}`
+  return JSON.stringify([serverName, ...getAuthStorageIdentity(options)])
 }
 
 function hasOAuthAuthority(authority: OAuthAuthority): boolean {
@@ -988,7 +994,7 @@ export async function authenticate(
   const authStorageOptions = options.authStorageOptions ?? {}
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
-  const authKey = `${serverName}|${serverUrl}|${getAuthBaseDir(authStorageOptions)}`
+  const authKey = JSON.stringify([serverName, serverUrl, ...getAuthStorageIdentity(authStorageOptions)])
   const inFlight = runtimeState.pendingAuthentications.get(authKey)
   if (inFlight) {
     try {

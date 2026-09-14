@@ -245,7 +245,11 @@ Persistent OAuth entries are stored per configured server name in the operating 
 
 Windows Credential Manager cannot hold a typical large OAuth JSON blob in one value, so payloads over 1,000 UTF-16 code units are stored as a manifest plus chunks; the size-limited test store uses the same representation. macOS Keychain and Linux Secret Service keep each record in one item, including ordinary 8–10 KiB records; if an unusually large record exceeds the native store's actual limit, that store error is surfaced. This avoids separate prompts for digest-addressed Keychain chunks. On macOS and Linux, the first ordinary read of a previously chunked record validates and rewrites it as one item before cleaning up its old chunks. Windows and the size-limited test store retain the chunked representation. Status inspection reads the existing representation but does not compact it; existing secure-record and legacy-plaintext cleanup semantics still apply.
 
-The adapter fails closed when the OS credential store is unavailable. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth; the adapter does not silently fall back to plaintext token files.
+The adapter fails closed when the OS credential store is unavailable. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth; the adapter does not silently fall back to plaintext token files. Windows OpenSSH network logons may report `ERROR_NO_SUCH_LOGON_SESSION` (1312) because Credential Manager has no credential set for that logon.
+
+For Windows OpenSSH/headless use, `settings.oauthCredentialStore: "encrypted-file"` explicitly selects an AES-256-GCM file store. It requires `PI_MCP_ADAPTER_OAUTH_FILE_KEY` to contain canonical base64 for exactly 32 random bytes; generate one with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` and inject it through an external secret mechanism. Never place the key in config or beside the ciphertext. One authenticated, versioned envelope is stored per hashed server account at `<Pi agent directory>/mcp-oauth-encrypted/sha256-<server-hash>/credentials.json`. The server URL and secrets appear only inside ciphertext, and account-bound authenticated data prevents copying an envelope to another account.
+
+Encrypted-file writes use private directory/file modes where supported and same-directory atomic replacement. POSIX modes are checked on reads, but they do not establish a Windows ACL; encryption with the external key is the confidentiality boundary. This backend never falls back to the OS store, reads `oauthDir` / `MCP_OAUTH_DIR`, or imports legacy plaintext. Reauthenticate after opting in. Key loss or rotation makes existing envelopes unreadable; remove them and reauthenticate with the new key.
 
 On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path requires `keyctl` and `node` on `PATH`; missing, locked, or otherwise unavailable credential stores still fail closed.
 
@@ -253,7 +257,7 @@ Complete credential entries are held in memory for the lifetime of the Pi proces
 
 A credential changed or deleted by another process while Pi is running is not observed immediately. The affected server picks it up after the first credential-backed authentication failure in that `needs-auth` episode: Pi discards the cached entry, and the following read reloads from the credential store. Restarting Pi also clears the cache. Set `PI_MCP_ADAPTER_DISABLE_AUTH_CACHE=1` to turn the cache off entirely and restore a credential-store read per request.
 
-Older versions stored plaintext entries at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json`, or under `settings.oauthDir` / `MCP_OAUTH_DIR`. On first read after upgrade, a valid legacy entry is imported into the OS credential store and the plaintext `tokens.json` file is removed. These directories are now legacy import locations, not persistent credential stores or isolation namespaces.
+Older versions stored plaintext entries at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json`, or under `settings.oauthDir` / `MCP_OAUTH_DIR`. With the default OS backend, the first read after upgrade imports a valid legacy entry and removes the plaintext `tokens.json`. The encrypted-file backend leaves legacy files untouched. These directories are legacy import locations, not persistent credential stores or isolation namespaces.
 
 The stored `serverUrl` field ensures credentials are invalidated if the server URL changes.
 
@@ -275,11 +279,11 @@ For private servers with known-broken metadata, `oauth.skipIssuerMetadataValidat
 
 When an MCP server does not publish usable protected-resource metadata, configure `oauth.authServerMetadataUrl` with the HTTPS URL of its OAuth/OIDC authorization-server metadata document. That document is authoritative instead of MCP protected-resource discovery, and its issuer is still checked by default. Treat this as trusted configuration and point it only at a metadata endpoint you explicitly trust.
 
-### OS Credential Store
+### Credential Stores
 
-Persistent OAuth credentials are written to the OS credential store. Legacy plaintext files are read only for one-way migration and are removed after successful import. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
+Persistent OAuth credentials are written to the OS credential store by default, or only to the encrypted file store when explicitly selected. Legacy plaintext files are read only for one-way migration to the default OS store and are removed after successful import. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
 
-Credential entries reside in process memory for the lifetime of the Pi process on every supported credential-store platform rather than being re-read per request. They are never written anywhere but the OS credential store, and the process-memory copy is discarded on exit.
+Credential entries reside in process memory for the lifetime of the Pi process rather than being re-read per request, and the process-memory copy is discarded on exit.
 
 ### URL Validation
 

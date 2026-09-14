@@ -49,6 +49,8 @@ vi.mock("open", () => ({
 
 describe("mcp-auth-flow explicit auth", () => {
   const originalOAuthDir = process.env.MCP_OAUTH_DIR;
+  const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const originalFileKey = process.env.PI_MCP_ADAPTER_OAUTH_FILE_KEY;
   let authDir: string;
 
   beforeEach(() => {
@@ -76,6 +78,10 @@ describe("mcp-auth-flow explicit auth", () => {
     } else {
       process.env.MCP_OAUTH_DIR = originalOAuthDir;
     }
+    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    if (originalFileKey === undefined) delete process.env.PI_MCP_ADAPTER_OAUTH_FILE_KEY;
+    else process.env.PI_MCP_ADAPTER_OAUTH_FILE_KEY = originalFileKey;
   });
 
   it("releases the idle callback server when startAuth is immediately authorized", async () => {
@@ -657,6 +663,39 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
   });
 
+  it("does not coalesce concurrent OS and encrypted authentication", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-authenticate-encrypted-"));
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.PI_MCP_ADAPTER_OAUTH_FILE_KEY = Buffer.alloc(32, 7).toString("base64");
+    let call = 0;
+    mocks.sdkAuth.mockImplementation(async (provider) => {
+      const current = ++call;
+      await provider.saveTokens({ access_token: `token-${current}`, token_type: "Bearer" });
+      return "AUTHORIZED";
+    });
+    const { authenticate, createOAuthRuntime, shutdownOAuth } = await import("../mcp-auth-flow.ts");
+    const { getAuthForUrl } = await import("../mcp-auth.ts");
+    const runtime = createOAuthRuntime();
+    const encrypted = { credentialStore: "encrypted-file" } as const;
+    const serverUrl = "https://api.example.com/mcp";
+    const definition = {
+      url: serverUrl,
+      auth: "oauth" as const,
+      oauth: { grantType: "client_credentials" as const, clientId: "client", clientSecret: "secret" },
+    };
+
+    await expect(Promise.all([
+      authenticate("cross-backend", serverUrl, definition, { runtime }),
+      authenticate("cross-backend", serverUrl, definition, { runtime, authStorageOptions: encrypted }),
+    ])).resolves.toEqual(["authenticated", "authenticated"]);
+
+    expect(mocks.sdkAuth).toHaveBeenCalledTimes(2);
+    expect(getAuthForUrl("cross-backend", serverUrl)?.tokens?.accessToken).toBe("token-1");
+    expect(getAuthForUrl("cross-backend", serverUrl, encrypted)?.tokens?.accessToken).toBe("token-2");
+    await shutdownOAuth(runtime);
+    rmSync(agentDir, { recursive: true, force: true });
+  });
+
   it("runs SDK auth before reporting expired tokens as re-authenticated", async () => {
     const { authenticate } = await import("../mcp-auth-flow.ts");
     const { getOAuthState, updateClientInfo, updateTokens } = await import("../mcp-auth.ts");
@@ -873,6 +912,72 @@ describe("mcp-auth-flow explicit auth", () => {
     await shutdownOAuth(runtimeB);
     rmSync(projectA, { recursive: true, force: true });
     rmSync(projectB, { recursive: true, force: true });
+  });
+
+  it("keeps OS and encrypted pending flows isolated in one runtime", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-auth-flow-encrypted-"));
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.PI_MCP_ADAPTER_OAUTH_FILE_KEY = Buffer.alloc(32, 7).toString("base64");
+    let call = 0;
+    mocks.sdkAuth.mockImplementation(async (provider) => {
+      call++;
+      if (call <= 2) {
+        await provider.redirectToAuthorization(new URL(`https://auth.example.com/authorize-${call}`));
+        return "REDIRECT";
+      }
+      await provider.saveTokens({ access_token: `token-${call}`, token_type: "Bearer" });
+      return "AUTHORIZED";
+    });
+    const { completeAuth, createOAuthRuntime, hasPendingAuth, shutdownOAuth, startAuth } = await import("../mcp-auth-flow.ts");
+    const { getAuthForUrl } = await import("../mcp-auth.ts");
+    const runtime = createOAuthRuntime();
+    const encrypted = { credentialStore: "encrypted-file" } as const;
+    const serverUrl = "https://api.example.com/mcp";
+
+    await expect(startAuth("backend-isolated", serverUrl, { url: serverUrl, auth: "oauth" }, { runtime }))
+      .resolves.toEqual({ authorizationUrl: "https://auth.example.com/authorize-1" });
+    await expect(startAuth("backend-isolated", serverUrl, { url: serverUrl, auth: "oauth" }, { runtime, authStorageOptions: encrypted }))
+      .resolves.toEqual({ authorizationUrl: "https://auth.example.com/authorize-2" });
+    expect(hasPendingAuth("backend-isolated", {}, runtime)).toBe(true);
+    expect(hasPendingAuth("backend-isolated", encrypted, runtime)).toBe(true);
+
+    await completeAuth("backend-isolated", "encrypted-code", { runtime, authStorageOptions: encrypted });
+    expect(getAuthForUrl("backend-isolated", serverUrl, encrypted)?.tokens?.accessToken).toBe("token-3");
+    expect(getAuthForUrl("backend-isolated", serverUrl)).toBeUndefined();
+    expect(hasPendingAuth("backend-isolated", {}, runtime)).toBe(true);
+
+    await completeAuth("backend-isolated", "os-code", { runtime });
+    expect(getAuthForUrl("backend-isolated", serverUrl)?.tokens?.accessToken).toBe("token-4");
+    await shutdownOAuth(runtime);
+    rmSync(agentDir, { recursive: true, force: true });
+  });
+
+  it("keeps an encrypted pending flow stable when MCP_OAUTH_DIR changes", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-auth-flow-encrypted-"));
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.PI_MCP_ADAPTER_OAUTH_FILE_KEY = Buffer.alloc(32, 7).toString("base64");
+    mocks.sdkAuth
+      .mockImplementationOnce(async (provider) => {
+        await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+        return "REDIRECT";
+      })
+      .mockImplementationOnce(async (provider) => {
+        await provider.saveTokens({ access_token: "encrypted-token", token_type: "Bearer" });
+        return "AUTHORIZED";
+      });
+    const { completeAuth, createOAuthRuntime, hasPendingAuth, shutdownOAuth, startAuth } = await import("../mcp-auth-flow.ts");
+    const { getAuthForUrl } = await import("../mcp-auth.ts");
+    const runtime = createOAuthRuntime();
+    const encrypted = { credentialStore: "encrypted-file" } as const;
+    const serverUrl = "https://api.example.com/mcp";
+
+    await startAuth("env-independent", serverUrl, { url: serverUrl, auth: "oauth" }, { runtime, authStorageOptions: encrypted });
+    process.env.MCP_OAUTH_DIR = join(agentDir, "changed-legacy-dir");
+    expect(hasPendingAuth("env-independent", encrypted, runtime)).toBe(true);
+    await completeAuth("env-independent", "code", { runtime, authStorageOptions: encrypted });
+    expect(getAuthForUrl("env-independent", serverUrl, encrypted)?.tokens?.accessToken).toBe("encrypted-token");
+    await shutdownOAuth(runtime);
+    rmSync(agentDir, { recursive: true, force: true });
   });
 
   it("preserves stored dynamic client info when tokens exist", async () => {

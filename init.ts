@@ -141,7 +141,7 @@ export async function initializeMcp(
   const config = options.config !== undefined
     ? resolveConfiguredClaudePluginMcp(cloneMcpConfig(options.config), cwd)
     : loadMcpConfig(configPath, cwd);
-  const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
+  const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd, config.settings?.oauthCredentialStore);
 
   const ownsOAuthRuntime = options.oauthRuntime === undefined;
   const oauthRuntime = options.oauthRuntime ?? createOAuthRuntime(owner.signal);

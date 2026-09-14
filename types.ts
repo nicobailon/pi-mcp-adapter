@@ -640,6 +640,8 @@ export interface McpSettings {
    * instruction when unset.
    */
   authRequiredMessage?: string;
+  /** Explicitly use AES-256-GCM files keyed by PI_MCP_ADAPTER_OAUTH_FILE_KEY instead of the OS credential store. */
+  oauthCredentialStore?: "encrypted-file";
   /**
    * Legacy OAuth tokens.json import directory.
    * Relative paths are resolved from the project root (cwd).

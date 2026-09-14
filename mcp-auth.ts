@@ -4,16 +4,16 @@
  * Handles secure storage of OAuth credentials, tokens, client information,
  * and legacy PKCE state for MCP servers.
  *
- * Persistent OAuth entries are stored in the operating system credential store.
- * Legacy plaintext entries are imported from $MCP_OAUTH_DIR/sha256-<server-hash>/tokens.json
- * when set, otherwise <Pi agent dir>/mcp-oauth/sha256-<server-hash>/tokens.json,
- * then the plaintext file is removed.
+ * Persistent OAuth entries are stored in the operating system credential store
+ * unless the externally keyed encrypted-file backend is explicitly selected.
+ * The default backend imports and removes legacy plaintext entries from
+ * $MCP_OAUTH_DIR or <Pi agent dir>/mcp-oauth.
  */
 
 import { spawnSync } from 'child_process';
-import { createHash } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { createRequire } from 'module';
-import { readFileSync, existsSync, rmSync } from 'fs';
+import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { getAgentPath } from './agent-dir.ts';
@@ -40,6 +40,8 @@ const TEST_LINUX_KEYRING_RECOVERY_ENV = 'PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOV
 const AUTH_CACHE_DISABLED_ENV = 'PI_MCP_ADAPTER_DISABLE_AUTH_CACHE';
 const KEYRING_RECOVERY_TIMEOUT_MS = 10_000;
 const AUTH_CHUNK_MANIFEST_KEY = '__piMcpAdapterOAuthChunked';
+const OAUTH_FILE_KEY_ENV = 'PI_MCP_ADAPTER_OAUTH_FILE_KEY';
+const ENCRYPTED_FILE_AAD_CONTEXT = 'pi-mcp-adapter.oauth.encrypted-file.v1';
 
 export type OAuthAuthority = () => void;
 
@@ -127,6 +129,7 @@ export interface AuthEntry {
 export interface AuthStorageOptions {
   /** Legacy plaintext import directory. Persistent secrets no longer use this as their store. */
   baseDir?: string;
+  credentialStore?: 'encrypted-file';
 }
 
 export class OAuthCredentialStoreError extends Error {
@@ -136,6 +139,7 @@ export class OAuthCredentialStoreError extends Error {
     message: string,
     readonly operation: 'read' | 'write' | 'remove',
     cause: unknown,
+    readonly backend?: 'encrypted-file',
   ) {
     super(message, { cause });
     this.name = 'OAuthCredentialStoreError';
@@ -163,8 +167,17 @@ function causeChainContains(error: unknown, pattern: RegExp): boolean {
 }
 
 export function formatOAuthCredentialStoreUnavailable(error: OAuthCredentialStoreError): string {
+  if (error.backend === 'encrypted-file') {
+    if (causeChainContains(error, /PI_MCP_ADAPTER_OAUTH_FILE_KEY/)) {
+      return 'Encrypted OAuth credential file store unavailable. Set PI_MCP_ADAPTER_OAUTH_FILE_KEY to canonical base64 for exactly 32 random bytes and retry.';
+    }
+    return 'Encrypted OAuth credential file store unavailable. Check the encrypted credential file and key, then reauthenticate.';
+  }
   if (process.platform === 'linux' && causeChainContains(error, /key\s*(?:has been\s*)?revoked|keyrevoked/i)) {
     return 'OAuth credential store unavailable: the Linux session keyring may be revoked. Start Pi from a fresh login/keyring session and retry.';
+  }
+  if (causeChainContains(error, /ERROR_NO_SUCH_LOGON_SESSION|\b1312\b/i)) {
+    return 'OAuth credential store unavailable: Windows Credential Manager is unavailable from this network logon. To opt in to encrypted file storage for OpenSSH/headless use, set settings.oauthCredentialStore to "encrypted-file" and provide PI_MCP_ADAPTER_OAUTH_FILE_KEY.';
   }
   return 'OAuth credential store unavailable. Configure or unlock the OS credential store and retry.';
 }
@@ -180,9 +193,14 @@ type KeyringModule = { Entry: KeyringEntryConstructor };
 type KeyringRequire = ((id: string) => unknown) & { resolve(id: string): string };
 
 interface AuthSecretStore {
+  readonly kind?: 'encrypted-file';
   read(account: string): string | undefined;
   write(account: string, payload: string): void;
   remove(account: string): void;
+}
+
+function authSecretStoreLabel(store: AuthSecretStore): string {
+  return store.kind === 'encrypted-file' ? 'encrypted OAuth credential file store' : 'OS secure credential store';
 }
 
 interface AuthEntryChunkManifest {
@@ -310,7 +328,120 @@ export function setTestAuthSecretStoreEntry(account: string, payload: string): v
   memoryAuthEntries.set(account, payload);
 }
 
-function getAuthSecretStore(): AuthSecretStore {
+function decodeCanonicalBase64(value: unknown, expectedBytes?: number): Buffer {
+  if (typeof value !== 'string' || value.length === 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    throw new Error('value is not canonical base64');
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (decoded.toString('base64') !== value || (expectedBytes !== undefined && decoded.length !== expectedBytes)) {
+    throw new Error(expectedBytes === undefined ? 'value is not canonical base64' : `value must decode to exactly ${expectedBytes} bytes`);
+  }
+  return decoded;
+}
+
+function getEncryptedFileKey(): Buffer {
+  const encoded = process.env[OAUTH_FILE_KEY_ENV];
+  if (!encoded) throw new Error(`${OAUTH_FILE_KEY_ENV} is required for the encrypted OAuth credential file store`);
+  try {
+    return decodeCanonicalBase64(encoded, 32);
+  } catch (error) {
+    throw new Error(`${OAUTH_FILE_KEY_ENV} must be canonical base64 for exactly 32 random bytes`, { cause: error });
+  }
+}
+
+function encryptedEntryPath(root: string, account: string): string {
+  return join(root, account, 'credentials.json');
+}
+
+function validatePrivateRegularFile(path: string): boolean {
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Refusing non-regular OAuth credential file at ${path}`);
+  if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
+    throw new Error(`OAuth credential file has group or other permissions at ${path}`);
+  }
+  return true;
+}
+
+function ensurePrivateDirectory(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Refusing non-directory OAuth credential path at ${path}`);
+  if (process.platform !== 'win32') chmodSync(path, 0o700);
+}
+
+function createEncryptedFileAuthSecretStore(): AuthSecretStore {
+  const root = getAgentPath('mcp-oauth-encrypted');
+  return {
+    kind: 'encrypted-file',
+    read(account) {
+      const key = getEncryptedFileKey();
+      const path = encryptedEntryPath(root, account);
+      if (!validatePrivateRegularFile(path)) return undefined;
+      const envelope = parseJsonPayload(account, readFileSync(path, 'utf8'), path) as Record<string, unknown>;
+      if (!envelope || envelope.version !== 1 || envelope.algorithm !== 'aes-256-gcm') {
+        throw new Error(`Unsupported encrypted OAuth credential envelope at ${path}`);
+      }
+      const iv = decodeCanonicalBase64(envelope.iv, 12);
+      const ciphertext = decodeCanonicalBase64(envelope.ciphertext);
+      const tag = decodeCanonicalBase64(envelope.tag, 16);
+      const decipher = createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAAD(Buffer.from(`${ENCRYPTED_FILE_AAD_CONTEXT}\0${account}`, 'utf8'));
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+    },
+    write(account, payload) {
+      const key = getEncryptedFileKey();
+      const iv = randomBytes(12);
+      const cipher = createCipheriv('aes-256-gcm', key, iv);
+      cipher.setAAD(Buffer.from(`${ENCRYPTED_FILE_AAD_CONTEXT}\0${account}`, 'utf8'));
+      const ciphertext = Buffer.concat([cipher.update(payload, 'utf8'), cipher.final()]);
+      const envelope = JSON.stringify({
+        version: 1,
+        algorithm: 'aes-256-gcm',
+        iv: iv.toString('base64'),
+        ciphertext: ciphertext.toString('base64'),
+        tag: cipher.getAuthTag().toString('base64'),
+      });
+      const dir = join(root, account);
+      ensurePrivateDirectory(root);
+      ensurePrivateDirectory(dir);
+      const destination = encryptedEntryPath(root, account);
+      validatePrivateRegularFile(destination);
+      const temporary = join(dir, `.credentials-${randomBytes(12).toString('hex')}.tmp`);
+      let fd: number | undefined;
+      try {
+        fd = openSync(temporary, 'wx', 0o600);
+        writeFileSync(fd, envelope, 'utf8');
+        fsyncSync(fd);
+        closeSync(fd);
+        fd = undefined;
+        renameSync(temporary, destination);
+      } catch (error) {
+        if (fd !== undefined) {
+          try { closeSync(fd); } catch {}
+        }
+        try { rmSync(temporary, { force: true }); } catch {}
+        throw error;
+      }
+    },
+    remove(account) {
+      getEncryptedFileKey();
+      const path = encryptedEntryPath(root, account);
+      if (!validatePrivateRegularFile(path)) return;
+      rmSync(path);
+      try { rmSync(dirname(path)); } catch {}
+    },
+  };
+}
+
+function getAuthSecretStore(options: AuthStorageOptions = {}): AuthSecretStore {
+  if (options.credentialStore === 'encrypted-file') return createEncryptedFileAuthSecretStore();
   if (process.env[TEST_AUTH_STORE_ENV] === 'memory') return memoryAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'sizelimited') return sizeLimitedAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'writefailing') return writeFailingAuthSecretStore;
@@ -465,7 +596,11 @@ export function loadTestKeyringEntryClass(keyringRequire: KeyringRequire, platfo
   return loadKeyringEntryClass(keyringRequire, platform, arch);
 }
 
-export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): AuthStorageOptions {
+export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd(), oauthCredentialStore?: unknown): AuthStorageOptions {
+  if (oauthCredentialStore !== undefined && oauthCredentialStore !== 'encrypted-file') {
+    throw new Error('settings.oauthCredentialStore must be "encrypted-file" when set');
+  }
+  if (oauthCredentialStore === 'encrypted-file') return { credentialStore: 'encrypted-file' };
   const baseDir = resolveConfiguredOAuthDir(oauthDir, cwd);
   return baseDir ? { baseDir } : {};
 }
@@ -632,7 +767,7 @@ function readChunkManifestFromPayload(serverName: string, payload: string, sourc
 function readExistingChunkManifest(store: AuthSecretStore, serverName: string, account: string): AuthEntryChunkManifest | undefined {
   try {
     const payload = store.read(account);
-    return payload === undefined ? undefined : readChunkManifestFromPayload(serverName, payload, 'OS secure credential store');
+    return payload === undefined ? undefined : readChunkManifestFromPayload(serverName, payload, authSecretStoreLabel(store));
   } catch {
     return undefined;
   }
@@ -653,8 +788,8 @@ function tryRemoveChunkPayloads(store: AuthSecretStore, account: string, manifes
   }
 }
 
-function shouldChunkAuthPayload(payload: string): boolean {
-  return payload.length > AUTH_SECRET_CHUNK_SIZE
+function shouldChunkAuthPayload(store: AuthSecretStore, payload: string): boolean {
+  return store.kind !== 'encrypted-file' && payload.length > AUTH_SECRET_CHUNK_SIZE
     && (process.platform === 'win32' || process.env[TEST_AUTH_STORE_ENV] === 'sizelimited');
 }
 
@@ -697,12 +832,12 @@ function readChunkedAuthEntry(store: AuthSecretStore, serverName: string, accoun
     }
   } catch (error) {
     throw new OAuthCredentialStoreError(
-      `Failed to read OAuth credentials for ${serverName} from the OS secure credential store`,
+      `Failed to read OAuth credentials for ${serverName} from the ${authSecretStoreLabel(store)}`,
       'read',
       error,
     );
   }
-  return parseAuthEntryPayload(serverName, payload, 'OS secure credential store chunks');
+  return parseAuthEntryPayload(serverName, payload, `${authSecretStoreLabel(store)} chunks`);
 }
 
 function readLegacyAuthEntry(serverName: string, options?: AuthStorageOptions): AuthEntry | undefined {
@@ -733,7 +868,7 @@ function writeSecureAuthEntryToStore(store: AuthSecretStore, serverName: string,
   const account = getAuthEntryAccount(serverName);
   const payload = JSON.stringify(entry);
   const previousManifest = readExistingChunkManifest(store, serverName, account);
-  const chunks = shouldChunkAuthPayload(payload) ? splitAuthPayload(payload) : undefined;
+  const chunks = shouldChunkAuthPayload(store, payload) ? splitAuthPayload(payload) : undefined;
   const manifest = chunks ? createChunkManifest(payload, chunks.length) : undefined;
 
   try {
@@ -752,38 +887,58 @@ function writeSecureAuthEntryToStore(store: AuthSecretStore, serverName: string,
   } catch (error) {
     tryRemoveChunkPayloads(store, account, manifest);
     throw new OAuthCredentialStoreError(
-      `Failed to write OAuth credentials for ${serverName} to the OS secure credential store`,
+      `Failed to write OAuth credentials for ${serverName} to the ${authSecretStoreLabel(store)}`,
       'write',
       error,
+      store.kind,
     );
   }
-
-  publishAuthEntryToCache(serverName, payload);
 }
 
-function publishAuthEntryToCache(serverName: string, payload: string): void {
+function authEntryCacheKey(
+  serverName: string,
+  options: AuthStorageOptions = {},
+  operation: 'read' | 'write' | 'remove' = 'read',
+): string {
+  if (options.credentialStore !== 'encrypted-file') return `os\0${serverName}`;
+  try {
+    const generation = createHash('sha256').update(getEncryptedFileKey()).digest('hex');
+    return `encrypted-file:${generation}\0${serverName}`;
+  } catch (error) {
+    throw new OAuthCredentialStoreError(
+      `Failed to ${operation} OAuth credentials for ${serverName} with the encrypted OAuth credential file store`,
+      operation,
+      error,
+      'encrypted-file',
+    );
+  }
+}
+
+function publishAuthEntryToCache(serverName: string, payload: string, options?: AuthStorageOptions): void {
   if (!isAuthEntryCacheEnabled()) return;
+  const cacheKey = authEntryCacheKey(serverName, options, 'write');
   // Cache the same normalized shape a fresh persistent-store read returns.
   const normalized = toAuthEntry(JSON.parse(payload) as unknown);
   if (!normalized) {
-    authEntryCache.delete(serverName);
+    authEntryCache.delete(cacheKey);
     return;
   }
-  authEntryCache.set(serverName, cloneAuthEntry(normalized));
+  authEntryCache.set(cacheKey, cloneAuthEntry(normalized));
 }
 
-function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
+function writeSecureAuthEntry(serverName: string, entry: AuthEntry, options?: AuthStorageOptions): void {
   try {
-    writeSecureAuthEntryToStore(getAuthSecretStore(), serverName, entry);
+    writeSecureAuthEntryToStore(getAuthSecretStore(options), serverName, entry);
   } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
+    if (options?.credentialStore === 'encrypted-file' || !shouldAttemptLinuxKeyringRecovery(error)) throw error;
     writeSecureAuthEntryToStore(linuxKeyringRecoveryAuthSecretStore, serverName, entry);
   }
+  publishAuthEntryToCache(serverName, JSON.stringify(entry), options);
 }
 
 /**
- * Read the auth entry for a server from the OS secure store, importing and
- * deleting a legacy plaintext entry when present.
+ * Read from the selected store. The OS backend imports and deletes a legacy
+ * plaintext entry when present.
  */
 function readAuthEntryFromStore(
   store: AuthSecretStore,
@@ -797,24 +952,28 @@ function readAuthEntryFromStore(
     payload = store.read(account);
   } catch (error) {
     throw new OAuthCredentialStoreError(
-      `Failed to read OAuth credentials for ${serverName} from the OS secure credential store`,
+      `Failed to read OAuth credentials for ${serverName} from the ${authSecretStoreLabel(store)}`,
       'read',
       error,
+      store.kind,
     );
   }
 
   if (payload !== undefined) {
-    const manifest = readChunkManifestFromPayload(serverName, payload, 'OS secure credential store');
+    const manifest = store.kind === 'encrypted-file'
+      ? undefined
+      : readChunkManifestFromPayload(serverName, payload, authSecretStoreLabel(store));
     const entry = manifest
       ? readChunkedAuthEntry(store, serverName, account, manifest)
-      : parseAuthEntryPayload(serverName, payload, 'OS secure credential store');
-    removeLegacyAuthEntry(serverName, options);
-    if (manifest && behavior.migrateLegacy !== false && !shouldChunkAuthPayload(JSON.stringify(entry))) {
+      : parseAuthEntryPayload(serverName, payload, authSecretStoreLabel(store));
+    if (store.kind !== 'encrypted-file') removeLegacyAuthEntry(serverName, options);
+    if (manifest && behavior.migrateLegacy !== false && !shouldChunkAuthPayload(store, JSON.stringify(entry))) {
       writeSecureAuthEntryToStore(store, serverName, entry);
     }
     return entry;
   }
 
+  if (store.kind === 'encrypted-file') return undefined;
   const legacyEntry = readLegacyAuthEntry(serverName, options);
   if (!legacyEntry) return undefined;
   if (behavior.migrateLegacy === false) return legacyEntry;
@@ -831,19 +990,20 @@ function readAuthEntry(
   // Status-only reads deliberately bypass the cache because they do not
   // migrate legacy entries.
   const cacheable = behavior.migrateLegacy !== false && isAuthEntryCacheEnabled();
-  if (cacheable && authEntryCache.has(serverName)) {
-    return cloneAuthEntry(authEntryCache.get(serverName));
+  const cacheKey = authEntryCacheKey(serverName, options);
+  if (cacheable && authEntryCache.has(cacheKey)) {
+    return cloneAuthEntry(authEntryCache.get(cacheKey));
   }
 
   let entry: AuthEntry | undefined;
   try {
-    entry = readAuthEntryFromStore(getAuthSecretStore(), serverName, options, behavior);
+    entry = readAuthEntryFromStore(getAuthSecretStore(options), serverName, options, behavior);
   } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
+    if (options?.credentialStore === 'encrypted-file' || !shouldAttemptLinuxKeyringRecovery(error)) throw error;
     entry = readAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore, serverName, options, behavior);
   }
 
-  if (cacheable) authEntryCache.set(serverName, cloneAuthEntry(entry));
+  if (cacheable) authEntryCache.set(cacheKey, cloneAuthEntry(entry));
   return entry;
 }
 
@@ -899,8 +1059,8 @@ export function saveAuthEntry(serverName: string, entry: AuthEntry, serverUrl?: 
   if (serverUrl) {
     entry.serverUrl = serverUrl;
   }
-  writeSecureAuthEntry(serverName, entry);
-  removeLegacyAuthEntry(serverName, options);
+  writeSecureAuthEntry(serverName, entry, options);
+  if (options?.credentialStore !== 'encrypted-file') removeLegacyAuthEntry(serverName, options);
 }
 
 /**
@@ -909,35 +1069,52 @@ export function saveAuthEntry(serverName: string, entry: AuthEntry, serverUrl?: 
 function removeAuthEntryFromStore(store: AuthSecretStore, serverName: string): void {
   const account = getAuthEntryAccount(serverName);
   try {
+    if (store.kind === 'encrypted-file') {
+      store.remove(account);
+      return;
+    }
     const payload = store.read(account);
-    const manifest = payload === undefined ? undefined : readChunkManifestFromPayload(serverName, payload, 'OS secure credential store');
+    const manifest = payload === undefined ? undefined : readChunkManifestFromPayload(serverName, payload, authSecretStoreLabel(store));
     if (manifest) removeChunkPayloads(store, account, manifest);
     store.remove(account);
   } catch (error) {
     throw new OAuthCredentialStoreError(
-      `Failed to remove OAuth credentials for ${serverName} from the OS secure credential store`,
+      `Failed to remove OAuth credentials for ${serverName} from the ${authSecretStoreLabel(store)}`,
       'remove',
       error,
+      store.kind,
     );
   }
 }
 
 export function removeAuthEntry(serverName: string, options?: AuthStorageOptions): void {
   try {
-    removeAuthEntryFromStore(getAuthSecretStore(), serverName);
+    removeAuthEntryFromStore(getAuthSecretStore(options), serverName);
   } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
+    if (options?.credentialStore === 'encrypted-file' || !shouldAttemptLinuxKeyringRecovery(error)) throw error;
     removeAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore, serverName);
   }
-  authEntryCache.delete(serverName);
-  removeLegacyAuthEntry(serverName, options);
+  evictAuthEntryCache(serverName, options);
+  if (options?.credentialStore !== 'encrypted-file') removeLegacyAuthEntry(serverName, options);
+}
+
+function evictAuthEntryCache(serverName: string, options: AuthStorageOptions = {}): void {
+  if (options.credentialStore !== 'encrypted-file') {
+    authEntryCache.delete(authEntryCacheKey(serverName, options, 'remove'));
+    return;
+  }
+  for (const key of authEntryCache.keys()) {
+    const separator = key.indexOf('\0');
+    if (key.startsWith('encrypted-file:') && separator !== -1 && key.slice(separator + 1) === serverName) authEntryCache.delete(key);
+  }
 }
 
 /**
  * Forget a cached entry so the next ordinary read reloads secure storage.
  */
 export function invalidateAuthEntryCache(serverName: string): void {
-  authEntryCache.delete(serverName);
+  evictAuthEntryCache(serverName);
+  evictAuthEntryCache(serverName, { credentialStore: 'encrypted-file' });
 }
 
 /**
