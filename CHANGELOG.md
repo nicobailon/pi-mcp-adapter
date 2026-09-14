@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Runtime-heavy MCP modules now load only when first needed while cached tools and commands remain synchronously available. Thanks to [@thefakepaulgg](https://github.com/thefakepaulgg) for PR #576.
 - Cross-process OAuth credential transaction serialization is temporarily withdrawn until matching official MCP client/core registry releases support the required hook and deduplication semantics. Registry-only dependencies restore default npm 12 installs and avoid the standalone native-addon dependency.
 
 ### Added

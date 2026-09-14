@@ -248,4 +248,3 @@ export function buildProxyDescription(config: McpConfig): string {
 
   return desc;
 }
-
