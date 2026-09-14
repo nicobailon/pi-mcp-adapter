@@ -2860,6 +2860,79 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
+  it("refreshes the command owner and context after retrying failed initialization", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockRejectedValueOnce(new Error("first boom")).mockResolvedValueOnce(state);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers } = createPi();
+      mcpAdapter(api);
+      await handlers.get("session_start")?.({}, { hasUI: false });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const command = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+      await command.handler("status", { hasUI: false, cwd: "/tmp/retry-command" });
+
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+      expect(mocks.showStatus).toHaveBeenCalledTimes(1);
+      expect(mocks.showStatus.mock.calls[0][0]).toBe(state);
+      expect(mocks.showStatus.mock.calls[0][1].signal.aborted).toBe(false);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("refreshes the auth command owner and context after retrying failed initialization", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockRejectedValueOnce(new Error("first boom")).mockResolvedValueOnce(state);
+    mocks.authenticateServer.mockResolvedValue({ ok: false });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers } = createPi();
+      mcpAdapter(api);
+      await handlers.get("session_start")?.({}, { hasUI: false });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const command = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp-auth")?.[1];
+      await command.handler("demo", { hasUI: false, cwd: "/tmp/retry-auth" });
+
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+      expect(mocks.authenticateServer).toHaveBeenCalledTimes(1);
+      expect(mocks.authenticateServer.mock.calls[0][0]).toBe("demo");
+      expect(mocks.authenticateServer.mock.calls[0][2].signal.aborted).toBe(false);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("refreshes the script owner after retrying failed initialization", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockRejectedValueOnce(new Error("first boom")).mockResolvedValueOnce(state);
+    mocks.runMcpScript.mockResolvedValue({ content: [{ type: "text", text: "script ok" }] });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers } = createPi();
+      mcpAdapter(api);
+      await handlers.get("session_start")?.({}, { hasUI: false });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const script = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcpScript")?.[0];
+      const result = await script.execute("call-1", { code: "emit('ok')" }, undefined, undefined, { hasUI: false, cwd: "/tmp/retry-script" });
+
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+      expect(mocks.runMcpScript).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ content: [{ type: "text", text: "script ok" }] });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("returns retry guidance when proxy retry initialization also fails", async () => {
     mocks.initializeMcp
       .mockRejectedValueOnce(new Error("first boom"))

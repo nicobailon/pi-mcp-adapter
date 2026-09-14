@@ -1186,12 +1186,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       return servers.length > 0 ? servers : null;
     },
     handler: async (args, ctx) => {
-      const commandOwner = currentOwner;
+      let commandOwner = currentOwner;
       const commandReload = typeof ctx.reload === "function" ? ctx.reload.bind(ctx) : async () => {};
-      const commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
+      let commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
       if (!state) {
         try {
           state = await ensureSessionRuntime(ctx as unknown as ExtensionContext);
+          commandOwner = currentOwner;
+          commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
           commandOwner?.throwIfInactive();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -1325,8 +1327,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",
     handler: async (args, ctx) => {
-      const commandOwner = currentOwner;
-      const commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
+      let commandOwner = currentOwner;
+      let commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
       const serverName = args?.trim();
       if (!serverName && !commandCtx.hasUI) {
         return;
@@ -1335,6 +1337,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (!state) {
         try {
           state = await ensureSessionRuntime(ctx as unknown as ExtensionContext);
+          commandOwner = currentOwner;
+          commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
           commandOwner?.throwIfInactive();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -1387,7 +1391,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       renderCall: createMcpScriptToolCallRenderer(toolRenderOptions),
       renderResult: renderMcpToolResult,
       async execute(_toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-        const executeOwner = currentOwner;
+        let executeOwner = currentOwner;
         if (!state) {
           try {
             const initialized = await awaitWithTimeout(ensureSessionRuntime(ctx), INIT_WAIT_TIMEOUT_MS);
@@ -1397,6 +1401,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
                 details: { mode: "script", error: "init_timeout", timeoutMs: INIT_WAIT_TIMEOUT_MS },
               };
             }
+            executeOwner = currentOwner;
             executeOwner?.throwIfInactive();
             state = initialized;
           } catch (error) {
