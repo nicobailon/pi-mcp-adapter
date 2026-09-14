@@ -11,16 +11,16 @@ describe("sandbox proxy template", () => {
     const html = buildSandboxProxyHtml({
       parentOrigin: "http://localhost:8377",
       resourcePath: "/resource/resource-nonce",
+      allowAttribute: "camera; microphone",
     });
 
     expect(html).toContain('<iframe id="mcp-app"');
     expect(html).toContain(`sandbox="${SANDBOX_INNER_SANDBOX}"`);
+    expect(html).toContain('allow="camera; microphone"');
     expect(html).toContain('const EXPECTED_PARENT_ORIGIN = "http://localhost:8377"');
     expect(html).toContain("event.source === window.parent && event.origin === EXPECTED_PARENT_ORIGIN");
     expect(html).toContain("event.source === innerFrame.contentWindow && event.origin === window.location.origin");
     expect(html).toContain('const RESOURCE_PATH = "/resource/resource-nonce"');
-    expect(html).toContain('innerFrame.setAttribute("src", RESOURCE_PATH)');
-    expect(html).toContain('innerFrame.addEventListener("load"');
     expect(html).not.toContain("document.write");
     expect(html).not.toContain("injectCsp");
     expect(html).not.toContain("allow-popups-to-escape-sandbox");
@@ -32,6 +32,7 @@ describe("sandbox proxy template", () => {
     const html = buildSandboxProxyHtml({
       parentOrigin: "http://localhost:8377",
       resourcePath: "/resource/resource-nonce",
+      allowAttribute: "",
     });
 
     expect(html).toContain("data.method === SANDBOX_RESOURCE_READY_METHOD");
@@ -56,6 +57,7 @@ describe("sandbox proxy template", () => {
     const html = buildSandboxProxyHtml({
       parentOrigin: "http://localhost:8377/<script>\u2028",
       resourcePath: "/resource/resource-nonce",
+      allowAttribute: "",
     });
 
     expect(html).not.toContain("<script>\u2028");

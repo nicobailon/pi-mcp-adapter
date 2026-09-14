@@ -87,6 +87,7 @@ export interface UiServerOptions {
 export async function startUiServer(options: UiServerOptions): Promise<UiServerHandle> {
   const sessionToken = options.sessionToken ?? randomUUID();
   const sandboxResourcePath = `${SANDBOX_RESOURCE_PATH_PREFIX}${randomUUID()}`;
+  const resourceAllow = buildAllowAttribute(options.resource.meta.permissions);
   const log = logger.child({ 
     component: "UiServer",
     server: options.serverName,
@@ -355,7 +356,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           toolName: options.toolName,
           toolArgs: options.toolArgs,
           resource: options.resource,
-          allowAttribute: buildAllowAttribute(options.resource.meta.permissions),
+          allowAttribute: resourceAllow,
           requireToolConsent: options.consentManager.requiresPrompt(options.serverName),
           cacheToolConsent: options.consentManager.shouldCacheConsent(),
           hostContext,
@@ -718,7 +719,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
             return;
           }
 
-          if (method === "HEAD" && url.pathname === SANDBOX_PROXY_PATH) {
+          if ((method === "GET" || method === "HEAD") && url.pathname === SANDBOX_PROXY_PATH) {
             res.writeHead(200, {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "no-store",
@@ -726,19 +727,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               "Referrer-Policy": "no-referrer",
               "X-Content-Type-Options": "nosniff",
             });
-            res.end();
-            return;
-          }
-
-          if (method === "GET" && url.pathname === SANDBOX_PROXY_PATH) {
-            res.writeHead(200, {
-              "Content-Type": "text/html; charset=utf-8",
-              "Cache-Control": "no-store",
-              "Content-Security-Policy": buildSandboxProxyCsp(),
-              "Referrer-Policy": "no-referrer",
-              "X-Content-Type-Options": "nosniff",
-            });
-            res.end(buildSandboxProxyHtml({ parentOrigin, resourcePath: sandboxResourcePath }));
+            res.end(method === "HEAD" ? undefined : buildSandboxProxyHtml({
+              parentOrigin,
+              resourcePath: sandboxResourcePath,
+              allowAttribute: resourceAllow,
+            }));
             return;
           }
 
