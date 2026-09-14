@@ -20,9 +20,7 @@ export function isBuiltInAgentPlugin(definition: ServerEntry, field: LiteralPlug
 export function cloneBuiltInAgentPluginEntry(source: ServerEntry): ServerEntry | undefined {
   const fields = LITERAL_PLUGIN_FIELDS.filter(field => Object.hasOwn(source, field) && isBuiltInAgentPlugin(source, field));
   if (fields.length === 0) return undefined;
-  const cloned = structuredClone(source);
-  markBuiltInAgentPlugin(cloned, fields.filter(field => Object.hasOwn(cloned, field)));
-  return cloned;
+  return markBuiltInAgentPlugin(structuredClone(source), fields);
 }
 
 /** @internal */
@@ -31,9 +29,7 @@ export function mergeBuiltInAgentPluginEntries(base: ServerEntry, next: ServerEn
   delete (merged as BuiltInAgentPluginEntry)[BUILT_IN_AGENT_PLUGIN];
   const fields = LITERAL_PLUGIN_FIELDS.filter(field => {
     const owner = Object.hasOwn(next, field) ? next : base;
-    return Object.hasOwn(owner, field)
-      && Object.is(merged[field], owner[field])
-      && isBuiltInAgentPlugin(owner, field);
+    return Object.hasOwn(owner, field) && isBuiltInAgentPlugin(owner, field);
   });
   if (fields.length > 0) markBuiltInAgentPlugin(merged, fields);
   return merged;

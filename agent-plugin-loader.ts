@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { markBuiltInAgentPlugin } from "./agent-plugin-provenance.ts";
 import type { McpConfig, ServerEntry } from "./types.ts";
+import { resolveRealContainedPath } from "./path-utils.ts";
 
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
@@ -377,51 +378,15 @@ function resolvePluginCwd(value: unknown, pluginRoot: string, pluginDataDir: str
   if (value.startsWith("./") || value === "${PLUGIN_ROOT}" || value.startsWith("${PLUGIN_ROOT}/")) {
     return resolveRealContainedPath(pluginRoot, resolve(pluginRoot, expanded));
   }
-  if (value === "${PLUGIN_DATA}" || value.startsWith("${PLUGIN_DATA}/")) return resolvePluginDataCwd(pluginDataDir, expanded);
+  if (value === "${PLUGIN_DATA}" || value.startsWith("${PLUGIN_DATA}/")) {
+    return resolvePluginDataCwd(pluginDataDir, expanded);
+  }
   return null;
 }
 
 function resolvePluginDataCwd(pluginDataDir: string, expanded: string): string | null {
-  const candidate = resolve(pluginDataDir, expanded);
-  if (!resolveContainedPath(pluginDataDir, candidate)) return null;
-
-  try {
-    const dataRoot = dirname(pluginDataDir);
-    if (!existsSync(dataRoot)) return candidate;
-    const realDataRoot = realpathSync(dataRoot);
-    if (!existsSync(pluginDataDir)) return candidate;
-    const realPluginDataDir = realpathSync(pluginDataDir);
-    if (!resolveContainedPath(realDataRoot, realPluginDataDir)) return null;
-
-    let existing = candidate;
-    while (!existsSync(existing)) {
-      const parent = dirname(existing);
-      if (parent === existing) return null;
-      existing = parent;
-    }
-    const realExisting = realpathSync(existing);
-    if (!resolveContainedPath(realPluginDataDir, realExisting)) return null;
-    return existing === candidate ? realExisting : candidate;
-  } catch {
-    return null;
-  }
-}
-
-function resolveRealContainedPath(root: string, path: string): string | null {
-  try {
-    const realRoot = realpathSync(root);
-    const realPath = realpathSync(path);
-    return resolveContainedPath(realRoot, realPath);
-  } catch {
-    return null;
-  }
-}
-
-function resolveContainedPath(root: string, value: string): string | null {
-  const resolved = resolve(root, value);
-  const rel = relative(root, resolved);
-  if (rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep) && !isAbsolute(rel))) return resolved;
-  return null;
+  if (existsSync(pluginDataDir) && !resolveRealContainedPath(dirname(pluginDataDir), pluginDataDir)) return null;
+  return resolveRealContainedPath(pluginDataDir, resolve(pluginDataDir, expanded), true);
 }
 
 function expandPluginPlaceholders(value: string, pluginRoot: string, pluginDataDir: string): string {
