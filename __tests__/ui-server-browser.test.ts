@@ -137,6 +137,7 @@ describe("UiServer browser CSP", () => {
         "--disable-dev-shm-usage",
         "--no-first-run",
         "--no-default-browser-check",
+        "--host-resolver-rules=MAP localhost 127.0.0.1",
         `--user-data-dir=${profileDir}`,
         handle.url,
       ], { stdio: "ignore" });
