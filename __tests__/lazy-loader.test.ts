@@ -16,18 +16,6 @@ function deferred<T>() {
 }
 
 describe("lazy runtime import boundaries", () => {
-  it("keeps execution-heavy modules out of idle static evaluation paths", () => {
-    const indexSource = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
-    const namespaceSource = readFileSync(new URL("../namespace-tools.ts", import.meta.url), "utf8");
-    const promptsSource = readFileSync(new URL("../prompts.ts", import.meta.url), "utf8");
-
-    for (const moduleName of ["init", "mcp-auth-flow", "proxy-modes", "direct-tools", "commands", "mcp-code", "mcp-install"]) {
-      expect(indexSource).not.toMatch(new RegExp(`^import (?!type).*\\./${moduleName}\\.ts`, "m"));
-    }
-    expect(namespaceSource).not.toMatch(/^import .*\.\/proxy-modes\.ts/m);
-    expect(promptsSource).not.toMatch(/^import .*\.\/init\.ts/m);
-  });
-
   it("proves the idle boundary from a fresh process module-load trace", () => {
     const directory = mkdtempSync(join(tmpdir(), "pi-mcp-lazy-probe-"));
     const loaderPath = join(directory, "loader.mjs");

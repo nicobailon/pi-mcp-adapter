@@ -241,6 +241,48 @@ function createPi(options: { unregisterTool?: false | ((name: string) => boolean
   };
 }
 
+async function loadAdapter(options: Parameters<typeof createPi>[0] = {}) {
+  const { default: mcpAdapter } = await import("../index.ts");
+  const pi = createPi(options);
+  mcpAdapter(pi.api);
+  return pi;
+}
+
+function registeredTool(api: ReturnType<typeof createPi>["api"], name: string) {
+  return api.registerTool.mock.calls.find((call: any[]) => call[0].name === name)?.[0];
+}
+
+function registeredCommand(api: ReturnType<typeof createPi>["api"], name: string) {
+  return api.registerCommand.mock.calls.find((call: any[]) => call[0] === name)?.[1];
+}
+
+function cacheLazyServer(definition: Record<string, unknown>, tools = [{ name: "search" }]) {
+  const config = { mcpServers: { demo: definition } };
+  mocks.loadMcpConfig.mockReturnValue(config);
+  mocks.loadMetadataCache.mockReturnValue({
+    version: 1,
+    servers: { demo: { configHash: computeServerHash(definition), cachedAt: Date.now(), tools, resources: [] } },
+  });
+  return config;
+}
+
+const directToolSpec = {
+  serverName: "demo",
+  originalName: "search",
+  prefixedName: "demo_search",
+  description: "Search",
+  inputSchema: { type: "object", properties: {} },
+};
+
+async function loadAfterFailedInitialization(state = createState()) {
+  mocks.initializeMcp.mockRejectedValueOnce(new Error("first boom")).mockResolvedValueOnce(state);
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const pi = await loadAdapter();
+  await pi.handlers.get("session_start")?.({}, { hasUI: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  return { ...pi, state };
+}
+
 function createStatusObservingPi() {
   const { api, handlers } = createPi();
   let activeTools = ["bash"];
@@ -359,6 +401,7 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     if (originalDirectTools === undefined) {
       delete process.env.MCP_DIRECT_TOOLS;
     } else {
@@ -367,9 +410,7 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   it("registers mcp and pi-mcp commands while keeping mcp-auth separate", async () => {
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     const commandNames = api.registerCommand.mock.calls.map((call: any[]) => call[0]);
     expect(commandNames.filter((name: string) => name === "mcp")).toHaveLength(1);
@@ -386,9 +427,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.discoverConfiguredClaudePluginSkills.mockImplementation((config: { claudePlugins?: Array<{ path: string }> }) =>
       config.claudePlugins?.map(plugin => `/skills/${plugin.path}`) ?? []);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { handlers } = await loadAdapter();
     const discover = handlers.get("resources_discover")!;
 
     expect(discover({ cwd: "/project", reason: "initial" })).toEqual({ skillPaths: ["/skills/plugin-2"] });
@@ -413,9 +452,7 @@ describe("mcpAdapter session lifecycle", () => {
     ]);
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["demo"]);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
       name: "demo_search",
@@ -442,9 +479,7 @@ describe("mcpAdapter session lifecycle", () => {
       },
     ]);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
       name: "demo_search",
@@ -462,9 +497,7 @@ describe("mcpAdapter session lifecycle", () => {
       mcpServers: {},
     });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
       name: "mcp",
@@ -473,9 +506,7 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   it("does not leak TypeBox internal markers into registered tool parameter schemas", async () => {
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     const collectTildeKeys = (value: unknown, path = "$", keys: string[] = []): string[] => {
       if (value === null || typeof value !== "object") return keys;
@@ -528,9 +559,7 @@ describe("mcpAdapter session lifecycle", () => {
       },
     ]);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     const directTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "demo_search")?.[0];
     expect(directTool.parameters).toEqual({ type: "object", properties: { query: { type: "string" } } });
@@ -560,9 +589,7 @@ describe("mcpAdapter session lifecycle", () => {
       },
     ]);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     expect(mocks.normalizeDirectToolInputSchema).toHaveBeenCalledWith(schema);
     const directTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "demo_search")?.[0];
@@ -595,9 +622,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["demo"]);
     mocks.initializeMcp.mockReturnValue(initialization.promise);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     let sessionStarted = false;
     const sessionStart = Promise.resolve(handlers.get("session_start")?.({}, { hasUI: false }))
@@ -648,9 +673,7 @@ describe("mcpAdapter session lifecycle", () => {
     state.consentManager = new ConsentManager();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     const context = { hasUI: false, sessionManager };
     await handlers.get("session_start")?.({}, context);
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
@@ -678,9 +701,7 @@ describe("mcpAdapter session lifecycle", () => {
     state.consentManager = new ConsentManager();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false, sessionManager: activeSessionManager });
     await handlers.get("session_tree")?.({}, { hasUI: false, sessionManager: staleSessionManager });
 
@@ -701,9 +722,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
     await Promise.resolve();
@@ -732,9 +751,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.initializeMcp.mockReturnValue(initialization.promise);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
 
     let inputCompleted = false;
@@ -761,9 +778,7 @@ describe("mcpAdapter session lifecycle", () => {
       mocks.loadMcpConfig.mockReturnValue(config);
       mocks.initializeMcp.mockReturnValue(initialization.promise);
 
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
+      const { api, handlers } = await loadAdapter();
       await handlers.get("session_start")?.({}, {});
 
       let inputCompleted = false;
@@ -816,9 +831,7 @@ describe("mcpAdapter session lifecycle", () => {
       .mockReturnValue([newTool]);
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
     await Promise.resolve();
@@ -863,9 +876,7 @@ describe("mcpAdapter session lifecycle", () => {
       ]);
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "demo_search" }));
 
@@ -897,9 +908,7 @@ describe("mcpAdapter session lifecycle", () => {
     ]);
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
     await Promise.resolve();
@@ -930,13 +939,11 @@ describe("mcpAdapter session lifecycle", () => {
     const connectResult = { content: [{ type: "text", text: "connected" }] };
     mocks.executeConnect.mockResolvedValue(connectResult);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
     const callsAfterInitialSync = mocks.resolveDirectTools.mock.calls.length;
-    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const proxyTool = registeredTool(api, "mcp");
 
     expect(await proxyTool.execute("call-1", { connect: "demo" })).toBe(connectResult);
     const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
@@ -953,9 +960,7 @@ describe("mcpAdapter session lifecycle", () => {
     const initializedState = createState();
     mocks.initializeMcp.mockResolvedValue(initializedState);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(initializedState));
     const gateway = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
@@ -993,9 +998,7 @@ describe("mcpAdapter session lifecycle", () => {
       throw new Error("cache unavailable");
     });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
     state.promptMetadata.set("demo", [prompt]);
@@ -1015,11 +1018,9 @@ describe("mcpAdapter session lifecycle", () => {
       details: { mode: "connect", server: "demo" },
     });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
-    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const proxyTool = registeredTool(api, "mcp");
 
     const result = await proxyTool.execute(
       "call-install",
@@ -1053,9 +1054,7 @@ describe("mcpAdapter session lifecycle", () => {
       details: { mode: "auth-start", server: "forex", authorizationUrl: "https://identity.example.com/authorize" },
     });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
 
@@ -1085,9 +1084,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(state);
     mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }], details: { mode: "connect" } });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
     const result = await proxyTool.execute(
@@ -1107,9 +1104,7 @@ describe("mcpAdapter session lifecycle", () => {
   it("rejects an inactive project target before provisional registration or connection", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     const gateway = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
     vi.stubEnv("PI_MCP_CONFIG_MODE", "exclusive");
@@ -1157,9 +1152,7 @@ describe("mcpAdapter session lifecycle", () => {
       controller.abort(error);
       return { content: [], details: {} };
     });
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     const gateway = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
     await expect(gateway.execute("install", { action: "install", server: "demo", url: "https://demo.example/mcp" }, controller.signal, undefined, { cwd: "/tmp/project" })).rejects.toBe(error);
@@ -1202,9 +1195,7 @@ describe("mcpAdapter session lifecycle", () => {
         return { content: [{ type: "text", text: "connected" }], details: {} };
       });
       mocks.writeSharedServerEntry.mockImplementation(() => { throw new Error("read-only"); });
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
+      const { api, handlers } = await loadAdapter();
       await handlers.get("session_start")?.({}, {});
       const gateway = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
       const searchBefore = await gateway.execute("before", { search: "provisional", regex: true });
@@ -1233,9 +1224,7 @@ describe("mcpAdapter session lifecycle", () => {
       details: { mode: "connect", error: "connect_failed" },
     });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
     const result = await proxyTool.execute(
@@ -1664,9 +1653,7 @@ describe("mcpAdapter session lifecycle", () => {
     });
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
     state.failureTracker.set("failed", Date.now());
@@ -1783,9 +1770,7 @@ describe("mcpAdapter session lifecycle", () => {
     });
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, {});
@@ -1826,9 +1811,7 @@ describe("mcpAdapter session lifecycle", () => {
     });
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi({ unregisterTool: false });
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter({ unregisterTool: false });
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, {});
@@ -1866,9 +1849,7 @@ describe("mcpAdapter session lifecycle", () => {
       },
     ]);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
       name: "demo_search",
@@ -1878,9 +1859,7 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   it("registers proxy args as string or object without patternProperties", async () => {
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
     expect(proxyTool).toBeDefined();
@@ -1898,9 +1877,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(state);
     mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, {});
@@ -1928,9 +1905,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
     mocks.executeSearch.mockResolvedValue({ content: [{ type: "text", text: "results" }] });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, {});
@@ -1954,9 +1929,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, {});
@@ -1979,9 +1952,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.executeAuthStart.mockResolvedValue({ content: [{ type: "text", text: "auth url" }] });
     mocks.executeAuthComplete.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, {});
@@ -2011,9 +1982,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(state);
     mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, {});
@@ -2239,9 +2208,7 @@ describe("mcpAdapter session lifecycle", () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     expect(sessionStart).toBeTypeOf("function");
@@ -2276,9 +2243,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     mocks.executeStatus.mockReturnValue({ content: [{ type: "text", text: "ready" }] });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     const sessionStart = handlers.get("session_start")!;
     await sessionStart({}, {});
     await sessionStart({}, {});
@@ -2311,9 +2276,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(state);
     mocks.executeStatus.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     await new Promise((resolve) => setImmediate(resolve));
     await Promise.resolve();
@@ -2342,24 +2305,20 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(state);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    try {
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api } = createPi();
-      api.getActiveTools.mockImplementation(() => {
-        throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
-      });
-      mcpAdapter(api);
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api } = createPi();
+    api.getActiveTools.mockImplementation(() => {
+      throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
+    });
+    mcpAdapter(api);
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await Promise.resolve();
-      await Promise.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+    await Promise.resolve();
+    await Promise.resolve();
 
-      expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
-      expect(mocks.updateStatusBar).toHaveBeenCalledWith(state);
-      expect(consoleError).not.toHaveBeenCalled();
-    } finally {
-      consoleError.mockRestore();
-    }
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+    expect(mocks.updateStatusBar).toHaveBeenCalledWith(state);
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it("does not initialize at load when startup servers are absent or disabled", async () => {
@@ -2370,9 +2329,7 @@ describe("mcpAdapter session lifecycle", () => {
       },
     });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     await new Promise((resolve) => setImmediate(resolve));
 
@@ -2390,9 +2347,7 @@ describe("mcpAdapter session lifecycle", () => {
       .mockReturnValueOnce(secondInitialization.promise);
     mocks.executeStatus.mockReturnValue({ content: [{ type: "text", text: "ready" }] });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false, cwd: "/one" });
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(firstState));
 
@@ -2441,9 +2396,7 @@ describe("mcpAdapter session lifecycle", () => {
     }
 
     try {
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
+      const { api, handlers } = await loadAdapter();
       const starting = Promise.resolve(handlers.get("session_start")?.({}, { hasUI: false }));
       await vi.waitFor(() => expect(
         moduleName === "core" ? mocks.coreModuleStarted : mocks.oauthModuleStarted,
@@ -2462,33 +2415,19 @@ describe("mcpAdapter session lifecycle", () => {
 
   it("defers a cache-backed lazy runtime and coalesces concurrent first operations", async () => {
     const definition = { command: "demo" };
-    const config = { mcpServers: { demo: definition } };
-    mocks.loadMcpConfig.mockReturnValue(config);
-    mocks.loadMetadataCache.mockReturnValue({
-      version: 1,
-      servers: {
-        demo: {
-          configHash: computeServerHash(definition),
-          cachedAt: Date.now(),
-          tools: [{ name: "search" }],
-          resources: [],
-        },
-      },
-    });
+    const config = cacheLazyServer(definition);
     const initializing = createDeferred<any>();
     const state = createState();
     state.config = config;
     mocks.initializeMcp.mockReturnValue(initializing.promise);
     mocks.executeStatus.mockReturnValue({ content: [{ type: "text", text: "ready" }] });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
     await new Promise((resolve) => setImmediate(resolve));
     expect(mocks.initializeMcp).not.toHaveBeenCalled();
 
-    const gateway = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const gateway = registeredTool(api, "mcp");
     const ctx = { hasUI: false, cwd: "/tmp", mode: "print" };
     const first = gateway.execute("one", {}, undefined, undefined, ctx);
     const second = gateway.execute("two", {}, undefined, undefined, ctx);
@@ -2505,16 +2444,9 @@ describe("mcpAdapter session lifecycle", () => {
     ["an env-selected tool already present in valid cache", { lifecycle: "lazy" }, "demo/search"],
   ])("defers %s", async (_label, definition, envSelection) => {
     if (envSelection) process.env.MCP_DIRECT_TOOLS = envSelection;
-    const config = { mcpServers: { demo: definition } };
-    mocks.loadMcpConfig.mockReturnValue(config);
-    mocks.loadMetadataCache.mockReturnValue({
-      version: 1,
-      servers: { demo: { configHash: computeServerHash(definition), cachedAt: Date.now(), tools: [{ name: "search" }], resources: [] } },
-    });
+    cacheLazyServer(definition);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
     await new Promise((resolve) => setImmediate(resolve));
 
@@ -2532,9 +2464,7 @@ describe("mcpAdapter session lifecycle", () => {
     });
     mocks.initializeMcp.mockResolvedValue(createState());
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
 
     await vi.waitFor(() => expect(mocks.initializeMcp).toHaveBeenCalledTimes(1));
@@ -2545,20 +2475,13 @@ describe("mcpAdapter session lifecycle", () => {
     ["mcp-auth", "demo"],
   ])("passes the complete first-use context from /%s into deferred initialization", async (commandName, args) => {
     const definition = { command: "demo" };
-    const config = { mcpServers: { demo: definition } };
-    mocks.loadMcpConfig.mockReturnValue(config);
-    mocks.loadMetadataCache.mockReturnValue({
-      version: 1,
-      servers: { demo: { configHash: computeServerHash(definition), cachedAt: Date.now(), tools: [], resources: [] } },
-    });
+    const config = cacheLazyServer(definition, []);
     const initializedState = createState();
     initializedState.config = config;
     mocks.initializeMcp.mockResolvedValue(initializedState);
     mocks.authenticateServer.mockResolvedValue({ ok: false });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
 
     const model = { id: "model" };
@@ -2574,7 +2497,7 @@ describe("mcpAdapter session lifecycle", () => {
       signal: new AbortController().signal,
       customHostField: { preserved: true },
     } as any;
-    const command = api.registerCommand.mock.calls.find((call: any[]) => call[0] === commandName)?.[1];
+    const command = registeredCommand(api, commandName);
     await command.handler(args, ctx);
 
     expect(mocks.initializeMcp.mock.calls[0][1]).toBe(ctx);
@@ -2589,12 +2512,10 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValueOnce(firstState).mockResolvedValueOnce(secondState);
     mocks.executeStatus.mockReturnValue({ content: [{ type: "text", text: "ready" }] });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(firstState));
-    const gateway = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const gateway = registeredTool(api, "mcp");
     const staleExecution = gateway.execute("stale", {}, undefined, undefined, { hasUI: false, cwd: "/one" });
     const staleRejection = expect(staleExecution).rejects.toThrow(/restarted|stale session/);
     await Promise.resolve();
@@ -2616,12 +2537,10 @@ describe("mcpAdapter session lifecycle", () => {
     const initializedState = createState();
     mocks.initializeMcp.mockResolvedValue(initializedState);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(initializedState));
-    const command = api.registerCommand.mock.calls.find((call: any[]) => call[0] === commandName)?.[1];
+    const command = registeredCommand(api, commandName);
     const pending = command.handler(args, { hasUI: false, cwd: "/one", mode: "print" });
     await Promise.resolve();
 
@@ -2634,26 +2553,13 @@ describe("mcpAdapter session lifecycle", () => {
 
   it("returns structured init_failed details when deferred direct initialization rejects", async () => {
     const definition = { command: "demo", directTools: true };
-    const config = { mcpServers: { demo: definition } };
-    mocks.loadMcpConfig.mockReturnValue(config);
-    mocks.loadMetadataCache.mockReturnValue({
-      version: 1,
-      servers: { demo: { configHash: computeServerHash(definition), cachedAt: Date.now(), tools: [{ name: "search" }], resources: [] } },
-    });
-    mocks.resolveDirectTools.mockReturnValue([{
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-      inputSchema: { type: "object", properties: {} },
-    }]);
+    cacheLazyServer(definition);
+    mocks.resolveDirectTools.mockReturnValue([directToolSpec]);
     mocks.initializeMcp.mockRejectedValue(new Error("startup failed"));
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
-    const directTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "demo_search")?.[0];
+    const directTool = registeredTool(api, "demo_search");
 
     await expect(directTool.execute("failed", {}, undefined, undefined, { hasUI: false, cwd: "/one" }))
       .resolves.toMatchObject({ details: { error: "init_failed", server: "demo", message: "startup failed" } });
@@ -2662,22 +2568,14 @@ describe("mcpAdapter session lifecycle", () => {
   it("keeps delayed direct-tool loading lifecycle-gated and structured", async () => {
     const gate = createDeferred<void>();
     mocks.directModuleGate = gate.promise;
-    mocks.resolveDirectTools.mockReturnValue([{
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-      inputSchema: { type: "object", properties: {} },
-    }]);
+    mocks.resolveDirectTools.mockReturnValue([directToolSpec]);
     const initializedState = createState();
     mocks.initializeMcp.mockResolvedValue(initializedState);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(initializedState));
-    const directTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "demo_search")?.[0];
+    const directTool = registeredTool(api, "demo_search");
     const pending = directTool.execute("stale", {}, undefined, undefined, { hasUI: false, cwd: "/one" });
     await Promise.resolve();
 
@@ -2693,12 +2591,10 @@ describe("mcpAdapter session lifecycle", () => {
     const initializedState = createState();
     mocks.initializeMcp.mockResolvedValue(initializedState);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(initializedState));
-    const script = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcpScript")?.[0];
+    const script = registeredTool(api, "mcpScript");
     const scriptExecution = script.execute("script", { code: "emit(1)" }, undefined, undefined, { hasUI: false, cwd: "/one" });
     const scriptRejection = expect(scriptExecution).rejects.toThrow(/shutdown|stale session/);
     await vi.waitFor(() => expect(mocks.codeModuleStarted).toHaveBeenCalledTimes(1));
@@ -2722,9 +2618,7 @@ describe("mcpAdapter session lifecycle", () => {
       .mockReturnValueOnce(loadInit.promise)
       .mockReturnValueOnce(sessionInit.promise);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     await new Promise((resolve) => setImmediate(resolve));
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
@@ -2756,9 +2650,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, { hasUI: false });
@@ -2778,9 +2670,7 @@ describe("mcpAdapter session lifecycle", () => {
     const loadInit = createDeferred<any>();
     mocks.initializeMcp.mockReturnValue(loadInit.promise);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     await new Promise((resolve) => setImmediate(resolve));
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
@@ -2808,9 +2698,7 @@ describe("mcpAdapter session lifecycle", () => {
     const never = createDeferred<any>();
     mocks.initializeMcp.mockReturnValue(never.promise);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     await new Promise((resolve) => setImmediate(resolve));
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
@@ -2832,143 +2720,78 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   it("retries initialization from the proxy tool after an initialization failure", async () => {
-    const state = createState();
-    mocks.initializeMcp
-      .mockRejectedValueOnce(new Error("first boom"))
-      .mockResolvedValueOnce(state);
     mocks.executeSearch.mockResolvedValue({ content: [{ type: "text", text: "results" }] });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { api, state } = await loadAfterFailedInitialization();
+    const callCtx = { hasUI: false, cwd: "/tmp/retry", mode: "print" };
+    const result = await registeredTool(api, "mcp").execute("call-1", { search: "demo" }, undefined, undefined, callCtx);
 
-    try {
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
-
-      await handlers.get("session_start")?.({}, { hasUI: false });
-      await new Promise((resolve) => setImmediate(resolve));
-
-      const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
-      const callCtx = { hasUI: false, cwd: "/tmp/retry", mode: "print" };
-      const result = await proxyTool.execute("call-1", { search: "demo" }, undefined, undefined, callCtx);
-
-      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
-      expect(mocks.initializeMcp.mock.calls[1][1]).toBe(callCtx);
-      expect(result).toEqual({ content: [{ type: "text", text: "results" }] });
-      expect(mocks.executeSearch).toHaveBeenCalledWith(state, "demo", undefined, undefined, undefined, undefined, undefined);
-    } finally {
-      consoleError.mockRestore();
-    }
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+    expect(mocks.initializeMcp.mock.calls[1][1]).toBe(callCtx);
+    expect(result).toEqual({ content: [{ type: "text", text: "results" }] });
+    expect(mocks.executeSearch).toHaveBeenCalledWith(state, "demo", undefined, undefined, undefined, undefined, undefined);
   });
 
   it("refreshes the command owner and context after retrying failed initialization", async () => {
-    const state = createState();
-    mocks.initializeMcp.mockRejectedValueOnce(new Error("first boom")).mockResolvedValueOnce(state);
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { api, state } = await loadAfterFailedInitialization();
+    await registeredCommand(api, "mcp").handler("status", { hasUI: false, cwd: "/tmp/retry-command" });
 
-    try {
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
-      await handlers.get("session_start")?.({}, { hasUI: false });
-      await new Promise((resolve) => setImmediate(resolve));
-
-      const command = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
-      await command.handler("status", { hasUI: false, cwd: "/tmp/retry-command" });
-
-      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
-      expect(mocks.showStatus).toHaveBeenCalledTimes(1);
-      expect(mocks.showStatus.mock.calls[0][0]).toBe(state);
-      expect(mocks.showStatus.mock.calls[0][1].signal.aborted).toBe(false);
-    } finally {
-      consoleError.mockRestore();
-    }
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+    expect(mocks.showStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.showStatus.mock.calls[0][0]).toBe(state);
+    expect(mocks.showStatus.mock.calls[0][1].signal.aborted).toBe(false);
   });
 
   it("refreshes the auth command owner and context after retrying failed initialization", async () => {
-    const state = createState();
-    mocks.initializeMcp.mockRejectedValueOnce(new Error("first boom")).mockResolvedValueOnce(state);
     mocks.authenticateServer.mockResolvedValue({ ok: false });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { api } = await loadAfterFailedInitialization();
+    await registeredCommand(api, "mcp-auth").handler("demo", { hasUI: false, cwd: "/tmp/retry-auth" });
 
-    try {
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
-      await handlers.get("session_start")?.({}, { hasUI: false });
-      await new Promise((resolve) => setImmediate(resolve));
-
-      const command = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp-auth")?.[1];
-      await command.handler("demo", { hasUI: false, cwd: "/tmp/retry-auth" });
-
-      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
-      expect(mocks.authenticateServer).toHaveBeenCalledTimes(1);
-      expect(mocks.authenticateServer.mock.calls[0][0]).toBe("demo");
-      expect(mocks.authenticateServer.mock.calls[0][2].signal.aborted).toBe(false);
-    } finally {
-      consoleError.mockRestore();
-    }
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+    expect(mocks.authenticateServer).toHaveBeenCalledTimes(1);
+    expect(mocks.authenticateServer.mock.calls[0][0]).toBe("demo");
+    expect(mocks.authenticateServer.mock.calls[0][2].signal.aborted).toBe(false);
   });
 
   it("refreshes the script owner after retrying failed initialization", async () => {
-    const state = createState();
-    mocks.initializeMcp.mockRejectedValueOnce(new Error("first boom")).mockResolvedValueOnce(state);
     mocks.runMcpScript.mockResolvedValue({ content: [{ type: "text", text: "script ok" }] });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { api } = await loadAfterFailedInitialization();
+    const result = await registeredTool(api, "mcpScript").execute(
+      "call-1", { code: "emit('ok')" }, undefined, undefined, { hasUI: false, cwd: "/tmp/retry-script" },
+    );
 
-    try {
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
-      await handlers.get("session_start")?.({}, { hasUI: false });
-      await new Promise((resolve) => setImmediate(resolve));
-
-      const script = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcpScript")?.[0];
-      const result = await script.execute("call-1", { code: "emit('ok')" }, undefined, undefined, { hasUI: false, cwd: "/tmp/retry-script" });
-
-      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
-      expect(mocks.runMcpScript).toHaveBeenCalledTimes(1);
-      expect(result).toEqual({ content: [{ type: "text", text: "script ok" }] });
-    } finally {
-      consoleError.mockRestore();
-    }
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+    expect(mocks.runMcpScript).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ content: [{ type: "text", text: "script ok" }] });
   });
 
   it("returns retry guidance when proxy retry initialization also fails", async () => {
     mocks.initializeMcp
       .mockRejectedValueOnce(new Error("first boom"))
       .mockRejectedValueOnce(new Error("retry boom"));
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { api, handlers } = await loadAdapter();
 
-    try {
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
+    await handlers.get("session_start")?.({}, { hasUI: false });
+    await new Promise((resolve) => setImmediate(resolve));
 
-      await handlers.get("session_start")?.({}, { hasUI: false });
-      await new Promise((resolve) => setImmediate(resolve));
+    const result = await registeredTool(api, "mcp").execute(
+      "call-1", { search: "demo" }, undefined, undefined, { hasUI: false },
+    );
+    const text = result.content[0].text;
 
-      const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
-      const result = await proxyTool.execute("call-1", { search: "demo" }, undefined, undefined, { hasUI: false });
-      const text = result.content[0].text;
-
-      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
-      expect(text).not.toBe("MCP not initialized");
-      expect(text).toContain("retry boom");
-      expect(text).toContain("call mcp(...) again to retry initialization");
-      expect(result.details).toEqual({ error: "init_failed", message: "retry boom" });
-      expect(mocks.executeSearch).not.toHaveBeenCalled();
-    } finally {
-      consoleError.mockRestore();
-    }
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+    expect(text).not.toBe("MCP not initialized");
+    expect(text).toContain("retry boom");
+    expect(text).toContain("call mcp(...) again to retry initialization");
+    expect(result.details).toEqual({ error: "init_failed", message: "retry boom" });
+    expect(mocks.executeSearch).not.toHaveBeenCalled();
   });
 
   it("does not turn a shutdown-aborted initialization into retry guidance", async () => {
     const initializing = createDeferred<any>();
     mocks.initializeMcp.mockReturnValue(initializing.promise);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     await handlers.get("session_start")?.({}, { hasUI: false });
 
@@ -2986,9 +2809,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     const sessionShutdown = handlers.get("session_shutdown");
@@ -3013,9 +2834,7 @@ describe("mcpAdapter session lifecycle", () => {
     };
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
     expect(commandDef.getArgumentCompletions("reconnect ")).toBeNull();
@@ -3062,9 +2881,7 @@ describe("mcpAdapter session lifecycle", () => {
     state.promptMetadata = new Map();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     await handlers.get("session_start")?.({}, { hasUI: false });
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
@@ -3089,9 +2906,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, { hasUI: true, ui: { notify: vi.fn() } });
@@ -3110,9 +2925,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const ui = { notify: vi.fn() };
     const sessionStart = handlers.get("session_start");
@@ -3131,9 +2944,7 @@ describe("mcpAdapter session lifecycle", () => {
     state.config.mcpServers = { global: { url: "https://example.test/mcp" } };
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: true, cwd: "/tmp/project", ui: { notify: vi.fn() } });
     await Promise.resolve();
     await Promise.resolve();
@@ -3150,9 +2961,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const ui = { notify: vi.fn() };
     const sessionStart = handlers.get("session_start");
@@ -3172,9 +2981,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(initialState);
     mocks.openMcpSetup.mockResolvedValue({ configChanged: true });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const ui = { notify: vi.fn() };
     const reload = vi.fn().mockResolvedValue(undefined);
@@ -3195,9 +3002,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const ui = { notify: vi.fn() };
     const sessionStart = handlers.get("session_start");
@@ -3217,9 +3022,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(state);
     mocks.authenticateServer.mockResolvedValue({ ok: true });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const ui = { notify: vi.fn() };
     const sessionStart = handlers.get("session_start");
@@ -3246,9 +3049,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(state);
     mocks.authenticateServer.mockResolvedValue({ ok: false });
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
 
     const ui = { notify: vi.fn() };
     const sessionStart = handlers.get("session_start");
@@ -3274,9 +3075,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api } = createPi();
-    mcpAdapter(api);
+    const { api } = await loadAdapter();
 
     const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp-auth")?.[1];
     await commandDef.handler("", { hasUI: false });
@@ -3287,37 +3086,21 @@ describe("mcpAdapter session lifecycle", () => {
 
   it("stops the runtime when initialization rejects before publishing state", async () => {
     mocks.initializeMcp.mockRejectedValue(new Error("init boom"));
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { handlers } = await loadAdapter();
 
-    try {
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await new Promise((resolve) => setImmediate(resolve));
 
-      await handlers.get("session_start")?.({}, {});
-      await new Promise((resolve) => setImmediate(resolve));
-
-      expect(mocks.createOAuthRuntime.mock.results[0].value.signal.aborted).toBe(true);
-    } finally {
-      consoleError.mockRestore();
-    }
+    expect(mocks.createOAuthRuntime.mock.results[0].value.signal.aborted).toBe(true);
   });
 
   it("rolls back commit registrations when registerTool synchronously shuts down the session", async () => {
-    const spec = {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-      inputSchema: { type: "object", properties: {} },
-    };
-    mocks.resolveDirectTools.mockReturnValueOnce([]).mockReturnValue([spec]);
+    mocks.resolveDirectTools.mockReturnValueOnce([]).mockReturnValue([directToolSpec]);
     const initializedState = createState();
     mocks.initializeMcp.mockResolvedValue(initializedState);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     let shutdown: Promise<unknown> | undefined;
     api.registerTool.mockImplementation((tool: { name: string }) => {
       if (tool.name === "demo_search" && !shutdown) {
@@ -3335,20 +3118,11 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   it("stops commit after a UI callback synchronously shuts down the session", async () => {
-    const spec = {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-      inputSchema: { type: "object", properties: {} },
-    };
-    mocks.resolveDirectTools.mockReturnValueOnce([]).mockReturnValue([spec]);
+    mocks.resolveDirectTools.mockReturnValueOnce([]).mockReturnValue([directToolSpec]);
     const initializedState = createState();
     mocks.initializeMcp.mockResolvedValue(initializedState);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     let shutdown: Promise<unknown> | undefined;
     const ui = {
       notify: vi.fn(() => {
@@ -3370,9 +3144,7 @@ describe("mcpAdapter session lifecycle", () => {
     const replacementState = createState();
     mocks.initializeMcp.mockResolvedValueOnce(staleState).mockResolvedValueOnce(replacementState);
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     let replacement: Promise<unknown> | undefined;
     mocks.updateStatusBar.mockImplementationOnce(() => {
       replacement = Promise.resolve(handlers.get("session_start")?.({}, { hasUI: false, cwd: "/replacement" }));
@@ -3385,7 +3157,7 @@ describe("mcpAdapter session lifecycle", () => {
 
     expect(staleState.lifecycle.gracefulShutdown).toHaveBeenCalledTimes(1);
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
-    const gateway = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const gateway = registeredTool(api, "mcp");
     mocks.executeStatus.mockReturnValue({ content: [{ type: "text", text: "replacement" }] });
     await expect(gateway.execute("current", {}, undefined, undefined, { hasUI: false }))
       .resolves.toEqual({ content: [{ type: "text", text: "replacement" }] });
@@ -3401,9 +3173,7 @@ describe("mcpAdapter session lifecycle", () => {
       mocks.initializeMcp.mockResolvedValueOnce(firstState);
     }
 
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
+    const { api, handlers } = await loadAdapter();
     let reentrant: Promise<unknown> | undefined;
     mocks.updateStatusBar.mockImplementationOnce(() => {
       reentrant = Promise.resolve(handlers.get(eventName)?.({}, { hasUI: false }));
@@ -3430,24 +3200,16 @@ describe("mcpAdapter session lifecycle", () => {
     });
 
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { handlers } = await loadAdapter();
+    const sessionStart = handlers.get("session_start");
+    expect(sessionStart).toBeTypeOf("function");
 
-    try {
-      const { default: mcpAdapter } = await import("../index.ts");
-      const { api, handlers } = createPi();
-      mcpAdapter(api);
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
 
-      const sessionStart = handlers.get("session_start");
-      expect(sessionStart).toBeTypeOf("function");
-
-      await sessionStart?.({}, {});
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setImmediate(resolve));
-
-      expect(consoleError).toHaveBeenCalledWith("MCP initialization failed: status boom");
-    } finally {
-      consoleError.mockRestore();
-    }
+    expect(consoleError).toHaveBeenCalledWith("MCP initialization failed: status boom");
   });
 
   it("registers a tool_result handler that re-flags returned MCP tool failures (and leaves other results alone)", async () => {
