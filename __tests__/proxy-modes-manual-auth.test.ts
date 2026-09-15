@@ -101,6 +101,93 @@ describe("manual OAuth proxy actions", () => {
     expect(result.details).toMatchObject({ mode: "auth-start", server: "demo" });
   });
 
+  it.each(["unavailable", "keyrevoked"])("reports an actionable diagnostic from real startup with a %s store", async (store) => {
+    const flow = await vi.importActual<typeof import("../mcp-auth-flow.ts")>("../mcp-auth-flow.ts");
+    const { getTestAuthSecretStoreReadCount } = await import("../mcp-auth.ts");
+    const { isCallbackServerRunning, getPendingAuthCount } = await import("../mcp-callback-server.ts");
+    const { executeAuthStart } = await import("../proxy-modes.ts");
+    const runtime = flow.createOAuthRuntime();
+    const state = createState({ oauthRuntime: runtime });
+    vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", store);
+    vi.stubEnv("PI_MCP_ADAPTER_DISABLE_AUTH_CACHE", "1");
+    vi.stubEnv("PI_MCP_ADAPTER_DISABLE_KEYRING_RECOVERY", "1");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network request"));
+    mocks.startAuth.mockImplementation(flow.startAuth);
+
+    try {
+      const readsBefore = getTestAuthSecretStoreReadCount();
+      const result = await executeAuthStart(state, "demo");
+      const message = store === "keyrevoked" && process.platform === "linux"
+        ? "OAuth credential store unavailable: the Linux session keyring may be revoked. Start Pi from a fresh login/keyring session and retry."
+        : "OAuth credential store unavailable. Configure or unlock the OS credential store and retry.";
+      expect(result.content).toEqual([
+        { type: "text", text: `Failed to start OAuth for "demo": ${message}` },
+      ]);
+      expect(result.details).toEqual({ mode: "auth-start", error: "auth_start_failed", server: "demo", message });
+      expect(getTestAuthSecretStoreReadCount() - readsBefore).toBe(1);
+      expect(flow.hasPendingAuth("demo", undefined, runtime)).toBe(false);
+      expect(isCallbackServerRunning()).toBe(false);
+      expect(getPendingAuthCount()).toBe(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mocks.authenticate).not.toHaveBeenCalled();
+      expect(state.openBrowser).not.toHaveBeenCalled();
+      expect(state.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      await flow.shutdownOAuth(runtime);
+      fetchMock.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  for (const action of ["start", "complete"] as const) {
+    it.each(["direct", "aggregate", "cause", "mixed-cycle"])(`sanitizes %s credential-store errors in auth-${action}`, async (shape) => {
+      const { OAuthCredentialStoreError } = await import("../mcp-auth.ts");
+      const { executeAuthStart, executeAuthComplete } = await import("../proxy-modes.ts");
+      const credentialError = new OAuthCredentialStoreError(
+        "synthetic-sensitive-top-level", "read",
+        new Error(shape === "cause" ? "synthetic-sensitive-KeyRevoked" : "synthetic-sensitive-native-payload"),
+      );
+      let error: Error = credentialError;
+      if (shape === "aggregate") error = new AggregateError([new Error("synthetic-sensitive-sibling"), credentialError], "synthetic-sensitive-aggregate");
+      if (shape === "cause") error = new Error("synthetic-sensitive-wrapper", { cause: credentialError });
+      if (shape === "mixed-cycle") {
+        error = new AggregateError([new Error("synthetic-sensitive-wrapper", { cause: { cause: credentialError } })], "synthetic-sensitive-aggregate");
+        error.cause = error;
+      }
+      mocks.startAuth.mockRejectedValueOnce(error);
+      mocks.completeAuthFromInput.mockRejectedValueOnce(error);
+      const state = createState();
+
+      const result = action === "start"
+        ? await executeAuthStart(state, "demo")
+        : await executeAuthComplete(state, "demo", "synthetic-code");
+      const message = shape === "cause" && process.platform === "linux"
+        ? "OAuth credential store unavailable: the Linux session keyring may be revoked. Start Pi from a fresh login/keyring session and retry."
+        : "OAuth credential store unavailable. Configure or unlock the OS credential store and retry.";
+      expect(result.content).toEqual([{ type: "text", text: `Failed to ${action} OAuth for "demo": ${message}` }]);
+      expect(result.details).toEqual({ mode: `auth-${action}`, error: `auth_${action}_failed`, server: "demo", message });
+      expect(JSON.stringify(result)).not.toContain("synthetic-sensitive");
+      expect(state.manager.close).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      new Error("ordinary failure", { cause: new Error("nested detail") }),
+      new AggregateError([new Error("nested detail")], "ordinary aggregate"),
+      "ordinary string failure",
+      null,
+    ])(`preserves ordinary auth-${action} diagnostics: %s`, async (error) => {
+      const { executeAuthStart, executeAuthComplete } = await import("../proxy-modes.ts");
+      mocks.startAuth.mockRejectedValueOnce(error);
+      mocks.completeAuthFromInput.mockRejectedValueOnce(error);
+      const result = action === "start"
+        ? await executeAuthStart(createState(), "demo")
+        : await executeAuthComplete(createState(), "demo", "synthetic-code");
+      const message = error instanceof Error ? error.message : String(error);
+      expect(result.details.message).toBe(message);
+      expect(result.content).toEqual([{ type: "text", text: `Failed to ${action} OAuth for "demo": ${message}` }]);
+    });
+  }
+
   it("reports background callback completion and resets connection state", async () => {
     mocks.authenticate.mockResolvedValueOnce("authenticated");
     const { executeAuthStart } = await import("../proxy-modes.ts");

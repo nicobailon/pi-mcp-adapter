@@ -15,6 +15,7 @@ import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from 
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, formatMcpStatus, normalizeToolArguments, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
+import { OAuthCredentialStoreError, formatOAuthCredentialStoreUnavailable } from "./mcp-auth.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
@@ -208,6 +209,22 @@ function getAuthRequiredMessage(
   return formatAuthRequiredMessage(state.config, serverName, defaultMessage);
 }
 
+function formatOAuthError(error: unknown): string {
+  const pending: unknown[] = [error];
+  const seen = new Set<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (typeof current !== "object" || current === null || seen.has(current)) continue;
+    seen.add(current);
+    if (current instanceof OAuthCredentialStoreError) return formatOAuthCredentialStoreUnavailable(current);
+    if (current instanceof AggregateError) {
+      for (const nested of current.errors) pending.push(nested);
+    }
+    if ("cause" in current) pending.push(current.cause);
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 function getAuthFailedMessage(state: McpExtensionState, serverName: string, message: string): string {
   const customGuidance = state.config.settings?.authRequiredMessage;
   if (customGuidance) {
@@ -278,7 +295,7 @@ async function attemptAutoAuth(
   try {
     serverUrl = resolveServerUrl(definition);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatOAuthError(error);
     return { status: "failed", message: getAuthFailedMessage(state, serverName, message) };
   }
   if (!serverUrl) {
@@ -317,7 +334,7 @@ async function attemptAutoAuth(
     return { status: "success" };
   } catch (error) {
     if (isAbortError(error, signal)) throw error;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatOAuthError(error);
     return {
       status: "failed",
       message: getAuthFailedMessage(state, serverName, message),
@@ -555,7 +572,7 @@ export async function executeAuthStart(state: McpExtensionState, serverName: str
       details: { mode: "auth-start", server: serverName, authorizationUrl },
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatOAuthError(error);
     return {
       content: [{ type: "text" as const, text: `Failed to start OAuth for "${serverName}": ${message}` }],
       details: { mode: "auth-start", error: "auth_start_failed", server: serverName, message },
@@ -598,7 +615,7 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
       details: { mode: "auth-complete", server: serverName, authenticated: true },
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatOAuthError(error);
     return {
       content: [{ type: "text" as const, text: `Failed to complete OAuth for "${serverName}": ${message}` }],
       details: { mode: "auth-complete", error: "auth_complete_failed", server: serverName, message },

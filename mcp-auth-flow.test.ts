@@ -15,6 +15,8 @@ process.env.MCP_OAUTH_DIR = TEST_DIR
 
 import {
   authenticate,
+  createOAuthRuntime,
+  hasPendingAuth,
   startAuth,
   getAuthStatus,
   getValidToken,
@@ -25,8 +27,19 @@ import {
   shutdownOAuth,
   waitForAuthorizationResponse,
 } from "./mcp-auth-flow.ts"
-import { isCallbackServerRunning } from "./mcp-callback-server.ts"
-import { updateTokens, updateClientInfo, getAuthForUrl, clearAllCredentials } from "./mcp-auth.ts"
+import {
+  cancelPendingCallback,
+  ensureCallbackServer,
+  getPendingAuthCount,
+  isCallbackServerRunning,
+  stopCallbackServerIfIdle,
+  waitForCallback,
+} from "./mcp-callback-server.ts"
+import { getConfiguredOAuthCallbackPort, getOAuthCallbackPort, McpOAuthProvider } from "./mcp-oauth-provider.ts"
+import {
+  updateTokens, updateClientInfo, getAuthForUrl, clearAllCredentials,
+  getTestAuthSecretStoreReadCount, OAuthCredentialStoreError,
+} from "./mcp-auth.ts"
 import type { ServerEntry } from "./types.ts"
 
 describe("mcp-auth-flow", () => {
@@ -190,6 +203,64 @@ describe("mcp-auth-flow", () => {
       await shutdownOAuth()
       assert.strictEqual(isCallbackServerRunning(), false)
     })
+  })
+
+  describe("credential-store startup failure", () => {
+    for (const sharedListener of [false, true]) {
+      it(`preserves the primary read error and releases only its callback (shared=${sharedListener})`, async (t) => {
+        const previousStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE
+        const previousCache = process.env.PI_MCP_ADAPTER_DISABLE_AUTH_CACHE
+        const runtime = createOAuthRuntime()
+        const serverName = "startup-store-failure"
+        const fetchMock = t.mock.method(globalThis, "fetch", async () => {
+          throw new Error("Unexpected network request")
+        })
+        const deactivate = t.mock.method(McpOAuthProvider.prototype, "deactivate")
+        let siblingCallback: Promise<unknown> | undefined
+        try {
+          if (sharedListener) {
+            await ensureCallbackServer({ oauthState: "sibling-state", reserveState: true })
+            siblingCallback = waitForCallback("sibling-state")
+            void siblingCallback.catch(() => {})
+          }
+          process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable"
+          process.env.PI_MCP_ADAPTER_DISABLE_AUTH_CACHE = "1"
+          const readsBefore = getTestAuthSecretStoreReadCount()
+          let failure: unknown
+          try {
+            await startAuth(serverName, "https://api.example.com/mcp", undefined, { runtime })
+          } catch (error) {
+            failure = error
+          }
+
+          // Check cleanup before inspecting the error so masking cannot hide a leak.
+          assert.strictEqual(hasPendingAuth(serverName, undefined, runtime), false)
+          assert.strictEqual(getPendingAuthCount(), sharedListener ? 1 : 0)
+          assert.strictEqual(isCallbackServerRunning(), sharedListener)
+          assert.strictEqual(deactivate.mock.callCount(), 1)
+          assert.strictEqual(fetchMock.mock.callCount(), 0)
+          assert.ok(failure instanceof OAuthCredentialStoreError)
+          assert.strictEqual(failure.operation, "read")
+          assert.strictEqual(failure.code, "OAUTH_CREDENTIAL_STORE_UNAVAILABLE")
+          assert.strictEqual(getTestAuthSecretStoreReadCount() - readsBefore, 1)
+
+          if (siblingCallback) {
+            cancelPendingCallback("sibling-state")
+            await assert.rejects(siblingCallback, /Authorization cancelled/)
+          }
+          await stopCallbackServerIfIdle()
+          assert.strictEqual(isCallbackServerRunning(), false)
+          assert.strictEqual(getOAuthCallbackPort(), getConfiguredOAuthCallbackPort())
+        } finally {
+          cancelPendingCallback("sibling-state")
+          await shutdownOAuth(runtime)
+          if (previousStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE
+          else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = previousStore
+          if (previousCache === undefined) delete process.env.PI_MCP_ADAPTER_DISABLE_AUTH_CACHE
+          else process.env.PI_MCP_ADAPTER_DISABLE_AUTH_CACHE = previousCache
+        }
+      })
+    }
   })
 
   describe("waitForAuthorizationResponse", () => {

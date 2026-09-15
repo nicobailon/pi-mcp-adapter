@@ -332,6 +332,53 @@ describe("proxy auto auth", () => {
     expect(result.content[0].text).toBe("Reconnect demo from the host app.");
   });
 
+  it.each(["direct", "aggregate", "cause", "mixed-cycle", "ordinary", "ordinary-aggregate", "non-error"])("preserves safe auto-auth diagnostics for %s failures", async (shape) => {
+    const { OAuthCredentialStoreError } = await import("../mcp-auth.ts");
+    const { executeConnect } = await import("../proxy-modes.ts");
+    const credentialError = new OAuthCredentialStoreError(
+      "synthetic-sensitive-top-level", "read", new Error("synthetic-sensitive-native-payload"),
+    );
+    let error: unknown = credentialError;
+    if (shape === "aggregate") error = new AggregateError([credentialError], "synthetic-sensitive-aggregate");
+    if (shape === "cause") error = new Error("synthetic-sensitive-wrapper", { cause: credentialError });
+    if (shape === "mixed-cycle") {
+      const aggregate = new AggregateError([new Error("synthetic-sensitive-wrapper", { cause: credentialError })], "synthetic-sensitive-aggregate");
+      aggregate.cause = aggregate;
+      error = aggregate;
+    }
+    if (shape === "ordinary") error = new Error("ordinary failure", { cause: new Error("nested detail") });
+    if (shape === "ordinary-aggregate") {
+      const aggregate = new AggregateError([new Error("nested detail")], "ordinary aggregate");
+      aggregate.cause = aggregate;
+      error = aggregate;
+    }
+    if (shape === "non-error") error = "ordinary string failure";
+    mocks.authenticate.mockRejectedValueOnce(error);
+    const state = {
+      config: {
+        settings: { autoAuth: true, authRequiredMessage: "Reconnect ${server} from the host app." },
+        mcpServers: { demo: { url: "https://api.example.com/mcp", auth: "oauth", oauth: { grantType: "client_credentials" } } },
+      },
+      manager: {
+        connect: vi.fn(async () => ({ status: "needs-auth" })),
+        getConnection: vi.fn(() => ({ status: "needs-auth" })),
+        close: vi.fn(),
+      },
+    } as any;
+
+    const result = await executeConnect(state, "demo");
+    const diagnostic = shape.startsWith("ordinary") || shape === "non-error"
+      ? error instanceof Error ? error.message : String(error)
+      : "OAuth credential store unavailable. Configure or unlock the OS credential store and retry.";
+    const message = `OAuth authentication failed for "demo": ${diagnostic}. Reconnect demo from the host app.`;
+    expect(result.content).toEqual([{ type: "text", text: message }]);
+    expect(result.details).toEqual({ mode: "connect", error: "auth_required", server: "demo", message });
+    expect(JSON.stringify(result)).not.toContain("synthetic-sensitive");
+    expect(mocks.authenticate).toHaveBeenCalledOnce();
+    expect(state.manager.connect).toHaveBeenCalledOnce();
+    expect(state.manager.close).not.toHaveBeenCalled();
+  });
+
   it("runs URL elicitations returned by proxy tool calls", async () => {
     const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
     const { executeCall } = await import("../proxy-modes.ts");

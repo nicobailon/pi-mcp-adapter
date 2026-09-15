@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The bundled `mcp-scripting` skill is now discovered alongside the default-on `mcpScript` tool and hidden with it when `settings.scriptMode` is `false`. Thanks to [@zhangyoufu](https://github.com/zhangyoufu) for PR #583.
 
+### Fixed
+
+- OAuth callback bind failures no longer read or clear existing credential-store state, so a store outage cannot mask the bind error or delete unrelated legacy state. Auth start, complete, and auto-auth now report the sanitized credential-store diagnostic instead of `OAuth startup cleanup failed`.
+
 ## [2.34.0] - 2026-09-14
 
 ### Highlights
