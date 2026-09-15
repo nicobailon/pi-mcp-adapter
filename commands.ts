@@ -33,6 +33,19 @@ function terminalHyperlink(label: string, url: string): string {
   return `\u001B]8;;${sanitizeTerminalText(url)}\u001B\\${sanitizeTerminalText(label)}\u001B]8;;\u001B\\`;
 }
 
+function oauthAuthorizationPrompt(
+  serverName: string,
+  authorizationUrl: string,
+  terminalLinks: boolean,
+): string {
+  const safeUrl = sanitizeTerminalText(authorizationUrl);
+  const authorizationLink = terminalLinks
+    ? `${terminalHyperlink("Open authorization page", authorizationUrl)}\n${safeUrl}`
+    : safeUrl;
+  return `Complete ${sanitizeTerminalText(serverName)} OAuth\n\n${authorizationLink}\n\n` +
+    "Approve access, then paste the full callback URL from the browser address bar below.";
+}
+
 /**
  * True when this run mode can display a `ctx.ui.custom()` overlay.
  *
@@ -318,9 +331,7 @@ export async function authenticateServer(
       onAuthorizationInput: async (authorizationUrl, inputSignal) => {
         if (inputSignal.aborted) return undefined;
         return ui.input(
-          `Complete ${serverName} OAuth\n\n` +
-            `${terminalHyperlink("Open authorization page", authorizationUrl)}\n${authorizationUrl}\n\n` +
-            "Approve access, then paste the full callback URL from the browser address bar below.",
+          oauthAuthorizationPrompt(serverName, authorizationUrl, ctx.mode === "tui"),
           undefined,
           { signal: inputSignal },
         );

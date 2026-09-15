@@ -270,6 +270,40 @@ describe("authenticateServer", () => {
     );
   });
 
+  it("uses a plain authorization URL outside the terminal UI", async () => {
+    const authorizationUrl = "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
+    const callbackUrl = "http://localhost:3118/callback?code=code&state=state";
+    const inputController = new AbortController();
+    mocks.authenticate.mockImplementationOnce(async (_name, _url, _definition, options) => {
+      const input = await options.onAuthorizationInput(authorizationUrl, inputController.signal);
+      expect(input).toBe(callbackUrl);
+      return "authenticated";
+    });
+    const ui = {
+      notify: vi.fn(),
+      setStatus: vi.fn(),
+      input: vi.fn(async () => callbackUrl),
+    };
+    const { authenticateServer } = await import("../commands.ts");
+
+    const result = await authenticateServer("sentry", {
+      mcpServers: {
+        sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" },
+      },
+    }, { hasUI: true, mode: "rpc", ui } as any);
+
+    expect(result.ok).toBe(true);
+    const prompt = ui.input.mock.calls[0]?.[0] ?? "";
+    expect(prompt).toContain(`Complete sentry OAuth\n\n${authorizationUrl}\n\n`);
+    expect(prompt).not.toContain("\u001B");
+    expect(prompt.split(authorizationUrl)).toHaveLength(2);
+    expect(ui.input).toHaveBeenCalledWith(
+      prompt,
+      undefined,
+      { signal: inputController.signal },
+    );
+  });
+
   it("does not open paste input when authorization was already cancelled", async () => {
     const inputController = new AbortController();
     inputController.abort();
