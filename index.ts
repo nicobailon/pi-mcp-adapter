@@ -1018,7 +1018,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ? cloneMcpConfig(sessionConfig)
       : loadMcpConfig(earlyConfigPath, event.cwd);
     const skillPaths = discoverConfiguredClaudePluginSkills(resourceConfig, event.cwd);
-    if (resourceConfig.settings?.scriptMode !== false) {
+    if (earlyConfig.settings?.scriptMode !== false) {
       const scriptingSkillPath = fileURLToPath(new URL("./skills/mcp-scripting/SKILL.md", import.meta.url));
       if (existsSync(scriptingSkillPath) && !skillPaths.includes(scriptingSkillPath)) {
         skillPaths.push(scriptingSkillPath);

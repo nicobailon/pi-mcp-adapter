@@ -564,19 +564,9 @@ Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — t
 
 ### MCP Scripting
 
-For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. Run that code with the default-on `mcpScript` tool. For a single MCP call, search, describe, status check, or auth action, use `mcp` instead. Set `settings.scriptMode` to `false` to hide the scripting tool.
+For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. Run that code with the default-on `mcpScript` tool. For a single MCP call, search, describe, status check, or auth action, use `mcp` instead. Set `settings.scriptMode` to `false` to hide both the scripting tool and its bundled skill.
 
-The bundled `mcp-scripting` skill is a separate Pi package resource and is manual-only by default, so its description is not added to the model's automatic skill context. Use `/skill:mcp-scripting` when you want its detailed workflow. To remove the manual skill command as well while keeping the adapter extension and `mcpScript` tool installed, replace the package entry in Pi settings with the object form and disable package skills:
-
-```json
-{
-  "packages": [
-    { "source": "npm:pi-mcp-adapter", "skills": [] }
-  ]
-}
-```
-
-Preserve any version pin in `source` if your existing package entry has one. You can also disable package resources through `pi config`.
+The bundled `mcp-scripting` skill is manual-only by default, so its description is not added to the model's automatic skill context. Use `/skill:mcp-scripting` when you want its detailed workflow.
 
 For example, this is the JavaScript passed as the `code` argument to `mcpScript`:
 
