@@ -606,34 +606,52 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
   }
 }
 
-export function executeDescribe(state: McpExtensionState, toolName: string): ProxyToolResult {
-  const exactMatches = getEnabledToolMatches(state, toolName, true)
-    .filter((match) => !isServerInActiveFailureBackoff(state, match.server));
-  if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
-  if (exactMatches.length === 0 && getEnabledToolMatches(state, toolName, false).filter((match) => !isServerInActiveFailureBackoff(state, match.server)).length > 1) {
-    return ambiguousToolResult("describe", toolName);
-  }
-
-  let serverName = exactMatches[0]?.server;
-  let toolMeta = exactMatches[0]?.tool;
+export function executeDescribe(state: McpExtensionState, toolName: string, serverOverride?: string): ProxyToolResult {
+  let serverName: string | undefined;
+  let toolMeta: ToolMetadata | undefined;
   let disabledMatch: string | undefined;
   let failedMatch: string | undefined;
 
-  if (!toolMeta) {
-    for (const [server, metadata] of state.toolMetadata.entries()) {
-      const found = findToolByName(metadata, toolName);
-      if (!found) continue;
-      if (isServerDisabled(state.config.mcpServers[server])) {
-        disabledMatch ??= server;
-        continue;
+  if (serverOverride) {
+    if (!state.config.mcpServers[serverOverride]) {
+      return {
+        content: [{ type: "text" as const, text: `Server "${serverOverride}" not found. Use mcp({}) to see available servers.` }],
+        details: { mode: "describe", error: "server_not_found", server: serverOverride, requestedTool: toolName },
+      };
+    }
+    const match = getServerScopedToolMatch(state.toolMetadata.get(serverOverride), toolName);
+    if (match === "ambiguous") return ambiguousToolResult("describe", toolName);
+    if (isServerDisabled(state.config.mcpServers[serverOverride])) return disabledResult("describe", serverOverride);
+    if (isServerInActiveFailureBackoff(state, serverOverride)) return serverBackoffResult(state, "describe", serverOverride);
+    serverName = serverOverride;
+    toolMeta = match?.tool;
+  } else {
+    const exactMatches = getEnabledToolMatches(state, toolName, true)
+      .filter((match) => !isServerInActiveFailureBackoff(state, match.server));
+    if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
+    if (exactMatches.length === 0 && getEnabledToolMatches(state, toolName, false).filter((match) => !isServerInActiveFailureBackoff(state, match.server)).length > 1) {
+      return ambiguousToolResult("describe", toolName);
+    }
+
+    serverName = exactMatches[0]?.server;
+    toolMeta = exactMatches[0]?.tool;
+
+    if (!toolMeta) {
+      for (const [server, metadata] of state.toolMetadata.entries()) {
+        const found = findToolByName(metadata, toolName);
+        if (!found) continue;
+        if (isServerDisabled(state.config.mcpServers[server])) {
+          disabledMatch ??= server;
+          continue;
+        }
+        if (isServerInActiveFailureBackoff(state, server)) {
+          failedMatch ??= server;
+          continue;
+        }
+        serverName = server;
+        toolMeta = found;
+        break;
       }
-      if (isServerInActiveFailureBackoff(state, server)) {
-        failedMatch ??= server;
-        continue;
-      }
-      serverName = server;
-      toolMeta = found;
-      break;
     }
   }
 

@@ -1819,7 +1819,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return connectAndReport(proxyState, params.connect, signal, _ctx as ExtensionContext);
         }
         if (params.describe) {
-          return proxyModes.executeDescribe(proxyState, params.describe);
+          return proxyModes.executeDescribe(proxyState, params.describe, params.server);
         }
         if (params.instructions) {
           return proxyModes.executeInstructions(proxyState, params.instructions);
