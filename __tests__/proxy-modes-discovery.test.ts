@@ -348,7 +348,7 @@ describe("proxy discovery", () => {
     expect(callTool).toHaveBeenCalledTimes(1);
   });
 
-  it("resolves a raw upstream name for an explicitly selected server", async () => {
+  it("resolves displayed and raw upstream names for an explicitly selected server", async () => {
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
     const state = {
       config: { mcpServers: { codegraph: { command: "codegraph" } } },
@@ -366,6 +366,15 @@ describe("proxy discovery", () => {
       serverInstructions: new Map(),
       completedUiSessions: [],
     } as unknown as McpExtensionState;
+
+    expect(executeDescribe(state, "codegraph_codegraph_explore", "codegraph").details).toMatchObject({
+      server: "codegraph",
+      tool: { originalName: "codegraph_explore" },
+    });
+    expect(executeDescribe(state, "codegraph_explore", "codegraph").details).toMatchObject({
+      server: "codegraph",
+      tool: { originalName: "codegraph_explore" },
+    });
 
     const result = await executeCall(state, "codegraph_explore", { query: "identity provider" }, "codegraph");
 
@@ -397,8 +406,23 @@ describe("proxy discovery", () => {
       completedUiSessions: [],
     } as unknown as McpExtensionState;
 
+    expect(executeDescribe(state, "search__one", "demo").details).toMatchObject({ error: "ambiguous_tool" });
     await expect(executeCall(state, "search__one", {}, "demo")).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
     expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("reports server-scoped describe errors without searching other servers", () => {
+    const state = createState();
+
+    expect(executeDescribe(state, "search", "missing").details).toMatchObject({
+      error: "server_not_found",
+      server: "missing",
+      requestedTool: "search",
+    });
+    expect(executeDescribe(state, "missing", "demo").details).toMatchObject({
+      error: "tool_not_found",
+      requestedTool: "missing",
+    });
   });
 
   it("tells callers to invoke native Pi tools directly", async () => {
