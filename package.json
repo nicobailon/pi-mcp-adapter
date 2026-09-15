@@ -71,9 +71,6 @@
     "extensions": [
       "./index.ts"
     ],
-    "skills": [
-      "./skills"
-    ],
     "video": "https://github.com/nicobailon/pi-mcp-adapter/raw/refs/heads/main/pi-mcp.mp4"
   },
   "files": [

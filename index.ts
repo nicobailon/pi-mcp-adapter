@@ -1,5 +1,7 @@
 import { withFileMutationQueue, type AgentToolUpdateCallback, type ExtensionAPI, type ExtensionContext, type ToolInfo } from "@earendil-works/pi-coding-agent";
 import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
@@ -1016,6 +1018,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ? cloneMcpConfig(sessionConfig)
       : loadMcpConfig(earlyConfigPath, event.cwd);
     const skillPaths = discoverConfiguredClaudePluginSkills(resourceConfig, event.cwd);
+    if (resourceConfig.settings?.scriptMode !== false) {
+      const scriptingSkillPath = fileURLToPath(new URL("./skills/mcp-scripting/SKILL.md", import.meta.url));
+      if (existsSync(scriptingSkillPath) && !skillPaths.includes(scriptingSkillPath)) {
+        skillPaths.push(scriptingSkillPath);
+      }
+    }
     return skillPaths.length > 0 ? { skillPaths } : undefined;
   });
 

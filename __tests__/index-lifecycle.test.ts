@@ -422,6 +422,7 @@ describe("mcpAdapter session lifecycle", () => {
     let generation = 0;
     mocks.loadMcpConfig.mockImplementation(() => ({
       mcpServers: {},
+      settings: { scriptMode: false },
       claudePlugins: [{ path: `plugin-${++generation}`, skills: true }],
     }));
     mocks.discoverConfiguredClaudePluginSkills.mockImplementation((config: { claudePlugins?: Array<{ path: string }> }) =>
@@ -433,6 +434,17 @@ describe("mcpAdapter session lifecycle", () => {
     expect(discover({ cwd: "/project", reason: "initial" })).toEqual({ skillPaths: ["/skills/plugin-2"] });
     expect(discover({ cwd: "/project", reason: "reload" })).toEqual({ skillPaths: ["/skills/plugin-3"] });
     expect(mocks.discoverConfiguredClaudePluginSkills).toHaveBeenCalledTimes(2);
+  });
+
+  it("discovers the bundled mcp-scripting skill when scriptMode is enabled", async () => {
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, claudePlugins: [] });
+    mocks.discoverConfiguredClaudePluginSkills.mockReturnValue([]);
+
+    const { handlers } = await loadAdapter();
+    const discover = handlers.get("resources_discover")!;
+
+    const expectedSkillPath = resolve("skills/mcp-scripting/SKILL.md");
+    expect(discover({ cwd: "/project", reason: "initial" })).toEqual({ skillPaths: [expectedSkillPath] });
   });
 
   it("keeps the proxy tool when direct tools are still missing from cache", async () => {
