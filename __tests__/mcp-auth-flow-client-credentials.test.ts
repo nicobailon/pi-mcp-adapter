@@ -106,6 +106,61 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.sdkAuth).not.toHaveBeenCalled();
   });
 
+  it("does not read legacy credentials before callback startup installed pending auth", async () => {
+    const primaryError = new Error("callback bind failed");
+    mocks.ensureCallbackServer.mockRejectedValueOnce(primaryError);
+    const { hasPendingAuth, startAuth } = await import("../mcp-auth-flow.ts");
+    const { getTestAuthSecretStoreReadCount } = await import("../mcp-auth.ts");
+    const previousStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+
+    try {
+      const readsBefore = getTestAuthSecretStoreReadCount();
+      await expect(startAuth("bind-store-failure", "https://api.example.com/mcp", { auth: "oauth" }))
+        .rejects.toBe(primaryError);
+      expect(getTestAuthSecretStoreReadCount() - readsBefore).toBe(0);
+      expect(hasPendingAuth("bind-store-failure")).toBe(false);
+      expect(mocks.releaseCallbackServer).toHaveBeenCalledWith(
+        mocks.ensureCallbackServer.mock.calls[0]![0].oauthState,
+      );
+      expect(mocks.stopCallbackServerIfIdle).toHaveBeenCalledOnce();
+      expect(mocks.sdkAuth).not.toHaveBeenCalled();
+      expect(mocks.fetch).not.toHaveBeenCalled();
+    } finally {
+      if (previousStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+      else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = previousStore;
+    }
+  });
+
+  it("preserves existing legacy state when callback startup fails", async () => {
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { getOAuthState, updateOAuthState } = await import("../mcp-auth.ts");
+    updateOAuthState("bind-legacy-state", "existing-state", "https://api.example.com/mcp");
+    mocks.ensureCallbackServer.mockRejectedValueOnce(new Error("callback bind failed"));
+
+    await expect(startAuth("bind-legacy-state", "https://api.example.com/mcp", { auth: "oauth" }))
+      .rejects.toThrow("callback bind failed");
+
+    expect(getOAuthState("bind-legacy-state")).toBe("existing-state");
+    expect(mocks.stopCallbackServerIfIdle).toHaveBeenCalledOnce();
+  });
+
+  it("retains both errors when callback startup and listener release genuinely fail", async () => {
+    const primaryError = new Error("callback bind failed");
+    const cleanupError = new Error("listener release failed");
+    mocks.ensureCallbackServer.mockRejectedValueOnce(primaryError);
+    mocks.stopCallbackServerIfIdle.mockRejectedValueOnce(cleanupError);
+    const { startAuth } = await import("../mcp-auth-flow.ts");
+
+    await expect(startAuth("bind-release-failure", "https://api.example.com/mcp", { auth: "oauth" }))
+      .rejects.toMatchObject({
+        name: "AggregateError",
+        message: "OAuth startup cleanup failed",
+        errors: [primaryError, cleanupError],
+      });
+    expect(mocks.releaseCallbackServer).toHaveBeenCalledOnce();
+  });
+
   it("parses manual OAuth redirect URL and code input", async () => {
     const { parseAuthorizationCodeInput } = await import("../mcp-auth-flow.ts");
 

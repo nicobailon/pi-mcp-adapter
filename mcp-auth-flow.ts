@@ -532,9 +532,8 @@ export async function startAuth(
     } catch (error) {
       releaseCallbackServer(oauthState)
       try {
-        await cleanupAndReleaseCallbackServerIfIdle(() => {
-          if (hasOAuthAuthority(authority)) clearOAuthState(serverName, authStorageOptions)
-        })
+        // No credentials or pending auth have been installed before listener setup.
+        await stopCallbackServerIfIdle()
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed")
       }
