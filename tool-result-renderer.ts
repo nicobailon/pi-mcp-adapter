@@ -225,7 +225,10 @@ export function formatMcpProxyToolCallLines(
   }
 
   if (args.connect) return [`mcp connect ${args.connect}`];
-  if (args.describe) return [`mcp describe ${args.describe}`];
+  if (args.describe) {
+    const target = args.server ? `${args.describe} @ ${args.server}` : args.describe;
+    return [`mcp describe ${target}`];
+  }
 
   if (args.search) {
     let line = `mcp search ${args.search}`;

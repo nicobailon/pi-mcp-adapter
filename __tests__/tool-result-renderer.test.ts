@@ -53,6 +53,9 @@ describe("MCP tool call renderer", () => {
     expect(formatMcpProxyToolCallLines({ search: "tail events", server: "cf-portal", regex: true })).toEqual([
       "mcp search tail events @ cf-portal (regex)",
     ]);
+    expect(formatMcpProxyToolCallLines({ describe: "list_worker_tail_events", server: "cf-portal" })).toEqual([
+      "mcp describe list_worker_tail_events @ cf-portal",
+    ]);
     expect(formatMcpProxyToolCallLines({ connect: "cf-portal" })).toEqual(["mcp connect cf-portal"]);
     expect(formatMcpProxyToolCallLines({ server: "cf-portal" })).toEqual(["mcp list cf-portal"]);
     expect(formatMcpProxyToolCallLines({})).toEqual(["mcp status"]);

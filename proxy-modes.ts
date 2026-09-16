@@ -672,9 +672,13 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
     if (failedMatch) return serverBackoffResult(state, "describe", failedMatch);
     const suggestions = rankSuggestions(state, toolName, 5, serverOverride);
     const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
+    const scopeText = serverOverride ? ` on server "${serverOverride}"` : "";
+    const searchHint = serverOverride
+      ? `mcp({ search: "...", server: "${serverOverride}" })`
+      : `mcp({ search: "..." })`;
     return {
-      content: [{ type: "text" as const, text: `Tool "${toolName}" not found. Use mcp({ search: "..." }) to search.${suggestionText}` }],
-      details: { mode: "describe", error: "tool_not_found", requestedTool: toolName, suggestions },
+      content: [{ type: "text" as const, text: `Tool "${toolName}" not found${scopeText}. Use ${searchHint} to search.${suggestionText}` }],
+      details: { mode: "describe", error: "tool_not_found", server: serverOverride, requestedTool: toolName, suggestions },
     };
   }
 

@@ -425,10 +425,14 @@ describe("proxy discovery", () => {
       server: "missing",
       requestedTool: "search",
     });
-    expect(executeDescribe(state, "missing", "demo").details).toMatchObject({
+    const missingTool = executeDescribe(state, "missing", "demo");
+    expect(missingTool.details).toMatchObject({
       error: "tool_not_found",
+      server: "demo",
       requestedTool: "missing",
     });
+    expect(missingTool.content[0].text).toContain('Tool "missing" not found on server "demo"');
+    expect(missingTool.content[0].text).toContain('mcp({ search: "...", server: "demo" })');
   });
 
   it("keeps server-scoped describe suggestions on the selected server", () => {
