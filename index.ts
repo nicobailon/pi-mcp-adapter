@@ -1678,7 +1678,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
         limit: optionalNumber({ minimum: 1, description: "Maximum search results to return (default: 12)" }),
         offset: optionalNumber({ minimum: 0, description: "Search result offset (default: 0)" }),
-        server: Type.Optional(Type.String({ description: "Server name (filters/disambiguates calls and optionally names an install)" })),
+        server: Type.Optional(Type.String({ description: "Server name: filters searches, disambiguates calls and describe operations, and optionally names an install" })),
         action: Type.Optional(Type.String({ description: "Action: 'install', 'ui-messages', 'auth-start', or 'auth-complete'" })),
         url: Type.Optional(Type.String({ description: "MCP endpoint URL for action: 'install'" })),
         target: Type.Optional(Type.String({ description: "Install target: 'global' (default) or 'project'" })),
