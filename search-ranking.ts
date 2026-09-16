@@ -266,13 +266,13 @@ export function paginate<T>(items: T[], offset: number, limit: number): { items:
   };
 }
 
-export function rankSuggestions(state: McpExtensionState, name: string, limit: number): string[] {
+export function rankSuggestions(state: McpExtensionState, name: string, limit: number, server?: string): string[] {
   const stripped = Object.keys(state.config.mcpServers)
-    .flatMap(server => (["server", "short", "mcp"] as const)
-      .map(prefix => getServerPrefix(server, prefix)))
+    .flatMap(serverName => (["server", "short", "mcp"] as const)
+      .map(prefix => getServerPrefix(serverName, prefix)))
     .filter((candidate): candidate is string => Boolean(candidate) && name.startsWith(`${candidate}_`))
     .sort((a, b) => b.length - a.length)
     .map(candidate => name.slice(candidate.length + 1));
   const query = stripped[0] ?? name;
-  return rankToolMatches(state, query, undefined, false).slice(0, limit).map(match => match.tool.name);
+  return rankToolMatches(state, query, server, false).slice(0, limit).map(match => match.tool.name);
 }
