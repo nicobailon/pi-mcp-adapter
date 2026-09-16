@@ -1887,6 +1887,30 @@ describe("mcpAdapter session lifecycle", () => {
       expect.objectContaining({ type: "object", additionalProperties: true }),
     ]);
     expect(JSON.stringify(argsSchema)).not.toContain("patternProperties");
+    expect(proxyTool.parameters.properties.server.description).toContain("describe operations");
+  });
+
+  it("forwards the server selector for describe operations", async () => {
+    const state = createState();
+    const describeResult = {
+      content: [{ type: "text", text: "description" }],
+      details: { mode: "describe", server: "codegraph" },
+    };
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeDescribe.mockReturnValue(describeResult);
+
+    const { api, handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const gateway = registeredTool(api, "mcp");
+    expect(await gateway.execute("describe-1", {
+      describe: "codegraph_explore",
+      server: "codegraph",
+    })).toBe(describeResult);
+
+    expect(mocks.executeDescribe).toHaveBeenCalledWith(state, "codegraph_explore", "codegraph");
   });
 
   it("forwards native object proxy args into executeCall", async () => {
