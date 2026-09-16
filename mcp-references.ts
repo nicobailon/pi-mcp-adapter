@@ -97,6 +97,7 @@ function hasNamespaceProxy(
   existingDirectNames: ReadonlySet<string>,
   serverName: string,
 ): boolean {
+  if (config.settings?.namespaceProxyTools === false) return false;
   const definition = config.mcpServers[serverName];
   if (!definition || isServerDisabled(definition)) return false;
   if (isMcpServerDirectlyRegistered(definition, config.settings, serverName, envOverride)) return false;

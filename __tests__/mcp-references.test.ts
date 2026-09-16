@@ -76,11 +76,11 @@ describe("namespaceProxyName", () => {
 });
 
 describe("resolveMcpToolReferences", () => {
-  it("expands direct server references from explicit config and cache", () => {
+  it.each([undefined, false])("expands direct server references when namespaceProxyTools is %s", (namespaceProxyTools) => {
     const definition: ServerEntry = { command: "demo", directTools: true };
     const result = resolveMcpToolReferences(
       ["mcp:demo"],
-      configFor({ demo: definition }),
+      configFor({ demo: definition }, { namespaceProxyTools }),
       cacheFor([["demo", { definition, tools: [{ name: "search" }, { name: "fetch" }] }]]),
     );
 
@@ -105,6 +105,18 @@ describe("resolveMcpToolReferences", () => {
     );
 
     expect(result).toEqual({ names: ["mcp__demo"], diagnostics: [] });
+  });
+
+  it.each(["mcp:demo", "mcp:demo/demo_search", "mcp:demo_search"])("does not resolve %s to a disabled namespace proxy", (ref) => {
+    const definition: ServerEntry = { command: "demo" };
+    const result = resolveMcpToolReferences(
+      [ref],
+      configFor({ demo: definition }, { namespaceProxyTools: false }),
+      cacheFor([["demo", { definition, tools: [{ name: "search" }] }]]),
+    );
+
+    expect(result.names).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
   });
 
   it("rejects unformatted proxy-only resource references", () => {

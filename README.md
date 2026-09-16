@@ -491,6 +491,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `oauthCredentialStore` | Set explicitly to `"encrypted-file"` for externally keyed AES-256-GCM storage (notably Windows OpenSSH network logons). Requires `PI_MCP_ADAPTER_OAUTH_FILE_KEY`; absent uses the OS credential store. |
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
 | `directTools` | Global default for all servers (default: false). `true`, `false`, or `"search"`. Per-server overrides this. |
+| `namespaceProxyTools` | Register per-server `mcp__<server>` wrappers (default: true). Set to `false` to omit them from the model's tool list; `mcp`, `mcpScript`, and direct tools are unaffected. References such as `mcp:<server>` that rely on a wrapper will no longer resolve. Run `/reload` after changing this setting. |
 | `strictDirectToolArguments` | Validate direct-tool inputs against their advertised schemas and recover one JSON string layer for object and array properties (default: false). |
 | `directToolResultDetails` | Direct-tool result details: `"lean"` (default) or `"bounded"` to retain the guarded raw MCP result. |
 | `warnOnLargeDirectTools` | Show the advisory when 75 or more direct tools resolve (default: `true`). Set to `false` to suppress only this advisory. |

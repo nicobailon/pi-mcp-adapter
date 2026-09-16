@@ -387,6 +387,8 @@ export interface McpSettings {
     idleTimeout?: number;
     requestTimeoutMs?: number;
     directTools?: boolean | "search";
+    /** Register per-server mcp__<server> namespace proxies. Defaults to true. */
+    namespaceProxyTools?: boolean;
     /**
      * Validate direct-tool inputs against the advertised schema after recovering
      * one JSON string layer for object and array properties. Defaults to false.

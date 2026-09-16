@@ -70,12 +70,12 @@ describe("syncNamespaceProxyTools", () => {
     vi.restoreAllMocks();
   });
 
-  it("registers mcp__<server> for each proxy-only server with metadata", async () => {
+  it.each([undefined, true])("registers namespace proxies when namespaceProxyTools is %s", async (namespaceProxyTools) => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered } = makePi();
 
     syncNamespaceProxyTools({
-      config: { mcpServers: { "context-mode": { command: "context-mode", lifecycle: "eager" } } },
+      config: { mcpServers: { "context-mode": { command: "context-mode", lifecycle: "eager" } }, settings: { namespaceProxyTools } },
       cache: CACHE_SHAPE([["context-mode", { tools: [{ name: "ctx_execute" }] }]]),
       envOverride: null,
       existingDirectNames: new Set(),
@@ -89,6 +89,54 @@ describe("syncNamespaceProxyTools", () => {
     expect(registered.has("mcp__context_mode")).toBe(true);
     const tool = registered.get("mcp__context_mode")!;
     expect(tool.execute).toBeTypeOf("function");
+  });
+
+  it("does not register namespace proxies when namespaceProxyTools is false", async () => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi } = makePi();
+
+    const result = syncNamespaceProxyTools({
+      config: { mcpServers: { demo: { command: "demo" } }, settings: { namespaceProxyTools: false } },
+      cache: CACHE_SHAPE([["demo", { tools: [{ name: "search" }] }]]),
+      envOverride: null,
+      existingDirectNames: new Set(),
+      existingNamespaceNames: new Set(),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(pi.registerTool).not.toHaveBeenCalled();
+    expect(result).toEqual({ specs: [], added: [], updated: [], deactivated: [] });
+  });
+
+  it.each([true, false])("deactivates disabled namespace proxies with unregisterTool=%s", async (canUnregister) => {
+    const { syncNamespaceProxyTools } = await importSync();
+    const { pi, registered } = makePi();
+    if (!canUnregister) delete pi.unregisterTool;
+    let activeTools = ["mcp", "mcpScript", "demo_search", "mcp__demo"];
+    pi.getActiveTools = vi.fn(() => activeTools);
+    pi.setActiveTools = vi.fn((names: string[]) => { activeTools = names; });
+    registered.set("mcp__demo", { name: "mcp__demo", execute: vi.fn() });
+
+    const result = syncNamespaceProxyTools({
+      config: { mcpServers: { demo: { command: "demo" } }, settings: { namespaceProxyTools: false } },
+      cache: CACHE_SHAPE([["demo", { tools: [{ name: "search" }] }]]),
+      envOverride: null,
+      existingDirectNames: new Set(["demo_search"]),
+      activeDirectNames: new Set(["demo_search"]),
+      existingNamespaceNames: new Set(["mcp__demo"]),
+      pi,
+      getState: () => null,
+      getInitPromise: () => null,
+      getPiTools: () => [],
+    });
+
+    expect(pi.registerTool).not.toHaveBeenCalled();
+    expect(result.deactivated).toEqual(["mcp__demo"]);
+    expect(activeTools).toEqual(["mcp", "mcpScript", "demo_search"]);
+    if (canUnregister) expect(registered.has("mcp__demo")).toBe(false);
   });
 
   it("registers proxy-only servers that expose only resources", async () => {
