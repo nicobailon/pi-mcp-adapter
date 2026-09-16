@@ -406,8 +406,14 @@ describe("proxy discovery", () => {
       completedUiSessions: [],
     } as unknown as McpExtensionState;
 
-    expect(executeDescribe(state, "search__one", "demo").details).toMatchObject({ error: "ambiguous_tool" });
-    await expect(executeCall(state, "search__one", {}, "demo")).resolves.toMatchObject({ details: { error: "ambiguous_tool" } });
+    const describeResult = executeDescribe(state, "search__one", "demo");
+    expect(describeResult.details).toMatchObject({ error: "ambiguous_tool", server: "demo" });
+    expect(describeResult.content[0].text).toContain('matches multiple tools on server "demo"');
+    expect(describeResult.content[0].text).toContain('mcp({ server: "demo" })');
+
+    const callResult = await executeCall(state, "search__one", {}, "demo");
+    expect(callResult.details).toMatchObject({ error: "ambiguous_tool", server: "demo" });
+    expect(callResult.content[0].text).toContain('matches multiple tools on server "demo"');
     expect(callTool).not.toHaveBeenCalled();
   });
 
@@ -422,6 +428,21 @@ describe("proxy discovery", () => {
     expect(executeDescribe(state, "missing", "demo").details).toMatchObject({
       error: "tool_not_found",
       requestedTool: "missing",
+    });
+  });
+
+  it("keeps server-scoped describe suggestions on the selected server", () => {
+    const state = createState();
+    state.config.mcpServers.other = { command: "other" };
+    state.toolMetadata.set("other", [{
+      name: "other_search",
+      originalName: "search",
+      description: "Search other records",
+    }]);
+
+    expect(executeDescribe(state, "demo_sear", "demo").details).toMatchObject({
+      error: "tool_not_found",
+      suggestions: ["demo_search"],
     });
   });
 
