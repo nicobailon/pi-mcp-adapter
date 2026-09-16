@@ -122,6 +122,18 @@ function ambiguousToolResult(mode: "call" | "describe", toolName: string): Proxy
   };
 }
 
+function ambiguousServerToolResult(
+  mode: "call" | "describe",
+  toolName: string,
+  serverName: string,
+): ProxyToolResult {
+  const message = `Tool "${toolName}" matches multiple tools on server "${serverName}". Use an exact displayed or upstream tool name; run mcp({ server: "${serverName}" }) to list available tools.`;
+  return {
+    content: [{ type: "text" as const, text: message }],
+    details: { mode, error: "ambiguous_tool", server: serverName, requestedTool: toolName, message },
+  };
+}
+
 function disabledResult(mode: string, serverName: string): ProxyToolResult {
   const message = `Server "${serverName}" is disabled. Run /mcp enable ${serverName} and /reload to enable it.`;
   return {
@@ -620,7 +632,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
       };
     }
     const match = getServerScopedToolMatch(state.toolMetadata.get(serverOverride), toolName);
-    if (match === "ambiguous") return ambiguousToolResult("describe", toolName);
+    if (match === "ambiguous") return ambiguousServerToolResult("describe", toolName, serverOverride);
     if (isServerDisabled(state.config.mcpServers[serverOverride])) return disabledResult("describe", serverOverride);
     if (isServerInActiveFailureBackoff(state, serverOverride)) return serverBackoffResult(state, "describe", serverOverride);
     serverName = serverOverride;
@@ -658,7 +670,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
   if (!serverName || !toolMeta) {
     if (disabledMatch) return disabledResult("describe", disabledMatch);
     if (failedMatch) return serverBackoffResult(state, "describe", failedMatch);
-    const suggestions = rankSuggestions(state, toolName, 5);
+    const suggestions = rankSuggestions(state, toolName, 5, serverOverride);
     const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
     return {
       content: [{ type: "text" as const, text: `Tool "${toolName}" not found. Use mcp({ search: "..." }) to search.${suggestionText}` }],
@@ -1063,7 +1075,7 @@ export async function executeCall(
   }
   if (serverName) {
     const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
-    if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+    if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
     toolMeta = match?.tool;
     if (isServerDisabled(state.config.mcpServers[serverName])) {
       return disabledCallResult(serverName, toolMeta);
@@ -1108,11 +1120,11 @@ export async function executeCall(
     if (connected) {
       if (serverOverride) {
         const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
-        if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+        if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
         toolMeta = match?.tool;
       } else {
         const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
-        if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+        if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
         toolMeta = match;
       }
     } else {
@@ -1133,10 +1145,10 @@ export async function executeCall(
             const connectedAfterAuth = await lazyConnect(state, serverName, ownedSignal);
             if (connectedAfterAuth) {
               const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
-              if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+              if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
               toolMeta = match?.tool;
               if (!toolMeta) {
-                const suggestions = rankSuggestions(state, toolName, 5);
+                const suggestions = rankSuggestions(state, toolName, 5, serverName);
                 const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
                 return {
                   content: [{ type: "text" as const, text: `Tool "${toolName}" not found on "${serverName}" after reconnect.${suggestionText}` }],
@@ -1241,7 +1253,7 @@ export async function executeCall(
     } else {
       msg += ` Use mcp({ search: "..." }) to search.`;
     }
-    const suggestions = rankSuggestions(state, toolName, 5);
+    const suggestions = rankSuggestions(state, toolName, 5, serverOverride);
     if (suggestions.length > 0) msg += ` Did you mean: ${suggestions.join(", ")}`;
     return {
       content: [{ type: "text" as const, text: msg }],
@@ -1333,11 +1345,11 @@ export async function executeCall(
       updateStatusBar(state);
       if (serverOverride) {
         const match = getServerScopedToolMatch(state.toolMetadata.get(serverName), toolName);
-        if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+        if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
         toolMeta = match?.tool;
       } else {
         const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
-        if (match === "ambiguous") return ambiguousToolResult("call", toolName);
+        if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
         toolMeta = match;
       }
       if (!toolMeta) {
@@ -1345,7 +1357,7 @@ export async function executeCall(
         const hint = available.length > 0
           ? `Available tools on "${serverName}": ${available.join(", ")}`
           : `Server "${serverName}" has no tools.`;
-        const suggestions = rankSuggestions(state, toolName, 5);
+        const suggestions = rankSuggestions(state, toolName, 5, serverName);
         const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
         return {
           content: [{ type: "text" as const, text: `Tool "${toolName}" not found on "${serverName}" after reconnect. ${hint}${suggestionText}` }],
