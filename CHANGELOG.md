@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/mcp edit [project|global]` opens the shared MCP config in an editor (Ctrl+G opens `$EDITOR`), refuses invalid JSON, and reloads after a save. Closes #593.
+
 ### Changed
 
 - The bundled `mcp-scripting` skill is now discovered alongside the default-on `mcpScript` tool and hidden with it when `settings.scriptMode` is `false`. Thanks to [@zhangyoufu](https://github.com/zhangyoufu) for PR #583.

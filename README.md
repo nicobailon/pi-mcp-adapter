@@ -869,6 +869,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 | `/mcp` | Interactive panel and first-run onboarding surface |
 | `/pi-mcp` | Alias for `/mcp` when the host reserves `/mcp` |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
+| `/mcp edit [project\|global]` | Open `.mcp.json` (default) or `~/.config/mcp/mcp.json` in an editor; Ctrl+G opens `$EDITOR`; saves valid JSON and reloads |
 | `/mcp tools` | List all tools |
 | `/mcp prompts` | List all MCP prompts registered as slash commands |
 | `/mcp reconnect` | Reconnect all servers |
