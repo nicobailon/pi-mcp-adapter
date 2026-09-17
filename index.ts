@@ -1265,6 +1265,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             commandCtx.ui?.notify("Usage: /mcp edit [project|global]", "error");
             return;
           }
+          commandOwner?.throwIfInactive();
           if (await commands.editSharedConfig(commandCtx, target)) {
             commandOwner?.throwIfInactive();
             await commandReload();
