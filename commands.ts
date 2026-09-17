@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { OverlayHandle } from "@earendil-works/pi-tui";
 import type { McpExtensionState } from "./state.ts";
@@ -17,6 +17,7 @@ import {
   writeDirectToolsConfig,
   writeProjectServerDisabledOverride,
   writeSharedServerEntry,
+  writeSharedConfigText,
   writeStarterSharedConfig,
 } from "./config.ts";
 import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
@@ -48,17 +49,17 @@ function canRenderPanel(ctx: ExtensionContext): boolean {
 }
 
 export async function editSharedConfig(ctx: ExtensionContext, target: SharedConfigTarget): Promise<boolean> {
+  if (!ctx.hasUI) return false;
   const path = getSharedConfigPath(target, ctx.cwd);
   const before = existsSync(path) ? readFileSync(path, "utf8") : '{\n  "mcpServers": {}\n}\n';
   const after = await ctx.ui.editor(`Edit ${path} (Ctrl+G opens $EDITOR)`, before);
   if (after === undefined || after === before) return false;
   try {
-    JSON.parse(after);
+    writeSharedConfigText(path, after);
   } catch (error) {
-    ctx.ui.notify(`MCP: not saved, invalid JSON: ${error instanceof Error ? error.message : String(error)}`, "error");
+    ctx.ui.notify(`MCP: not saved: ${error instanceof Error ? error.message : String(error)}`, "error");
     return false;
   }
-  writeFileSync(path, after);
   return true;
 }
 
