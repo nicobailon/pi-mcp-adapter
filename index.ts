@@ -1256,7 +1256,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           break;
         }
         case "edit": {
-          commandOwner?.throwIfInactive();
           if (programmaticConfig) {
             commandCtx.ui?.notify("MCP edit is unavailable when config is supplied by createMcpAdapter().", "info");
             break;

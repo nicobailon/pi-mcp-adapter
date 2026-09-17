@@ -1150,7 +1150,6 @@ function writeRawConfigObject(filePath: string, raw: Record<string, unknown>): v
   writeConfigText(filePath, `${JSON.stringify(raw, null, 2)}\n`);
 }
 
-/** Writes editor text as a shared config. Throws when it is not a JSONC object. */
 export function writeSharedConfigText(filePath: string, text: string): void {
   if (!isRecord(parseJsonWithComments(text))) throw new Error("top-level value must be an object");
   writeConfigText(filePath, text);
