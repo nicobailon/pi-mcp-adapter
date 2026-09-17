@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/mcp edit [project|global]` opens the shared MCP config in an editor (Ctrl+G opens `$EDITOR`), refuses invalid JSON, and reloads after a save. Closes #593.
+
 ### Changed
 
 - Namespace proxy tools can now be disabled with `settings.namespaceProxyTools: false`. Thanks to [@k03mad](https://github.com/k03mad) for PR #592.

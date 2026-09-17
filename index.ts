@@ -1156,6 +1156,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           { value: "tools", label: "tools — List all tools" },
           { value: "prompts", label: "prompts — List all MCP prompts" },
           { value: "setup", label: "setup — Configure MCP servers" },
+          { value: "edit", label: "edit — Edit .mcp.json or the global config" },
           { value: "logout", label: "logout — Clear server credentials" },
           { value: "token", label: "token — Manage stored bearer tokens" },
           { value: "disable", label: "disable — Disable a server" },
@@ -1248,6 +1249,24 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
           const result = await commands.openMcpSetup(state, pi, commandCtx, earlyConfigPath, "setup");
           if (result?.configChanged) {
+            commandOwner?.throwIfInactive();
+            await commandReload();
+            return;
+          }
+          break;
+        }
+        case "edit": {
+          commandOwner?.throwIfInactive();
+          if (programmaticConfig) {
+            commandCtx.ui?.notify("MCP edit is unavailable when config is supplied by createMcpAdapter().", "info");
+            break;
+          }
+          const target = parts[1] ?? "project";
+          if (target !== "project" && target !== "global") {
+            commandCtx.ui?.notify("Usage: /mcp edit [project|global]", "error");
+            return;
+          }
+          if (await commands.editSharedConfig(commandCtx, target)) {
             commandOwner?.throwIfInactive();
             await commandReload();
             return;

@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { OverlayHandle } from "@earendil-works/pi-tui";
 import type { McpExtensionState } from "./state.ts";
@@ -44,6 +45,21 @@ function terminalHyperlink(label: string, url: string): string {
  */
 function canRenderPanel(ctx: ExtensionContext): boolean {
   return ctx.hasUI && ctx.mode === "tui";
+}
+
+export async function editSharedConfig(ctx: ExtensionContext, target: SharedConfigTarget): Promise<boolean> {
+  const path = getSharedConfigPath(target, ctx.cwd);
+  const before = existsSync(path) ? readFileSync(path, "utf8") : '{\n  "mcpServers": {}\n}\n';
+  const after = await ctx.ui.editor(`Edit ${path} (Ctrl+G opens $EDITOR)`, before);
+  if (after === undefined || after === before) return false;
+  try {
+    JSON.parse(after);
+  } catch (error) {
+    ctx.ui.notify(`MCP: not saved, invalid JSON: ${error instanceof Error ? error.message : String(error)}`, "error");
+    return false;
+  }
+  writeFileSync(path, after);
+  return true;
 }
 
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
