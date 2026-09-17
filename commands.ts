@@ -28,7 +28,7 @@ import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from ".
 import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { inspectBearerTokenForUrl, removeBearerToken } from "./mcp-bearer-store.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
-import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
+import { formatTerminalError, openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
 
 function terminalHyperlink(label: string, url: string): string {
@@ -57,7 +57,7 @@ export async function editSharedConfig(ctx: ExtensionContext, target: SharedConf
   try {
     writeSharedConfigText(path, after);
   } catch (error) {
-    ctx.ui.notify(`MCP: not saved: ${error instanceof Error ? error.message : String(error)}`, "error");
+    ctx.ui.notify(`MCP: not saved: ${formatTerminalError(error)}`, "error");
     return false;
   }
   return true;
