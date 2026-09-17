@@ -1139,11 +1139,21 @@ function readRawConfigObject(filePath: string): Record<string, unknown> {
   }
 }
 
-function writeRawConfigObject(filePath: string, raw: Record<string, unknown>): void {
+function writeConfigText(filePath: string, text: string): void {
   mkdirSync(dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, `${JSON.stringify(raw, null, 2)}\n`, "utf-8");
+  writeFileSync(tmpPath, text, "utf-8");
   renameSync(tmpPath, filePath);
+}
+
+function writeRawConfigObject(filePath: string, raw: Record<string, unknown>): void {
+  writeConfigText(filePath, `${JSON.stringify(raw, null, 2)}\n`);
+}
+
+/** Writes editor text as a shared config. Throws when it is not a JSONC object. */
+export function writeSharedConfigText(filePath: string, text: string): void {
+  if (!isRecord(parseJsonWithComments(text))) throw new Error("top-level value must be an object");
+  writeConfigText(filePath, text);
 }
 
 function getServersObject(raw: Record<string, unknown>): Record<string, ServerEntry> {

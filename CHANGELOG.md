@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `/mcp edit [project|global]` opens the shared MCP config in an editor (Ctrl+G opens `$EDITOR`), refuses invalid JSON, and reloads after a save. Closes #593.
+- `/mcp edit [project|global]` opens the shared MCP config in an editor (Ctrl+G opens `$EDITOR`), refuses text that is not a JSONC object, and reloads after a save. Closes #593.
 
 ### Changed
 
