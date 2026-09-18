@@ -44,9 +44,10 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 }
 
 describe("server-returned domain errors", () => {
-  it.each(["direct", "proxy"] as const)("does not append input guidance on the %s path", async (path) => {
+  it.each(["direct", "proxy", "proxy-ui"] as const)("does not append input guidance on the %s path", async (path) => {
     const { state, metadata, callTool } = connectedState();
-    const result = path === "proxy"
+    if (path === "proxy-ui") metadata.uiResourceUri = "ui://demo/lookup";
+    const result = path.startsWith("proxy")
       ? await executeCall(state, metadata.name, { id: "missing" }, "demo")
       : await createDirectToolExecutor(() => state, () => null, {
           serverName: "demo",
@@ -60,5 +61,17 @@ describe("server-returned domain errors", () => {
     expect(text(result)).not.toContain("Expected parameters");
     expect(result.details).toMatchObject({ error: "tool_error", server: "demo" });
     expect(callTool).toHaveBeenCalledOnce();
+  });
+
+  it("rejects schema-invalid proxy arguments before dispatch with corrective guidance", async () => {
+    const { state, metadata, callTool } = connectedState();
+
+    const result = await executeCall(state, metadata.name, {}, "demo");
+
+    expect(text(result)).toContain("Failed to call tool:");
+    expect(text(result)).toContain("Expected parameters:");
+    expect(text(result)).toContain("id (string) *required*");
+    expect(result.details).toMatchObject({ error: "call_failed", server: "demo" });
+    expect(callTool).not.toHaveBeenCalled();
   });
 });
