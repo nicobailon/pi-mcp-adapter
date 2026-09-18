@@ -323,11 +323,9 @@ export function createDirectToolExecutor(
         const mcpContent = (result.content ?? []) as McpContent[];
         const content = transformMcpContent(mcpContent, state.owner?.signal);
         const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-        const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
         const guarded = await guardMcpOutput(outputContent, {
           ...outputGuardOptions,
           prefix: "Error: ",
-          suffix: schemaText,
           emptyTextFallback: "Tool execution failed",
           ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
         });

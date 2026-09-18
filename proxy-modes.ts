@@ -1530,8 +1530,7 @@ export async function executeCall(
         const mcpContent = (result.content ?? []) as McpContent[];
         const content = transformMcpContent(mcpContent, state.owner?.signal);
         const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-        const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
-        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed", rawMcpResult: result });
+        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed", rawMcpResult: result });
         return {
           content: guarded.content,
           details: { mode: "call", error: "tool_error", ...callIdentity, ...guardedMcpDetails(guarded) },
@@ -1559,8 +1558,7 @@ export async function executeCall(
       const mcpContent = (result.content ?? []) as McpContent[];
       const content = transformMcpContent(mcpContent, state.owner?.signal);
       const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-      const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed", rawMcpResult: result });
+      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed", rawMcpResult: result });
       return {
         content: guarded.content,
         details: { mode: "call", error: "tool_error", ...callIdentity, ...guardedMcpDetails(guarded) },
