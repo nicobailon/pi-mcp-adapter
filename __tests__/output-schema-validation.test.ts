@@ -61,7 +61,10 @@ describe("MCP output schema validation", () => {
       : await createDirectToolExecutor(() => state, () => null, directSpec(name))("id", {});
 
     expect(result.details).not.toMatchObject({ error: "call_failed" });
-    expect(result.content).toEqual([{ type: "text", text: name }]);
+    expect(result.content).toEqual([
+      { type: "text", text: name },
+      { type: "text", text: 'structuredContent:\n{\n  "values": [\n    "ok",\n    1\n  ]\n}' },
+    ]);
   });
 
   it.each([

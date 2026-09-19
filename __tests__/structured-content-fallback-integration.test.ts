@@ -65,6 +65,24 @@ describe("structuredContent fallback — direct tool executor", () => {
     expect(textOf(result)).not.toContain("(empty result)");
   });
 
+  it("preserves content before labeled structuredContent", async () => {
+    const { createDirectToolExecutor } = await import("../direct-tools.ts");
+    const structured = { status: "ok" };
+    const state = makeState({ isError: false, content: [{ type: "text", text: "summary" }], structuredContent: structured });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      { serverName: "demo", originalName: "tool", prefixedName: "demo_tool", description: "Tool" },
+    );
+
+    const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
+
+    expect(result.content).toEqual([
+      { type: "text", text: "summary" },
+      { type: "text", text: `structuredContent:\n${JSON.stringify(structured, null, 2)}` },
+    ]);
+  });
+
   it("still shows (empty result) when both content and structuredContent are empty", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
     const state = makeState({ isError: false, content: [] });
@@ -78,6 +96,24 @@ describe("structuredContent fallback — direct tool executor", () => {
     const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
 
     expect(textOf(result)).toBe("(empty result)");
+  });
+
+  it.each([
+    ["structured-only", [], { code: "failed" }, 'Error: {\n  "code": "failed"\n}'],
+    ["mixed", [{ type: "text", text: "failed summary" }], { code: "failed" }, 'Error: failed summary\nstructuredContent:\n{\n  "code": "failed"\n}'],
+  ])("preserves %s error result data", async (_case, content, structuredContent, expected) => {
+    const { createDirectToolExecutor } = await import("../direct-tools.ts");
+    const state = makeState({ isError: true, content, structuredContent });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      { serverName: "demo", originalName: "tool", prefixedName: "demo_tool", description: "Tool" },
+    );
+
+    const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
+
+    expect(textOf(result)).toBe(expected);
+    expect(result.details).toMatchObject({ error: "tool_error", server: "demo" });
   });
 });
 
@@ -99,6 +135,19 @@ describe("structuredContent fallback — proxy executeCall", () => {
     expect(textOf(result)).not.toContain("(empty result)");
   });
 
+  it("preserves content before labeled structuredContent", async () => {
+    const { executeCall } = await import("../proxy-modes.ts");
+    const structured = { status: "ok" };
+    const state = makeState({ isError: false, content: [{ type: "text", text: "summary" }], structuredContent: structured });
+
+    const result = await executeCall(state, "demo_tool", {}, "demo");
+
+    expect(result.content).toEqual([
+      { type: "text", text: "summary" },
+      { type: "text", text: `structuredContent:\n${JSON.stringify(structured, null, 2)}` },
+    ]);
+  });
+
   it("still shows (empty result) when both content and structuredContent are empty", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
     const state = makeState({ isError: false, content: [] }, "noop");
@@ -106,5 +155,18 @@ describe("structuredContent fallback — proxy executeCall", () => {
     const result = await executeCall(state, "demo_noop", {}, "demo");
 
     expect(textOf(result)).toContain("(empty result)");
+  });
+
+  it.each([
+    ["structured-only", [], { code: "failed" }, 'Error: {\n  "code": "failed"\n}'],
+    ["mixed", [{ type: "text", text: "failed summary" }], { code: "failed" }, 'Error: failed summary\nstructuredContent:\n{\n  "code": "failed"\n}'],
+  ])("preserves %s error result data", async (_case, content, structuredContent, expected) => {
+    const { executeCall } = await import("../proxy-modes.ts");
+    const state = makeState({ isError: true, content, structuredContent });
+
+    const result = await executeCall(state, "demo_tool", {}, "demo");
+
+    expect(textOf(result)).toBe(expected);
+    expect(result.details).toMatchObject({ mode: "call", error: "tool_error", server: "demo" });
   });
 });

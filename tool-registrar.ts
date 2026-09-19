@@ -230,18 +230,20 @@ export function transformMcpContent(content: McpContent[], scope?: object): Cont
 }
 
 /**
- * Resolve a tool result's content blocks, falling back to structuredContent
- * when content is empty.
+ * Resolve a tool result's content blocks, appending structuredContent when it
+ * coexists with ordinary content and falling back to it when content is empty.
  */
 export function resolveMcpResultContent(result: Record<string, unknown>, scope?: object): ContentBlock[] {
   const blocks = transformMcpContent((Array.isArray(result.content) ? result.content : []) as McpContent[], scope);
-  if (blocks.length > 0) return blocks;
-
   if (result.structuredContent !== undefined && result.structuredContent !== null) {
-    return [{ type: "text" as const, text: stringifyStructuredContent(result.structuredContent) }];
+    const structured = stringifyStructuredContent(result.structuredContent);
+    if (blocks.length > 0) {
+      return [...blocks, { type: "text" as const, text: `structuredContent:\n${structured}` }];
+    }
+    return [{ type: "text" as const, text: structured }];
   }
 
-  return [];
+  return blocks;
 }
 
 function stringifyStructuredContent(value: unknown): string {

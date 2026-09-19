@@ -10,13 +10,16 @@ import {
 describe("resolveMcpResultContent", () => {
   afterEach(() => cleanupMaterializedBinaryResources());
 
-  it("returns transformed content blocks when content is present", () => {
+  it("returns transformed content followed by labeled structuredContent", () => {
     const blocks = resolveMcpResultContent({
       content: [{ type: "text", text: "hello" }],
-      structuredContent: { ignored: true },
+      structuredContent: { included: true },
     });
 
-    expect(blocks).toEqual([{ type: "text", text: "hello" }]);
+    expect(blocks).toEqual([
+      { type: "text", text: "hello" },
+      { type: "text", text: 'structuredContent:\n{\n  "included": true\n}' },
+    ]);
   });
 
   it("materializes binary resources without retaining base64", () => {
@@ -334,13 +337,16 @@ describe("resolveMcpResultContent", () => {
     ).toEqual([{ type: "text", text: "{}" }]);
   });
 
-  it("does not fall back when content has a non-text block", () => {
+  it("preserves a non-text block before coexisting structuredContent", () => {
     const blocks = resolveMcpResultContent({
       content: [{ type: "image", data: "abc", mimeType: "image/png" }],
-      structuredContent: { should: "not appear" },
+      structuredContent: { status: "available" },
     });
 
-    expect(blocks).toEqual([{ type: "image", data: "abc", mimeType: "image/png" }]);
+    expect(blocks).toEqual([
+      { type: "image", data: "abc", mimeType: "image/png" },
+      { type: "text", text: 'structuredContent:\n{\n  "status": "available"\n}' },
+    ]);
   });
 
   it("degrades gracefully when structuredContent is not serializable", () => {
@@ -353,12 +359,35 @@ describe("resolveMcpResultContent", () => {
     expect(blocks[0]).toMatchObject({ type: "text" });
   });
 
-  it("prefers real content over structuredContent even for a single block", () => {
+  it("appends labeled structuredContent after real content", () => {
     const blocks = resolveMcpResultContent({
       content: [{ type: "text", text: "real" }],
-      structuredContent: { fallback: "should not appear" },
+      structuredContent: { status: "ok" },
     });
 
-    expect(blocks).toEqual([{ type: "text", text: "real" }]);
+    expect(blocks).toEqual([
+      { type: "text", text: "real" },
+      { type: "text", text: 'structuredContent:\n{\n  "status": "ok"\n}' },
+    ]);
+  });
+
+  it("preserves empty and non-serializable structuredContent during coexistence", () => {
+    expect(resolveMcpResultContent({
+      content: [{ type: "text", text: "real" }],
+      structuredContent: {},
+    })).toEqual([
+      { type: "text", text: "real" },
+      { type: "text", text: "structuredContent:\n{}" },
+    ]);
+
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(resolveMcpResultContent({
+      content: [{ type: "text", text: "real" }],
+      structuredContent: circular,
+    })).toEqual([
+      { type: "text", text: "real" },
+      { type: "text", text: "structuredContent:\n[object Object]" },
+    ]);
   });
 });
