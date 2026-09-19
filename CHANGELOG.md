@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The bundled `mcp-scripting` skill is now discovered alongside the default-on `mcpScript` tool and hidden with it when `settings.scriptMode` is `false`. Thanks to [@zhangyoufu](https://github.com/zhangyoufu) for PR #583.
 
+### Fixed
+
+- Server-scoped tool describe and call requests now fail closed when a name exactly identifies different displayed and upstream tools. Thanks to [@sheurich](https://github.com/sheurich) for PR #587.
+
 ## [2.34.0] - 2026-09-14
 
 ### Highlights

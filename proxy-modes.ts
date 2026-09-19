@@ -101,15 +101,21 @@ type ServerScopedToolMatch = { tool: ToolMetadata; precedence: number } | "ambig
 function getServerScopedToolMatch(metadata: ToolMetadata[] | undefined, toolName: string): ServerScopedToolMatch | undefined {
   if (!metadata) return undefined;
   const normalizedName = toolName.replace(/-/g, "_");
-  const matchesByPrecedence = [
-    metadata.filter((tool) => tool.name === toolName),
-    metadata.filter((tool) => tool.originalName === toolName),
-    metadata.filter((tool) => tool.name.replace(/-/g, "_") === normalizedName),
-    metadata.filter((tool) => tool.originalName.replace(/-/g, "_") === normalizedName),
-  ];
-  for (const [precedence, matches] of matchesByPrecedence.entries()) {
-    if (matches.length > 1) return "ambiguous";
-    if (matches.length === 1) return { tool: matches[0]!, precedence };
+  const exactDisplayedMatches = metadata.filter((tool) => tool.name === toolName);
+  const exactOriginalMatches = metadata.filter((tool) => tool.originalName === toolName);
+  const exactMatches = new Set([...exactDisplayedMatches, ...exactOriginalMatches]);
+  if (exactMatches.size > 1) return "ambiguous";
+  if (exactMatches.size === 1) {
+    const tool = exactMatches.values().next().value!;
+    return { tool, precedence: exactDisplayedMatches.includes(tool) ? 0 : 1 };
+  }
+  const normalizedDisplayedMatches = metadata.filter((tool) => tool.name.replace(/-/g, "_") === normalizedName);
+  const normalizedOriginalMatches = metadata.filter((tool) => tool.originalName.replace(/-/g, "_") === normalizedName);
+  const normalizedMatches = new Set([...normalizedDisplayedMatches, ...normalizedOriginalMatches]);
+  if (normalizedMatches.size > 1) return "ambiguous";
+  if (normalizedMatches.size === 1) {
+    const tool = normalizedMatches.values().next().value!;
+    return { tool, precedence: normalizedDisplayedMatches.includes(tool) ? 2 : 3 };
   }
   return undefined;
 }

@@ -386,6 +386,71 @@ describe("proxy discovery", () => {
     );
   });
 
+  it("fails closed for same-server displayed and raw exact-name collisions", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
+    const state = {
+      config: { mcpServers: { demo: { command: "demo" } } },
+      toolMetadata: new Map([["demo", [
+        { name: "demo_search", originalName: "search", description: "Displayed match" },
+        { name: "demo_demo_search", originalName: "demo_search", description: "Raw match" },
+      ]]]),
+      manager: {
+        getConnection: () => ({ status: "connected", client: { callTool } }),
+        touch: () => {},
+        incrementInFlight: () => {},
+        decrementInFlight: () => {},
+        getRequestOptions: () => undefined,
+      },
+      failureTracker: new Map(),
+      serverInstructions: new Map(),
+      completedUiSessions: [],
+    } as unknown as McpExtensionState;
+
+    expect(executeDescribe(state, "demo_search", "demo").details).toMatchObject({
+      error: "ambiguous_tool",
+      server: "demo",
+    });
+    await expect(executeCall(state, "demo_search", {}, "demo")).resolves.toMatchObject({
+      details: { error: "ambiguous_tool", server: "demo" },
+    });
+    expect(callTool).not.toHaveBeenCalled();
+
+    expect(executeDescribe(state, "demo_search").details).toMatchObject({
+      server: "demo",
+      tool: { originalName: "search" },
+    });
+  });
+
+  it("fails closed for same-server normalized displayed and raw-name collisions", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
+    const state = {
+      config: { mcpServers: { demo: { command: "demo" } } },
+      toolMetadata: new Map([["demo", [
+        { name: "demo_search-item", originalName: "search-item", description: "Displayed match" },
+        { name: "demo_other", originalName: "demo-search_item", description: "Raw match" },
+      ]]]),
+      manager: {
+        getConnection: () => ({ status: "connected", client: { callTool } }),
+        touch: () => {},
+        incrementInFlight: () => {},
+        decrementInFlight: () => {},
+        getRequestOptions: () => undefined,
+      },
+      failureTracker: new Map(),
+      serverInstructions: new Map(),
+      completedUiSessions: [],
+    } as unknown as McpExtensionState;
+
+    expect(executeDescribe(state, "demo_search_item", "demo").details).toMatchObject({
+      error: "ambiguous_tool",
+      server: "demo",
+    });
+    await expect(executeCall(state, "demo_search_item", {}, "demo")).resolves.toMatchObject({
+      details: { error: "ambiguous_tool", server: "demo" },
+    });
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
   it("fails closed for same-server normalized original-name collisions", async () => {
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
     const state = {
