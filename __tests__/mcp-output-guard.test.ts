@@ -127,6 +127,39 @@ describe("guardMcpOutput", () => {
     });
   });
 
+  it("self-identifies and accounts for partial structured summaries", async () => {
+    const structuredContent = Object.fromEntries([
+      ["result", Array.from({ length: 2_000 }, (_, index) => ({ index }))],
+      ...Array.from({ length: 11 }, (_, index) => [`large-${index}`, "x".repeat(450)]),
+      ...Array.from({ length: 13 }, (_, index) => [`small-${index}`, index]),
+    ]);
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "ok" }],
+      {
+        detailsMaxBytes: 16 * 1024,
+        rawMcpResult: { content: [{ type: "text", text: "ok" }], structuredContent },
+      },
+    );
+    const structuredSummary = (guarded.mcpResult as McpResultSummary).structuredContent!;
+    const preservedFields = structuredSummary.preservedFields as Record<string, unknown>;
+    const summary = structuredSummary.summary as {
+      keyCount: number;
+      preservedCount: number;
+      droppedCount: number;
+    };
+
+    expect(structuredSummary).toMatchObject({
+      omitted: true,
+      preservedFields: { result: { omitted: true } },
+    });
+    expect(structuredSummary).not.toHaveProperty("result");
+    expect(summary.keyCount).toBe(25);
+    expect(summary.preservedCount).toBe(Object.keys(preservedFields).length);
+    expect(summary.keyCount).toBe(summary.preservedCount + summary.droppedCount);
+    expect(summary.droppedCount).toBeGreaterThan(5);
+    expect(Buffer.byteLength(JSON.stringify(guarded.mcpResult), "utf8")).toBeLessThanOrEqual(16 * 1024);
+  });
+
   it("keeps structured payload fields separate from summary metadata", async () => {
     const structuredContent = {
       type: "reserve_result",
@@ -145,6 +178,7 @@ describe("guardMcpOutput", () => {
 
     expect(structuredSummary).not.toHaveProperty("type");
     expect(structuredSummary).toMatchObject({
+      omitted: true,
       preservedFields: {
         type: "reserve_result",
         omitted: false,

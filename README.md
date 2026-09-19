@@ -553,6 +553,8 @@ Oversized MCP tool/resource results are guarded by default so a single huge resp
 - Binary resource blobs up to **10 MiB** are decoded to private temp files and replaced with file references. Each session is limited to **100 MiB** and **10,000 files**. The files are removed at session teardown.
 - In proxy mode, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results are replaced with a compact summary (block counts, sizes, key previews) and the raw JSON is saved to a temp file. Direct tools keep lean details unless `settings.directToolResultDetails` is set to `"bounded"`, which applies the same guarded `mcpResult` limit.
 
+Extensions consuming `details.mcpResult` must check for `omitted === true` on both the result and its `structuredContent` before treating either value as an original payload. For omitted object `structuredContent`, `preservedFields` is only a partial preview; `summary.keyCount` is the original cardinality, while `preservedCount` and `droppedCount` account for retention. Under tiny limits, the whole result may compact to an omission marker without spill metadata.
+
 Tune the text and details limits with the object form:
 
 ```json

@@ -404,12 +404,16 @@ function summarizeStructuredContent(value: unknown): Record<string, unknown> {
     fields[key] = candidate;
     preservedBytes += entryBytes;
   }
+  const preservedCount = Object.keys(fields).length;
   return {
+    omitted: true,
     preservedFields: fields,
     summary: {
       type: "object",
       estimatedBytes: estimateValueBytes(value),
       keyCount: keys.length,
+      preservedCount,
+      droppedCount: keys.length - preservedCount,
       keysPreview: previewKeys,
       omitted: true,
     },
