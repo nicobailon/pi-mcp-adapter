@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 async function edit(ui: { editor: () => Promise<string>; notify: () => void }, cwd: string) {
@@ -30,5 +30,22 @@ describe("/mcp edit", () => {
 
     expect(await edit(ui, cwd)).toBe(true);
     expect(readFileSync(join(cwd, ".mcp.json"), "utf8")).toBe(text);
+  });
+
+  it("preserves an existing relative config symlink", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mcp-edit-symlink-"));
+    const cwd = join(root, "project");
+    const path = join(cwd, ".mcp.json");
+    const target = join(root, "configs", "mcp.json");
+    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, '{"mcpServers":{}}\n');
+    symlinkSync(relative(dirname(path), target), path);
+    const text = '{\n  // edited through link\n  "mcpServers": {},\n}\n';
+    const ui = { editor: vi.fn(async () => text), notify: vi.fn() };
+
+    expect(await edit(ui, cwd)).toBe(true);
+    expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, "utf8")).toBe(text);
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -896,6 +896,39 @@ describe("config discovery", () => {
         },
       },
     });
+  });
+
+  it("preserves an existing config symlink and its restrictive target mode", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-mcp-symlink-write-"));
+    const path = join(root, "project", ".mcp.json");
+    const target = join(root, "configs", "mcp.json");
+    writeJson(target, {});
+    if (process.platform !== "win32") chmodSync(target, 0o600);
+    mkdirSync(dirname(path), { recursive: true });
+    symlinkSync(target, path);
+    const tmpPath = `${realpathSync(target)}.${process.pid}.tmp`;
+    writeFileSync(tmpPath, "stale", { mode: 0o666 });
+    if (process.platform !== "win32") chmodSync(tmpPath, 0o666);
+
+    const { writeSharedServerEntry } = await import("../config.ts");
+    expect(writeSharedServerEntry(path, "added", { command: "added" })).toBe(path);
+    expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    if (process.platform !== "win32") expect(statSync(target).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(target, "utf-8"))).toEqual({
+      mcpServers: {
+        added: { command: "added" },
+      },
+    });
+  });
+
+  it("removes the temporary file when the final rename fails", async () => {
+    const path = mkdtempSync(join(tmpdir(), "pi-mcp-rename-failure-"));
+    const tmpPath = `${realpathSync(path)}.${process.pid}.tmp`;
+    writeFileSync(tmpPath, "stale");
+
+    const { writeSharedConfigText } = await import("../config.ts");
+    expect(() => writeSharedConfigText(path, "{}\n")).toThrow();
+    expect(existsSync(tmpPath)).toBe(false);
   });
 
   it("resolves configured oauthDir against the active project cwd", async () => {

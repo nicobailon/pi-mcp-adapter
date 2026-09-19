@@ -1,5 +1,5 @@
 // config.ts - Config loading with import support
-import { existsSync, readFileSync, realpathSync, statSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -1139,11 +1139,23 @@ function readRawConfigObject(filePath: string): Record<string, unknown> {
   }
 }
 
-function writeConfigText(filePath: string, text: string): void {
-  mkdirSync(dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, text, "utf-8");
-  renameSync(tmpPath, filePath);
+function writeConfigText(writePath: string, text: string): void {
+  let mode: number | undefined;
+  try {
+    writePath = realpathSync(writePath);
+    mode = statSync(writePath).mode & 0o777;
+  } catch {}
+  mkdirSync(dirname(writePath), { recursive: true });
+  const tmpPath = `${writePath}.${process.pid}.tmp`;
+  rmSync(tmpPath, { force: true });
+  try {
+    writeFileSync(tmpPath, text, mode === undefined ? "utf-8" : { encoding: "utf-8", mode });
+    if (mode !== undefined) chmodSync(tmpPath, mode);
+    renameSync(tmpPath, writePath);
+  } catch (error) {
+    try { rmSync(tmpPath, { force: true }); } catch {}
+    throw error;
+  }
 }
 
 function writeRawConfigObject(filePath: string, raw: Record<string, unknown>): void {
