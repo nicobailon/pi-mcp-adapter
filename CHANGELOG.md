@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Server-scoped tool describe and call requests now fail closed when a name exactly identifies different displayed and upstream tools. Thanks to [@sheurich](https://github.com/sheurich) for PR #587.
 - Config writes now preserve resolvable existing symlinks by atomically replacing their targets. Thanks to [@peedrr](https://github.com/peedrr) for #597.
+- Server-returned MCP tool errors no longer include misleading input-schema guidance, while invalid proxy arguments are rejected before dispatch. Thanks to [@jaresty](https://github.com/jaresty) for PR #596.
 
 ## [2.34.0] - 2026-09-14
 

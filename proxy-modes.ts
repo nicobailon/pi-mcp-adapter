@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
-import { UrlElicitationRequiredError, type Client, type JsonSchemaType, type Progress, type RequestOptions } from "@modelcontextprotocol/client";
+import { UrlElicitationRequiredError, type Client, type JsonSchemaType, type JsonSchemaValidator, type Progress, type RequestOptions } from "@modelcontextprotocol/client";
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
@@ -27,13 +27,18 @@ type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
 
 const require = createRequire(import.meta.url);
-const proxyArgumentValidator = createJsonSchemaValidator();
+const proxyArgumentValidators = new WeakMap<object, JsonSchemaValidator<unknown>>();
 const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
 
 function proxyArgumentValidationError(inputSchema: unknown, args: unknown): string | null {
   if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) return null;
   try {
-    const result = proxyArgumentValidator.getValidator(inputSchema as JsonSchemaType)(args);
+    let validate = proxyArgumentValidators.get(inputSchema);
+    if (!validate) {
+      validate = createJsonSchemaValidator().getValidator(inputSchema as JsonSchemaType);
+      proxyArgumentValidators.set(inputSchema, validate);
+    }
+    const result = validate(args);
     return result.valid ? null : result.errorMessage ?? "arguments do not match the advertised input schema";
   } catch {
     // Preserve server-side validation for schema dialects the adapter cannot evaluate.
@@ -1405,7 +1410,7 @@ export async function executeCall(
   const normalizedArgs = toolMeta.resourceUri ? args ?? {} : normalizeToolArguments(args);
   const validationError = toolMeta.resourceUri ? null : proxyArgumentValidationError(toolMeta.inputSchema, normalizedArgs);
   if (validationError) {
-    const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
+    const schemaText = `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}`;
     const guarded = await guardMcpOutput(
       [{ type: "text" as const, text: validationError }],
       { ...resolveMcpOutputGuardOptions(state.config.settings), prefix: "Failed to call tool: ", suffix: schemaText },

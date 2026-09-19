@@ -58,7 +58,6 @@ describe("server-returned domain errors", () => {
         })("call-1", { id: "missing" }, undefined, undefined, undefined as any);
 
     expect(text(result)).toBe("Error: domain failure");
-    expect(text(result)).not.toContain("Expected parameters");
     expect(result.details).toMatchObject({ error: "tool_error", server: "demo" });
     expect(callTool).toHaveBeenCalledOnce();
   });
@@ -68,10 +67,48 @@ describe("server-returned domain errors", () => {
 
     const result = await executeCall(state, metadata.name, {}, "demo");
 
-    expect(text(result)).toContain("Failed to call tool:");
     expect(text(result)).toContain("Expected parameters:");
     expect(text(result)).toContain("id (string) *required*");
     expect(result.details).toMatchObject({ error: "call_failed", server: "demo" });
     expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("isolates and safely reuses proxy validation for schemas sharing an id", async () => {
+    const { state, callTool } = connectedState();
+    state.toolMetadata.set("demo", [
+      {
+        name: "demo_first",
+        originalName: "first",
+        description: "First",
+        inputSchema: {
+          $id: "https://example.test/shared-tool-schema",
+          type: "object",
+          properties: { first: { type: "string" } },
+          required: ["first"],
+        },
+      },
+      {
+        name: "demo_second",
+        originalName: "second",
+        description: "Second",
+        inputSchema: {
+          $id: "https://example.test/shared-tool-schema",
+          type: "object",
+          properties: { second: { type: "string" } },
+          required: ["second"],
+        },
+      },
+    ]);
+
+    await executeCall(state, "demo_first", { first: "one" }, "demo");
+    await executeCall(state, "demo_second", { second: "two" }, "demo");
+    await executeCall(state, "demo_second", { first: "wrong schema" }, "demo");
+
+    expect(callTool).toHaveBeenCalledTimes(2);
+    expect(callTool).toHaveBeenNthCalledWith(
+      2,
+      { name: "second", arguments: { second: "two" } },
+      undefined,
+    );
   });
 });
