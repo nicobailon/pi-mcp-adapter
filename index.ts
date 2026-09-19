@@ -13,7 +13,7 @@ import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { computeServerHash, isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
-import { formatTerminalError, getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
+import { formatMcpFooterStatus, formatTerminalError, getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
 import { createMcpDirectToolCallRenderer, createMcpProxyToolCallRenderer, createMcpScriptToolCallRenderer, createMcpToolResultRenderer, resolveMcpToolRenderOptions } from "./tool-result-renderer.ts";
 import { toolErrorOverride } from "./error-signal.ts";
 import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
@@ -1057,7 +1057,21 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (state) return;
 
     if (!initPromise) {
-      if (deferSessionRuntime) return;
+      if (deferSessionRuntime) {
+        const serverCount = Object.keys(earlyConfig.mcpServers).length;
+        const formattedStatus = formatMcpFooterStatus(
+          earlyConfig,
+          enabledEarlyServers.length,
+          serverCount - enabledEarlyServers.length,
+          0,
+        );
+        const theme = ctx.ui?.theme;
+        const styledStatus = formattedStatus !== undefined && typeof theme?.fg === "function"
+          ? theme.fg("accent", formattedStatus)
+          : formattedStatus;
+        ctx.ui?.setStatus("mcp", styledStatus);
+        return;
+      }
       startInitialization(ctx, owner, generation, "stale_session_start");
     }
 

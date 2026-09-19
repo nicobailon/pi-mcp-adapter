@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restored the MCP footer status during cache-backed deferred startup without eagerly loading or connecting the runtime. Thanks to [@pkulyn](https://github.com/pkulyn) for issue #586.
 - Oversized object `structuredContent` summaries now identify themselves as omitted and account for preserved and dropped fields, so extension consumers do not mistake a partial preview for an empty payload. Thanks to [@Batchputz](https://github.com/Batchputz) for issue #585.
 - Server-scoped tool describe and call requests now fail closed when a name exactly identifies different displayed and upstream tools. Thanks to [@sheurich](https://github.com/sheurich) for PR #587.
 - Config writes now preserve resolvable existing symlinks by atomically replacing their targets. Thanks to [@peedrr](https://github.com/peedrr) for #597.

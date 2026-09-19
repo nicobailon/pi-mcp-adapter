@@ -2480,6 +2480,74 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.executeStatus).toHaveBeenCalledTimes(2);
   });
 
+  it("publishes a themed config-derived footer while keeping the cached runtime deferred", async () => {
+    const enabled = { command: "demo" };
+    const config = {
+      settings: { showStatusIcon: false },
+      mcpServers: { demo: enabled, paused: { command: "paused", disabled: true } },
+    };
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.loadMetadataCache.mockReturnValue({
+      version: 1,
+      servers: { demo: { configHash: computeServerHash(enabled), cachedAt: Date.now(), tools: [], resources: [] } },
+    });
+    const setStatus = vi.fn();
+    const theme = { fg: vi.fn((_color: string, text: string) => `styled:${text}`) };
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { setStatus, theme } });
+
+    expect(setStatus).toHaveBeenCalledWith("mcp", "styled:MCP: 1 server enabled (1 disabled)");
+    expect(theme.fg).toHaveBeenCalledWith("accent", "MCP: 1 server enabled (1 disabled)");
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
+    expect(mocks.coreModuleStarted).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["compact", "MCP 0/1"],
+    ["off", undefined],
+  ])("publishes the %s deferred footer without initializing", async (mcpFooterStatus, expected) => {
+    const definition = { command: "demo" };
+    const config = cacheLazyServer(definition);
+    config.settings = { mcpFooterStatus };
+    const setStatus = vi.fn();
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { setStatus } });
+
+    expect(setStatus).toHaveBeenCalledWith("mcp", expected);
+  });
+
+  it("clears a stale footer for a cache-backed config with no servers", async () => {
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {} });
+    mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: {} });
+    const setStatus = vi.fn();
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { setStatus } });
+
+    expect(setStatus).toHaveBeenCalledWith("mcp", undefined);
+  });
+
+  it("lets live runtime status overwrite the provisional deferred footer on first use", async () => {
+    const definition = { command: "demo" };
+    cacheLazyServer(definition);
+    const initializedState = createState();
+    mocks.initializeMcp.mockResolvedValue(initializedState);
+    mocks.executeStatus.mockReturnValue({ content: [{ type: "text", text: "ready" }] });
+    const setStatus = vi.fn();
+    mocks.updateStatusBar.mockImplementation(() => setStatus("mcp", "live"));
+
+    const { api, handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { setStatus } });
+    await registeredTool(api, "mcp").execute("one", {}, undefined, undefined, { hasUI: false, cwd: "/tmp" });
+
+    expect(setStatus.mock.calls).toEqual([
+      ["mcp", "🔌 MCP: 1 server enabled"],
+      ["mcp", "live"],
+    ]);
+  });
+
   it.each([
     ["lazy-keep-alive with valid cache", { lifecycle: "lazy-keep-alive" }, undefined],
     ["an env-selected tool already present in valid cache", { lifecycle: "lazy" }, "demo/search"],

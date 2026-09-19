@@ -426,6 +426,22 @@ export function formatMcpStatus(config: Pick<McpConfig, "settings">, message: st
   return `${config.settings?.showStatusIcon === false ? "MCP: " : "🔌 MCP: "}${message}`;
 }
 
+export function formatMcpFooterStatus(
+  config: Pick<McpConfig, "settings">,
+  enabledCount: number,
+  disabledCount: number,
+  connectedCount: number,
+): string | undefined {
+  if (enabledCount + disabledCount === 0 || config.settings?.mcpFooterStatus === "off") return undefined;
+  const footerStatus = config.settings?.mcpFooterStatus ?? "full";
+  if (footerStatus === "compact") return `MCP ${connectedCount}/${enabledCount}`;
+
+  let status = `${enabledCount} ${enabledCount === 1 ? "server" : "servers"} enabled`;
+  if (connectedCount > 0) status += ` (${connectedCount} connected)`;
+  if (disabledCount > 0) status += ` (${disabledCount} disabled)`;
+  return formatMcpStatus(config, status);
+}
+
 /**
  * Extract the adapter-owned UI stream mode from tool metadata.
  */
