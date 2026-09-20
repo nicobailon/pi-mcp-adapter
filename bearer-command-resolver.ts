@@ -9,8 +9,8 @@ const USE_PROCESS_GROUP = process.platform !== "win32";
 function resolveDefaultTtlMs(): number {
   const raw = process.env[ENV_TTL_MS];
   if (raw === undefined || raw === "") return DEFAULT_TTL_MS;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TTL_MS;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return DEFAULT_TTL_MS;
   return parsed;
 }
 
@@ -195,9 +195,4 @@ export class BearerCommandResolver {
     });
   }
 
-  /** Invalidate both the cached token and any failed-refresh retry deadline. */
-  invalidate(): void {
-    this.#cached = undefined;
-    this.#failure = undefined;
-  }
 }

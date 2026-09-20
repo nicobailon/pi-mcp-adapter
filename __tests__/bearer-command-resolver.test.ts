@@ -127,17 +127,16 @@ setTimeout(() => {
     expect(await resolver.resolve()).toBe("jwt-2");
   });
 
-  it("invalidate forces the next call to re-run the command", async () => {
-    const resolver = new BearerCommandResolver(command(), "test", 60_000);
-    expect(await resolver.resolve()).toBe("jwt-1");
-    resolver.invalidate();
-    expect(await resolver.resolve()).toBe("jwt-2");
-  });
-
   it("accepts empty and invalid TTL environment values", async () => {
     process.env.PI_MCP_ADAPTER_BEARER_COMMAND_TTL_MS = "";
     expect(await new BearerCommandResolver(command(), "test").resolve()).toBe("jwt-1");
     process.env.PI_MCP_ADAPTER_BEARER_COMMAND_TTL_MS = "invalid";
-    expect(await new BearerCommandResolver(command(), "test").resolve()).toBe("jwt-2");
+    const invalid = new BearerCommandResolver(command(), "test");
+    expect(await invalid.resolve()).toBe("jwt-2");
+    process.env.PI_MCP_ADAPTER_BEARER_COMMAND_TTL_MS = "10ms";
+    const ambiguous = new BearerCommandResolver(command(), "test");
+    expect(await ambiguous.resolve()).toBe("jwt-3");
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(await ambiguous.resolve()).toBe("jwt-3");
   });
 });

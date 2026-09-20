@@ -124,8 +124,8 @@ function localNetworkFailureCodes(error: unknown, seen = new Set<object>()): str
 export function isUnauthorizedHttpError(error: unknown): boolean {
   return error instanceof UnauthorizedError
     || (error instanceof SdkHttpError && error.status === 401)
-    // The pinned SDK emits this plain Error when bearer request headers are
-    // used without an OAuth authProvider.
+    // Some pinned-SDK transport paths emit this plain Error when bearer
+    // request headers are used without an OAuth authProvider.
     || (error instanceof Error && /^Error POSTing to endpoint \(HTTP 401\):/.test(error.message));
 }
 
@@ -241,14 +241,20 @@ function createBearerCommandFetch(
   resolver: BearerCommandResolver,
   delegate: FetchLike | undefined,
 ): FetchLike {
-  const innerFetch: FetchLike = delegate ?? ((input, init) => globalThis.fetch(input, init));
+  const innerFetch = delegate
+    ? (input: URL | RequestInfo, init?: RequestInit) => delegate(input as URL, init)
+    : (input: URL | RequestInfo, init?: RequestInit) => globalThis.fetch(input, init);
   return async (input, init) => {
     const request = new Request(input, init);
     const token = await resolver.resolve(request.signal);
     const headers = new Headers(request.headers);
     headers.set("Authorization", `Bearer ${token}`);
-    // FetchLike accepts string | URL, not Request, so unwrap the URL.
-    return innerFetch(new URL(request.url), { ...init, headers });
+    // A Request is the single owner of merged input/init semantics. Passing
+    // its URL plus the old init would drop method, body, and signal whenever
+    // the caller supplied those on an input Request. The SDK's FetchLike type
+    // is narrower than the fetch implementations we compose here (global,
+    // CA, and requestHeadersCommand), all of which accept Request at runtime.
+    return innerFetch(new Request(request, { headers }));
   };
 }
 

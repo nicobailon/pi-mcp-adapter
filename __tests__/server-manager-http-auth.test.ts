@@ -389,9 +389,8 @@ process.stdout.write("rotating-jwt-" + count + "\\n");
       expect(fetch).toBeTypeOf("function");
 
       const seenAuth: string[] = [];
-      const probe = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
-        const headers = new Headers(init?.headers);
-        const auth = headers.get("Authorization");
+      const probe = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+        const auth = new Request(input, init).headers.get("Authorization");
         if (auth) seenAuth.push(auth);
         return new Response("", { status: 200 });
       });
@@ -429,9 +428,17 @@ process.stdout.write("rotating-jwt-" + count + "\\n");
     writeFileSync(tokenPath, 'process.stdout.write("bearer-command-token\\n");\n');
     const manager = new (await import("../server-manager.ts")).McpServerManager();
     const originalFetch = globalThis.fetch;
-    const seen = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) =>
-      new Response(new Headers(init?.headers).get("authorization"), { status: 200 }));
-    globalThis.fetch = seen as typeof globalThis.fetch;
+    const seen: Array<{ authorization: string | null; method: string; body: string; source: string | null }> = [];
+    globalThis.fetch = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const request = new Request(input, init);
+      seen.push({
+        authorization: request.headers.get("authorization"),
+        method: request.method,
+        body: await request.text(),
+        source: request.headers.get("x-source"),
+      });
+      return new Response("ok", { status: 200 });
+    }) as typeof globalThis.fetch;
     try {
       await manager.connect("remote", {
         url: "https://example.test/mcp",
@@ -442,10 +449,19 @@ process.stdout.write("rotating-jwt-" + count + "\\n");
           args: ["-e", 'process.stdin.resume(); process.stdin.on("end", () => console.log(JSON.stringify({Authorization:"Bearer final-command"})))'],
         },
       });
-      const response = await mocks.httpTransports.at(-1)!.options.fetch!(new URL("https://example.test/mcp"), {
+      const input = new Request("https://example.test/mcp", {
         method: "POST",
+        headers: { "x-source": "input-request" },
+        body: "request-body",
       });
-      expect(await response.text()).toBe("Bearer final-command");
+      const response = await mocks.httpTransports.at(-1)!.options.fetch!(input as unknown as URL);
+      expect(await response.text()).toBe("ok");
+      expect(seen).toEqual([{
+        authorization: "Bearer final-command",
+        method: "POST",
+        body: "request-body",
+        source: "input-request",
+      }]);
     } finally {
       globalThis.fetch = originalFetch;
       await manager.closeAll();
