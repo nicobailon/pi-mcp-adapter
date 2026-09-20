@@ -229,7 +229,7 @@ describe("McpServerManager.reconnect", () => {
     await expect(reconnecting).rejects.toThrow("closed while reconnecting");
 
     expect(settledBeforeCandidateRelease).toBe(true);
-    expect(mocks.clients[1].close).toHaveBeenCalledTimes(1);
+    expect(mocks.httpTransports[1].close).toHaveBeenCalledTimes(1);
     expect(manager.getConnection("remote")).toBeUndefined();
   });
 
@@ -246,10 +246,12 @@ describe("McpServerManager.reconnect", () => {
     const fresh = manager.getConnection("remote")!;
     expect(fresh).not.toBe(stale);
 
-    await manager.close("remote");
+    const reconnectResult = expect(reconnecting).rejects.toThrow("closed while reconnecting");
+    const closing = manager.close("remote");
     staleCleanup.resolve();
 
-    await expect(reconnecting).rejects.toThrow("closed while reconnecting");
+    await closing;
+    await reconnectResult;
     expect(fresh.client.close).toHaveBeenCalledTimes(1);
     expect(manager.getConnection("remote")).toBeUndefined();
   });

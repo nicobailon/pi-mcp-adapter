@@ -266,6 +266,7 @@ export class McpServerManager {
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private connectOAuthAuthorities = new Map<string, OAuthAuthority>();
   private reconnectPromises = new Map<string, Promise<ServerConnection>>();
+  private reconnectAttempts = new Map<string, AbortController>();
   private uiStreamListeners = new Map<string, UiStreamListener>();
   private samplingConfig: ServerSamplingConfig | undefined;
   private metadataListChangedListener: MetadataListChangedListener | undefined;
@@ -488,12 +489,25 @@ export class McpServerManager {
       return abortable(inFlight, ownedSignal);
     }
 
-    const promise = this.doReconnect(name, definition, staleConnection, ownedSignal).finally(() => {
-      if (this.reconnectPromises.get(name) === promise) {
-        this.reconnectPromises.delete(name);
-      }
-    });
+    const attemptController = new AbortController();
+    const attemptSignal = combineAbortSignals(ownedSignal, attemptController.signal);
+    const promise = this.doReconnect(name, definition, staleConnection, attemptSignal)
+      .catch(error => {
+        if (attemptController.signal.aborted && !this.containsCleanupFailure(error)) {
+          throw new Error(`MCP connection for ${name} was closed while reconnecting`, { cause: error });
+        }
+        throw error;
+      })
+      .finally(() => {
+        if (this.reconnectPromises.get(name) === promise) {
+          this.reconnectPromises.delete(name);
+        }
+        if (this.reconnectAttempts.get(name) === attemptController) {
+          this.reconnectAttempts.delete(name);
+        }
+      });
     this.reconnectPromises.set(name, promise);
+    this.reconnectAttempts.set(name, attemptController);
     return abortable(promise, ownedSignal);
   }
 
@@ -902,7 +916,23 @@ export class McpServerManager {
     // Publish first so calls route to the fresh image while the exact displaced
     // child is terminated and reaped. Late close callbacks are identity-guarded.
     staleConnection.status = "closed";
-    await this.disposeConnection(staleConnection);
+    try {
+      await this.disposeConnection(staleConnection);
+    } catch (error) {
+      const failures = error instanceof AggregateError ? error.errors : [error];
+      const details = failures
+        .map(failure => failure instanceof Error ? failure.message : String(failure))
+        .join("; ");
+      logger.debug(`MCP: stale connection cleanup failed for ${name}: ${details}`);
+    }
+
+    // Publication is not permission to return a route that close() disposed
+    // while stale cleanup was pending.
+    if ((this.closeGenerations.get(name) ?? 0) !== generation
+      || this.connections.get(name) !== fresh
+      || fresh.status !== "connected") {
+      throw new Error(`MCP connection for ${name} was closed while reconnecting`);
+    }
     return fresh;
   }
 
@@ -1800,8 +1830,10 @@ export class McpServerManager {
   async close(name: string): Promise<void> {
     this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
     this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
+    this.reconnectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
     this.pendingMetadataPublications.delete(name);
 
+    const pendingReconnect = this.reconnectPromises.get(name);
     const connection = this.connections.get(name);
     if (!connection) {
       const pendingClose = this.closePromises.get(name);
@@ -1810,9 +1842,10 @@ export class McpServerManager {
         return;
       }
       const pendingConnect = this.connectPromises.get(name);
-      if (pendingConnect) {
+      for (const pending of [pendingConnect, pendingReconnect]) {
+        if (!pending) continue;
         try {
-          await pendingConnect;
+          await pending;
         } catch (error) {
           if (this.containsCleanupFailure(error)) throw error;
         }
@@ -1829,7 +1862,14 @@ export class McpServerManager {
       if (this.closePromises.get(name) === closing) this.closePromises.delete(name);
     });
     this.closePromises.set(name, closing);
-    return closing;
+    await closing;
+    if (pendingReconnect) {
+      try {
+        await pendingReconnect;
+      } catch (error) {
+        if (this.containsCleanupFailure(error)) throw error;
+      }
+    }
   }
 
   private async disposeConnection(connection: ServerConnection): Promise<void> {
@@ -1849,13 +1889,18 @@ export class McpServerManager {
 
   async closeAll(): Promise<void> {
     this.stopped = true;
-    const names = new Set([...this.connections.keys(), ...this.connectPromises.keys()]);
+    const names = new Set([
+      ...this.connections.keys(),
+      ...this.connectPromises.keys(),
+      ...this.reconnectPromises.keys(),
+    ]);
     for (const name of names) {
       this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
       this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
+      this.reconnectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
     }
 
-    const pendingConnects = [...this.connectPromises.values()];
+    const pendingConnects = [...this.connectPromises.values(), ...this.reconnectPromises.values()];
     const currentNames = [...this.connections.keys()];
     const pendingResults = await Promise.allSettled(pendingConnects);
     const results = await Promise.allSettled(currentNames.map(name => this.close(name)));
