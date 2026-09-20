@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Direct tools now recover stringified array and object arguments declared through type arrays and schema unions without coercing values that are valid strings. Thanks to [@sashkachan](https://github.com/sashkachan) for issue [#606](https://github.com/nicobailon/pi-mcp-adapter/issues/606).
+- Default tool search now supports CJK text, including unseparated mixed-script queries and configured search keywords, while retaining bounded lexical matching. Thanks to [@wjunhere](https://github.com/wjunhere) for issue [#607](https://github.com/nicobailon/pi-mcp-adapter/issues/607).
 - Tool results now preserve `structuredContent` alongside ordinary content in direct and proxy calls. Thanks to [@civcode](https://github.com/civcode) for issue #588.
 - Restored the MCP footer status during cache-backed deferred startup without eagerly loading or connecting the runtime. Thanks to [@pkulyn](https://github.com/pkulyn) for issue #586.
 - Oversized object `structuredContent` summaries now identify themselves as omitted and account for preserved and dropped fields, so extension consumers do not mistake a partial preview for an empty payload. Thanks to [@Batchputz](https://github.com/Batchputz) for issue #585.

@@ -10,6 +10,15 @@ import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
  */
 const MIN_STEM_LENGTH = 4;
 
+/**
+ * Bound the number of overlapping tokens produced for an unseparated Unicode
+ * run. Two-code-point tokens make CJK (and other space-free scripts)
+ * searchable without the false positives caused by matching single letters.
+ */
+const MAX_UNICODE_BIGRAMS_PER_RUN = 64;
+const ASCII_ALPHANUMERIC = /^[a-z0-9]$/;
+const UNICODE_WORD_CHARACTER = /^[\p{L}\p{N}\p{M}]$/u;
+
 const FIELD_WEIGHTS = {
   name: 12,
   originalName: 10,
@@ -82,7 +91,35 @@ export function normalizeSearchText(value: string): string {
 }
 
 export function tokenize(value: string): string[] {
-  return normalizeSearchText(value).split(/[^a-z0-9]+/).filter(Boolean);
+  const tokens: string[] = [];
+  let asciiRun = "";
+  let unicodeRun: string[] = [];
+
+  const flush = () => {
+    if (asciiRun) tokens.push(asciiRun);
+    asciiRun = "";
+    if (unicodeRun.length > 1) {
+      const count = Math.min(unicodeRun.length - 1, MAX_UNICODE_BIGRAMS_PER_RUN);
+      for (let index = 0; index < count; index++) {
+        tokens.push(unicodeRun[index]! + unicodeRun[index + 1]!);
+      }
+    }
+    unicodeRun = [];
+  };
+
+  for (const character of normalizeSearchText(value)) {
+    if (ASCII_ALPHANUMERIC.test(character)) {
+      if (unicodeRun.length > 0) flush();
+      asciiRun += character;
+    } else if (UNICODE_WORD_CHARACTER.test(character)) {
+      if (asciiRun) flush();
+      unicodeRun.push(character);
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return tokens;
 }
 
 function prepareToolSearch(tool: ToolMetadata, server: string, keywords?: string[]): PreparedToolSearch {
