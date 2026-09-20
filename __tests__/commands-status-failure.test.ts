@@ -50,7 +50,7 @@ describe("MCP status failure reasons", () => {
           my_2d_server: { command: "escaped" },
         },
       },
-      manager: { close: vi.fn(async () => {}), connect: vi.fn(async () => connection) },
+      manager: { getConnection: vi.fn(() => undefined), connect: vi.fn(async () => connection) },
       toolMetadata: new Map([["my_2d_server", [{ name: "my_2d_server_search_records", originalName: "search_records", description: "Other" }]]]),
       promptMetadata: new Map(),
       promptMetadataLive: new Set(),
@@ -68,7 +68,7 @@ describe("MCP status failure reasons", () => {
     await reconnectServer({
       config: { settings: {}, mcpServers: { demo: { command: "node" } } },
       manager: {
-        close: vi.fn(async () => {}),
+        getConnection: vi.fn(() => undefined),
         connect: vi.fn(async () => {
           throw new Error("stderr \x1b]52;c;clipboard-secret\x07server failed");
         }),

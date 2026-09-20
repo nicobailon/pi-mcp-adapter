@@ -211,11 +211,11 @@ export async function reconnectServer(
   }
 
   try {
-    await state.manager.close(name);
     state.owner?.throwIfInactive();
-    const connection = signal
-      ? await state.manager.connect(name, definition, signal)
-      : await state.manager.connect(name, definition);
+    const current = state.manager.getConnection(name);
+    const connection = current
+      ? await state.manager.reconnect(name, definition, current, signal)
+      : await state.manager.connect(name, definition, signal);
     state.owner?.throwIfInactive();
     if (connection.status === "needs-auth") {
       if (ui) {

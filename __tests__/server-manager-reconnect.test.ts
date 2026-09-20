@@ -13,6 +13,7 @@ type HttpTransportMock = {
 const mocks = vi.hoisted(() => ({
   clients: [] as any[],
   httpTransports: [] as HttpTransportMock[],
+  connectImplementations: [] as Array<() => Promise<void>>,
 }));
 
 vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
@@ -24,7 +25,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
       onclose: undefined,
       setRequestHandler: vi.fn(),
       setNotificationHandler: vi.fn(),
-      connect: vi.fn(async () => undefined),
+      connect: vi.fn(() => mocks.connectImplementations.shift()?.() ?? Promise.resolve()),
       listTools: vi.fn(async () => ({ tools: [] })),
       listResources: vi.fn(async () => ({ resources: [] })),
       close: vi.fn(async () => undefined),
@@ -52,7 +53,18 @@ describe("McpServerManager.reconnect", () => {
   beforeEach(() => {
     mocks.clients.length = 0;
     mocks.httpTransports.length = 0;
+    mocks.connectImplementations.length = 0;
   });
+
+  function deferred<T = void>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
 
   // Each HTTP connection uses one client and one Streamable HTTP transport.
   const def = { url: "https://example.test/mcp" };
@@ -149,10 +161,7 @@ describe("McpServerManager.reconnect", () => {
     const manager = new McpServerManager();
 
     const stale = await manager.connect("remote", def);
-    let releaseClose!: () => void;
-    stale.client.close = vi.fn(() => new Promise<void>((resolve) => {
-      releaseClose = resolve;
-    }));
+    const staleClose = vi.spyOn(stale.client, "close");
     const reason = new Error("stop waiting");
     const controller = new AbortController();
 
@@ -161,12 +170,67 @@ describe("McpServerManager.reconnect", () => {
     await expect(first).rejects.toBe(reason);
 
     const second = manager.reconnect("remote", def, stale);
-    releaseClose();
     await expect(second).rejects.toBe(reason);
+    expect(manager.getConnection("remote")).toBe(stale);
+    expect(staleClose).not.toHaveBeenCalled();
 
     const fresh = await manager.reconnect("remote", def, stale);
     expect(fresh).not.toBe(stale);
     expect(manager.getConnection("remote")).toBe(fresh);
+  });
+
+  it("keeps the old route live until a replacement is ready, then publishes before cleanup", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+
+    const stale = await manager.connect("remote", def);
+    const staleClose = vi.spyOn(stale.client, "close");
+    const candidateStart = deferred();
+    mocks.connectImplementations.push(() => candidateStart.promise);
+
+    const reconnecting = manager.reconnect("remote", def, stale);
+    await Promise.resolve();
+
+    expect(manager.getConnection("remote")).toBe(stale);
+    expect(staleClose).not.toHaveBeenCalled();
+
+    candidateStart.resolve();
+    const fresh = await reconnecting;
+
+    expect(manager.getConnection("remote")).toBe(fresh);
+    expect(fresh).not.toBe(stale);
+    expect(staleClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the old route when replacement startup fails", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+
+    const stale = await manager.connect("remote", def);
+    const staleClose = vi.spyOn(stale.client, "close");
+    const failure = new Error("replacement failed");
+    mocks.connectImplementations.push(() => Promise.reject(failure));
+
+    await expect(manager.reconnect("remote", def, stale)).rejects.toThrow("replacement failed");
+
+    expect(manager.getConnection("remote")).toBe(stale);
+    expect(stale.status).toBe("connected");
+    expect(staleClose).not.toHaveBeenCalled();
+  });
+
+  it("does not close a different configured server while swapping one route", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+
+    const stale = await manager.connect("repo", def);
+    const other = await manager.connect("nais", { url: "https://nais.example.test/mcp" });
+    const otherClose = vi.spyOn(other.client, "close");
+
+    const fresh = await manager.reconnect("repo", def, stale);
+
+    expect(manager.getConnection("repo")).toBe(fresh);
+    expect(manager.getConnection("nais")).toBe(other);
+    expect(otherClose).not.toHaveBeenCalled();
   });
 
   it("carries in-flight work from the stale connection to the fresh connection", async () => {

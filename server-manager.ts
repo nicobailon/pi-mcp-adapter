@@ -869,10 +869,40 @@ export class McpServerManager {
       return current ?? this.connect(name, definition, signal);
     }
 
-    const staleInFlight = staleConnection.inFlight;
-    await this.close(name);
-    const fresh = await this.connect(name, definition, signal);
-    fresh.inFlight = Math.max(fresh.inFlight, staleInFlight);
+    // Build the replacement privately. The current route remains usable until
+    // the candidate has completed its handshake and metadata discovery. A
+    // failed candidate therefore cannot remove or close the last good route.
+    const generation = this.closeGenerations.get(name) ?? 0;
+    const candidateAttempt = this.createConnection(name, definition, signal, signal, false);
+    const fresh = definition.url
+      ? await candidateAttempt.catch(async error => { throw await this.enrichHttpConnectionError(definition, error); })
+      : await candidateAttempt;
+
+    // An explicit close or a concurrent replacement supersedes this candidate.
+    // Dispose only the candidate we own; never close whichever route is now
+    // registered under the shared server name.
+    if ((this.closeGenerations.get(name) ?? 0) !== generation) {
+      await this.disposeConnection(fresh);
+      throwIfAborted(signal);
+      throw new Error(`MCP connection for ${name} was closed while reconnecting`);
+    }
+    const routeAtPublish = this.connections.get(name);
+    if (routeAtPublish !== staleConnection) {
+      await this.disposeConnection(fresh);
+      return routeAtPublish ?? this.connect(name, definition, signal);
+    }
+
+    fresh.inFlight = Math.max(fresh.inFlight, staleConnection.inFlight);
+    this.connections.set(name, fresh);
+    this.watchListenSubscription(name, fresh, fresh.listenSubscription);
+    if ([...this.resourceUpdatedListeners.values()].some(registration => registration.serverName === name)) {
+      void this.ensureListen(name, fresh);
+    }
+
+    // Publish first so calls route to the fresh image while the exact displaced
+    // child is terminated and reaped. Late close callbacks are identity-guarded.
+    staleConnection.status = "closed";
+    await this.disposeConnection(staleConnection);
     return fresh;
   }
 

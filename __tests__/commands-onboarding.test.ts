@@ -338,7 +338,9 @@ describe("commands onboarding", () => {
     const close = vi.fn(async () => {
       currentConnection = null;
     });
-    const connect = vi.fn(async () => {
+    const connect = vi.fn(async () => currentConnection);
+    const reconnect = vi.fn(async (_name, _definition, staleConnection) => {
+      expect(staleConnection).toBe(currentConnection);
       currentConnection = {
         status: "connected",
         tools: [{ name: "search", description: "Search" }],
@@ -351,6 +353,7 @@ describe("commands onboarding", () => {
       manager: {
         close,
         connect,
+        reconnect,
         getConnection: vi.fn(() => currentConnection),
         getAllConnections: vi.fn(() => new Map(currentConnection?.status === "connected" ? [["notion", currentConnection]] : [])),
       },
@@ -366,8 +369,9 @@ describe("commands onboarding", () => {
     const callbacks = mocks.createMcpPanel.mock.calls[0]?.[3];
     await expect(callbacks.reconnect("notion")).resolves.toBe(true);
 
-    expect(close).toHaveBeenCalledWith("notion");
-    expect(connect).toHaveBeenCalledWith("notion", state.config.mcpServers.notion);
+    expect(close).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+    expect(reconnect).toHaveBeenCalledWith("notion", state.config.mcpServers.notion, expect.any(Object), undefined);
     expect(state.failureTracker.has("notion")).toBe(false);
     expect(state.toolMetadata.get("notion")?.[0]?.name).toBe("notion_search");
     expect(callbacks.getConnectionStatus("notion")).toBe("connected");
