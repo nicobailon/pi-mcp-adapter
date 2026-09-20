@@ -1,5 +1,5 @@
 import { SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -319,6 +319,39 @@ describe("McpServerManager HTTP bearer auth", () => {
     const transport = mocks.httpTransports.at(-1)!;
     expect(transport.options.requestInit?.headers?.Authorization).toBeUndefined();
     expect(transport.options.fetch).toBeTypeOf("function");
+  });
+
+  it("cancels eager bearer command resolution with its connection attempt", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pi-mcp-bearer-connect-abort-"));
+    const fixture = join(directory, "token.cjs");
+    const started = join(directory, "started");
+    const completed = join(directory, "completed");
+    writeFileSync(fixture, `
+const fs = require("node:fs");
+fs.writeFileSync(process.argv[2], "started");
+setTimeout(() => {
+  fs.writeFileSync(process.argv[3], "completed");
+  process.stdout.write("token\\n");
+}, 2000);
+`);
+    const controller = new AbortController();
+    const manager = new (await import("../server-manager.ts")).McpServerManager();
+    try {
+      const pending = manager.connect("remote", {
+        url: "https://example.test/mcp",
+        auth: "bearer",
+        bearerToken: `!${[process.execPath, fixture, started, completed].map(shellArg).join(" ")}`,
+      }, controller.signal);
+      while (!existsSync(started)) await new Promise(resolve => setTimeout(resolve, 10));
+      controller.abort(new Error("cancel bearer connect"));
+
+      await expect(pending).rejects.toThrow("cancel bearer connect");
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(existsSync(completed)).toBe(false);
+      expect(mocks.httpTransports).toHaveLength(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("injects a freshly resolved !command bearer on every per-request fetch call", async () => {

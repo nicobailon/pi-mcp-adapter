@@ -1354,7 +1354,7 @@ export class McpServerManager {
         );
         // Eager resolve so a broken command surfaces at connect time, not at
         // the first tool call.
-        await bearerCommandResolver.resolve();
+        await bearerCommandResolver.resolve(signal);
       } else {
         const token = resolveBearerToken(definition)
           ?? (definition.bearerToken === undefined && definition.bearerTokenEnv === undefined && definition.bearerTokenStore === true

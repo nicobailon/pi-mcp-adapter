@@ -228,7 +228,7 @@ export class McpLifecycleManager {
         await this.handleSupersededConnection(name, definition, connection, signal, retrySuperseded);
         return;
       }
-      if (!shouldReconnectAfterRefresh(error, hadSessionId)) {
+      if (!shouldReconnectAfterRefresh(error, hadSessionId, definition)) {
         this.reportConnectionFailure(name, definition, error, "refresh", connection);
         return;
       }
@@ -444,7 +444,11 @@ export class McpLifecycleManager {
   }
 }
 
-function shouldReconnectAfterRefresh(error: unknown, hadSessionId: boolean): boolean {
+function shouldReconnectAfterRefresh(
+  error: unknown,
+  hadSessionId: boolean,
+  definition: ServerDefinition,
+): boolean {
   if (isTerminatedSession(error, hadSessionId)) return true;
   // A 401 on a keep-alive refresh means the bearer token we baked into the
   // transport at connect time has expired (e.g. Cloudflare Access 24h JWT).
@@ -452,7 +456,7 @@ function shouldReconnectAfterRefresh(error: unknown, hadSessionId: boolean): boo
   // bearerTokenStore tokens still bake at connect time. Treat 401 the same
   // way as a terminated session so the lifecycle manager reconnects with a
   // fresh token instead of staying in a permanent failure backoff.
-  if (isUnauthorizedHttpError(error)) return true;
+  if (definition.auth === "bearer" && isUnauthorizedHttpError(error)) return true;
   return error instanceof SdkError
     && (error.code === SdkErrorCode.NotConnected || error.code === SdkErrorCode.ConnectionClosed);
 }

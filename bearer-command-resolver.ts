@@ -22,6 +22,7 @@ function runCommand(command: string, context: string, signal: AbortSignal): Prom
   return new Promise((resolve, reject) => {
     let output = Buffer.alloc(0);
     let settled = false;
+    let terminating = false;
     const child = spawn(command.slice(1), {
       shell: true,
       stdio: ["ignore", "pipe", "ignore"],
@@ -29,17 +30,24 @@ function runCommand(command: string, context: string, signal: AbortSignal): Prom
       detached: USE_PROCESS_GROUP,
     });
 
-    const kill = () => {
+    const kill = async (): Promise<void> => {
       if (child.pid === undefined) return;
-      try {
-        if (USE_PROCESS_GROUP) process.kill(-child.pid, "SIGKILL");
-        else {
+      if (!USE_PROCESS_GROUP) {
+        await new Promise<void>((resolveKill, rejectKill) => {
           const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
             stdio: "ignore",
             windowsHide: true,
           });
-          killer.unref();
-        }
+          killer.on("error", () => rejectKill(new Error("Failed to stop bearer token command")));
+          killer.on("close", code => {
+            if (code === 0 || code === 128) resolveKill();
+            else rejectKill(new Error(`Failed to stop bearer token command: taskkill exited with code ${code ?? "unknown"}`));
+          });
+        });
+        return;
+      }
+      try {
+        process.kill(-child.pid, "SIGKILL");
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
       }
@@ -52,13 +60,23 @@ function runCommand(command: string, context: string, signal: AbortSignal): Prom
       if (error !== undefined) reject(error);
       else resolve(token!);
     };
+    const terminate = async (error: unknown) => {
+      if (settled || terminating) return;
+      terminating = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      try {
+        await kill();
+        finish(error);
+      } catch (cleanupError) {
+        finish(cleanupError);
+      }
+    };
     const onAbort = () => {
-      kill();
-      finish(abortReason(signal));
+      void terminate(abortReason(signal));
     };
     const timer = setTimeout(() => {
-      kill();
-      finish(new Error(`Failed to resolve ${context}: command timed out after ${COMMAND_TIMEOUT_MS}ms`));
+      void terminate(new Error(`Failed to resolve ${context}: command timed out after ${COMMAND_TIMEOUT_MS}ms`));
     }, COMMAND_TIMEOUT_MS);
 
     signal.addEventListener("abort", onAbort, { once: true });
@@ -66,17 +84,18 @@ function runCommand(command: string, context: string, signal: AbortSignal): Prom
       onAbort();
       return;
     }
-    child.on("error", () => finish(new Error(`Failed to resolve ${context}: command failed to start`)));
+    child.on("error", () => {
+      if (!terminating) finish(new Error(`Failed to resolve ${context}: command failed to start`));
+    });
     child.stdout.on("data", (chunk: Buffer | string) => {
-      if (settled) return;
+      if (settled || terminating) return;
       output = Buffer.concat([output, Buffer.from(chunk)]);
       if (output.byteLength > COMMAND_MAX_OUTPUT_BYTES) {
-        kill();
-        finish(new Error(`Failed to resolve ${context}: command output exceeded 1 MiB`));
+        void terminate(new Error(`Failed to resolve ${context}: command output exceeded 1 MiB`));
       }
     });
     child.on("close", code => {
-      if (settled) return;
+      if (settled || terminating) return;
       if (code !== 0) {
         finish(new Error(`Failed to resolve ${context}: command exited with code ${code ?? "unknown"}`));
         return;
@@ -137,7 +156,11 @@ export class BearerCommandResolver {
           return token;
         })
         .catch(error => {
-          this.#failure = { error, retryAt: Date.now() + this.#ttlMs };
+          // Request cancellation is not a helper outage. Do not let one
+          // cancelled request suppress refresh attempts for the next caller.
+          if (!controller.signal.aborted) {
+            this.#failure = { error, retryAt: Date.now() + this.#ttlMs };
+          }
           if (this.#cached !== undefined) return this.#cached.token;
           throw error;
         })
@@ -165,7 +188,10 @@ export class BearerCommandResolver {
     return result.finally(() => {
       if (onAbort) signal!.removeEventListener("abort", onAbort);
       inflight.waiters--;
-      if (!inflight.done && inflight.waiters === 0) inflight.controller.abort(signal?.reason);
+      if (!inflight.done && inflight.waiters === 0) {
+        if (this.#inflight === inflight) this.#inflight = undefined;
+        inflight.controller.abort(signal?.reason);
+      }
     });
   }
 

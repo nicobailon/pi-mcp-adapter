@@ -71,6 +71,17 @@ setTimeout(() => {
     expect(results).toEqual(["jwt-1", "jwt-1", "jwt-1"]);
   });
 
+  it("keeps a shared execution alive while another request still waits", async () => {
+    const controller = new AbortController();
+    const resolver = new BearerCommandResolver(command({ delay: 50 }), "test", 60_000);
+    const cancelled = resolver.resolve(controller.signal);
+    const remaining = resolver.resolve();
+    controller.abort(new Error("cancel one waiter"));
+
+    await expect(cancelled).rejects.toThrow("cancel one waiter");
+    await expect(remaining).resolves.toBe("jwt-1");
+  });
+
   it("falls back to the last good token and throttles failed refresh retries", async () => {
     const fail = join(directory, "fail");
     const resolver = new BearerCommandResolver(command({ fail }), "test", 20);
@@ -113,6 +124,7 @@ setTimeout(() => {
     await expect(pending).rejects.toThrow("cancelled during refresh");
     await new Promise(resolve => setTimeout(resolve, 100));
     expect(existsSync(completed)).toBe(false);
+    expect(await resolver.resolve()).toBe("jwt-2");
   });
 
   it("invalidate forces the next call to re-run the command", async () => {

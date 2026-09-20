@@ -220,7 +220,7 @@ describe("lazy-keep-alive lifecycle", () => {
     // gets 401. The lifecycle manager must treat 401 the same as a terminated
     // session and reconnect, otherwise the connection stays in a permanent
     // failure backoff until pi is restarted.
-    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    const def: ServerDefinition = { url: "https://example.test/mcp", auth: "bearer", lifecycle: "keep-alive" };
     lifecycle.markKeepAlive("srv", def);
     const staleConnection = fake.setConnection("srv", "connected", "stale-session")!;
     const transport = new StreamableHTTPClientTransport(new URL("https://example.test/mcp"), {
@@ -247,7 +247,7 @@ describe("lazy-keep-alive lifecycle", () => {
   });
 
   it("reconnects for the pinned SDK's plain bearer 401 error variant", async () => {
-    const def: ServerDefinition = { url: "https://example.test/mcp", lifecycle: "keep-alive" };
+    const def: ServerDefinition = { url: "https://example.test/mcp", auth: "bearer", lifecycle: "keep-alive" };
     lifecycle.markKeepAlive("srv", def);
     const staleConnection = fake.setConnection("srv", "connected", "stale-session")!;
     fake.refreshToolsError = new Error("Error POSTing to endpoint (HTTP 401): expired");
@@ -255,6 +255,17 @@ describe("lazy-keep-alive lifecycle", () => {
     await lifecycle.ensureConverged();
 
     expect(fake.reconnectCalls).toEqual([{ name: "srv", staleConnection }]);
+  });
+
+  it("does not turn a non-bearer HTTP 401 into a reconnect loop", async () => {
+    const def: ServerDefinition = { url: "https://example.test/mcp", auth: false, lifecycle: "keep-alive" };
+    lifecycle.markKeepAlive("srv", def);
+    fake.setConnection("srv", "connected", "stale-session");
+    fake.refreshToolsError = new Error("Error POSTing to endpoint (HTTP 401): denied");
+
+    await lifecycle.ensureConverged();
+
+    expect(fake.reconnectCalls).toEqual([]);
   });
 
   it("publishes metadata when a concurrent recovery replaces the connection during refresh", async () => {
