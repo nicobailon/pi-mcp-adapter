@@ -32,6 +32,7 @@ export declare function normalizeDirectToolInputSchema(schema: unknown): Record<
 export declare function normalizeToolArguments(value: unknown, context?: string): Record<string, unknown>;
 export declare function formatAuthRequiredMessage(config: Pick<McpConfig, "settings">, serverName: string, defaultMessage: string): string;
 export declare function formatMcpStatus(config: Pick<McpConfig, "settings">, message: string): string | undefined;
+export declare function formatMcpFooterStatus(config: Pick<McpConfig, "settings">, enabledCount: number, disabledCount: number, connectedCount: number): string | undefined;
 /**
  * Extract the adapter-owned UI stream mode from tool metadata.
  */

@@ -588,6 +588,11 @@ export declare function getServerPrefix(serverName: string, mode: ToolPrefix): s
  */
 export declare function formatToolName(toolName: string, serverName: string, prefix: ToolPrefix): string;
 export declare function resolveToolPrefix(definition?: Pick<ServerEntry, "toolPrefix">, globalPrefix?: ToolPrefix): ToolPrefix;
+/** A canonical name has an owner only when exactly one eligible entry produces it. */
+export declare function resolveUniqueNameOwnership<T>(entries: readonly T[], getName: (entry: T) => string): {
+    unique: T[];
+    collisions: Map<string, T[]>;
+};
 /**
  * Resolve a configured MCP server name from a prefixed tool name.
  *

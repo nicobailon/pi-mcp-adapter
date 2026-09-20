@@ -122,10 +122,28 @@ export function getServerPrefix(serverName, mode) {
 export function formatToolName(toolName, serverName, prefix) {
     const p = getServerPrefix(serverName, prefix);
     const sanitized = toolName.replace(/\./g, "_");
+    if (p && sanitized.startsWith(`${p}_`) && sanitized.length > p.length + 1) {
+        return sanitized;
+    }
     return p ? `${p}_${sanitized}` : sanitized;
 }
 export function resolveToolPrefix(definition, globalPrefix) {
     return definition?.toolPrefix ?? globalPrefix ?? "server";
+}
+/** A canonical name has an owner only when exactly one eligible entry produces it. */
+export function resolveUniqueNameOwnership(entries, getName) {
+    const owners = new Map();
+    for (const entry of entries) {
+        const name = getName(entry);
+        const named = owners.get(name) ?? [];
+        named.push(entry);
+        owners.set(name, named);
+    }
+    const collisions = new Map([...owners].filter(([, named]) => named.length > 1));
+    return {
+        unique: entries.filter((entry) => !collisions.has(getName(entry))),
+        collisions,
+    };
 }
 /**
  * Resolve a configured MCP server name from a prefixed tool name.
