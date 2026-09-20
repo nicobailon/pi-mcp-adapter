@@ -830,11 +830,7 @@ export function resolveToolPrefix(
   return definition?.toolPrefix ?? globalPrefix ?? "server";
 }
 
-/**
- * Enforce canonical-name ownership: a name has an owner only when exactly one
- * eligible entry produces it. Colliding names have no owner, independent of
- * discovery order.
- */
+/** A canonical name has an owner only when exactly one eligible entry produces it. */
 export function resolveUniqueNameOwnership<T>(
   entries: readonly T[],
   getName: (entry: T) => string,
@@ -852,7 +848,6 @@ export function resolveUniqueNameOwnership<T>(
     collisions,
   };
 }
-
 
 /**
  * Resolve a configured MCP server name from a prefixed tool name.

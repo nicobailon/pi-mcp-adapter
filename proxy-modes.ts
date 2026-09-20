@@ -131,7 +131,7 @@ function getCandidateToolMatch(
   return candidates.length > 1 ? "ambiguous" : candidates[0];
 }
 
-function getPrefixedServerScope(state: McpExtensionState, toolName: string): string | "ambiguous" | undefined {
+function getPrefixedServerScope(state: McpExtensionState, toolName: string): string | undefined {
   const candidates = Object.entries(state.config.mcpServers)
     .filter(([, definition]) => !isServerDisabled(definition))
     .map(([name, definition]) => ({
@@ -143,7 +143,7 @@ function getPrefixedServerScope(state: McpExtensionState, toolName: string): str
   if (candidates.length === 0) return undefined;
   const longest = candidates[0]!.prefix.length;
   const best = candidates.filter(({ prefix }) => prefix.length === longest);
-  return best.length === 1 ? best[0]!.name : "ambiguous";
+  return best.length === 1 ? best[0]!.name : undefined;
 }
 
 type ServerScopedToolMatch = { tool: ToolMetadata; precedence: number } | "ambiguous";
@@ -1148,7 +1148,7 @@ export async function executeCall(
       toolMeta = exactMatches[0]!.tool;
     } else {
       const prefixedScope = getPrefixedServerScope(state, toolName);
-      if (prefixedScope && prefixedScope !== "ambiguous") {
+      if (prefixedScope) {
         serverName = prefixedScope;
         const match = getCandidateToolMatch(state.toolMetadata.get(prefixedScope), toolName, prefixedScope, state);
         if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, prefixedScope);
@@ -1278,7 +1278,7 @@ export async function executeCall(
         lazyExactMatches.push({ serverName: configuredServer, toolMeta: exactMatches[0]! });
         continue;
       }
-      const fallbackMatches = getToolMatches(metadata, toolName, false);
+      const fallbackMatches = getCandidateToolMatches(metadata, toolName, configuredServer, state);
       if (fallbackMatches.length > 1) return ambiguousToolResult("call", toolName);
       if (fallbackMatches.length === 1) lazyFallbackMatches.push({ serverName: configuredServer, toolMeta: fallbackMatches[0]! });
     }
