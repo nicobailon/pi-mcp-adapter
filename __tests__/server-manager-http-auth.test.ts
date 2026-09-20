@@ -295,6 +295,85 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(mocks.httpTransports).toHaveLength(0);
   });
 
+  it("does not bake a !command bearer token into requestInit at connect time", async () => {
+    // The transport's requestInit headers are reused for every request on a
+    // lazy-keep-alive connection. Baking a resolved bearer there means a
+    // Cloudflare Access JWT resolved at connect time stays frozen until the
+    // transport dies. Verify the bearer is instead injected per-request via
+    // the fetch wrapper.
+    const { McpServerManager } = await import("../server-manager.ts");
+
+    const manager = new McpServerManager();
+    await manager.connect("remote", {
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerToken: "!echo rotating-jwt",
+    });
+
+    const transport = mocks.httpTransports.at(-1)!;
+    expect(transport.options.requestInit?.headers?.Authorization).toBeUndefined();
+    expect(transport.options.fetch).toBeTypeOf("function");
+  });
+
+  it("injects a freshly resolved !command bearer on every per-request fetch call", async () => {
+    // Reproduce the lazy-keep-alive scenario: the SDK transport is built
+    // once, then the per-request fetch wrapper is invoked for each tool
+    // call. The bearer command must run on each invocation so a rotated
+    // Cloudflare Access JWT is picked up without restarting the connection.
+    const { McpServerManager } = await import("../server-manager.ts");
+
+    const counterPath = `/tmp/bcr-bearer-${Math.random().toString(36).slice(2)}.txt`;
+    const command = `!n=$(cat ${counterPath} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${counterPath}; echo rotating-jwt-$n`;
+    // Short TTL so the test can wait it out between fetches. The eager
+    // resolve at connect time counts as the first run.
+    process.env.PI_MCP_ADAPTER_BEARER_COMMAND_TTL_MS = "5";
+
+    try {
+      const manager = new McpServerManager();
+      await manager.connect("remote", {
+        url: "https://example.test/mcp",
+        auth: "bearer",
+        bearerToken: command,
+      });
+
+      const transport = mocks.httpTransports.at(-1)!;
+      const fetch = transport.options.fetch!;
+      expect(fetch).toBeTypeOf("function");
+
+      const seenAuth: string[] = [];
+      const probe = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        const auth = headers.get("Authorization");
+        if (auth) seenAuth.push(auth);
+        return new Response("", { status: 200 });
+      });
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = probe as typeof globalThis.fetch;
+      try {
+        await fetch(new URL("https://example.test/mcp"), { method: "POST" });
+        await new Promise(r => setTimeout(r, 20));
+        await fetch(new URL("https://example.test/mcp"), { method: "POST" });
+        await new Promise(r => setTimeout(r, 20));
+        await fetch(new URL("https://example.test/mcp"), { method: "POST" });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      // The bearer values must be strictly increasing across fetches. The
+      // exact starting number depends on whether the eager resolve's cache
+      // has expired by the time of the first fetch (it usually has, since
+      // `await manager.connect()` returns after microtasks complete); what
+      // matters is that consecutive fetches observe different tokens,
+      // proving the command is re-run instead of frozen at connect time.
+      expect(seenAuth.length).toBe(3);
+      const numbers = seenAuth.map(s => Number(s.replace("Bearer rotating-jwt-", "")));
+      expect(numbers[0]).toBeLessThan(numbers[1]);
+      expect(numbers[1]).toBeLessThan(numbers[2]);
+    } finally {
+      delete process.env.PI_MCP_ADAPTER_BEARER_COMMAND_TTL_MS;
+    }
+  });
+
   it("uses configured headers without implicit OAuth", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
 

@@ -79,6 +79,7 @@ import {
 import { createOAuthFetch, resolveOAuthHeaders } from "./mcp-auth-fetch.ts";
 import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
 import { createCaFetch, validateCaFile } from "./http-ca.ts";
+import { BearerCommandResolver } from "./bearer-command-resolver.ts";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
@@ -120,7 +121,7 @@ function localNetworkFailureCodes(error: unknown, seen = new Set<object>()): str
   return [...new Set(codes)];
 }
 
-function isUnauthorizedHttpError(error: unknown): boolean {
+export function isUnauthorizedHttpError(error: unknown): boolean {
   return error instanceof UnauthorizedError || (error instanceof SdkHttpError && error.status === 401);
 }
 
@@ -229,6 +230,22 @@ export function isTransientHttpConnectError(error: unknown): boolean {
     current = current.cause;
   }
   return false;
+}
+
+/** Wrap a FetchLike so each request re-resolves the bearer token via the resolver. */
+function createBearerCommandFetch(
+  resolver: BearerCommandResolver,
+  delegate: FetchLike | undefined,
+): FetchLike {
+  const innerFetch: FetchLike = delegate ?? ((input, init) => globalThis.fetch(input, init));
+  return async (input, init) => {
+    const token = await resolver.resolve();
+    const request = new Request(input, init);
+    const headers = new Headers(request.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    // FetchLike accepts string | URL, not Request, so unwrap the URL.
+    return innerFetch(new URL(request.url), { ...init, headers });
+  };
 }
 
 export class McpServerManager {
@@ -1317,14 +1334,30 @@ export class McpServerManager {
     const commandBearer = definition.bearerToken?.startsWith("!") && !definition.bearerToken.startsWith("!!")
       ? definition.bearerToken
       : undefined;
+    // A `!command`-derived bearer must be re-resolved per request, not baked
+    // into requestInit once. With lazy-keep-alive transports the SDK reuses
+    // requestInit.headers for every request, so a token resolved at connect
+    // time (e.g. a Cloudflare Access JWT with a 24h session) freezes in the
+    // transport until reconnect. Resolve once eagerly to fail fast, then
+    // route through a per-request FetchLike that re-resolves on demand with
+    // a short TTL cache (see BearerCommandResolver).
+    let bearerCommandResolver: BearerCommandResolver | undefined;
     if (definition.auth === "bearer") {
-      const token = commandBearer
-        ? resolveCommandSecret(commandBearer, `MCP server "${serverName}" HTTP bearer token`)
-        : resolveBearerToken(definition)
+      if (commandBearer) {
+        bearerCommandResolver = new BearerCommandResolver(
+          commandBearer,
+          `MCP server "${serverName}" HTTP bearer token`,
+        );
+        // Eager resolve so a broken command surfaces at connect time, not at
+        // the first tool call.
+        await bearerCommandResolver.resolve();
+      } else {
+        const token = resolveBearerToken(definition)
           ?? (definition.bearerToken === undefined && definition.bearerTokenEnv === undefined && definition.bearerTokenStore === true
             ? getBearerTokenForUrl(serverName, serverUrl)
             : undefined);
-      if (token) headers["Authorization"] = `Bearer ${token}`;
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+      }
     }
 
     if (hasCommandHeader || commandBearer) {
@@ -1390,13 +1423,21 @@ export class McpServerManager {
     const commandFetch = definition.requestHeadersCommand
       ? createRequestHeadersCommandFetch(definition.requestHeadersCommand, caFetch?.fetch)
       : caFetch?.fetch;
+    // Inject the bearer-token `!command` resolver as the outermost fetch
+    // wrapper so any Authorization header from requestHeadersCommand or the
+    // SDK transport is overwritten with the freshly resolved token. The
+    // resolver caches per TTL, so cloudflared etc. only re-spawn on cache
+    // expiry, not on every HTTP request.
+    const bearerFetch = bearerCommandResolver
+      ? createBearerCommandFetch(bearerCommandResolver, commandFetch)
+      : commandFetch;
     const requestFetch = oauthEnabled
       ? createOAuthFetch(serverUrl, () => serviceHeaders, this.oauthRuntime?.signal, {
         // MCP streams outlive individual auth requests; retain SDK request deadlines.
         timeout: false,
-        ...(commandFetch ? { delegate: commandFetch } : {}),
+        ...(bearerFetch ? { delegate: bearerFetch } : {}),
       })
-      : commandFetch;
+      : bearerFetch;
     const attempt = async (
       kind: "streamable-http" | "sse",
     ): Promise<
