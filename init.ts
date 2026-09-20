@@ -209,6 +209,7 @@ export async function initializeMcp(
     failureTracker,
     failureMessages,
     approvedToolCalls,
+    approvedServers: new Map(),
     ...(persistSessionApproval !== undefined ? { persistSessionApproval } : {}),
     ...(sessionManager !== undefined ? { sessionManager } : {}),
     approvalEvents: pi.events,
@@ -252,6 +253,9 @@ export async function initializeMcp(
   manager.setListenStateChangedListener?.(() => {
     if (!owner.isActive()) return;
     updateStatusBar(state);
+  });
+  owner.addCleanup(() => {
+    state.approvedServers = new Map();
   });
   owner.addCleanup(() => lifecycle.gracefulShutdown());
   owner.addCleanup(() => {

@@ -160,12 +160,26 @@ export function rememberToolApproval(
   }
 }
 
+/** Bind broad consent to this configured server, not a replacement with the same name. */
+export function getServerApprovalIdentity(state: McpExtensionState, serverName: string) {
+  if (!Object.hasOwn(state.config.mcpServers, serverName)) return undefined;
+  const definition = state.config.mcpServers[serverName];
+  if (!definition) return undefined;
+  return {
+    definition,
+    hash: createHash("sha256").update(stableStringify(definition)).digest("hex"),
+  };
+}
+
 export function restoreSessionApprovalState(
   state: McpExtensionState,
   branchEntries: readonly unknown[],
 ): void {
   const approvedToolCalls = state.approvedToolCalls ??= new Map<string, true>();
   approvedToolCalls.clear();
+  // Replace the map so an approval dialog opened on the old branch cannot grant
+  // server-wide authority after navigation, resume, or session replacement.
+  state.approvedServers = new Map();
   state.consentManager.clear();
 
   for (const entry of branchEntries) {
