@@ -7,6 +7,7 @@ import {
   isServerDisabled,
   isToolAllowed,
   resolveToolPrefix,
+  resolveUniqueNameOwnership,
   type CachedTool,
   type McpConfig,
   type ServerCacheEntry,
@@ -147,21 +148,14 @@ function registeredDirectNames(
   envOverride: DirectToolSelectorOverride | null,
   selectorIndex: ToolSelectorCandidateIndex | undefined,
 ): Map<string, DirectNameOwner> {
-  const owners = new Map<string, DirectNameOwner>();
-  const collisions = new Set<string>();
+  const entries: Array<{ name: string; owner: DirectNameOwner }> = [];
   for (const { serverName, definition, entry, prefix } of cachedServers(config, cache)) {
     const selection = resolveDirectSelection(config, definition, serverName, envOverride);
     for (const { name, originalName } of directNameEntries(entry, serverName, definition, prefix, selection, selectorIndex)) {
-      if (collisions.has(name)) continue;
-      if (owners.has(name)) {
-        owners.delete(name);
-        collisions.add(name);
-      } else {
-        owners.set(name, { serverName, originalName });
-      }
+      entries.push({ name, owner: { serverName, originalName } });
     }
   }
-  return owners;
+  return new Map(resolveUniqueNameOwnership(entries, (entry) => entry.name).unique.map(({ name, owner }) => [name, owner]));
 }
 
 function allCurrentCandidates(config: McpConfig, cache: MetadataCache | null): ToolSelectorCandidateIndex | undefined {

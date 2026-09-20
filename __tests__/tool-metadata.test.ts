@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { buildToolMetadata, formatSchema } from "../tool-metadata.ts";
 
 describe("buildToolMetadata names", () => {
-  it("fails closed when ordinary and self-prefixed tools share a canonical name", () => {
+  it.each([
+    [[{ name: "search" }, { name: "demo_search" }]],
+    [[{ name: "demo_search" }, { name: "search" }]],
+  ])("fails closed independent of discovery order when tools share a canonical name", (tools) => {
     const result = buildToolMetadata(
-      [{ name: "search" }, { name: "demo_search" }],
+      tools,
       [],
       { command: "demo" },
       "demo",

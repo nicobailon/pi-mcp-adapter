@@ -808,7 +808,7 @@ describe("excludeTools filtering", () => {
       ["my_server", "my_server_get"],
       ["my-server", "my-server_get"],
     ]);
-    expect(warn).toHaveBeenCalledWith('MCP: skipping colliding direct tool "my_20_server_get" from "my server", "my_20_server"');
+    expect(warn).toHaveBeenCalledWith('MCP: skipping colliding direct name "my_20_server_get" from "my server", "my_20_server"');
   });
 
   it("honors per-server toolPrefix during direct tool registration from cache", () => {
