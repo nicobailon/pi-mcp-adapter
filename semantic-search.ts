@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { evaluateJev, validateJevSettings } from "./jev-client.ts";
+import { areJevSourcesAllowed, evaluateJev, validateJevSettings } from "./jev-client.ts";
 import type { JevEvaluateInput, JevEvaluationEnvelope } from "./jev-contracts.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { rankToolMatches, type RankedToolMatch } from "./search-ranking.ts";
@@ -10,7 +10,7 @@ import { isServerDisabled } from "./types.ts";
 export type SemanticSearchEvaluator = (
   state: McpExtensionState,
   input: JevEvaluateInput,
-  options: { purpose: "semantic-search"; signal?: AbortSignal },
+  options: { purpose: "semantic-search"; signal?: AbortSignal; observedSources?: readonly string[] },
 ) => Promise<JevEvaluationEnvelope>;
 
 export type SemanticSearchBackend =
@@ -108,6 +108,7 @@ export async function semanticSearch(
   server?: string,
   signal?: AbortSignal,
   evaluator: SemanticSearchEvaluator = evaluateJev,
+  observedSources: readonly string[] = [],
 ): Promise<SemanticSearchResult> {
   let settings;
   try {
@@ -117,6 +118,9 @@ export async function semanticSearch(
   }
   if (!settings.semanticSearch) {
     return { ok: false, error: { code: "disabled", message: "TypeSafe semantic search is disabled." } };
+  }
+  if (!areJevSourcesAllowed(state, settings, observedSources)) {
+    return { ok: false, error: { code: "data_policy_denied", message: "Evaluation sources are not allowed by policy." } };
   }
   if (query.trim().length === 0) {
     return { ok: false, error: { code: "empty_query", message: "Semantic search query cannot be empty." } };
@@ -147,7 +151,7 @@ export async function semanticSearch(
     },
     sources: [...new Set(candidates.map(candidate => candidate.server))],
   };
-  const envelope = await evaluator(state, input, { purpose: "semantic-search", ...(signal ? { signal } : {}) });
+  const envelope = await evaluator(state, input, { purpose: "semantic-search", ...(signal ? { signal } : {}), ...(observedSources.length > 0 ? { observedSources } : {}) });
   if (!envelope.ok) {
     if (envelope.error.code === "timeout" || envelope.error.code === "rate_limited" || envelope.error.code === "service_unavailable") {
       return {

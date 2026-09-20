@@ -21,6 +21,14 @@ type JevSettingsInput = Partial<ResolvedJevSettings>;
 type Host = { client: TypeSafeClient };
 const hosts = new WeakMap<McpExtensionState, Host>();
 
+export function areJevSourcesAllowed(state: McpExtensionState, settings: ResolvedJevSettings, sources: Iterable<string>): boolean {
+  for (const source of sources) {
+    const server = state.config.mcpServers[source];
+    if (!settings.allowedServers.includes(source) || !server || isServerDisabled(server)) return false;
+  }
+  return true;
+}
+
 function record(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
   const prototype = Object.getPrototypeOf(value);
@@ -212,16 +220,14 @@ function failure(error: unknown, signal: AbortSignal | undefined, timedOut: bool
   return { ok: false, error: { code: "invalid_response", message: "TypeSafe returned an invalid response." } };
 }
 
-export async function evaluateJev(state: McpExtensionState, value: JevEvaluateInput, options: { purpose: "script" | "semantic-search"; signal?: AbortSignal; budget?: JevBudget }): Promise<JevEvaluationEnvelope> {
+export async function evaluateJev(state: McpExtensionState, value: JevEvaluateInput, options: { purpose: "script" | "semantic-search"; signal?: AbortSignal; budget?: JevBudget; observedSources?: readonly string[] }): Promise<JevEvaluationEnvelope> {
   let settings: ResolvedJevSettings;
   let input: JevEvaluateInput;
   try { settings = validateJevSettings(state.config.settings?.jev); input = validateJevEvaluateInput(value, settings); }
   catch { return { ok: false, error: { code: "invalid_request", message: "Invalid TypeSafe evaluation request or settings." } }; }
   if ((options.purpose === "script" && !settings.scriptEvaluation) || (options.purpose === "semantic-search" && !settings.semanticSearch)) return { ok: false, error: { code: "disabled", message: "TypeSafe evaluation is disabled." } };
-  for (const source of input.sources ?? []) {
-    const server = state.config.mcpServers[source];
-    if (!settings.allowedServers.includes(source) || !server || isServerDisabled(server)) return { ok: false, error: { code: "data_policy_denied", message: "Evaluation sources are not allowed by policy." } };
-  }
+  const sources = new Set([...(input.sources ?? []), ...(options.observedSources ?? [])]);
+  if (!areJevSourcesAllowed(state, settings, sources)) return { ok: false, error: { code: "data_policy_denied", message: "Evaluation sources are not allowed by policy." } };
   const bytes = Buffer.byteLength(JSON.stringify(input));
   if (options.budget && !options.budget.consume(bytes)) return { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation budget exhausted." } };
   const resolved = getHost(state, settings);

@@ -12,6 +12,14 @@ const DEFAULTS = {
 };
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const hosts = new WeakMap();
+export function areJevSourcesAllowed(state, settings, sources) {
+    for (const source of sources) {
+        const server = state.config.mcpServers[source];
+        if (!settings.allowedServers.includes(source) || !server || isServerDisabled(server))
+            return false;
+    }
+    return true;
+}
 function record(value, label) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error(`${label} must be an object`);
@@ -273,11 +281,9 @@ export async function evaluateJev(state, value, options) {
     }
     if ((options.purpose === "script" && !settings.scriptEvaluation) || (options.purpose === "semantic-search" && !settings.semanticSearch))
         return { ok: false, error: { code: "disabled", message: "TypeSafe evaluation is disabled." } };
-    for (const source of input.sources ?? []) {
-        const server = state.config.mcpServers[source];
-        if (!settings.allowedServers.includes(source) || !server || isServerDisabled(server))
-            return { ok: false, error: { code: "data_policy_denied", message: "Evaluation sources are not allowed by policy." } };
-    }
+    const sources = new Set([...(input.sources ?? []), ...(options.observedSources ?? [])]);
+    if (!areJevSourcesAllowed(state, settings, sources))
+        return { ok: false, error: { code: "data_policy_denied", message: "Evaluation sources are not allowed by policy." } };
     const bytes = Buffer.byteLength(JSON.stringify(input));
     if (options.budget && !options.budget.consume(bytes))
         return { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation budget exhausted." } };

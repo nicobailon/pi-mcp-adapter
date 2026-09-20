@@ -41,13 +41,7 @@ const success: JevEvaluationEnvelope = {
 };
 
 function evaluatorReturning(envelope: JevEvaluationEnvelope): McpScriptJevEvaluator {
-  return vi.fn(async (_state, value, options) => {
-    const bytes = Buffer.byteLength(JSON.stringify(value));
-    if (options.budget && !options.budget.consume(bytes)) {
-      return { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation budget exhausted." } };
-    }
-    return envelope;
-  });
+  return vi.fn(async () => envelope);
 }
 
 describe("mcpScript jev.evaluate", () => {
@@ -56,7 +50,7 @@ describe("mcpScript jev.evaluate", () => {
     const result = await runMcpScript(makeState(), `return await jev.evaluate(${JSON.stringify(input)});`, 2_000, undefined, undefined, evaluator);
 
     expect(JSON.parse(text(result))).toEqual(success);
-    expect(evaluator).toHaveBeenCalledWith(expect.anything(), input, expect.objectContaining({ purpose: "script", signal: expect.any(AbortSignal), budget: expect.anything() }));
+    expect(evaluator).toHaveBeenCalledWith(expect.anything(), input, expect.objectContaining({ purpose: "script", signal: expect.any(AbortSignal) }));
     expect(result.details).toMatchObject({ calls: [{ operation: "evaluate", ok: true, model: "jev-1.13.0", inputTokens: 12, outputTokens: 7, durationMs: expect.any(Number) }] });
     expect(JSON.stringify(result.details)).not.toMatch(/redacted-state|route|fix|confidence|probabilities/);
   });
@@ -94,9 +88,7 @@ describe("mcpScript jev.evaluate", () => {
 
   it("enforces cumulative UTF-8 input bytes before provider work", async () => {
     let providerCalls = 0;
-    const evaluator: McpScriptJevEvaluator = vi.fn(async (_state, value, options) => {
-      const bytes = Buffer.byteLength(JSON.stringify(value), "utf8");
-      if (!options.budget?.consume(bytes)) return { ok: false, error: { code: "budget_exhausted", message: "budget exhausted" } };
+    const evaluator: McpScriptJevEvaluator = vi.fn(async () => {
       providerCalls += 1;
       return success;
     });

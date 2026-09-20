@@ -7,6 +7,7 @@ import { runMcpScript } from "../mcp-code.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { McpServerManager } from "../server-manager.ts";
+import { getTestSecureKeyringReadCount, resetTestSecureKeyring } from "../secure-keyring.ts";
 import type { McpExtensionState } from "../state.ts";
 import { MCP_TOOL_APPROVAL_REQUEST_EVENT, type McpToolApprovalRequest } from "../types.ts";
 
@@ -139,6 +140,50 @@ describe("runMcpScript", () => {
       },
     });
     expect(payload.error.message).not.toContain("mcp({ search:");
+  });
+
+  it("taints later direct and semantic evaluations with every server-attributed call", async () => {
+    const originalKey = process.env.TYPESAFE_API_KEY;
+    const originalStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+    delete process.env.TYPESAFE_API_KEY;
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    resetTestSecureKeyring();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const taintedState = {
+        ...state,
+        config: {
+          settings: { jev: { scriptEvaluation: true, semanticSearch: true, allowedServers: ["allowed"] } },
+          mcpServers: { fixture: definition, allowed: { command: "unused" } },
+        },
+        toolMetadata: new Map([
+          ...state.toolMetadata,
+          ["allowed", [{ name: "allowed_lookup", originalName: "lookup", description: "Allowed lookup" }]],
+        ]),
+      } as unknown as McpExtensionState;
+      for (const path of ["fixture_echo", "fixture_fail"]) {
+        const result = await runMcpScript(taintedState, `
+          const call = await tools.call(${JSON.stringify(path)}, { value: "blocked data" });
+          const direct = await jev.evaluate({ state: { copied: call }, questions: { q: { type: "noul" } } });
+          const semantic = await tools.search({ query: "copied blocked data", searchMode: "semantic" });
+          return { direct, semantic, continued: true };
+        `);
+        expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+          direct: { ok: false, error: { code: "data_policy_denied" } },
+          semantic: { error: { code: "data_policy_denied" } },
+          continued: true,
+        });
+      }
+      expect(getTestSecureKeyringReadCount()).toBe(0);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      if (originalKey === undefined) delete process.env.TYPESAFE_API_KEY;
+      else process.env.TYPESAFE_API_KEY = originalKey;
+      if (originalStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+      else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = originalStore;
+      resetTestSecureKeyring();
+    }
   });
 
   it("searches the script-visible tool catalog with pagination and server filtering", async () => {

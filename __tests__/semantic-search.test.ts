@@ -222,4 +222,53 @@ describe("semantic search", () => {
     ]);
     expect(evaluator).toHaveBeenCalledTimes(1);
   });
+
+  it("shares the script evaluation count across direct and semantic attempts", async () => {
+    const state = stateWithTools();
+    state.config.settings!.jev = { scriptEvaluation: true, semanticSearch: true, allowedServers: ["demo", "other"], maxEvaluationsPerScript: 2 };
+    const direct = vi.fn(async (): Promise<JevEvaluationEnvelope> => ({
+      ok: true,
+      data: { answers: { q: { type: "noul", noul: 1 } }, model: "jev-test", usage: { inputTokens: 0, outputTokens: 0 } },
+    }));
+    const semantic = choiceEvaluator("other_weather");
+    const input = JSON.stringify({ state: "direct", questions: { q: { type: "noul" } } });
+    const result = await runMcpScript(
+      state,
+      `const direct = await jev.evaluate(${input}); const search = await tools.search({ query: "umbrella", searchMode: "semantic" }); const blocked = await jev.evaluate(${input}); return { direct, search, blocked, continued: true };`,
+      2_000, undefined, undefined, direct, semantic,
+    );
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      direct: { ok: true }, search: { backend: { used: "semantic" } },
+      blocked: { ok: false, error: { code: "budget_exhausted" } }, continued: true,
+    });
+    expect(direct).toHaveBeenCalledTimes(1);
+    expect(semantic).toHaveBeenCalledTimes(1);
+  });
+
+  it("charges semantic request bytes to the shared script budget before provider work", async () => {
+    const captureState = stateWithTools();
+    let semanticBytes = 0;
+    await semanticSearch(captureState, "umbrella", undefined, undefined, async (_state, semanticInput) => {
+      semanticBytes = Buffer.byteLength(JSON.stringify(semanticInput), "utf8");
+      return (choiceEvaluator("other_weather") as SemanticSearchEvaluator)(_state, semanticInput, { purpose: "semantic-search" });
+    });
+    const state = stateWithTools();
+    state.config.settings!.jev = { scriptEvaluation: true, semanticSearch: true, allowedServers: ["demo", "other"], maxEvaluationBytesPerScript: semanticBytes };
+    const direct = vi.fn(async (): Promise<JevEvaluationEnvelope> => ({
+      ok: true,
+      data: { answers: { q: { type: "noul", noul: 1 } }, model: "jev-test", usage: { inputTokens: 0, outputTokens: 0 } },
+    }));
+    const semantic = choiceEvaluator("other_weather");
+    const input = JSON.stringify({ state: "direct", questions: { q: { type: "noul" } } });
+    const result = await runMcpScript(
+      state,
+      `const search = await tools.search({ query: "umbrella", searchMode: "semantic" }); const blocked = await jev.evaluate(${input}); return { search, blocked, continued: true };`,
+      2_000, undefined, undefined, direct, semantic,
+    );
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      search: { backend: { used: "semantic" } }, blocked: { ok: false, error: { code: "budget_exhausted" } }, continued: true,
+    });
+    expect(semantic).toHaveBeenCalledTimes(1);
+    expect(direct).not.toHaveBeenCalled();
+  });
 });
