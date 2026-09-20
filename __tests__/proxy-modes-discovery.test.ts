@@ -537,6 +537,37 @@ describe("proxy discovery", () => {
     expect(exactCall).toHaveBeenCalledWith({ name: "foo_bar", arguments: {}, _meta: undefined }, undefined);
   });
 
+  it("ignores lower-tier and unavailable ambiguities when describing an exact upstream owner", () => {
+    const exact = { name: "other_foo__bar", originalName: "foo__bar", description: "Exact" };
+    const collisions = [
+      { name: "foo--bar", originalName: "first", description: "First" },
+      { name: "foo-_bar", originalName: "second", description: "Second" },
+    ];
+    const state = {
+      config: {
+        mcpServers: {
+          other: { command: "other" },
+          lower: { command: "lower" },
+          disabled: { command: "disabled", enabled: false },
+          failed: { command: "failed" },
+        },
+      },
+      toolMetadata: new Map([
+        ["other", [exact]],
+        ["lower", collisions],
+        ["disabled", collisions],
+        ["failed", collisions],
+      ]),
+      manager: { getConnection: () => undefined },
+      failureTracker: new Map([["failed", Date.now()]]),
+    } as unknown as McpExtensionState;
+
+    expect(executeDescribe(state, "foo__bar").details).toMatchObject({
+      server: "other",
+      tool: { originalName: "foo__bar" },
+    });
+  });
+
   it("fails closed for same-server normalized displayed and raw-name collisions", async () => {
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
     const state = {

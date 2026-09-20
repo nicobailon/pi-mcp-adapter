@@ -159,26 +159,32 @@ function getPrefixedServerScope(state: McpExtensionState, toolName: string): str
 
 type ServerScopedToolMatch = { tool: ToolMetadata; precedence: number } | "ambiguous";
 
-function getServerScopedToolMatch(metadata: ToolMetadata[] | undefined, toolName: string): ServerScopedToolMatch | undefined {
+function getServerScopedToolCandidates(
+  metadata: ToolMetadata[] | undefined,
+  toolName: string,
+): { tools: ToolMetadata[]; precedence: number } | undefined {
   if (!metadata) return undefined;
   const normalizedName = toolName.replace(/-/g, "_");
   const exactDisplayedMatches = metadata.filter((tool) => tool.name === toolName);
-  if (exactDisplayedMatches.length > 1) return "ambiguous";
-  if (exactDisplayedMatches.length === 1) return { tool: exactDisplayedMatches[0]!, precedence: 0 };
+  if (exactDisplayedMatches.length > 0) return { tools: exactDisplayedMatches, precedence: 0 };
   const exactOriginalMatches = metadata.filter((tool) => tool.originalName === toolName);
-  if (exactOriginalMatches.length > 1) return "ambiguous";
-  if (exactOriginalMatches.length === 1) {
-    return { tool: exactOriginalMatches[0]!, precedence: 1 };
-  }
+  if (exactOriginalMatches.length > 0) return { tools: exactOriginalMatches, precedence: 1 };
   const normalizedDisplayedMatches = metadata.filter((tool) => tool.name.replace(/-/g, "_") === normalizedName);
   const normalizedOriginalMatches = metadata.filter((tool) => tool.originalName.replace(/-/g, "_") === normalizedName);
   const normalizedMatches = new Set([...normalizedDisplayedMatches, ...normalizedOriginalMatches]);
-  if (normalizedMatches.size > 1) return "ambiguous";
-  if (normalizedMatches.size === 1) {
-    const tool = normalizedMatches.values().next().value!;
-    return { tool, precedence: normalizedDisplayedMatches.includes(tool) ? 2 : 3 };
-  }
-  return undefined;
+  if (normalizedMatches.size === 0) return undefined;
+  return {
+    tools: [...normalizedMatches],
+    precedence: normalizedDisplayedMatches.length > 0 ? 2 : 3,
+  };
+}
+
+function getServerScopedToolMatch(metadata: ToolMetadata[] | undefined, toolName: string): ServerScopedToolMatch | undefined {
+  const candidates = getServerScopedToolCandidates(metadata, toolName);
+  if (!candidates) return undefined;
+  return candidates.tools.length === 1
+    ? { tool: candidates.tools[0]!, precedence: candidates.precedence }
+    : "ambiguous";
 }
 
 function ambiguousToolResult(mode: "call" | "describe", toolName: string): ProxyToolResult {
@@ -707,9 +713,8 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
   } else {
     const matches: Array<{ server: string; tool: ToolMetadata; precedence: number }> = [];
     for (const [server, metadata] of state.toolMetadata.entries()) {
-      const match = getServerScopedToolMatch(metadata, toolName);
-      if (!match) continue;
-      if (match === "ambiguous") return ambiguousToolResult("describe", toolName);
+      const candidates = getServerScopedToolCandidates(metadata, toolName);
+      if (!candidates) continue;
       if (isServerDisabled(state.config.mcpServers[server])) {
         disabledMatch ??= server;
         continue;
@@ -718,7 +723,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
         failedMatch ??= server;
         continue;
       }
-      matches.push({ server, tool: match.tool, precedence: match.precedence });
+      for (const tool of candidates.tools) matches.push({ server, tool, precedence: candidates.precedence });
     }
     if (matches.length > 0) {
       const precedence = Math.min(...matches.map(match => match.precedence));
