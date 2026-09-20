@@ -298,25 +298,28 @@ async function invokeRequestHeadersCommand(
 export function createRequestHeadersCommandFetch(
   config: HttpRequestHeadersCommand,
   delegate: FetchLike = globalThis.fetch,
-): FetchLike {
+) {
   // Validate static configuration before the first request.
   resolvedCommand(config);
   return async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
+    const signal = init?.signal === null
+      ? request.signal
+      : init?.signal ?? (input instanceof Request ? input.signal : request.signal);
     const body = Buffer.from(await request.clone().arrayBuffer());
     const derived = await invokeRequestHeadersCommand(config, {
       version: 1,
       method: request.method.toUpperCase(),
       url: request.url,
       bodyBase64: body.toString("base64"),
-    }, request.signal);
+    }, signal);
     const headers = new Headers(request.headers);
     derived.forEach((value, name) => headers.set(name, value));
     return delegate(new URL(request.url), {
       method: request.method,
       headers,
       ...(request.method === "GET" || request.method === "HEAD" ? {} : { body }),
-      signal: request.signal,
+      signal,
       cache: request.cache,
       credentials: request.credentials,
       integrity: request.integrity,

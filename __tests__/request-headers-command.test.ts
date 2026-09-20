@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { createRequestHeadersCommandFetch } from "../request-headers-command.ts";
 
@@ -53,6 +56,54 @@ process.stdin.on("end", () => {
 `;
 
 describe("per-request HTTP header commands", () => {
+  it.each(["init", "Request"])("aborts a streamed response after garbage collection using the %s signal", async mode => {
+    await promisify(execFile)(process.execPath, [
+      "--expose-gc",
+      "--import", "tsx",
+      fileURLToPath(new URL("./fixtures/request-headers-stream.ts", import.meta.url)),
+      mode,
+    ], { timeout: 10_000 });
+  }, 15_000);
+
+  it("uses the init signal override instead of the input Request signal", async () => {
+    const script = commandScript('process.stdout.write("{}");\n');
+    const inputController = new AbortController();
+    const overrideController = new AbortController();
+    const input = new Request("https://mcp.example.test/mcp", { signal: inputController.signal });
+    let forwardedSignal: AbortSignal | null | undefined;
+    const fetch = createRequestHeadersCommandFetch(
+      { command: process.execPath, args: [script] },
+      async (_input, init) => {
+        forwardedSignal = init?.signal;
+        return new Response("ok");
+      },
+    );
+
+    await fetch(input, { signal: overrideController.signal });
+    inputController.abort();
+    expect(forwardedSignal?.aborted).toBe(false);
+    overrideController.abort();
+    expect(forwardedSignal?.aborted).toBe(true);
+  });
+
+  it("detaches the input Request signal for an explicit null override", async () => {
+    const script = commandScript('process.stdout.write("{}");\n');
+    const controller = new AbortController();
+    const input = new Request("https://mcp.example.test/mcp", { signal: controller.signal });
+    let forwardedSignal: AbortSignal | null | undefined;
+    const fetch = createRequestHeadersCommandFetch(
+      { command: process.execPath, args: [script] },
+      async (_input, init) => {
+        forwardedSignal = init?.signal;
+        return new Response("ok");
+      },
+    );
+
+    controller.abort();
+    await fetch(input, { signal: null });
+    expect(forwardedSignal?.aborted).toBe(false);
+  });
+
   it("derives headers from the exact request and preserves existing headers", async () => {
     const script = commandScript(readEnvelope);
     let forwarded: Request | undefined;
