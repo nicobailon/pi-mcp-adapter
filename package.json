@@ -145,6 +145,8 @@
     "jev-key-store.ts",
     "jev-client.ts",
     "semantic-search.ts",
+    "examples/jev-semantic-filter.mjs",
+    "examples/jev-accessibility-loop.mjs",
     "mcp-keyring-helper.cjs",
     "mcp-oauth-provider.ts",
     "mcp-callback-server.ts",

@@ -497,6 +497,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `warnOnLargeDirectTools` | Show the advisory when 75 or more direct tools resolve (default: `true`). Set to `false` to suppress only this advisory. |
 | `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so metadata updates and explicit reconnects do not rebuild the system prompt. Proxy/search/cache metadata still refreshes. Default: false. |
 | `scriptMode` | Register the MCP-only `mcpScript` plain-JavaScript tool (default: true). Set to `false` to hide it. |
+| `jev` | Optional TypeSafe Jev evaluation settings. `semanticSearch` and `scriptEvaluation` both default to `false`; `allowedServers` is an explicit MCP data-egress allowlist. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. Ignored while any server uses `directTools: "search"`, whose tools are registered inactive and can only be activated through `mcp({ search })`. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
@@ -568,6 +569,37 @@ Tune the text and details limits with the object form:
 Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — to disable text and details guarding. Binary resource materialization and its safety limits remain active. Output-guard spill files are created with mode `0600` under the system temp directory and are not cleaned up automatically; note that spilled MCP output may contain sensitive data.
 
 ### MCP Scripting
+
+#### Opt-in Jev evaluation and semantic search
+
+Jev is disabled by default: merely configuring a key performs no credential lookup, SDK client construction, or network I/O. When explicitly enabled, evaluation data is sent only to the fixed origin `https://api.typesafe.ai` using the pinned model `jev-1.13.0`. The adapter does not control TypeSafe's processing, privacy, or retention; review TypeSafe's current policies before sending data.
+
+On desktops, store the API key in the OS keyring (recommended):
+
+```sh
+pi-mcp-adapter key set typesafe
+pi-mcp-adapter key status typesafe
+```
+
+`TYPESAFE_API_KEY` is intended primarily for CI and headless environments and overrides the keyring. Stdio MCP subprocesses inherit the host environment by default, so this variable may leak to those children. Set `inheritEnv: false` for each stdio server and explicitly provide only its required environment entries. The API key, SDK, endpoint, headers, and environment are never exposed to the `mcpScript` worker.
+
+```json
+{
+  "settings": {
+    "jev": {
+      "semanticSearch": true,
+      "scriptEvaluation": true,
+      "allowedServers": ["github"]
+    }
+  }
+}
+```
+
+Semantic discovery is always explicit: use `mcp({ search: "triage customer reports", searchMode: "semantic" })` or `tools.search({ query: "triage customer reports", searchMode: "semantic" })`. Regex cannot be combined with semantic mode. Timeout, rate-limit, and service-availability failures degrade to lexical results and are identified in `backend`; credentials, authentication, policy, configuration, and invalid-response failures remain hard errors.
+
+Optional `jev` controls bound the pinned `model`, total `requestTimeoutMs`, `maxRetries`, state/question size, evaluations and evaluation bytes per script, semantic candidates (at most 127, reserving the `none` label), and minimum semantic probability. Invalid values fail configuration loading; there is no configurable endpoint, header, or logging override.
+
+Within `mcpScript`, `await jev.evaluate({ state, questions, sources })` returns `{ ok, data }` or `{ ok: false, error }`. List every MCP server whose metadata or results were copied into `state` in `sources`; this is an explicit declaration boundary, not automatic data-flow tracking. Per-script count/byte budgets, the script deadline, and the shared 16 MiB transfer cap apply. Evaluation output never authorizes an action: every subsequent `tools.call` still passes through normal authentication and approval. See `examples/jev-semantic-filter.mjs` and `examples/jev-accessibility-loop.mjs`.
 
 For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. Run that code with the default-on `mcpScript` tool. For a single MCP call, search, describe, status check, or auth action, use `mcp` instead. Set `settings.scriptMode` to `false` to hide both the scripting tool and its bundled skill.
 
