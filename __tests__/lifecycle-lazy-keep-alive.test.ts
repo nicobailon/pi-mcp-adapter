@@ -214,12 +214,6 @@ describe("lazy-keep-alive lifecycle", () => {
   });
 
   it("reconnects on a 401 refresh so a stale bearer token forces a fresh connect", async () => {
-    // With a non-command bearerToken (env var or stored), the resolved token
-    // is baked into the transport's requestInit at connect time. A 24h JWT
-    // rotation cannot be refreshed mid-flight, so the next keep-alive refresh
-    // gets 401. The lifecycle manager must treat 401 the same as a terminated
-    // session and reconnect, otherwise the connection stays in a permanent
-    // failure backoff until pi is restarted.
     const def: ServerDefinition = { url: "https://example.test/mcp", auth: "bearer", lifecycle: "keep-alive" };
     lifecycle.markKeepAlive("srv", def);
     const staleConnection = fake.setConnection("srv", "connected", "stale-session")!;
@@ -231,7 +225,6 @@ describe("lazy-keep-alive lifecycle", () => {
     try {
       await transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     } catch (error) {
-      // Exercise the pinned SDK's real no-authProvider bearer error shape.
       fake.refreshToolsError = error;
     } finally {
       await transport.close();

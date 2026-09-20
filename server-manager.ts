@@ -249,11 +249,7 @@ function createBearerCommandFetch(
     const token = await resolver.resolve(request.signal);
     const headers = new Headers(request.headers);
     headers.set("Authorization", `Bearer ${token}`);
-    // A Request is the single owner of merged input/init semantics. Passing
-    // its URL plus the old init would drop method, body, and signal whenever
-    // the caller supplied those on an input Request. The SDK's FetchLike type
-    // is narrower than the fetch implementations we compose here (global,
-    // CA, and requestHeadersCommand), all of which accept Request at runtime.
+    // Composed runtime fetches accept Request despite the SDK's narrower type.
     return innerFetch(new Request(request, { headers }));
   };
 }
@@ -1344,13 +1340,7 @@ export class McpServerManager {
     const commandBearer = definition.bearerToken?.startsWith("!") && !definition.bearerToken.startsWith("!!")
       ? definition.bearerToken
       : undefined;
-    // A `!command`-derived bearer must be re-resolved per request, not baked
-    // into requestInit once. With lazy-keep-alive transports the SDK reuses
-    // requestInit.headers for every request, so a token resolved at connect
-    // time (e.g. a Cloudflare Access JWT with a 24h session) freezes in the
-    // transport until reconnect. Resolve once eagerly to fail fast, then
-    // route through a per-request FetchLike that re-resolves on demand with
-    // a short TTL cache (see BearerCommandResolver).
+    // Command-backed bearers resolve eagerly, then refresh through a TTL cache.
     let bearerCommandResolver: BearerCommandResolver | undefined;
     if (definition.auth === "bearer") {
       if (commandBearer) {
@@ -1433,9 +1423,7 @@ export class McpServerManager {
     const commandFetch = definition.requestHeadersCommand
       ? createRequestHeadersCommandFetch(definition.requestHeadersCommand, caFetch?.fetch)
       : caFetch?.fetch;
-    // Inject the bearer-token `!command` before delegating to the command
-    // wrapper. requestHeadersCommand therefore remains the final authority
-    // over request headers, as documented. The resolver caches per TTL.
+    // requestHeadersCommand stays last in the header chain.
     const bearerFetch = bearerCommandResolver
       ? createBearerCommandFetch(bearerCommandResolver, commandFetch)
       : commandFetch;

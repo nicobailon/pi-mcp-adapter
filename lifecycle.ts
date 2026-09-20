@@ -450,12 +450,7 @@ function shouldReconnectAfterRefresh(
   definition: ServerDefinition,
 ): boolean {
   if (isTerminatedSession(error, hadSessionId)) return true;
-  // A 401 on a keep-alive refresh means the bearer token we baked into the
-  // transport at connect time has expired (e.g. Cloudflare Access 24h JWT).
-  // The new bearer-command resolver refreshes per-request, but env-var and
-  // bearerTokenStore tokens still bake at connect time. Treat 401 the same
-  // way as a terminated session so the lifecycle manager reconnects with a
-  // fresh token instead of staying in a permanent failure backoff.
+  // Reconnect baked bearer sources so connect-time resolution runs again.
   if (definition.auth === "bearer" && isUnauthorizedHttpError(error)) return true;
   return error instanceof SdkError
     && (error.code === SdkErrorCode.NotConnected || error.code === SdkErrorCode.ConnectionClosed);

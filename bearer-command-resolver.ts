@@ -114,7 +114,6 @@ type Inflight = {
   controller: AbortController;
   promise: Promise<string>;
   waiters: number;
-  done: boolean;
 };
 
 /** Resolve and periodically refresh one command-backed bearer token. */
@@ -147,7 +146,7 @@ export class BearerCommandResolver {
     let inflight = this.#inflight;
     if (inflight === undefined) {
       const controller = new AbortController();
-      inflight = { controller, promise: Promise.resolve(""), waiters: 0, done: false };
+      inflight = { controller, promise: Promise.resolve(""), waiters: 0 };
       const current = inflight;
       current.promise = runCommand(this.#command, this.#context, controller.signal)
         .then(token => {
@@ -165,7 +164,6 @@ export class BearerCommandResolver {
           throw error;
         })
         .finally(() => {
-          current.done = true;
           if (this.#inflight === current) this.#inflight = undefined;
         });
       this.#inflight = current;
@@ -188,11 +186,10 @@ export class BearerCommandResolver {
     return result.finally(() => {
       if (onAbort) signal!.removeEventListener("abort", onAbort);
       inflight.waiters--;
-      if (!inflight.done && inflight.waiters === 0) {
-        if (this.#inflight === inflight) this.#inflight = undefined;
+      if (this.#inflight === inflight && inflight.waiters === 0) {
+        this.#inflight = undefined;
         inflight.controller.abort(signal?.reason);
       }
     });
   }
-
 }

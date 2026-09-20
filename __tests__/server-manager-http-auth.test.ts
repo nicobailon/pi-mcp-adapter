@@ -301,26 +301,6 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(mocks.httpTransports).toHaveLength(0);
   });
 
-  it("does not bake a !command bearer token into requestInit at connect time", async () => {
-    // The transport's requestInit headers are reused for every request on a
-    // lazy-keep-alive connection. Baking a resolved bearer there means a
-    // Cloudflare Access JWT resolved at connect time stays frozen until the
-    // transport dies. Verify the bearer is instead injected per-request via
-    // the fetch wrapper.
-    const { McpServerManager } = await import("../server-manager.ts");
-
-    const manager = new McpServerManager();
-    await manager.connect("remote", {
-      url: "https://example.test/mcp",
-      auth: "bearer",
-      bearerToken: "!echo rotating-jwt",
-    });
-
-    const transport = mocks.httpTransports.at(-1)!;
-    expect(transport.options.requestInit?.headers?.Authorization).toBeUndefined();
-    expect(transport.options.fetch).toBeTypeOf("function");
-  });
-
   it("cancels eager bearer command resolution with its connection attempt", async () => {
     const directory = mkdtempSync(join(tmpdir(), "pi-mcp-bearer-connect-abort-"));
     const fixture = join(directory, "token.cjs");
@@ -354,11 +334,7 @@ setTimeout(() => {
     }
   });
 
-  it("injects a freshly resolved !command bearer on every per-request fetch call", async () => {
-    // Reproduce the lazy-keep-alive scenario: the SDK transport is built
-    // once, then the per-request fetch wrapper is invoked for each tool
-    // call. The bearer command must run on each invocation so a rotated
-    // Cloudflare Access JWT is picked up without restarting the connection.
+  it("refreshes a command-backed bearer after its TTL", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
 
     const fixtureDirectory = mkdtempSync(join(tmpdir(), "pi-mcp-bearer-http-"));
@@ -372,8 +348,6 @@ fs.writeFileSync(path, String(count));
 process.stdout.write("rotating-jwt-" + count + "\\n");
 `);
     const command = `!${[process.execPath, fixturePath, counterPath].map(shellArg).join(" ")}`;
-    // Short TTL so the test can wait it out between fetches. The eager
-    // resolve at connect time counts as the first run.
     process.env.PI_MCP_ADAPTER_BEARER_COMMAND_TTL_MS = "5";
 
     try {
@@ -386,6 +360,7 @@ process.stdout.write("rotating-jwt-" + count + "\\n");
 
       const transport = mocks.httpTransports.at(-1)!;
       const fetch = transport.options.fetch!;
+      expect(transport.options.requestInit?.headers?.Authorization).toBeUndefined();
       expect(fetch).toBeTypeOf("function");
 
       const seenAuth: string[] = [];
@@ -406,12 +381,6 @@ process.stdout.write("rotating-jwt-" + count + "\\n");
         globalThis.fetch = originalFetch;
       }
 
-      // The bearer values must be strictly increasing across fetches. The
-      // exact starting number depends on whether the eager resolve's cache
-      // has expired by the time of the first fetch (it usually has, since
-      // `await manager.connect()` returns after microtasks complete); what
-      // matters is that consecutive fetches observe different tokens,
-      // proving the command is re-run instead of frozen at connect time.
       expect(seenAuth.length).toBe(3);
       const numbers = seenAuth.map(s => Number(s.replace("Bearer rotating-jwt-", "")));
       expect(numbers[0]).toBeLessThan(numbers[1]);
