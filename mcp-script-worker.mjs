@@ -96,6 +96,10 @@ const tools = new Proxy(Object.create(null), {
   },
 });
 
+const jev = Object.freeze({
+  evaluate: (input) => request("evaluate", { input }),
+});
+
 const emit = (value) => {
   parentPort.postMessage({ type: "emit", block: toContentBlock(value) });
 };
@@ -112,6 +116,7 @@ void (async () => {
   try {
     const context = vm.createContext(Object.assign(Object.create(null), {
       tools,
+      jev,
       emit,
       console: capturedConsole,
     }), {
