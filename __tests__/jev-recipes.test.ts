@@ -16,6 +16,7 @@ describe("bounded accessibility recipe", () => {
   it("requires positive step, time, and evaluation budgets", async () => {
     await expect(runAccessibilityLoop({}, {}, { ...options, maxSteps: 0 })).rejects.toThrow("Positive");
     await expect(runAccessibilityLoop({}, {}, { ...options, sources: [] })).rejects.toThrow("Explicit MCP sources");
+    await expect(runAccessibilityLoop({}, {}, { ...options, allowedOperations: ["click"] })).rejects.toThrow("non-destructive");
   });
 
   it.each([
@@ -36,15 +37,11 @@ describe("bounded accessibility recipe", () => {
     expect(tools.call).toHaveBeenCalledTimes(1);
   });
 
-  it("revalidates freshness and returns on a stale target", async () => {
-    const tools = { call: vi.fn().mockResolvedValueOnce(tree("o1")).mockResolvedValueOnce(tree("o2", [])) };
-    const result = await runAccessibilityLoop(tools, { evaluate: vi.fn().mockResolvedValue(answer("a0")) }, options);
-    expect(result).toEqual({ status: "stop", reason: "stale-candidate" });
-    expect(tools.call).toHaveBeenCalledTimes(2);
-  });
-
-  it("rejects a reused observation identifier as stale", async () => {
-    const tools = { call: vi.fn().mockResolvedValue(tree("o1")) };
+  it.each([
+    [tree("o2", [])],
+    [tree("o1")],
+  ])("returns before acting when the refreshed observation is stale", async fresh => {
+    const tools = { call: vi.fn().mockResolvedValueOnce(tree("o1")).mockResolvedValueOnce(fresh) };
     const result = await runAccessibilityLoop(tools, { evaluate: vi.fn().mockResolvedValue(answer("a0")) }, options);
     expect(result).toEqual({ status: "stop", reason: "stale-candidate" });
     expect(tools.call).toHaveBeenCalledTimes(2);

@@ -1,10 +1,10 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpAdapter } from "../index.ts";
 import { semanticSearch, type SemanticSearchEvaluator } from "../semantic-search.ts";
 import { getTestSecureKeyringReadCount, resetTestSecureKeyring } from "../secure-keyring.ts";
 import { isToolCallApprovalRequired } from "../tool-approval.ts";
 import type { McpExtensionState } from "../state.ts";
-import { readFileSync } from "node:fs";
 
 function state(): McpExtensionState {
   return {
@@ -43,7 +43,7 @@ describe("Jev integration boundaries", () => {
   it("keeps high semantic confidence separate from tool approval", async () => {
     const runtime = state();
     const evaluator: SemanticSearchEvaluator = async (_state, input) => {
-      const id = (input.state as any).candidates[0].id;
+      const id = (input.state as { candidates: Array<{ id: string }> }).candidates[0]!.id;
       return { ok: true, data: { model: "fixture", usage: { inputTokens: 1, outputTokens: 1 }, answers: { match: { type: "choice", choice: id, confidence: 1, probabilities: { [id]: 1, none: 0 } } } } };
     };
     const result = await semanticSearch(runtime, "do it", undefined, undefined, evaluator);
@@ -56,7 +56,7 @@ describe("Jev integration boundaries", () => {
     expect(pkg.files).toEqual(expect.arrayContaining(["examples/jev-semantic-filter.mjs", "examples/jev-accessibility-loop.mjs"]));
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
     expect(readme).toContain("https://api.typesafe.ai");
-    expect(readme).toContain("privacy, or retention");
+    expect(readme).toContain("privacy and retention");
     expect(readme).toContain("Stdio MCP subprocesses inherit the host environment");
     expect(readme).toContain("disabled by default");
   });

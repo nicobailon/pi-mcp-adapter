@@ -1,5 +1,3 @@
-// Copy the function body into mcpScript, or call it with the worker-provided globals.
-// This example only selects data; it never executes an action based on a score.
 export async function selectIssueForTriage(tools, jev) {
   const found = await tools.search({
     query: "list open customer issue reports",
@@ -8,7 +6,7 @@ export async function selectIssueForTriage(tools, jev) {
     limit: 5,
   });
   const tool = found.items?.[0];
-  if (!tool) return { status: "no-match", backend: found.backend };
+  if (!tool) return { status: "no-match" };
 
   const listed = await tools.call(tool.path, { state: "open", limit: 20 });
   if (!listed.ok) return { status: "stop", error: listed.error };

@@ -572,7 +572,7 @@ Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — t
 
 #### Opt-in Jev evaluation and semantic search
 
-Jev is disabled by default: merely configuring a key performs no credential lookup, SDK client construction, or network I/O. When explicitly enabled, evaluation data is sent only to the fixed origin `https://api.typesafe.ai` using the pinned model `jev-1.13.0`. The adapter does not control TypeSafe's processing, privacy, or retention; review TypeSafe's current policies before sending data.
+Jev is disabled by default: configuring a key alone performs no credential lookup or network I/O. Enabled evaluations use pinned model `jev-1.13.0` at the fixed origin `https://api.typesafe.ai`. Review TypeSafe's current privacy and retention policies before sending data.
 
 On desktops, store the API key in the OS keyring (recommended):
 
@@ -581,7 +581,7 @@ pi-mcp-adapter key set typesafe
 pi-mcp-adapter key status typesafe
 ```
 
-`TYPESAFE_API_KEY` is intended primarily for CI and headless environments and overrides the keyring. Stdio MCP subprocesses inherit the host environment by default, so this variable may leak to those children. Set `inheritEnv: false` for each stdio server and explicitly provide only its required environment entries. The API key, SDK, endpoint, headers, and environment are never exposed to the `mcpScript` worker.
+`TYPESAFE_API_KEY` is for CI/headless use and overrides the keyring. Stdio MCP subprocesses inherit the host environment by default, so set `inheritEnv: false` where they must not receive it. The script worker receives no key, SDK, endpoint, headers, or environment.
 
 ```json
 {
@@ -595,11 +595,11 @@ pi-mcp-adapter key status typesafe
 }
 ```
 
-Semantic discovery is always explicit: use `mcp({ search: "triage customer reports", searchMode: "semantic" })` or `tools.search({ query: "triage customer reports", searchMode: "semantic" })`. Regex cannot be combined with semantic mode. Timeout, rate-limit, and service-availability failures degrade to lexical results and are identified in `backend`; credentials, authentication, policy, configuration, and invalid-response failures remain hard errors.
+Request semantic discovery explicitly with `mcp({ search: "triage customer reports", searchMode: "semantic" })` or `tools.search({ query: "triage customer reports", searchMode: "semantic" })`. Regex is incompatible. Timeout, rate-limit, and service failures return marked lexical fallback; credential, policy, configuration, and response failures do not.
 
-Optional `jev` controls bound the pinned `model`, total `requestTimeoutMs`, `maxRetries`, state/question size, evaluations and evaluation bytes per script, semantic candidates (at most 127, reserving the `none` label), and minimum semantic probability. Invalid values fail configuration loading; there is no configurable endpoint, header, or logging override.
+Optional `jev` controls bound timeout/retries, request and script budgets, semantic candidates (at most 127), and minimum probability. The endpoint, headers, and SDK logging are not configurable.
 
-Within `mcpScript`, `await jev.evaluate({ state, questions, sources })` returns `{ ok, data }` or `{ ok: false, error }`. List every MCP server whose metadata or results were copied into `state` in `sources`; this is an explicit declaration boundary, not automatic data-flow tracking. Per-script count/byte budgets, the script deadline, and the shared 16 MiB transfer cap apply. Evaluation output never authorizes an action: every subsequent `tools.call` still passes through normal authentication and approval. See `examples/jev-semantic-filter.mjs` and `examples/jev-accessibility-loop.mjs`.
+`await jev.evaluate({ state, questions, sources })` returns `{ ok, data }` or `{ ok: false, error }`. `sources` must name every MCP server represented in `state`; this is a declaration, not automatic tracking. Script count/byte/deadline limits apply, and later `tools.call` operations still require normal authentication and approval. See `examples/jev-semantic-filter.mjs` and `examples/jev-accessibility-loop.mjs`.
 
 For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. Run that code with the default-on `mcpScript` tool. For a single MCP call, search, describe, status check, or auth action, use `mcp` instead. Set `settings.scriptMode` to `false` to hide both the scripting tool and its bundled skill.
 

@@ -1,10 +1,10 @@
-// A bounded, non-destructive accessibility-tree recipe, not an executor or DSL.
-// `observePath` and `actionPath` must be exact, previously inspected MCP tool paths.
+const SAFE_OPERATIONS = new Set(["focus", "scroll"]);
+
 export async function runAccessibilityLoop(tools, jev, options) {
   const { observePath, actionPath, goal, allowedOperations, sources, maxSteps, maxMs, maxEvaluations } = options;
-  if (!observePath || !actionPath || !goal || !Array.isArray(allowedOperations) || allowedOperations.length === 0
-    || allowedOperations.some(operation => typeof operation !== "string" || !operation)) {
-    throw new Error("Explicit observation/action tools, goal, and allowed operations are required");
+  if (typeof observePath !== "string" || !observePath || typeof actionPath !== "string" || !actionPath || typeof goal !== "string" || !goal
+    || !Array.isArray(allowedOperations) || allowedOperations.length === 0 || allowedOperations.some(operation => !SAFE_OPERATIONS.has(operation))) {
+    throw new Error("Exact tool paths, a goal, and non-destructive focus/scroll operations are required");
   }
   if (![maxSteps, maxMs, maxEvaluations].every(value => Number.isInteger(value) && value > 0)) {
     throw new Error("Positive step, time, and evaluation budgets are required");
@@ -36,8 +36,7 @@ export async function runAccessibilityLoop(tools, jev, options) {
 
     const actions = snapshot.tree.nodes.flatMap(node =>
       (node && typeof node.id === "string" && node.id && Array.isArray(node.actions) ? node.actions : [])
-        .filter(operation => typeof operation === "string")
-        .filter(operation => allowedOperations.includes(operation))
+        .filter(operation => typeof operation === "string" && allowedOperations.includes(operation))
         .map(operation => ({ target: node.id, operation })),
     ).slice(0, 120).map((action, index) => ({ ...action, label: `a${index}` }));
     if (actions.length === 0) return { status: "no-match" };
@@ -66,9 +65,8 @@ export async function runAccessibilityLoop(tools, jev, options) {
     if (answer.choice === "none") return { status: "no-match" };
     if (answer.choice === "needsInformation") return { status: "needs-information" };
     const selected = actions.find(action => action.label === answer.choice);
-    if (!selected || !allowedOperations.includes(selected.operation)) return { status: "stop", reason: "invalid-action" };
+    if (!selected) return { status: "stop", reason: "invalid-action" };
 
-    // Re-observe after evaluation. Never act on a target from a stale candidate set.
     if (Date.now() - startedAt >= maxMs) return { status: "stop", reason: "time-budget" };
     const fresh = await observe();
     if (fresh.error || fresh.tree.observationId === snapshot.tree.observationId) return { status: "stop", reason: "stale-candidate" };
@@ -81,7 +79,6 @@ export async function runAccessibilityLoop(tools, jev, options) {
       target: selected.target,
       observationId: fresh.tree.observationId,
     });
-    // Approval remains inside tools.call. Never retry: failure may follow a side effect.
     if (!acted.ok) return { status: "stop", reason: "action-failed-or-uncertain" };
   }
   return { status: "stop", reason: "step-budget" };
