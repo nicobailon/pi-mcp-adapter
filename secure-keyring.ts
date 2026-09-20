@@ -1,5 +1,8 @@
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface SecureKeyringStore {
   read(account: string): string | undefined;
@@ -35,11 +38,72 @@ function nativeStore(service: string): SecureKeyringStore {
       throw new Error("OS secure credential storage is unavailable. Configure or unlock the OS credential store and retry.", { cause: error });
     }
   };
-  return {
-    read: account => entry(account).getPassword() ?? undefined,
-    write: (account, payload) => entry(account).setPassword(payload),
-    remove: account => { entry(account).deleteCredential(); },
+  const run = (operation: "read" | "write" | "remove", account: string, payload?: string): string | undefined => {
+    try {
+      const credential = entry(account);
+      if (operation === "read") return credential.getPassword() ?? undefined;
+      if (operation === "write") credential.setPassword(payload!);
+      else credential.deleteCredential();
+      return undefined;
+    } catch (error) {
+      if (!shouldRecoverKeyring(error)) throw error;
+      return recoverKeyring(operation, service, account, payload);
+    }
   };
+  return {
+    read: account => run("read", account),
+    write: (account, payload) => { run("write", account, payload); },
+    remove: account => { run("remove", account); },
+  };
+}
+
+function shouldRecoverKeyring(error: unknown): boolean {
+  if (process.platform !== "linux" || process.env.PI_MCP_ADAPTER_DISABLE_KEYRING_RECOVERY === "1") return false;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 16 && error !== undefined && !seen.has(error); depth++) {
+    seen.add(error);
+    const candidate = typeof error === "object" && error !== null
+      ? error as { name?: unknown; message?: unknown; code?: unknown; cause?: unknown }
+      : { message: error };
+    if ([candidate.name, candidate.message, candidate.code].some(value =>
+      typeof value === "string" && /\b(?:KeyRevoked|key\s+(?:has been\s+)?revoked)\b/i.test(value))) return true;
+    error = candidate.cause;
+  }
+  return false;
+}
+
+function recoverKeyring(operation: "read" | "write" | "remove", service: string, account: string, payload?: string): string | undefined {
+  try {
+    // Source modules live at package root; published CLI modules live in dist.
+    const adjacentHelper = new URL("./mcp-keyring-helper.cjs", import.meta.url);
+    const helper = existsSync(adjacentHelper) ? adjacentHelper : new URL("../mcp-keyring-helper.cjs", import.meta.url);
+    const result = spawnSync("keyctl", ["session", "-", process.execPath, fileURLToPath(helper)], {
+      input: `${JSON.stringify({ operation, service, account, payload })}\n`,
+      encoding: "utf8",
+      stdio: "pipe",
+      shell: false,
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    });
+    if (result.error || result.status !== 0 || result.signal) throw new Error();
+    const response: unknown = JSON.parse(result.stdout);
+    if (typeof response !== "object" || response === null || Array.isArray(response)) throw new Error();
+    const value = response as { ok?: unknown; found?: unknown; value?: unknown };
+    if (value.ok !== true) throw new Error();
+    const allowedKeys = operation === "read" ? ["ok", "found", "value"] : ["ok"];
+    if (Object.keys(response).some(key => !allowedKeys.includes(key))) throw new Error();
+    if (operation === "read") {
+      if (value.found === true && typeof value.value === "string") return value.value;
+      if (value.found === false && value.value === undefined) return undefined;
+      throw new Error();
+    }
+    return undefined;
+  } catch {
+    // Subprocess output, parse excerpts and attached causes can contain secrets.
+    throw new Error("Linux keyring recovery failed. Configure or unlock the OS credential store and retry.");
+  }
 }
 
 export function createSecureKeyringStore(service: string): SecureKeyringStore {
