@@ -250,9 +250,14 @@ export async function runMcpScript(
   const searchTools = async (input?: SearchInput) => {
     const startedAt = Date.now();
     const query = typeof input?.query === "string" ? input.query : "";
+    const index = calls.push({ operation: "search", query, ok: false, error: "incomplete", durationMs: 0, startedAt }) - 1;
     let error: unknown;
     try {
-      if (query.trim() === "") {
+      if (input?.searchMode !== undefined && input.searchMode !== "lexical" && input.searchMode !== "semantic") {
+        error = "invalid_search_mode";
+        return { items: [], total: 0, hasMore: false, nextOffset: null, error: { code: "invalid_search_mode", message: "Search mode must be lexical or semantic." } };
+      }
+      if (query.trim() === "" && input?.searchMode !== "semantic") {
         return { items: [], total: 0, hasMore: false, nextOffset: null };
       }
       const server = typeof input?.server === "string" ? input.server : undefined;
@@ -260,12 +265,14 @@ export async function runMcpScript(
       const offset = typeof input?.offset === "number" ? input.offset : 0;
       const searchMode = input?.searchMode === "semantic" ? "semantic" : "lexical";
       if (searchMode === "semantic" && input?.regex === true) {
+        error = "invalid_search_mode";
         return { items: [], total: 0, hasMore: false, nextOffset: null, error: { code: "invalid_search_mode", message: "Semantic search cannot be combined with regex search." } };
       }
       const semantic = searchMode === "semantic"
         ? await semanticSearch(state, query, server, callSignal, semanticEvaluator)
         : undefined;
       if (semantic && !semantic.ok) {
+        error = semantic.error.code;
         return { items: [], total: 0, hasMore: false, nextOffset: null, error: semantic.error };
       }
       const page = paginate(semantic?.matches ?? rankToolMatches(state, query, server), offset, limit);
@@ -284,9 +291,9 @@ export async function runMcpScript(
       error = caught;
       throw caught;
     } finally {
-      calls.push(error === undefined
+      calls[index] = error === undefined
         ? { operation: "search", query, ok: true, durationMs: Date.now() - startedAt, startedAt }
-        : { operation: "search", query, ok: false, error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt, startedAt });
+        : { operation: "search", query, ok: false, error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt, startedAt };
     }
   };
 

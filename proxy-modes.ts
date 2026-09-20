@@ -857,6 +857,12 @@ export function executeSearch(
   semanticEvaluator?: SemanticSearchEvaluator,
 ): ProxyToolResult | Promise<ProxyToolResult> {
   const showSchemas = includeSchemas !== false;
+  if ((searchMode as string) !== "lexical" && (searchMode as string) !== "semantic") {
+    return {
+      content: [{ type: "text" as const, text: "Search mode must be lexical or semantic." }],
+      details: { mode: "search", error: "invalid_search_mode", query },
+    };
+  }
   if (server && isServerDisabled(state.config.mcpServers[server])) return disabledResult("search", server);
   if (server && isServerInActiveFailureBackoff(state, server)) return serverBackoffResult(state, "search", server);
   if (searchMode === "semantic" && regex) {

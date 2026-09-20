@@ -81,6 +81,13 @@ describe("Jev host client", () => {
     expect(() => validateJevEvaluateInput(input, limits)).toThrow("maxStateBytes");
     const denied = await evaluateJev(state({ scriptEvaluation: true, allowedServers: [] }), input, { purpose: "script" });
     expect(denied).toMatchObject({ ok: false, error: { code: "data_policy_denied" } });
+    expect(() => validateJevEvaluateInput({ ...input, state: { nested: new Date() } }, validateJevSettings(undefined))).toThrow("non-plain object");
+  });
+
+  it("classifies HTTP request timeouts as retryable timeouts", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("timed out", { status: 408 }));
+    const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
+    expect(result).toEqual({ ok: false, error: { code: "timeout", message: "TypeSafe evaluation timed out.", retryable: true } });
   });
 
   it("honors abort and a total deadline", async () => {

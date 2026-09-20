@@ -72,9 +72,13 @@ function validateJson(value: unknown, path: string, seen = new Set<object>()): a
   if (seen.has(value)) throw new Error(`${path} contains a cycle`);
   seen.add(value);
   if (Array.isArray(value)) value.forEach((item, index) => validateJson(item, `${path}[${index}]`, seen));
-  else for (const [key, item] of Object.entries(value)) {
-    if (DANGEROUS_KEYS.has(key)) throw new Error(`${path} contains an unsafe key`);
-    validateJson(item, `${path}.${key}`, seen);
+  else {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw new Error(`${path} contains a non-plain object`);
+    for (const [key, item] of Object.entries(value)) {
+      if (DANGEROUS_KEYS.has(key)) throw new Error(`${path} contains an unsafe key`);
+      validateJson(item, `${path}.${key}`, seen);
+    }
   }
   seen.delete(value);
 }
@@ -199,6 +203,7 @@ function failure(error: unknown, signal: AbortSignal | undefined, timedOut: bool
   if (signal?.aborted || (error instanceof Error && error.name === "APIUserAbortError")) return { ok: false, error: { code: "aborted", message: "TypeSafe evaluation was aborted." } };
   const status = typeof error === "object" && error !== null && "status" in error ? (error as { status?: unknown }).status : undefined;
   if (status === 401 || status === 403) return { ok: false, error: { code: "authentication_failed", message: "TypeSafe authentication failed." } };
+  if (status === 408) return { ok: false, error: { code: "timeout", message: "TypeSafe evaluation timed out.", retryable: true } };
   if (status === 429) return { ok: false, error: { code: "rate_limited", message: "TypeSafe rate limit exceeded.", retryable: true } };
   if (typeof status === "number" && status >= 500) return { ok: false, error: { code: "service_unavailable", message: "TypeSafe service is unavailable.", retryable: true } };
   if (status === 400 || status === 422) return { ok: false, error: { code: "invalid_request", message: "TypeSafe rejected the evaluation request." } };

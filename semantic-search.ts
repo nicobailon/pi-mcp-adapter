@@ -127,6 +127,9 @@ export async function semanticSearch(
   if (!settings.semanticSearch) {
     return { ok: false, error: { code: "disabled", message: "TypeSafe semantic search is disabled." } };
   }
+  if (query.trim().length === 0) {
+    return { ok: false, error: { code: "empty_query", message: "Semantic search query cannot be empty." } };
+  }
   const candidates = selectSemanticCandidates(state, query, server, settings.allowedServers, settings.semanticCandidateLimit);
   if (candidates.length === 0) {
     return {

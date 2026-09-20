@@ -80,12 +80,16 @@ function validateJson(value, path, seen = new Set()) {
     seen.add(value);
     if (Array.isArray(value))
         value.forEach((item, index) => validateJson(item, `${path}[${index}]`, seen));
-    else
+    else {
+        const prototype = Object.getPrototypeOf(value);
+        if (prototype !== Object.prototype && prototype !== null)
+            throw new Error(`${path} contains a non-plain object`);
         for (const [key, item] of Object.entries(value)) {
             if (DANGEROUS_KEYS.has(key))
                 throw new Error(`${path} contains an unsafe key`);
             validateJson(item, `${path}.${key}`, seen);
         }
+    }
     seen.delete(value);
 }
 function validateId(id, label) {
@@ -244,6 +248,8 @@ function failure(error, signal, timedOut) {
     const status = typeof error === "object" && error !== null && "status" in error ? error.status : undefined;
     if (status === 401 || status === 403)
         return { ok: false, error: { code: "authentication_failed", message: "TypeSafe authentication failed." } };
+    if (status === 408)
+        return { ok: false, error: { code: "timeout", message: "TypeSafe evaluation timed out.", retryable: true } };
     if (status === 429)
         return { ok: false, error: { code: "rate_limited", message: "TypeSafe rate limit exceeded.", retryable: true } };
     if (typeof status === "number" && status >= 500)

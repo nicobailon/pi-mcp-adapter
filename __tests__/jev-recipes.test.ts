@@ -42,6 +42,13 @@ describe("bounded accessibility recipe", () => {
     expect(tools.call).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects a reused observation identifier as stale", async () => {
+    const tools = { call: vi.fn().mockResolvedValue(tree("o1")) };
+    const result = await runAccessibilityLoop(tools, { evaluate: vi.fn().mockResolvedValue(answer("a0")) }, options);
+    expect(result).toEqual({ status: "stop", reason: "stale-candidate" });
+    expect(tools.call).toHaveBeenCalledTimes(2);
+  });
+
   it("never retries a possibly side-effectful failure", async () => {
     const calls = vi.fn()
       .mockResolvedValueOnce(tree("o1"))

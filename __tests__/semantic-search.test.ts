@@ -71,6 +71,20 @@ describe("semantic search", () => {
     expect(evaluator).not.toHaveBeenCalled();
   });
 
+  it("rejects empty semantic queries and invalid worker modes without evaluating", async () => {
+    const state = stateWithTools();
+    const evaluator = choiceEvaluator("none");
+    const empty = await gatewaySemantic(state, "   ", evaluator);
+    expect(empty.details).toMatchObject({ error: "empty_query" });
+    expect(evaluator).not.toHaveBeenCalled();
+
+    const direct = executeSearch(state, "weather", false, undefined, false, 12, 0, "invalid" as any);
+    expect((direct as any).details).toMatchObject({ error: "invalid_search_mode" });
+    const script = await runMcpScript(state, 'emit(await tools.search({ query: "weather", searchMode: "invalid" }))');
+    expect(JSON.parse(script.content[0]!.text)).toMatchObject({ error: { code: "invalid_search_mode" } });
+    expect(script.details).toMatchObject({ calls: [{ operation: "search", ok: false, error: "invalid_search_mode" }] });
+  });
+
   it("does no evaluator or credential work when semantic search is disabled", async () => {
     const state = stateWithTools();
     state.config.settings!.jev = { semanticSearch: false, allowedServers: ["demo"] };
@@ -165,5 +179,21 @@ describe("semantic search", () => {
     expect(payload.backend).toEqual((gateway.details as any).backend);
     expect(payload.items[0]).toMatchObject({ path: "other_weather", name: "weather", server: "other", score: 0.8 });
     expect((gateway.details as any).matches[0]).toMatchObject({ tool: "other_weather", server: "other", score: 0.8 });
+  });
+
+  it("aborts and traces an in-flight semantic worker search at the script deadline", async () => {
+    const evaluator: SemanticSearchEvaluator = (_state, _input, options) => new Promise(resolve => {
+      options.signal?.addEventListener("abort", () => resolve({ ok: false, error: { code: "aborted", message: "aborted" } }), { once: true });
+    });
+    const result = await runMcpScript(
+      stateWithTools(),
+      'await tools.search({ query: "umbrella", searchMode: "semantic" })',
+      100,
+      undefined,
+      undefined,
+      undefined,
+      evaluator,
+    );
+    expect(result.details).toMatchObject({ error: "timeout", calls: [{ operation: "search", query: "umbrella", ok: false, error: "incomplete" }] });
   });
 });
