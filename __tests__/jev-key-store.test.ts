@@ -13,8 +13,7 @@ describe("TypeSafe secure key storage", () => {
   });
 
   it("uses an explicit environment override without touching keyring", () => {
-    saveJevApiKey("stored-secret");
-    resetTestSecureKeyring();
+    setTestSecureKeyringEntry(JEV_KEYRING_SERVICE, JEV_KEYRING_ACCOUNT, JSON.stringify({ version: 1, provider: "typesafe", origin: TYPESAFE_API_ORIGIN, apiKey: "stored-secret" }));
     process.env.TYPESAFE_API_KEY = "environment-secret";
     expect(resolveJevCredential()).toEqual({ status: "present", source: "environment", apiKey: "environment-secret" });
     expect(getTestSecureKeyringReadCount()).toBe(0);
@@ -22,6 +21,8 @@ describe("TypeSafe secure key storage", () => {
 
   it("fails closed for malformed, origin-mismatched, and malformed env records", () => {
     setTestSecureKeyringEntry(JEV_KEYRING_SERVICE, JEV_KEYRING_ACCOUNT, JSON.stringify({ version: 1, provider: "typesafe", origin: "https://evil.test", apiKey: "secret" }));
+    expect(resolveJevCredential()).toMatchObject({ status: "unavailable" });
+    setTestSecureKeyringEntry(JEV_KEYRING_SERVICE, JEV_KEYRING_ACCOUNT, JSON.stringify({ version: 1, provider: "typesafe", origin: TYPESAFE_API_ORIGIN, apiKey: "secret", extra: true }));
     expect(resolveJevCredential()).toMatchObject({ status: "unavailable" });
     process.env.TYPESAFE_API_KEY = "   ";
     expect(resolveJevCredential()).toEqual({ status: "unavailable", message: "TYPESAFE_API_KEY is present but invalid." });

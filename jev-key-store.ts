@@ -44,6 +44,8 @@ function readStoredKey(secretStore: SecureKeyringStore = store()): string | unde
     const value: unknown = JSON.parse(payload);
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid record");
     const record = value as Partial<StoredJevKey>;
+    const keys = Object.keys(record);
+    if (keys.length !== 4 || !["version", "provider", "origin", "apiKey"].every(key => Object.hasOwn(record, key))) throw new Error("invalid record fields");
     if (record.version !== 1 || record.provider !== "typesafe" || record.origin !== TYPESAFE_API_ORIGIN) throw new Error("invalid or mismatched record");
     return validateApiKey(record.apiKey);
   } catch (error) {
@@ -51,13 +53,13 @@ function readStoredKey(secretStore: SecureKeyringStore = store()): string | unde
   }
 }
 
-export function resolveJevCredential(env: NodeJS.ProcessEnv = process.env, secretStore: SecureKeyringStore = store()): JevCredentialResolution {
+export function resolveJevCredential(env: NodeJS.ProcessEnv = process.env, secretStore?: SecureKeyringStore): JevCredentialResolution {
   if (Object.hasOwn(env, "TYPESAFE_API_KEY")) {
     try { return { status: "present", source: "environment", apiKey: validateApiKey(env.TYPESAFE_API_KEY) }; }
     catch { return { status: "unavailable", message: "TYPESAFE_API_KEY is present but invalid." }; }
   }
   try {
-    const apiKey = readStoredKey(secretStore);
+    const apiKey = readStoredKey(secretStore ?? store());
     return apiKey === undefined ? { status: "missing" } : { status: "present", source: "keyring", apiKey };
   } catch (error) {
     if (!(error instanceof JevCredentialStoreError)) throw error;

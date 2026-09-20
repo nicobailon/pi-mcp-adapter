@@ -36,7 +36,7 @@ function integer(value, fallback, min, max, label) {
 }
 export function validateJevSettings(value) {
     if (value === undefined || value === false)
-        return { ...DEFAULTS, allowedServers: [] };
+        return { ...DEFAULTS, allowedServers: [...DEFAULTS.allowedServers] };
     const input = record(value, "settings.jev");
     const allowed = new Set(Object.keys(DEFAULTS));
     for (const key of Object.keys(input))
@@ -52,16 +52,16 @@ export function validateJevSettings(value) {
     if (typeof probability !== "number" || !Number.isFinite(probability) || probability < 0 || probability > 1)
         throw new Error("settings.jev.semanticMinProbability must be from 0 to 1");
     return {
-        semanticSearch: boolean(input.semanticSearch, false, "settings.jev.semanticSearch"),
-        scriptEvaluation: boolean(input.scriptEvaluation, false, "settings.jev.scriptEvaluation"),
-        allowedServers: [...new Set(input.allowedServers ?? [])], model,
-        requestTimeoutMs: integer(input.requestTimeoutMs, 5_000, 100, 30_000, "settings.jev.requestTimeoutMs"),
-        maxRetries: integer(input.maxRetries, 0, 0, 2, "settings.jev.maxRetries"),
-        maxStateBytes: integer(input.maxStateBytes, 262_144, 1, 1_048_576, "settings.jev.maxStateBytes"),
-        maxQuestionsPerRequest: integer(input.maxQuestionsPerRequest, 64, 1, 128, "settings.jev.maxQuestionsPerRequest"),
-        maxEvaluationsPerScript: integer(input.maxEvaluationsPerScript, 8, 1, 32, "settings.jev.maxEvaluationsPerScript"),
-        maxEvaluationBytesPerScript: integer(input.maxEvaluationBytesPerScript, 524_288, 1, 4_194_304, "settings.jev.maxEvaluationBytesPerScript"),
-        semanticCandidateLimit: integer(input.semanticCandidateLimit, 127, 2, 127, "settings.jev.semanticCandidateLimit"),
+        semanticSearch: boolean(input.semanticSearch, DEFAULTS.semanticSearch, "settings.jev.semanticSearch"),
+        scriptEvaluation: boolean(input.scriptEvaluation, DEFAULTS.scriptEvaluation, "settings.jev.scriptEvaluation"),
+        allowedServers: [...new Set(input.allowedServers ?? DEFAULTS.allowedServers)], model,
+        requestTimeoutMs: integer(input.requestTimeoutMs, DEFAULTS.requestTimeoutMs, 100, 30_000, "settings.jev.requestTimeoutMs"),
+        maxRetries: integer(input.maxRetries, DEFAULTS.maxRetries, 0, 2, "settings.jev.maxRetries"),
+        maxStateBytes: integer(input.maxStateBytes, DEFAULTS.maxStateBytes, 1, 1_048_576, "settings.jev.maxStateBytes"),
+        maxQuestionsPerRequest: integer(input.maxQuestionsPerRequest, DEFAULTS.maxQuestionsPerRequest, 1, 128, "settings.jev.maxQuestionsPerRequest"),
+        maxEvaluationsPerScript: integer(input.maxEvaluationsPerScript, DEFAULTS.maxEvaluationsPerScript, 1, 32, "settings.jev.maxEvaluationsPerScript"),
+        maxEvaluationBytesPerScript: integer(input.maxEvaluationBytesPerScript, DEFAULTS.maxEvaluationBytesPerScript, 1, 4_194_304, "settings.jev.maxEvaluationBytesPerScript"),
+        semanticCandidateLimit: integer(input.semanticCandidateLimit, DEFAULTS.semanticCandidateLimit, 2, 127, "settings.jev.semanticCandidateLimit"),
         semanticMinProbability: probability,
     };
 }
@@ -236,7 +236,7 @@ function getHost(state, settings) {
         return { ok: false, error: { code: "credential_missing", message: "TypeSafe API key is not configured." } };
     if (credential.status === "unavailable")
         return { ok: false, error: { code: "credential_unavailable", message: credential.message } };
-    const host = { settings, client: new TypeSafeClient({ apiKey: credential.apiKey, baseURL: TYPESAFE_API_ORIGIN, defaultModel: settings.model, logLevel: "off", retry: { maxRetries: settings.maxRetries }, timeout: settings.requestTimeoutMs, defaultHeaders: {}, fetch: fixedOriginFetch }) };
+    const host = { client: new TypeSafeClient({ apiKey: credential.apiKey, baseURL: TYPESAFE_API_ORIGIN, defaultModel: settings.model, logLevel: "off", retry: { maxRetries: settings.maxRetries }, timeout: settings.requestTimeoutMs, defaultHeaders: {}, fetch: fixedOriginFetch }) };
     hosts.set(state, host);
     return host;
 }

@@ -10,11 +10,12 @@ const answer = (choice: string, confidence = 1) => ({
   ok: true,
   data: { model: "fixture", usage: { inputTokens: 1, outputTokens: 1 }, answers: { next: { type: "choice", choice, confidence, probabilities: { [choice]: confidence } } } },
 });
-const options = { observePath: "browser_observe", actionPath: "browser_action", goal: "focus target", allowedOperations: ["focus"], maxSteps: 3, maxMs: 5_000, maxEvaluations: 3 };
+const options = { observePath: "browser_observe", actionPath: "browser_action", goal: "focus target", allowedOperations: ["focus"], sources: ["browser"], maxSteps: 3, maxMs: 5_000, maxEvaluations: 3 };
 
 describe("bounded accessibility recipe", () => {
   it("requires positive step, time, and evaluation budgets", async () => {
     await expect(runAccessibilityLoop({}, {}, { ...options, maxSteps: 0 })).rejects.toThrow("Positive");
+    await expect(runAccessibilityLoop({}, {}, { ...options, sources: [] })).rejects.toThrow("Explicit MCP sources");
   });
 
   it.each([

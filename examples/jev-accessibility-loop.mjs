@@ -1,13 +1,16 @@
 // A bounded, non-destructive accessibility-tree recipe, not an executor or DSL.
 // `observePath` and `actionPath` must be exact, previously inspected MCP tool paths.
 export async function runAccessibilityLoop(tools, jev, options) {
-  const { observePath, actionPath, goal, allowedOperations, sources = [], maxSteps, maxMs, maxEvaluations } = options;
+  const { observePath, actionPath, goal, allowedOperations, sources, maxSteps, maxMs, maxEvaluations } = options;
   if (!observePath || !actionPath || !goal || !Array.isArray(allowedOperations) || allowedOperations.length === 0
     || allowedOperations.some(operation => typeof operation !== "string" || !operation)) {
     throw new Error("Explicit observation/action tools, goal, and allowed operations are required");
   }
   if (![maxSteps, maxMs, maxEvaluations].every(value => Number.isInteger(value) && value > 0)) {
     throw new Error("Positive step, time, and evaluation budgets are required");
+  }
+  if (!Array.isArray(sources) || sources.length === 0 || sources.some(source => typeof source !== "string" || !source)) {
+    throw new Error("Explicit MCP sources are required for accessibility data");
   }
   const startedAt = Date.now();
   let evaluations = 0;
