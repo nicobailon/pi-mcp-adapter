@@ -478,6 +478,36 @@ describe("proxy discovery", () => {
     expect(callTool).not.toHaveBeenCalled();
   });
 
+  it("gives a global exact canonical name precedence over another server's alias", async () => {
+    const exactCall = vi.fn(async () => ({ content: [{ type: "text", text: "exact" }] }));
+    const aliasCall = vi.fn();
+    const state = {
+      config: { mcpServers: { demo: { command: "demo" }, other: { command: "other" } } },
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Exact" }]],
+        ["other", [{ name: "other_demo_search", originalName: "demo_search", description: "Alias" }]],
+      ]),
+      manager: {
+        getConnection: (server: string) => ({
+          status: "connected",
+          client: { callTool: server === "demo" ? exactCall : aliasCall },
+        }),
+        getRequestOptions: () => undefined,
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+    } as unknown as McpExtensionState;
+
+    await expect(executeCall(state, "demo_search", {})).resolves.toMatchObject({
+      details: { server: "demo", tool: "search", canonicalTool: "demo_search" },
+    });
+    expect(exactCall).toHaveBeenCalledOnce();
+    expect(aliasCall).not.toHaveBeenCalled();
+  });
+
   it("fails closed for same-server normalized displayed and raw-name collisions", async () => {
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
     const state = {

@@ -108,12 +108,6 @@ function serverBackoffResult(state: McpExtensionState, mode: string, serverName:
   };
 }
 
-function getSingleToolMatch(metadata: ToolMetadata[] | undefined, toolName: string): ToolMetadata | "ambiguous" | undefined {
-  const exactMatches = getToolMatches(metadata, toolName, true);
-  const matches = exactMatches.length > 0 ? exactMatches : getToolMatches(metadata, toolName, false);
-  return matches.length > 1 ? "ambiguous" : matches[0];
-}
-
 function getCandidateToolMatches(
   metadata: ToolMetadata[] | undefined,
   toolName: string,
@@ -1155,12 +1149,10 @@ export async function executeCall(
     } else {
       const prefixedScope = getPrefixedServerScope(state, toolName);
       if (prefixedScope && prefixedScope !== "ambiguous") {
+        serverName = prefixedScope;
         const match = getCandidateToolMatch(state.toolMetadata.get(prefixedScope), toolName, prefixedScope, state);
         if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, prefixedScope);
-        if (match) {
-          serverName = prefixedScope;
-          toolMeta = match;
-        }
+        toolMeta = match;
       } else {
         const matches: Array<{ server: string; tool: ToolMetadata }> = [];
         for (const [server, metadata] of state.toolMetadata) {
@@ -1188,15 +1180,9 @@ export async function executeCall(
   if (serverName && !toolMeta) {
     const connected = await lazyConnect(state, serverName, ownedSignal);
     if (connected) {
-      if (serverOverride) {
-        const match = getCandidateToolMatch(state.toolMetadata.get(serverName), toolName, serverName, state);
-        if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
-        toolMeta = match;
-      } else {
-        const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
-        if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
-        toolMeta = match;
-      }
+      const match = getCandidateToolMatch(state.toolMetadata.get(serverName), toolName, serverName, state);
+      if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
+      toolMeta = match;
     } else {
       const needsAuthConnection = state.manager.getConnection(serverName);
       if (needsAuthConnection?.status === "needs-auth") {
@@ -1413,15 +1399,9 @@ export async function executeCall(
       if (!restored) notifyToolMetadataUpdated(state, serverName, "proxy-call-reconnect");
       markKeepAliveAfterConnect(state, serverName);
       updateStatusBar(state);
-      if (serverOverride) {
-        const match = getCandidateToolMatch(state.toolMetadata.get(serverName), toolName, serverName, state);
-        if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
-        toolMeta = match;
-      } else {
-        const match = getSingleToolMatch(state.toolMetadata.get(serverName), toolName);
-        if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
-        toolMeta = match;
-      }
+      const match = getCandidateToolMatch(state.toolMetadata.get(serverName), toolName, serverName, state);
+      if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, serverName);
+      toolMeta = match;
       if (!toolMeta) {
         const available = getToolNames(state, serverName);
         const hint = available.length > 0
