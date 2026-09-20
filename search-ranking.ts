@@ -11,6 +11,7 @@ import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 const MIN_STEM_LENGTH = 4;
 
 // Keep ASCII tokens unchanged; bound adjacent bigrams for non-ASCII Unicode word runs.
+// Whole-run fallbacks preserve single characters and prevent truncated queries from matching only a prefix.
 const MAX_UNICODE_BIGRAMS_PER_RUN = 64;
 const SEARCH_RUN = /[a-z0-9]+|(?:(?![a-z0-9])[\p{L}\p{N}\p{M}])+/gu;
 const ASCII_RUN = /^[a-z0-9]+$/;
@@ -93,12 +94,15 @@ export function tokenize(value: string): string[] {
       tokens.push(run);
       continue;
     }
+    const characters = [...run];
+    if (characters.length === 1 || characters.length > MAX_UNICODE_BIGRAMS_PER_RUN + 1) {
+      tokens.push(run);
+      continue;
+    }
     let previous = "";
-    let emitted = 0;
-    for (const character of run) {
+    for (const character of characters) {
       if (previous) {
         tokens.push(previous + character);
-        if (++emitted === MAX_UNICODE_BIGRAMS_PER_RUN) break;
       }
       previous = character;
     }
