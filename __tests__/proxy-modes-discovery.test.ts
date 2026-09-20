@@ -530,6 +530,10 @@ describe("proxy discovery", () => {
     await expect(executeCall(state, "foo_bar", {})).resolves.toMatchObject({
       details: { server: "other", tool: "foo_bar", canonicalTool: "other_foo_bar" },
     });
+    expect(executeDescribe(state, "foo_bar").details).toMatchObject({
+      server: "other",
+      tool: { originalName: "foo_bar" },
+    });
     expect(exactCall).toHaveBeenCalledWith({ name: "foo_bar", arguments: {}, _meta: undefined }, undefined);
   });
 

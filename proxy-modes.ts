@@ -7,7 +7,7 @@ import { getServerPrefix, getToolNameCandidates, isServerDisabled, parseUiPrompt
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
+import { buildToolMetadata, getToolNames, formatSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
@@ -705,32 +705,27 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
     serverName = serverOverride;
     toolMeta = match?.tool;
   } else {
-    const exactMatches = getEnabledToolMatches(state, toolName, true)
-      .filter((match) => !isServerInActiveFailureBackoff(state, match.server));
-    if (exactMatches.length > 1) return ambiguousToolResult("describe", toolName);
-    if (exactMatches.length === 0 && getEnabledToolMatches(state, toolName, false).filter((match) => !isServerInActiveFailureBackoff(state, match.server)).length > 1) {
-      return ambiguousToolResult("describe", toolName);
-    }
-
-    serverName = exactMatches[0]?.server;
-    toolMeta = exactMatches[0]?.tool;
-
-    if (!toolMeta) {
-      for (const [server, metadata] of state.toolMetadata.entries()) {
-        const found = findToolByName(metadata, toolName);
-        if (!found) continue;
-        if (isServerDisabled(state.config.mcpServers[server])) {
-          disabledMatch ??= server;
-          continue;
-        }
-        if (isServerInActiveFailureBackoff(state, server)) {
-          failedMatch ??= server;
-          continue;
-        }
-        serverName = server;
-        toolMeta = found;
-        break;
+    const matches: Array<{ server: string; tool: ToolMetadata; precedence: number }> = [];
+    for (const [server, metadata] of state.toolMetadata.entries()) {
+      const match = getServerScopedToolMatch(metadata, toolName);
+      if (!match) continue;
+      if (match === "ambiguous") return ambiguousToolResult("describe", toolName);
+      if (isServerDisabled(state.config.mcpServers[server])) {
+        disabledMatch ??= server;
+        continue;
       }
+      if (isServerInActiveFailureBackoff(state, server)) {
+        failedMatch ??= server;
+        continue;
+      }
+      matches.push({ server, tool: match.tool, precedence: match.precedence });
+    }
+    if (matches.length > 0) {
+      const precedence = Math.min(...matches.map(match => match.precedence));
+      const bestMatches = matches.filter(match => match.precedence === precedence);
+      if (bestMatches.length > 1) return ambiguousToolResult("describe", toolName);
+      serverName = bestMatches[0]!.server;
+      toolMeta = bestMatches[0]!.tool;
     }
   }
 
