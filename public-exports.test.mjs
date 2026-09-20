@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -20,6 +20,64 @@ async function extractPackedPackage(fixtureRoot) {
   assert.equal(extracted.status, 0, `${extracted.stdout}\n${extracted.stderr}`);
   await symlink(path.join(process.cwd(), "node_modules"), path.join(packageRoot, "node_modules"), "dir");
 }
+
+test("packed bearer storage recovers through the root helper from dist", { skip: process.platform !== "linux" }, async () => {
+  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "pi-mcp-keyring-recovery-"));
+  try {
+    await extractPackedPackage(fixtureRoot);
+    const packageRoot = path.join(fixtureRoot, "node_modules", "pi-mcp-adapter");
+    // Replace only this fixture's dependency symlink, never the real native store.
+    await rm(path.join(packageRoot, "node_modules"));
+    const nativeRoot = path.join(packageRoot, "node_modules", "@napi-rs", "keyring");
+    await mkdir(nativeRoot, { recursive: true });
+    await writeFile(path.join(nativeRoot, "index.js"), `
+      const assert = require("node:assert/strict");
+      exports.Entry = class {
+        constructor(service) {
+          if (process.env.SYNTHETIC_KEYRING_HELPER !== "1") throw new Error("KeyRevoked");
+          assert.equal(service, "pi-mcp-adapter.bearer");
+        }
+        getPassword() { return JSON.stringify({ token: "synthetic-secret", serverUrl: "https://example.test/mcp" }); }
+        setPassword(value) { assert.equal(JSON.parse(value).token, "synthetic-secret"); }
+        deleteCredential() { return true; }
+      };
+    `);
+    const bin = path.join(fixtureRoot, "bin");
+    await mkdir(bin);
+    const keyctl = path.join(bin, "keyctl");
+    await writeFile(keyctl, `#!${process.execPath}
+      const assert = require("node:assert/strict");
+      const { spawnSync } = require("node:child_process");
+      const { readFileSync } = require("node:fs");
+      const args = process.argv.slice(2);
+      assert.deepEqual(args.slice(0, 2), ["session", "-"]);
+      const result = spawnSync(args[2], [args[3]], {
+        input: readFileSync(0), encoding: "utf8", timeout: 2000,
+        env: { ...process.env, SYNTHETIC_KEYRING_HELPER: "1" },
+      });
+      process.stdout.write(result.stdout || "");
+      process.exit(result.status === 0 ? 0 : 1);
+    `);
+    await chmod(keyctl, 0o755);
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", `
+      import assert from "node:assert/strict";
+      const store = await import("./node_modules/pi-mcp-adapter/dist/mcp-bearer-store.js");
+      const url = "https://example.test/mcp";
+      store.saveBearerTokenForUrl("remote", "synthetic-secret", url);
+      assert.equal(store.getBearerTokenForUrl("remote", url), "synthetic-secret");
+      assert.equal(store.getBearerTokenForUrl("remote", url + "/other"), undefined);
+      store.removeBearerToken("remote");
+    `], {
+      cwd: fixtureRoot, encoding: "utf8", timeout: 15000,
+      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH || ""}`, PI_MCP_ADAPTER_TEST_AUTH_STORE: "", PI_MCP_ADAPTER_DISABLE_KEYRING_RECOVERY: "", SYNTHETIC_KEYRING_HELPER: "" },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
 
 test("public metadata, config, and type helpers load in plain Node from node_modules", async () => {
   const fixtureRoot = await mkdtemp(path.join(tmpdir(), "pi-mcp-public-exports-"));
