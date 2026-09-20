@@ -110,6 +110,12 @@ export function tokenize(value: string): string[] {
   return tokens;
 }
 
+function matchesAsciiStem(fieldToken: string, queryToken: string): boolean {
+  return ASCII_RUN.test(fieldToken)
+    && ASCII_RUN.test(queryToken)
+    && (fieldToken.startsWith(queryToken) || (fieldToken.length >= MIN_STEM_LENGTH && queryToken.startsWith(fieldToken)));
+}
+
 function prepareToolSearch(tool: ToolMetadata, server: string, keywords?: string[]): PreparedToolSearch {
   const fields = {
     name: normalizeSearchText(tool.name),
@@ -157,7 +163,7 @@ function scorePreparedToolMatch(
       if (fieldTokens.includes(token)) {
         score += weight * 4;
         matchedTokens.add(token);
-      } else if (fieldTokens.some(fieldToken => fieldToken.startsWith(token) || (fieldToken.length >= MIN_STEM_LENGTH && token.startsWith(fieldToken)))) {
+      } else if (fieldTokens.some(fieldToken => matchesAsciiStem(fieldToken, token))) {
         score += weight * 2;
         matchedTokens.add(token);
       } else if (value.includes(token)) {
@@ -192,7 +198,7 @@ function scorePreparedToolMatch(
       if (prepared.keywordTokens.includes(token)) {
         score += weight * 4;
         matchedTokens.add(token);
-      } else if (prepared.keywordTokens.some(keywordToken => keywordToken.startsWith(token) || (keywordToken.length >= MIN_STEM_LENGTH && token.startsWith(keywordToken)))) {
+      } else if (prepared.keywordTokens.some(keywordToken => matchesAsciiStem(keywordToken, token))) {
         score += weight * 2;
         matchedTokens.add(token);
       } else if (prepared.keywordPhrases.some(phrase => phrase.includes(token))) {

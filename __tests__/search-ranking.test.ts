@@ -29,8 +29,14 @@ describe("search ranking", () => {
   it("does not match only the retained prefix of a long Unicode query", () => {
     const query = Array.from({ length: 80 }, (_, index) => String.fromCodePoint(0x4e00 + index)).join("");
 
-    expect(scoreToolMatch(tool("prefix", query.slice(0, 65)), "demo", query)).toBeNull();
+    expect(scoreToolMatch(tool("prefix", query.slice(0, 79)), "demo", query)).toBeNull();
     expect(scoreToolMatch(tool("complete", query), "demo", query)).not.toBeNull();
+  });
+
+  it("does not apply ASCII stemming to astral Unicode tokens", () => {
+    const query = Array.from({ length: 80 }, (_, index) => String.fromCodePoint(0x20000 + index)).join("");
+
+    expect(scoreToolMatch(tool("prefix", [...query].slice(0, 2).join("")), "demo", query)).toBeNull();
   });
 
   it("ignores single-letter possessive tokens instead of stem-matching them", () => {
