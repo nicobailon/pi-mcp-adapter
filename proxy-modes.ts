@@ -19,6 +19,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+import { semanticSearch, type SemanticSearchBackend, type SemanticSearchEvaluator } from "./semantic-search.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 
@@ -774,6 +775,75 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
   };
 }
 
+function renderSearchResults(
+  state: McpExtensionState,
+  query: string,
+  server: string | undefined,
+  showSchemas: boolean,
+  limit: number,
+  offset: number,
+  matches: Array<{ server: string; tool: ToolMetadata; score: number }>,
+  backend?: SemanticSearchBackend,
+): ProxyToolResult {
+  const page = paginate(matches, offset, limit);
+  if (page.total === 0) {
+    const connectingServers = server
+      ? state.config.mcpServers[server] && state.manager.isConnecting(server) ? [server] : []
+      : Object.keys(state.config.mcpServers)
+        .filter(name => !isServerDisabled(state.config.mcpServers[name]) && state.manager.isConnecting(name))
+        .sort((a, b) => a.localeCompare(b));
+    const msg = server ? `No tools matching "${query}" in "${server}"` : `No tools matching "${query}"`;
+    const connectingMessage = connectingServers.length === 1
+      ? ` Server "${connectingServers[0]}" is still connecting; retry in a moment.`
+      : connectingServers.length > 1
+        ? ` Servers ${connectingServers.map(name => `"${name}"`).join(", ")} are still connecting; retry in a moment.`
+        : "";
+    return {
+      content: [{ type: "text" as const, text: `${msg}${connectingMessage}` }],
+      details: {
+        mode: "search", matches: [], count: 0, hasMore: false, nextOffset: null, query,
+        ...(backend ? { backend } : {}),
+        ...(connectingServers.length > 0 ? { connectingServers } : {}),
+      },
+    };
+  }
+
+  let text = `Found ${page.total} tool${page.total === 1 ? "" : "s"} matching "${query}":\n\n`;
+  for (const match of page.items) {
+    const approvalMarker = isToolCallApprovalRequired(state.config, match.server, match.tool, state.toolMetadata)
+      ? " (requires approval)"
+      : "";
+    if (showSchemas) {
+      text += `${match.tool.name}${approvalMarker}\n`;
+      text += `  ${match.tool.description || "(no description)"}\n`;
+      if (match.tool.inputSchema && !match.tool.resourceUri) {
+        const shape = renderTsShape(match.tool.inputSchema);
+        text += shape === null
+          ? `\n  Parameters:\n${formatSchema(match.tool.inputSchema, "    ")}\n`
+          : `\n  Shape:\n${shape.split("\n").map(line => `    ${line}`).join("\n")}\n`;
+      } else if (match.tool.resourceUri) {
+        text += "  No parameters (resource tool).\n";
+      }
+      text += "\n";
+    } else {
+      text += `- ${match.tool.name}${approvalMarker}`;
+      if (match.tool.description) text += ` - ${truncateAtWord(match.tool.description, 50)}`;
+      text += "\n";
+    }
+  }
+  if (page.hasMore) text += `\n${page.items.length} of ${page.total} — offset: ${page.nextOffset} for more\n`;
+
+  return {
+    content: [{ type: "text" as const, text: text.trim() }],
+    details: {
+      mode: "search",
+      matches: page.items.map(match => ({ server: match.server, tool: match.tool.name, score: match.score })),
+      count: page.total, hasMore: page.hasMore, nextOffset: page.nextOffset, query,
+      ...(backend ? { backend } : {}),
+    },
+  };
+}
+
 export function executeSearch(
   state: McpExtensionState,
   query: string,
@@ -782,10 +852,30 @@ export function executeSearch(
   includeSchemas?: boolean,
   limit = 12,
   offset = 0,
-): ProxyToolResult {
+  searchMode: "lexical" | "semantic" = "lexical",
+  signal?: AbortSignal,
+  semanticEvaluator?: SemanticSearchEvaluator,
+): ProxyToolResult | Promise<ProxyToolResult> {
   const showSchemas = includeSchemas !== false;
   if (server && isServerDisabled(state.config.mcpServers[server])) return disabledResult("search", server);
   if (server && isServerInActiveFailureBackoff(state, server)) return serverBackoffResult(state, "search", server);
+  if (searchMode === "semantic" && regex) {
+    return {
+      content: [{ type: "text" as const, text: "Semantic search cannot be combined with regex search." }],
+      details: { mode: "search", error: "invalid_search_mode", query },
+    };
+  }
+  if (searchMode === "semantic") {
+    return semanticSearch(state, query, server, signal, semanticEvaluator).then(result => {
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: `Semantic search failed: ${result.error.message}` }],
+          details: { mode: "search", error: result.error.code, message: result.error.message, query },
+        };
+      }
+      return renderSearchResults(state, query, server, showSchemas, limit, offset, result.matches, result.backend);
+    });
+  }
 
   let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;
   if (regex) {
@@ -849,69 +939,7 @@ export function executeSearch(
     matches = rankToolMatches(state, query, server);
   }
 
-  const page = paginate(matches, offset, limit);
-  if (page.total === 0) {
-    const connectingServers = server
-      ? state.config.mcpServers[server] && state.manager.isConnecting(server) ? [server] : []
-      : Object.keys(state.config.mcpServers)
-        .filter(name => !isServerDisabled(state.config.mcpServers[name]) && state.manager.isConnecting(name))
-        .sort((a, b) => a.localeCompare(b));
-    const msg = server ? `No tools matching "${query}" in "${server}"` : `No tools matching "${query}"`;
-    const connectingMessage = connectingServers.length === 1
-      ? ` Server "${connectingServers[0]}" is still connecting; retry in a moment.`
-      : connectingServers.length > 1
-        ? ` Servers ${connectingServers.map(name => `"${name}"`).join(", ")} are still connecting; retry in a moment.`
-        : "";
-    return {
-      content: [{ type: "text" as const, text: `${msg}${connectingMessage}` }],
-      details: {
-        mode: "search",
-        matches: [],
-        count: 0,
-        hasMore: false,
-        nextOffset: null,
-        query,
-        ...(connectingServers.length > 0 ? { connectingServers } : {}),
-      },
-    };
-  }
-
-  let text = `Found ${page.total} tool${page.total === 1 ? "" : "s"} matching "${query}":\n\n`;
-  for (const match of page.items) {
-    const approvalMarker = isToolCallApprovalRequired(state.config, match.server, match.tool, state.toolMetadata)
-      ? " (requires approval)"
-      : "";
-    if (showSchemas) {
-      text += `${match.tool.name}${approvalMarker}\n`;
-      text += `  ${match.tool.description || "(no description)"}\n`;
-      if (match.tool.inputSchema && !match.tool.resourceUri) {
-        const shape = renderTsShape(match.tool.inputSchema);
-        text += shape === null
-          ? `\n  Parameters:\n${formatSchema(match.tool.inputSchema, "    ")}\n`
-          : `\n  Shape:\n${shape.split("\n").map(line => `    ${line}`).join("\n")}\n`;
-      } else if (match.tool.resourceUri) {
-        text += "  No parameters (resource tool).\n";
-      }
-      text += "\n";
-    } else {
-      text += `- ${match.tool.name}${approvalMarker}`;
-      if (match.tool.description) text += ` - ${truncateAtWord(match.tool.description, 50)}`;
-      text += "\n";
-    }
-  }
-  if (page.hasMore) text += `\n${page.items.length} of ${page.total} — offset: ${page.nextOffset} for more\n`;
-
-  return {
-    content: [{ type: "text" as const, text: text.trim() }],
-    details: {
-      mode: "search",
-      matches: page.items.map(match => ({ server: match.server, tool: match.tool.name, score: match.score })),
-      count: page.total,
-      hasMore: page.hasMore,
-      nextOffset: page.nextOffset,
-      query,
-    },
-  };
+  return renderSearchResults(state, query, server, showSchemas, limit, offset, matches);
 }
 
 export function executeList(state: McpExtensionState, server: string): ProxyToolResult {

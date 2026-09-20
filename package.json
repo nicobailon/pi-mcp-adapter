@@ -144,6 +144,7 @@
     "jev-contracts.ts",
     "jev-key-store.ts",
     "jev-client.ts",
+    "semantic-search.ts",
     "mcp-keyring-helper.cjs",
     "mcp-oauth-provider.ts",
     "mcp-callback-server.ts",

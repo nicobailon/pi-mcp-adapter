@@ -1888,6 +1888,26 @@ describe("mcpAdapter session lifecycle", () => {
     ]);
     expect(JSON.stringify(argsSchema)).not.toContain("patternProperties");
     expect(proxyTool.parameters.properties.server.description).toContain("describe operations");
+    expect(proxyTool.parameters.properties.searchMode.enum).toEqual(["lexical", "semantic"]);
+  });
+
+  it("forwards explicit semantic search mode and the request signal", async () => {
+    const state = createState();
+    const result = { content: [{ type: "text", text: "semantic results" }], details: { mode: "search", matches: [] } };
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeSearch.mockResolvedValue(result);
+    const { api, handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    const signal = new AbortController().signal;
+
+    await expect(registeredTool(api, "mcp").execute("search-1", {
+      search: "find by meaning",
+      searchMode: "semantic",
+    }, signal)).resolves.toBe(result);
+    expect(mocks.executeSearch).toHaveBeenCalledWith(
+      state, "find by meaning", undefined, undefined, undefined, undefined, undefined, "semantic", signal,
+    );
   });
 
   it("forwards the server selector for describe operations", async () => {
@@ -2837,7 +2857,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
     expect(mocks.initializeMcp.mock.calls[1][1]).toBe(callCtx);
     expect(result).toEqual({ content: [{ type: "text", text: "results" }] });
-    expect(mocks.executeSearch).toHaveBeenCalledWith(state, "demo", undefined, undefined, undefined, undefined, undefined);
+    expect(mocks.executeSearch).toHaveBeenCalledWith(state, "demo", undefined, undefined, undefined, undefined, undefined, undefined, undefined);
   });
 
   it("refreshes the command owner and context after retrying failed initialization", async () => {

@@ -1707,6 +1707,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
         instructions: Type.Optional(Type.String({ description: "Server name to show that server's usage instructions" })),
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
+        searchMode: Type.Optional(Type.String({ enum: ["lexical", "semantic"], description: "Search backend (default: lexical; semantic must be explicitly enabled)" })),
         regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
         limit: optionalNumber({ minimum: 1, description: "Maximum search results to return (default: 12)" }),
@@ -1724,6 +1725,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         describe?: string;
         instructions?: string;
         search?: string;
+        searchMode?: "lexical" | "semantic";
         regex?: boolean;
         includeSchemas?: boolean;
         limit?: number;
@@ -1858,7 +1860,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return proxyModes.executeInstructions(proxyState, params.instructions);
         }
         if (params.search !== undefined) {
-          const result = proxyModes.executeSearch(proxyState, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset);
+          const result = await proxyModes.executeSearch(proxyState, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset, params.searchMode, signal);
           if (lazyDirectTools.size === 0) return result;
           holdLazyToolsInactive();
           const matches = (result.details as { matches?: Array<{ server: string; tool: string }> } | undefined)?.matches ?? [];

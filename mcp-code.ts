@@ -8,6 +8,7 @@ import type { JevBudget, JevErrorCode, JevEvaluateInput, JevEvaluationEnvelope }
 import { executeCall } from "./proxy-modes.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
+import { semanticSearch, type SemanticSearchEvaluator } from "./semantic-search.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import type { McpExtensionState } from "./state.ts";
 import { findToolByName, formatSchema, hasSchemaDescriptions } from "./tool-metadata.ts";
@@ -24,7 +25,7 @@ class McpScriptTimeoutError extends Error {
   }
 }
 
-type SearchInput = { query?: unknown; server?: unknown; limit?: unknown; offset?: unknown };
+type SearchInput = { query?: unknown; server?: unknown; limit?: unknown; offset?: unknown; searchMode?: unknown; regex?: unknown };
 type DescribeInput = { path?: unknown };
 type WorkerMessage =
   | { type: "emit"; block: unknown }
@@ -127,6 +128,7 @@ export async function runMcpScript(
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
   jevEvaluator: McpScriptJevEvaluator = evaluateJev,
+  semanticEvaluator?: SemanticSearchEvaluator,
 ) {
   const resolvedTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
     ? Math.floor(timeoutMs)
@@ -245,7 +247,7 @@ export async function runMcpScript(
     return { envelope: JSON.parse(envelopeJson) };
   };
 
-  const searchTools = (input?: SearchInput) => {
+  const searchTools = async (input?: SearchInput) => {
     const startedAt = Date.now();
     const query = typeof input?.query === "string" ? input.query : "";
     let error: unknown;
@@ -256,7 +258,17 @@ export async function runMcpScript(
       const server = typeof input?.server === "string" ? input.server : undefined;
       const limit = typeof input?.limit === "number" ? input.limit : 12;
       const offset = typeof input?.offset === "number" ? input.offset : 0;
-      const page = paginate(rankToolMatches(state, query, server), offset, limit);
+      const searchMode = input?.searchMode === "semantic" ? "semantic" : "lexical";
+      if (searchMode === "semantic" && input?.regex === true) {
+        return { items: [], total: 0, hasMore: false, nextOffset: null, error: { code: "invalid_search_mode", message: "Semantic search cannot be combined with regex search." } };
+      }
+      const semantic = searchMode === "semantic"
+        ? await semanticSearch(state, query, server, callSignal, semanticEvaluator)
+        : undefined;
+      if (semantic && !semantic.ok) {
+        return { items: [], total: 0, hasMore: false, nextOffset: null, error: semantic.error };
+      }
+      const page = paginate(semantic?.matches ?? rankToolMatches(state, query, server), offset, limit);
       return {
         ...page,
         items: page.items.map(({ server: matchServer, tool, score }) => ({
@@ -266,6 +278,7 @@ export async function runMcpScript(
           ...(tool.description ? { description: tool.description } : {}),
           score,
         })),
+        ...(semantic ? { backend: semantic.backend } : {}),
       };
     } catch (caught) {
       error = caught;
@@ -370,7 +383,7 @@ export async function runMcpScript(
           } else if (message.type === "evaluate") {
             payload = await evaluate(message.input);
           } else if (message.type === "search") {
-            payload = { envelope: searchTools(message.input as SearchInput | undefined) };
+            payload = { envelope: await searchTools(message.input as SearchInput | undefined) };
           } else {
             payload = { envelope: describeTool(message.input as DescribeInput | undefined) };
           }
