@@ -45,6 +45,46 @@ describe("direct tool host contracts", () => {
     })).toThrow("MCP direct tool arguments do not match the advertised input schema");
   });
 
+  it("recovers containers declared by type arrays and unions without coercing valid strings", async () => {
+    const { prepareDirectToolArguments } = await import("../direct-tools.ts");
+    const schema = {
+      type: "object",
+      required: ["typed", "either", "exclusive", "ambiguous"],
+      properties: {
+        typed: { type: ["array", "null"], items: { type: "number" } },
+        either: { anyOf: [{ type: "object", required: ["id"], properties: { id: { type: "number" } } }] },
+        exclusive: { oneOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] },
+        ambiguous: { anyOf: [{ type: "string" }, { type: "object" }] },
+      },
+      additionalProperties: false,
+    };
+
+    expect(prepareDirectToolArguments(schema, {
+      typed: "[1,2]",
+      either: '{"id":7}',
+      exclusive: '["north"]',
+      ambiguous: '{"keep":"as a string"}',
+    })).toEqual({
+      typed: [1, 2],
+      either: { id: 7 },
+      exclusive: ["north"],
+      ambiguous: '{"keep":"as a string"}',
+    });
+
+    expect(() => prepareDirectToolArguments(schema, {
+      typed: "{}",
+      either: '{"id":7}',
+      exclusive: '["north"]',
+      ambiguous: "valid",
+    })).toThrow("MCP direct tool arguments do not match the advertised input schema");
+    expect(() => prepareDirectToolArguments(schema, {
+      typed: "[broken",
+      either: '{"id":7}',
+      exclusive: '["north"]',
+      ambiguous: "valid",
+    })).toThrow("MCP direct tool arguments do not match the advertised input schema");
+  });
+
   it("returns a bounded raw MCP result when configured", async () => {
     const rawResult = {
       content: [{ type: "text", text: "accepted" }],

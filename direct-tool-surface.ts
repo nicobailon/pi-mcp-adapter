@@ -28,14 +28,14 @@ export function prepareDirectToolArguments(inputSchema: unknown, args: unknown):
     for (const [name, propertySchema] of Object.entries(properties)) {
       if (!Object.hasOwn(input, name) || typeof input[name] !== "string"
         || !propertySchema || typeof propertySchema !== "object" || Array.isArray(propertySchema)) continue;
-      const expectedType = (propertySchema as Record<string, unknown>).type;
-      if (expectedType !== "object" && expectedType !== "array") continue;
+      // A valid string may be intentional (for example, string | object).
+      // Only recover JSON when the advertised property rejects the raw value.
+      if (Check(propertySchema as never, input[name])) continue;
       try {
         const parsed: unknown = JSON.parse(input[name] as string);
-        const matches = expectedType === "array"
-          ? Array.isArray(parsed)
-          : parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
-        if (matches) {
+        const isContainer = Array.isArray(parsed)
+          || (parsed !== null && typeof parsed === "object");
+        if (isContainer && Check(propertySchema as never, parsed)) {
           prepared ??= { ...input };
           prepared[name] = parsed;
         }
