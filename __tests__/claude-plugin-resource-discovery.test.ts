@@ -12,7 +12,6 @@ afterEach(async () => {
 
 describe("Claude plugin skill resource discovery", () => {
   it("discovers plugin skills on startup and refreshes them on reload", async () => {
-    // This SDK fixture bypasses CLI theme initialization; do not start a watcher.
     initTheme("dark", false);
     const root = await mkdtemp(join(tmpdir(), "pi-mcp-claude-resources-"));
     roots.push(root);
