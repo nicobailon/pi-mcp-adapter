@@ -10,11 +10,7 @@ import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
  */
 const MIN_STEM_LENGTH = 4;
 
-/**
- * Preserve legacy ASCII alphanumeric runs. For each non-ASCII Unicode word
- * run, emit at most 64 adjacent bigrams; single characters do not become broad
- * substring matches.
- */
+// Keep ASCII tokens unchanged; bound adjacent bigrams for non-ASCII Unicode word runs.
 const MAX_UNICODE_BIGRAMS_PER_RUN = 64;
 const SEARCH_RUN = /[a-z0-9]+|(?:(?![a-z0-9])[\p{L}\p{N}\p{M}])+/gu;
 const ASCII_RUN = /^[a-z0-9]+$/;
