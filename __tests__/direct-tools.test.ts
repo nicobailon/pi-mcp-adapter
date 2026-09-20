@@ -716,6 +716,20 @@ describe("excludeTools filtering", () => {
     expect(reconstructed).toEqual([]);
   });
 
+  it("does not register either owner of a self-prefix collision", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const definition = { command: "demo", directTools: true };
+    const config = { mcpServers: { demo: definition } };
+    const cache: MetadataCache = { version: 1, servers: { demo: {
+      configHash: computeServerHash(definition),
+      cachedAt: Date.now(),
+      tools: [{ name: "search" }, { name: "demo_search" }],
+      resources: [],
+    } } };
+
+    expect(resolveDirectTools(config, cache, "server")).toEqual([]);
+  });
+
   it("filters excluded tools during direct tool registration from cache", () => {
     const config: McpConfig = {
       settings: { toolPrefix: "server" },

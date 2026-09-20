@@ -1,23 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildToolMetadata, formatSchema } from "../tool-metadata.ts";
-
-describe("buildToolMetadata names", () => {
-  it.each([
-    [[{ name: "search" }, { name: "demo_search" }]],
-    [[{ name: "demo_search" }, { name: "search" }]],
-  ])("fails closed independent of discovery order when tools share a canonical name", (tools) => {
-    const result = buildToolMetadata(
-      tools,
-      [],
-      { command: "demo" },
-      "demo",
-      "server",
-    );
-
-    expect(result.metadata).toEqual([]);
-    expect(result.failedTools).toEqual(expect.arrayContaining(["search", "demo_search"]));
-  });
-});
+import { formatSchema } from "../tool-metadata.ts";
 
 describe("formatSchema", () => {
   it("keeps simple object schemas compact", () => {
