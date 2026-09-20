@@ -1,6 +1,11 @@
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { isServerDisabled, type ServerDefinition } from "./types.ts";
-import { isTransientHttpConnectError, type McpServerManager, type ServerConnection } from "./server-manager.ts";
+import {
+  isTransientHttpConnectError,
+  isUnauthorizedHttpError,
+  type McpServerManager,
+  type ServerConnection,
+} from "./server-manager.ts";
 import { hasPendingAuth } from "./mcp-auth-flow.ts";
 import { logger } from "./logger.ts";
 import { formatTerminalError, parallelLimit, sanitizeTerminalText } from "./utils.ts";
@@ -441,6 +446,13 @@ export class McpLifecycleManager {
 
 function shouldReconnectAfterRefresh(error: unknown, hadSessionId: boolean): boolean {
   if (isTerminatedSession(error, hadSessionId)) return true;
+  // A 401 on a keep-alive refresh means the bearer token we baked into the
+  // transport at connect time has expired (e.g. Cloudflare Access 24h JWT).
+  // The new bearer-command resolver refreshes per-request, but env-var and
+  // bearerTokenStore tokens still bake at connect time. Treat 401 the same
+  // way as a terminated session so the lifecycle manager reconnects with a
+  // fresh token instead of staying in a permanent failure backoff.
+  if (isUnauthorizedHttpError(error)) return true;
   return error instanceof SdkError
     && (error.code === SdkErrorCode.NotConnected || error.code === SdkErrorCode.ConnectionClosed);
 }
