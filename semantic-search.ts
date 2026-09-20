@@ -23,8 +23,6 @@ export type SemanticSearchResult =
 
 interface Candidate {
   id: string;
-  path: string;
-  name: string;
   server: string;
   description: string;
   tool: ToolMetadata;
@@ -45,9 +43,8 @@ function stableHash(value: string): string {
 function eligibleMatches(state: McpExtensionState, server: string | undefined, allowed: Set<string>): RankedToolMatch[] {
   const matches: RankedToolMatch[] = [];
   for (const [serverName, metadata] of state.toolMetadata) {
-    if ((server && serverName !== server) || !allowed.has(serverName)) continue;
-    if (isServerDisabled(state.config.mcpServers[serverName])) continue;
-    if (isServerInActiveFailureBackoff(state, serverName)) continue;
+    if ((server && serverName !== server) || !allowed.has(serverName)
+      || isServerDisabled(state.config.mcpServers[serverName]) || isServerInActiveFailureBackoff(state, serverName)) continue;
     for (const tool of metadata) matches.push({ server: serverName, tool, score: 0 });
   }
   return matches;
@@ -82,7 +79,7 @@ function roundRobinNonLexical(query: string, matches: RankedToolMatch[]): Ranked
   return result;
 }
 
-export function selectSemanticCandidates(
+function selectSemanticCandidates(
   state: McpExtensionState,
   query: string,
   server: string | undefined,
@@ -101,14 +98,8 @@ export function selectSemanticCandidates(
     const broad = roundRobinNonLexical(query, eligible.filter(match => !lexicalPaths.has(`${match.server}\0${match.tool.name}`)));
     selected = [...first, ...broad.slice(0, limit - first.length)];
   }
-  return selected.map((match, index) => ({
-    id: `c${index}`,
-    path: match.tool.name,
-    name: match.tool.originalName,
-    server: match.server,
-    description: truncateUtf8(match.tool.description ?? "", 512),
-    tool: match.tool,
-  }));
+  return selected.map((match, index) => ({ id: `c${index}`, server: match.server,
+    description: truncateUtf8(match.tool.description ?? "", 512), tool: match.tool }));
 }
 
 export async function semanticSearch(
@@ -138,20 +129,20 @@ export async function semanticSearch(
       backend: { requested: "semantic", used: "semantic", degraded: false, model: settings.model, usage: { inputTokens: 0, outputTokens: 0 }, abstained: true },
     };
   }
-  const criteria = Object.fromEntries([
-    ...candidates.map(candidate => [candidate.id, { path: candidate.path }]),
-    ["none", { noSuitableTool: true }],
-  ]);
   const input: JevEvaluateInput = {
     state: {
       query,
-      candidates: candidates.map(({ id, path, name, server: candidateServer, description }) => ({ id, path, name, server: candidateServer, description })),
+      candidates: candidates.map(candidate => ({ id: candidate.id, path: candidate.tool.name,
+        name: candidate.tool.originalName, server: candidate.server, description: candidate.description })),
     },
     questions: {
       match: {
         type: "choice",
         instructions: "Rank which tool best matches the query. Choose none when no tool is suitable.",
-        criteria,
+        criteria: Object.fromEntries([
+          ...candidates.map(candidate => [candidate.id, { path: candidate.tool.name }]),
+          ["none", { noSuitableTool: true }],
+        ]),
       },
     },
     sources: [...new Set(candidates.map(candidate => candidate.server))],

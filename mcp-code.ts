@@ -220,9 +220,8 @@ export async function runMcpScript(
   const evaluate = async (input: unknown): Promise<WorkerResultPayload> => {
     const startedAt = Date.now();
     const index = calls.push({ operation: "evaluate", ok: false, error: "incomplete", durationMs: 0, startedAt }) - 1;
-    evaluationAttempts += 1;
     let envelope: JevEvaluationEnvelope;
-    if (evaluationAttempts > jevSettings.maxEvaluationsPerScript) {
+    if (++evaluationAttempts > jevSettings.maxEvaluationsPerScript) {
       envelope = { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation count budget exhausted." } };
     } else {
       envelope = await jevEvaluator(state, input as JevEvaluateInput, {
@@ -232,10 +231,8 @@ export async function runMcpScript(
       });
     }
     throwIfAborted(callSignal);
-    let envelopeJson = JSON.stringify(envelope);
-    if (!reserveIntermediateBytes(envelopeJson)) {
+    if (!reserveIntermediateBytes(JSON.stringify(envelope))) {
       envelope = { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation exceeds the remaining mcpScript intermediate transfer budget (16 MiB per script)." } };
-      envelopeJson = JSON.stringify(envelope);
     }
     calls[index] = envelope.ok
       ? {
@@ -244,7 +241,7 @@ export async function runMcpScript(
           durationMs: Date.now() - startedAt, startedAt,
         }
       : { operation: "evaluate", ok: false, error: envelope.error.code, durationMs: Date.now() - startedAt, startedAt };
-    return { envelope: JSON.parse(envelopeJson) };
+    return { envelope };
   };
 
   const searchTools = async (input?: SearchInput) => {

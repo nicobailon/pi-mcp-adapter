@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { runMcpScript } from "../mcp-code.ts";
 import { executeSearch } from "../proxy-modes.ts";
-import { selectSemanticCandidates, semanticSearch, type SemanticSearchEvaluator } from "../semantic-search.ts";
+import { semanticSearch, type SemanticSearchEvaluator } from "../semantic-search.ts";
 import type { JevEvaluateInput, JevEvaluationEnvelope } from "../jev-contracts.ts";
 import type { McpExtensionState } from "../state.ts";
 
@@ -116,11 +116,19 @@ describe("semantic search", () => {
     await semanticSearch(state, "anything", undefined, undefined, inspect);
   });
 
-  it("caps at 127 and reserves a deterministic nonlexical recovery lane", () => {
+  it("caps at 127 and reserves a deterministic nonlexical recovery lane", async () => {
     const state = stateWithTools(140);
     for (let index = 0; index < 70; index++) state.toolMetadata.get("demo")![index]!.description = `needle match ${index}`;
-    const first = selectSemanticCandidates(state, "needle", undefined, ["demo"], 127);
-    const second = selectSemanticCandidates(state, "needle", undefined, ["demo"], 127);
+    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo"], semanticCandidateLimit: 127 };
+    const sent: Array<Array<{ path: string; description: string }>> = [];
+    const inspect: SemanticSearchEvaluator = async (_state, input) => {
+      sent.push((input.state as { candidates: Array<{ path: string; description: string }> }).candidates);
+      return choiceEvaluator("none")(_state, input, { purpose: "semantic-search" });
+    };
+    await semanticSearch(state, "needle", undefined, undefined, inspect);
+    await semanticSearch(state, "needle", undefined, undefined, inspect);
+    const first = sent[0]!;
+    const second = sent[1]!;
     expect(first).toHaveLength(127);
     expect(first.map(candidate => candidate.path)).toEqual(second.map(candidate => candidate.path));
     expect(first.slice(63).some(candidate => !candidate.description.includes("needle"))).toBe(true);
