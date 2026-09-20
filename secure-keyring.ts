@@ -74,7 +74,6 @@ function shouldRecoverKeyring(error: unknown): boolean {
 
 function recoverKeyring(operation: "read" | "write" | "remove", service: string, account: string, payload?: string): string | undefined {
   try {
-    // Source modules live at package root; published CLI modules live in dist.
     const adjacentHelper = new URL("./mcp-keyring-helper.cjs", import.meta.url);
     const helper = existsSync(adjacentHelper) ? adjacentHelper : new URL("../mcp-keyring-helper.cjs", import.meta.url);
     const result = spawnSync("keyctl", ["session", "-", process.execPath, fileURLToPath(helper)], {
@@ -101,7 +100,6 @@ function recoverKeyring(operation: "read" | "write" | "remove", service: string,
     }
     return undefined;
   } catch {
-    // Subprocess output, parse excerpts and attached causes can contain secrets.
     throw new Error("Linux keyring recovery failed. Configure or unlock the OS credential store and retry.");
   }
 }
