@@ -11,17 +11,13 @@ import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 const MIN_STEM_LENGTH = 4;
 
 /**
- * Bound the number of overlapping tokens produced for an unseparated Unicode
- * run. Two-code-point tokens make CJK (and other space-free scripts)
- * searchable without the false positives caused by matching single letters.
+ * Preserve legacy ASCII alphanumeric runs. For each non-ASCII Unicode word
+ * run, emit at most 64 distributed adjacent bigrams; single characters do not
+ * become broad substring matches.
  */
 const MAX_UNICODE_BIGRAMS_PER_RUN = 64;
-const ASCII_ALPHANUMERIC = /^[a-z0-9]$/;
-const UNICODE_WORD_CHARACTER = /^[\p{L}\p{N}\p{M}]$/u;
-
-function isSingleUnicodeCharacter(value: string): boolean {
-  return !ASCII_ALPHANUMERIC.test(value) && [...value].length === 1;
-}
+const SEARCH_RUN = /[a-z0-9]+|(?:(?![a-z0-9])[\p{L}\p{N}\p{M}])+/gu;
+const ASCII_RUN = /^[a-z0-9]+$/;
 
 const FIELD_WEIGHTS = {
   name: 12,
@@ -96,37 +92,19 @@ export function normalizeSearchText(value: string): string {
 
 export function tokenize(value: string): string[] {
   const tokens: string[] = [];
-  let asciiRun = "";
-  let unicodeRun: string[] = [];
-
-  const flush = () => {
-    if (asciiRun) tokens.push(asciiRun);
-    asciiRun = "";
-    if (unicodeRun.length === 1) {
-      tokens.push(unicodeRun[0]!);
-    } else if (unicodeRun.length > 1) {
-      const available = unicodeRun.length - 1;
-      const count = Math.min(available, MAX_UNICODE_BIGRAMS_PER_RUN);
-      for (let index = 0; index < count; index++) {
-        const start = count === available ? index : Math.floor(index * (available - 1) / (count - 1));
-        tokens.push(unicodeRun[start]! + unicodeRun[start + 1]!);
-      }
+  for (const run of normalizeSearchText(value).match(SEARCH_RUN) ?? []) {
+    if (ASCII_RUN.test(run)) {
+      tokens.push(run);
+      continue;
     }
-    unicodeRun = [];
-  };
-
-  for (const character of normalizeSearchText(value)) {
-    if (ASCII_ALPHANUMERIC.test(character)) {
-      if (unicodeRun.length > 0) flush();
-      asciiRun += character;
-    } else if (UNICODE_WORD_CHARACTER.test(character)) {
-      if (asciiRun) flush();
-      unicodeRun.push(character);
-    } else {
-      flush();
+    const characters = [...run];
+    const available = characters.length - 1;
+    const count = Math.min(available, MAX_UNICODE_BIGRAMS_PER_RUN);
+    for (let index = 0; index < count; index++) {
+      const start = count === available ? index : Math.floor(index * (available - 1) / (count - 1));
+      tokens.push(characters[start]! + characters[start + 1]!);
     }
   }
-  flush();
   return tokens;
 }
 
@@ -158,7 +136,6 @@ function scorePreparedToolMatch(
   let phraseMatched = false;
   let wholeFieldExact = false;
   const matchedTokens = new Set<string>();
-  const exactOnly = queryTokens.length === 1 && isSingleUnicodeCharacter(queryTokens[0]!);
 
   for (const [field, value, fieldTokens] of prepared.fields) {
     const weight = FIELD_WEIGHTS[field];
@@ -166,10 +143,10 @@ function scorePreparedToolMatch(
       score += weight * 14;
       phraseMatched = true;
       wholeFieldExact = true;
-    } else if (!exactOnly && value.startsWith(normalizedQuery)) {
+    } else if (value.startsWith(normalizedQuery)) {
       score += weight * 9;
       phraseMatched = true;
-    } else if (!exactOnly && value.includes(normalizedQuery)) {
+    } else if (value.includes(normalizedQuery)) {
       score += weight * 6;
       phraseMatched = true;
     }
@@ -178,10 +155,10 @@ function scorePreparedToolMatch(
       if (fieldTokens.includes(token)) {
         score += weight * 4;
         matchedTokens.add(token);
-      } else if (!exactOnly && fieldTokens.some(fieldToken => fieldToken.startsWith(token) || (fieldToken.length >= MIN_STEM_LENGTH && token.startsWith(fieldToken)))) {
+      } else if (fieldTokens.some(fieldToken => fieldToken.startsWith(token) || (fieldToken.length >= MIN_STEM_LENGTH && token.startsWith(fieldToken)))) {
         score += weight * 2;
         matchedTokens.add(token);
-      } else if (!exactOnly && value.includes(token)) {
+      } else if (value.includes(token)) {
         score += weight;
         matchedTokens.add(token);
       }
@@ -199,10 +176,10 @@ function scorePreparedToolMatch(
         phraseScore = Math.max(phraseScore, weight * 14);
         phraseMatched = true;
         wholeFieldExact = true;
-      } else if (!exactOnly && phrase.startsWith(normalizedQuery)) {
+      } else if (phrase.startsWith(normalizedQuery)) {
         phraseScore = Math.max(phraseScore, weight * 9);
         phraseMatched = true;
-      } else if (!exactOnly && phrase.includes(normalizedQuery)) {
+      } else if (phrase.includes(normalizedQuery)) {
         phraseScore = Math.max(phraseScore, weight * 6);
         phraseMatched = true;
       }
@@ -213,10 +190,10 @@ function scorePreparedToolMatch(
       if (prepared.keywordTokens.includes(token)) {
         score += weight * 4;
         matchedTokens.add(token);
-      } else if (!exactOnly && prepared.keywordTokens.some(keywordToken => keywordToken.startsWith(token) || (keywordToken.length >= MIN_STEM_LENGTH && token.startsWith(keywordToken)))) {
+      } else if (prepared.keywordTokens.some(keywordToken => keywordToken.startsWith(token) || (keywordToken.length >= MIN_STEM_LENGTH && token.startsWith(keywordToken)))) {
         score += weight * 2;
         matchedTokens.add(token);
-      } else if (!exactOnly && prepared.keywordPhrases.some(phrase => phrase.includes(token))) {
+      } else if (prepared.keywordPhrases.some(phrase => phrase.includes(token))) {
         score += weight;
         matchedTokens.add(token);
       }

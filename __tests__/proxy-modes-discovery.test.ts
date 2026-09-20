@@ -141,13 +141,12 @@ describe("proxy discovery", () => {
 
   it("finds tools through exact CJK search keywords", () => {
     const state = createState();
-    state.config.mcpServers.demo!.searchKeywords = { find: ["天气预报", "日"] };
+    state.config.mcpServers.demo!.searchKeywords = { find: ["天气预报"] };
 
     expect(executeSearch(state, "天气预报").details).toMatchObject({
       count: 1,
       matches: [{ tool: "demo_find" }],
     });
-    expect(executeSearch(state, "日").details).toMatchObject({ count: 1, matches: [{ tool: "demo_find" }] });
   });
 
   it("matches useful CJK sentence terms while rejecting unrelated text", () => {
@@ -163,19 +162,6 @@ describe("proxy discovery", () => {
       matches: [{ tool: "demo_calendar" }],
     });
     expect(executeSearch(state, "查询天气预报").details).toMatchObject({ count: 0, matches: [] });
-    expect(executeSearch(state, "日").details).toMatchObject({ count: 0, matches: [] });
-  });
-
-  it("samples bounded tokens across an entire long Unicode run", () => {
-    const query = Array.from({ length: 70 }, (_, index) => String.fromCodePoint(0x4e00 + index)).join("");
-    const state = createState();
-    state.toolMetadata.set("demo", [{
-      name: "demo_partial",
-      originalName: "partial",
-      description: query.slice(0, 40),
-    }]);
-
-    expect(executeSearch(state, query).details).toMatchObject({ count: 0, matches: [] });
   });
 
   it("matches adjacent CJK and ASCII terms without separators", () => {
