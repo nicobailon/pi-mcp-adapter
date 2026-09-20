@@ -99,6 +99,17 @@ function getEnabledToolMatches(state: McpExtensionState, toolName: string, exact
   return matches;
 }
 
+function getEnabledOriginalToolMatches(state: McpExtensionState, toolName: string): { server: string; tool: ToolMetadata }[] {
+  const matches: { server: string; tool: ToolMetadata }[] = [];
+  for (const [server, metadata] of state.toolMetadata) {
+    if (isServerDisabled(state.config.mcpServers[server])) continue;
+    for (const tool of metadata) {
+      if (tool.originalName === toolName) matches.push({ server, tool });
+    }
+  }
+  return matches;
+}
+
 function serverBackoffResult(state: McpExtensionState, mode: string, serverName: string): ProxyToolResult {
   const failedAgo = getFailureAgeSeconds(state, serverName) ?? 0;
   const message = `Server "${serverName}" not available (last failed ${failedAgo}s ago)`;
@@ -1147,22 +1158,29 @@ export async function executeCall(
       serverName = exactMatches[0]!.server;
       toolMeta = exactMatches[0]!.tool;
     } else {
-      const prefixedScope = getPrefixedServerScope(state, toolName);
-      if (prefixedScope) {
-        serverName = prefixedScope;
-        const match = getCandidateToolMatch(state.toolMetadata.get(prefixedScope), toolName, prefixedScope, state);
-        if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, prefixedScope);
-        toolMeta = match;
+      const originalMatches = getEnabledOriginalToolMatches(state, toolName);
+      if (originalMatches.length > 1) return ambiguousToolResult("call", toolName);
+      if (originalMatches.length === 1) {
+        serverName = originalMatches[0]!.server;
+        toolMeta = originalMatches[0]!.tool;
       } else {
-        const matches: Array<{ server: string; tool: ToolMetadata }> = [];
-        for (const [server, metadata] of state.toolMetadata) {
-          if (isServerDisabled(state.config.mcpServers[server])) continue;
-          for (const tool of getCandidateToolMatches(metadata, toolName, server, state)) matches.push({ server, tool });
-        }
-        if (matches.length > 1) return ambiguousToolResult("call", toolName);
-        if (matches.length === 1) {
-          serverName = matches[0]!.server;
-          toolMeta = matches[0]!.tool;
+        const prefixedScope = getPrefixedServerScope(state, toolName);
+        if (prefixedScope) {
+          serverName = prefixedScope;
+          const match = getCandidateToolMatch(state.toolMetadata.get(prefixedScope), toolName, prefixedScope, state);
+          if (match === "ambiguous") return ambiguousServerToolResult("call", toolName, prefixedScope);
+          toolMeta = match;
+        } else {
+          const matches: Array<{ server: string; tool: ToolMetadata }> = [];
+          for (const [server, metadata] of state.toolMetadata) {
+            if (isServerDisabled(state.config.mcpServers[server])) continue;
+            for (const tool of getCandidateToolMatches(metadata, toolName, server, state)) matches.push({ server, tool });
+          }
+          if (matches.length > 1) return ambiguousToolResult("call", toolName);
+          if (matches.length === 1) {
+            serverName = matches[0]!.server;
+            toolMeta = matches[0]!.tool;
+          }
         }
       }
     }
