@@ -16,6 +16,7 @@ import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } 
 import { formatAuthRequiredMessage, formatMcpStatus, normalizeToolArguments, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
+import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -1611,6 +1612,15 @@ export async function executeCall(
       serverName,
       async (conn) => {
         await state.manager.ensureListen?.(serverName, conn);
+        if (conn.taskSession) {
+          return await callToolViaTaskSession(conn.taskSession, {
+            name: toolMeta.originalName,
+            args: normalizedArgs ?? {},
+            meta: uiSession?.requestMeta,
+            signal: ownedSignal,
+            requestTimeoutMs: requestOptions?.timeout,
+          }) as unknown as ClientCallToolResult;
+        }
         return abortable(conn.client.callTool({
           name: toolMeta.originalName,
           arguments: normalizedArgs,

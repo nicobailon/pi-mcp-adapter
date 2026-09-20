@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added opt-in TypeSafe Jev semantic tool search and host-mediated `jev.evaluate` for `mcpScript`, with secure OS-keyring credentials, fixed-origin bounded requests, explicit data-egress policy, examples, and metadata-only traces. Part of [#611](https://github.com/nicobailon/pi-mcp-adapter/issues/611). Thanks to [@nicobailon](https://github.com/nicobailon).
 - `/mcp edit [project|global]` opens the shared MCP config in an editor (Ctrl+G opens `$EDITOR`), refuses text that is not a JSONC object, and reloads after a save. Closes #593. Thanks to [@turisanapo](https://github.com/turisanapo) for PR #594.
+- Support for the MCP Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663). Tool calls that return a task handle are transparently polled to completion, task-time elicitation is routed through the normal elicitation UI and answered via `tasks/update`, aborting a call sends a cooperative `tasks/cancel`, and failed tasks surface as the typed JSON-RPC error a synchronous call would have produced. Built on `@modelcontextprotocol/ext-tasks`; active only when a 2026-07-28 connection's server advertises the extension, with a per-server `tasks: false` opt-out.
 
 ### Changed
 

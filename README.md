@@ -320,6 +320,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
 | `requestTimeoutMs` | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used) |
 | `protocolVersion` | `"legacy"` (default), `"auto"`, or `"2026-07-28"`; modern negotiation is opt-in |
+| `tasks` | MCP Tasks extension support on 2026-07-28 connections (default: true; set `false` to opt out); see [Task-augmented tool calls](#task-augmented-tool-calls) |
 | `exposeResources` | Expose MCP resources as tools (default: true) |
 | `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
 | `toolPrefix` | Override global `settings.toolPrefix` for this server (`"server"`, `"short"`, `"none"`, or `"mcp"`) |
@@ -347,6 +348,21 @@ The adapter defaults to `protocolVersion: "legacy"`. Omitting the field uses the
 Use `"auto"` to probe for MCP 2026-07-28 and conservatively fall back to the classic handshake when the server provides legacy evidence. Set it for Cloudflare Workers `createMcpHandler` and other MCP SDK v2 stateless servers. The adapter keeps `"legacy"` as the global default for compatibility. For stdio servers, the SDK probes with a short-lived sibling process before starting the session process, so each fresh auto connection adds one process spawn and can wait for the configured request timeout. Explicit Unix sockets are custom transports and probe in place. HTTP auto negotiation uses the actual Streamable HTTP connection; the adapter falls back to legacy SSE only when the endpoint definitively rejects Streamable HTTP (for example 404/405/406/415), never for authentication failures, cancellation, timeouts, or server errors.
 
 Use `"2026-07-28"` to pin that revision. Pinning has no legacy or SSE fallback and fails if the server does not offer the requested version.
+
+#### Task-augmented tool calls
+
+The adapter supports the [MCP Tasks extension](https://modelcontextprotocol.io/extensions/tasks/overview) (`io.modelcontextprotocol/tasks`, SEP-2663), which lets long-running tools return a durable task handle instead of blocking the connection. Support is negotiated per connection and needs no configuration: the task session only activates when a 2026-07-28 connection's server advertises the extension, so nothing changes for servers without task support. Set `tasks: false` on a server to opt out and keep the plain synchronous call path. Legacy (2025-11-25) experimental tasks are not supported.
+
+When active, tool calls keep their normal contract from the model's point of view:
+
+- A tool that returns a task handle is transparently polled to completion, honoring the server's suggested poll interval; the final result is returned as if the call had been synchronous.
+- If the task pauses for input (`input_required`), elicitation requests are routed through the same interactive elicitation UI as direct `elicitation/create` requests, and answers are delivered back via `tasks/update`.
+- Cancelling the Pi tool call sends a cooperative `tasks/cancel` to the server.
+- A task that fails with a JSON-RPC error surfaces as the same error a synchronous call would have produced; a tool result with `isError: true` is returned as a normal tool error.
+
+Task traffic is dispatched on a dedicated raw channel below the SDK client (the published MCP SDK does not yet decode task result shapes itself), built on the official `@modelcontextprotocol/ext-tasks` requester package. The channel chains onto the connected transport's handlers without replacing the transport, and raw task frames appear in `/mcp-trace` in both directions. Task status notifications (`notifications/tasks`) are not consumed; polling is used exclusively. `requestTimeoutMs` applies per task request (the initiating call and each poll), not to the overall task duration — a task that runs for hours holds the Pi tool call for as long as the model waits for it.
+
+One trade-off while tasks are active: every `tools/call` on that connection is dispatched through the task-aware path instead of `Client.callTool`, so the SDK's client-side output-schema validation of `structuredContent` and SEP-2243 `Mcp-Param-*` header mirroring do not run for those calls. Servers still validate their own results; only the client-side double-check is skipped.
 
 The stable SDK handles era-specific request envelopes, result decoding, list-changed subscriptions, cancellation, and multi-round-trip sampling/elicitation. The SDK's embedded-input progress callback does not expose the originating tool or resource identity, so the adapter cannot maintain a durable per-tool waiting status row; interactive sessions keep the existing input dialog visible, and proxy calls show request progress when UI is available. The adapter keeps strict OAuth issuer validation in every mode. Adapter-level roots support, standard MCP logging presentation, and configuration/UI for protocol cache hints are not yet implemented.
 

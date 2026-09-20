@@ -52,12 +52,15 @@ import {
   type OAuthAuthority,
 } from "./mcp-auth.ts";
 import { getBearerTokenForUrl } from "./mcp-bearer-store.ts";
-import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
+import { handleSamplingRequest, registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
 import {
+  handleElicitationRequest,
   handleUrlElicitation,
   registerElicitationHandler,
   type ServerElicitationConfig,
 } from "./elicitation-handler.ts";
+import { attachTaskSession, type RawRequestChannel } from "./mcp-tasks.ts";
+import type { TaskEnabledSession } from "@modelcontextprotocol/ext-tasks/client";
 import {
   interpolateEnvVars,
   resolveBearerToken,
@@ -196,6 +199,10 @@ export interface ServerConnection {
   status: "connected" | "closed" | "needs-auth";
   /** Catalog subscription health, tracked independently from transport health. */
   listenState: McpListenState;
+  /** ext-tasks requester session, attached when `tasks: true` and the server advertises the extension. */
+  taskSession?: TaskEnabledSession;
+  /** Raw JSON-RPC channel backing the task session on 2026-07-28 connections. */
+  taskChannel?: RawRequestChannel;
   listenSubscription?: McpSubscription;
   /** Last requested filter; the server's honored filter may be a subset. */
   listenFilter?: SubscriptionFilter;
@@ -1047,6 +1054,45 @@ export class McpServerManager {
       connection.prompts = promptResult.prompts;
       connection.promptDiscoveryFailed = promptResult.failed;
 
+      if (definition.tasks !== false) {
+        try {
+          const attachment = await attachTaskSession({
+            client,
+            serverName: name,
+            definition,
+            transport,
+            requestTimeoutMs: this.getResolvedRequestTimeoutMs(definition),
+            clientInfo: { name: `pi-mcp-${name}`, version: "1.0.0" },
+            clientCapabilities: this.buildClientCapabilities(),
+            ...(this.elicitationConfig
+              ? {
+                  onElicitation: (request: Parameters<typeof handleElicitationRequest>[1]) =>
+                    handleElicitationRequest({
+                      ...this.elicitationConfig!,
+                      serverName: name,
+                      onUrlAccepted: elicitationId => this.rememberUrlElicitation(name, elicitationId),
+                    }, request),
+                }
+              : {}),
+            ...(this.samplingConfig
+              ? {
+                  onSampling: (request: Parameters<typeof handleSamplingRequest>[1]) =>
+                    handleSamplingRequest({ ...this.samplingConfig!, serverName: name }, request),
+                }
+              : {}),
+          });
+          if (attachment && connection.status === "connected") {
+            connection.taskSession = attachment.session;
+            connection.taskChannel = attachment.channel;
+          } else if (attachment) {
+            attachment.channel.rejectAll("MCP connection closed");
+            await attachment.session.close().catch(() => {});
+          }
+        } catch (error) {
+          logger.debug(`Task session attach failed for ${name}: ${String(error)}`);
+        }
+      }
+
       return connection;
     } catch (error) {
       // If connectClientWithAbort closed the transport, await that exact close.
@@ -1753,6 +1799,11 @@ export class McpServerManager {
 
   private async disposeConnection(connection: ServerConnection): Promise<void> {
     const results = await Promise.allSettled([
+      // Release ext-tasks state first so its SDK adapter detaches before close.
+      Promise.resolve().then(async () => {
+        connection.taskChannel?.rejectAll("MCP connection closed");
+        await connection.taskSession?.close();
+      }).catch(() => {}),
       // Only client.close() is needed; the client owns the transport and will close it internally.
       Promise.resolve().then(() => connection.client.close()),
       this.traceWriter?.flush() ?? Promise.resolve(),

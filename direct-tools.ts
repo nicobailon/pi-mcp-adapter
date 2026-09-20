@@ -13,6 +13,7 @@ import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
 import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl } from "./utils.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
+import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 
@@ -310,6 +311,15 @@ export function createDirectToolExecutor(
         spec.serverName,
         async (conn) => {
           await state.manager.ensureListen?.(spec.serverName, conn);
+          if (conn.taskSession) {
+            return await callToolViaTaskSession(conn.taskSession, {
+              name: spec.originalName,
+              args: normalizedParams ?? {},
+              meta: uiSession?.requestMeta,
+              signal: ownedSignal,
+              requestTimeoutMs: requestOptions?.timeout,
+            }) as unknown as ClientCallToolResult;
+          }
           return abortable(conn.client.callTool({
             name: spec.originalName,
             arguments: normalizedParams,

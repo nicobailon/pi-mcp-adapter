@@ -330,6 +330,15 @@ export interface ServerEntry {
      * with no fallback. `auto` and `2026-07-28` must be set explicitly.
      */
     protocolVersion?: "legacy" | "auto" | "2026-07-28";
+    /**
+     * MCP Tasks extension (io.modelcontextprotocol/tasks, SEP-2663) support.
+     * On 2026-07-28 connections where the server advertises the extension, tool
+     * calls that return a task handle are transparently polled to completion,
+     * task-time elicitation is routed through the normal elicitation UI, and
+     * aborting a call cancels the remote task. Enabled by default; set to
+     * false to keep the plain synchronous call path.
+     */
+    tasks?: boolean;
     disabled?: boolean;
 }
 /** Only the literal boolean `true` disables a server. */
