@@ -50,6 +50,10 @@ function shellArg(value: string): string {
     : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function nodeCommand(source: string, ...args: string[]): string {
+  return `!${[process.execPath, "-e", source, ...args].map(shellArg).join(" ")}`;
+}
+
 vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation((info: unknown, options: ClientOptions) => {
@@ -303,24 +307,20 @@ describe("McpServerManager HTTP bearer auth", () => {
 
   it("cancels eager bearer command resolution with its connection attempt", async () => {
     const directory = mkdtempSync(join(tmpdir(), "pi-mcp-bearer-connect-abort-"));
-    const fixture = join(directory, "token.cjs");
     const started = join(directory, "started");
     const completed = join(directory, "completed");
-    writeFileSync(fixture, `
-const fs = require("node:fs");
-fs.writeFileSync(process.argv[2], "started");
-setTimeout(() => {
-  fs.writeFileSync(process.argv[3], "completed");
-  process.stdout.write("token\\n");
-}, 2000);
-`);
+    const command = nodeCommand(
+      "const fs=require('node:fs');fs.writeFileSync(process.argv[1],'started');setTimeout(()=>{fs.writeFileSync(process.argv[2],'completed');process.stdout.write('token\\n')},2000)",
+      started,
+      completed,
+    );
     const controller = new AbortController();
     const manager = new (await import("../server-manager.ts")).McpServerManager();
     try {
       const pending = manager.connect("remote", {
         url: "https://example.test/mcp",
         auth: "bearer",
-        bearerToken: `!${[process.execPath, fixture, started, completed].map(shellArg).join(" ")}`,
+        bearerToken: command,
       }, controller.signal);
       while (!existsSync(started)) await new Promise(resolve => setTimeout(resolve, 10));
       controller.abort(new Error("cancel bearer connect"));
@@ -339,15 +339,10 @@ setTimeout(() => {
 
     const fixtureDirectory = mkdtempSync(join(tmpdir(), "pi-mcp-bearer-http-"));
     const counterPath = join(fixtureDirectory, "counter.txt");
-    const fixturePath = join(fixtureDirectory, "token.cjs");
-    writeFileSync(fixturePath, `
-const fs = require("node:fs");
-const path = process.argv[2];
-const count = fs.existsSync(path) ? Number(fs.readFileSync(path, "utf8")) + 1 : 1;
-fs.writeFileSync(path, String(count));
-process.stdout.write("rotating-jwt-" + count + "\\n");
-`);
-    const command = `!${[process.execPath, fixturePath, counterPath].map(shellArg).join(" ")}`;
+    const command = nodeCommand(
+      "const fs=require('node:fs'),p=process.argv[1],n=fs.existsSync(p)?+fs.readFileSync(p,'utf8')+1:1;fs.writeFileSync(p,String(n));process.stdout.write(`rotating-jwt-${n}\\n`)",
+      counterPath,
+    );
     process.env.PI_MCP_ADAPTER_BEARER_COMMAND_TTL_MS = "5";
 
     try {
@@ -392,9 +387,6 @@ process.stdout.write("rotating-jwt-" + count + "\\n");
   });
 
   it("keeps requestHeadersCommand as the final Authorization authority", async () => {
-    const fixtureDirectory = mkdtempSync(join(tmpdir(), "pi-mcp-bearer-precedence-"));
-    const tokenPath = join(fixtureDirectory, "token.cjs");
-    writeFileSync(tokenPath, 'process.stdout.write("bearer-command-token\\n");\n');
     const manager = new (await import("../server-manager.ts")).McpServerManager();
     const originalFetch = globalThis.fetch;
     const seen: Array<{ authorization: string | null; method: string; body: string; source: string | null }> = [];
@@ -412,7 +404,7 @@ process.stdout.write("rotating-jwt-" + count + "\\n");
       await manager.connect("remote", {
         url: "https://example.test/mcp",
         auth: "bearer",
-        bearerToken: `!${[process.execPath, tokenPath].map(shellArg).join(" ")}`,
+        bearerToken: nodeCommand("process.stdout.write('bearer-command-token\\n')"),
         requestHeadersCommand: {
           command: process.execPath,
           args: ["-e", 'process.stdin.resume(); process.stdin.on("end", () => console.log(JSON.stringify({Authorization:"Bearer final-command"})))'],
@@ -434,7 +426,6 @@ process.stdout.write("rotating-jwt-" + count + "\\n");
     } finally {
       globalThis.fetch = originalFetch;
       await manager.closeAll();
-      rmSync(fixtureDirectory, { recursive: true, force: true });
     }
   });
 

@@ -7,11 +7,8 @@ const COMMAND_MAX_OUTPUT_BYTES = 1024 * 1024;
 const USE_PROCESS_GROUP = process.platform !== "win32";
 
 function resolveDefaultTtlMs(): number {
-  const raw = process.env[ENV_TTL_MS];
-  if (raw === undefined || raw === "") return DEFAULT_TTL_MS;
-  const parsed = Number(raw);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) return DEFAULT_TTL_MS;
-  return parsed;
+  const parsed = Number(process.env[ENV_TTL_MS] || DEFAULT_TTL_MS);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_TTL_MS;
 }
 
 function abortReason(signal: AbortSignal): unknown {
@@ -121,7 +118,7 @@ export class BearerCommandResolver {
   readonly #command: string;
   readonly #context: string;
   readonly #ttlMs: number;
-  #cached: { token: string; fetchedAt: number } | undefined;
+  #cached: { token: string; expiresAt: number } | undefined;
   #failure: { error: unknown; retryAt: number } | undefined;
   #inflight: Inflight | undefined;
 
@@ -134,7 +131,7 @@ export class BearerCommandResolver {
   resolve(signal?: AbortSignal): Promise<string> {
     if (signal?.aborted) return Promise.reject(abortReason(signal));
     const now = Date.now();
-    if (this.#cached !== undefined && now - this.#cached.fetchedAt < this.#ttlMs) {
+    if (this.#cached !== undefined && now < this.#cached.expiresAt) {
       return Promise.resolve(this.#cached.token);
     }
     if (this.#failure !== undefined && now < this.#failure.retryAt) {
@@ -146,11 +143,10 @@ export class BearerCommandResolver {
     let inflight = this.#inflight;
     if (inflight === undefined) {
       const controller = new AbortController();
-      inflight = { controller, promise: Promise.resolve(""), waiters: 0 };
-      const current = inflight;
-      current.promise = runCommand(this.#command, this.#context, controller.signal)
+      let current: Inflight;
+      const promise = runCommand(this.#command, this.#context, controller.signal)
         .then(token => {
-          this.#cached = { token, fetchedAt: Date.now() };
+          this.#cached = { token, expiresAt: Date.now() + this.#ttlMs };
           this.#failure = undefined;
           return token;
         })
@@ -166,7 +162,9 @@ export class BearerCommandResolver {
         .finally(() => {
           if (this.#inflight === current) this.#inflight = undefined;
         });
+      current = { controller, promise, waiters: 0 };
       this.#inflight = current;
+      inflight = current;
     }
     return this.#wait(inflight, signal);
   }
