@@ -44,6 +44,12 @@ const mocks = vi.hoisted(() => ({
   sseTransports: [] as HttpTransportMock[],
 }));
 
+function shellArg(value: string): string {
+  return process.platform === "win32"
+    ? `"${value.replace(/"/g, '""')}"`
+    : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation((info: unknown, options: ClientOptions) => {
@@ -322,8 +328,17 @@ describe("McpServerManager HTTP bearer auth", () => {
     // Cloudflare Access JWT is picked up without restarting the connection.
     const { McpServerManager } = await import("../server-manager.ts");
 
-    const counterPath = `/tmp/bcr-bearer-${Math.random().toString(36).slice(2)}.txt`;
-    const command = `!n=$(cat ${counterPath} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${counterPath}; echo rotating-jwt-$n`;
+    const fixtureDirectory = mkdtempSync(join(tmpdir(), "pi-mcp-bearer-http-"));
+    const counterPath = join(fixtureDirectory, "counter.txt");
+    const fixturePath = join(fixtureDirectory, "token.cjs");
+    writeFileSync(fixturePath, `
+const fs = require("node:fs");
+const path = process.argv[2];
+const count = fs.existsSync(path) ? Number(fs.readFileSync(path, "utf8")) + 1 : 1;
+fs.writeFileSync(path, String(count));
+process.stdout.write("rotating-jwt-" + count + "\\n");
+`);
+    const command = `!${[process.execPath, fixturePath, counterPath].map(shellArg).join(" ")}`;
     // Short TTL so the test can wait it out between fetches. The eager
     // resolve at connect time counts as the first run.
     process.env.PI_MCP_ADAPTER_BEARER_COMMAND_TTL_MS = "5";
@@ -371,6 +386,37 @@ describe("McpServerManager HTTP bearer auth", () => {
       expect(numbers[1]).toBeLessThan(numbers[2]);
     } finally {
       delete process.env.PI_MCP_ADAPTER_BEARER_COMMAND_TTL_MS;
+      rmSync(fixtureDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps requestHeadersCommand as the final Authorization authority", async () => {
+    const fixtureDirectory = mkdtempSync(join(tmpdir(), "pi-mcp-bearer-precedence-"));
+    const tokenPath = join(fixtureDirectory, "token.cjs");
+    writeFileSync(tokenPath, 'process.stdout.write("bearer-command-token\\n");\n');
+    const manager = new (await import("../server-manager.ts")).McpServerManager();
+    const originalFetch = globalThis.fetch;
+    const seen = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) =>
+      new Response(new Headers(init?.headers).get("authorization"), { status: 200 }));
+    globalThis.fetch = seen as typeof globalThis.fetch;
+    try {
+      await manager.connect("remote", {
+        url: "https://example.test/mcp",
+        auth: "bearer",
+        bearerToken: `!${[process.execPath, tokenPath].map(shellArg).join(" ")}`,
+        requestHeadersCommand: {
+          command: process.execPath,
+          args: ["-e", 'process.stdin.resume(); process.stdin.on("end", () => console.log(JSON.stringify({Authorization:"Bearer final-command"})))'],
+        },
+      });
+      const response = await mocks.httpTransports.at(-1)!.options.fetch!(new URL("https://example.test/mcp"), {
+        method: "POST",
+      });
+      expect(await response.text()).toBe("Bearer final-command");
+    } finally {
+      globalThis.fetch = originalFetch;
+      await manager.closeAll();
+      rmSync(fixtureDirectory, { recursive: true, force: true });
     }
   });
 

@@ -122,7 +122,11 @@ function localNetworkFailureCodes(error: unknown, seen = new Set<object>()): str
 }
 
 export function isUnauthorizedHttpError(error: unknown): boolean {
-  return error instanceof UnauthorizedError || (error instanceof SdkHttpError && error.status === 401);
+  return error instanceof UnauthorizedError
+    || (error instanceof SdkHttpError && error.status === 401)
+    // The pinned SDK emits this plain Error when bearer request headers are
+    // used without an OAuth authProvider.
+    || (error instanceof Error && /^Error POSTing to endpoint \(HTTP 401\):/.test(error.message));
 }
 
 function shouldFallbackToSse(error: unknown, definition: ServerDefinition): boolean {
@@ -239,8 +243,8 @@ function createBearerCommandFetch(
 ): FetchLike {
   const innerFetch: FetchLike = delegate ?? ((input, init) => globalThis.fetch(input, init));
   return async (input, init) => {
-    const token = await resolver.resolve();
     const request = new Request(input, init);
+    const token = await resolver.resolve(request.signal);
     const headers = new Headers(request.headers);
     headers.set("Authorization", `Bearer ${token}`);
     // FetchLike accepts string | URL, not Request, so unwrap the URL.
@@ -1423,11 +1427,9 @@ export class McpServerManager {
     const commandFetch = definition.requestHeadersCommand
       ? createRequestHeadersCommandFetch(definition.requestHeadersCommand, caFetch?.fetch)
       : caFetch?.fetch;
-    // Inject the bearer-token `!command` resolver as the outermost fetch
-    // wrapper so any Authorization header from requestHeadersCommand or the
-    // SDK transport is overwritten with the freshly resolved token. The
-    // resolver caches per TTL, so cloudflared etc. only re-spawn on cache
-    // expiry, not on every HTTP request.
+    // Inject the bearer-token `!command` before delegating to the command
+    // wrapper. requestHeadersCommand therefore remains the final authority
+    // over request headers, as documented. The resolver caches per TTL.
     const bearerFetch = bearerCommandResolver
       ? createBearerCommandFetch(bearerCommandResolver, commandFetch)
       : commandFetch;
