@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { logger } from "../logger.ts";
 
 type TransportOptions = {
   requestInit?: { headers?: Record<string, string> };
@@ -200,6 +201,74 @@ describe("McpServerManager.reconnect", () => {
     expect(manager.getConnection("remote")).toBe(fresh);
     expect(fresh).not.toBe(stale);
     expect(staleClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts and awaits replacement startup during shutdown", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+
+    const stale = await manager.connect("remote", def);
+    const candidateStart = deferred();
+    mocks.connectImplementations.push(() => candidateStart.promise);
+
+    const reconnecting = manager.reconnect("remote", def, stale);
+    await vi.waitFor(() => expect(mocks.clients).toHaveLength(2));
+    let reconnectSettled = false;
+    void reconnecting.then(
+      () => { reconnectSettled = true; },
+      () => { reconnectSettled = true; },
+    );
+
+    await manager.closeAll();
+    await Promise.resolve();
+    const settledBeforeCandidateRelease = reconnectSettled;
+
+    // Release the deliberately non-cooperative mock so the RED implementation
+    // cannot leave work behind after the assertion is recorded.
+    candidateStart.resolve();
+    await expect(reconnecting).rejects.toThrow("closed while reconnecting");
+
+    expect(settledBeforeCandidateRelease).toBe(true);
+    expect(mocks.clients[1].close).toHaveBeenCalledTimes(1);
+    expect(manager.getConnection("remote")).toBeUndefined();
+  });
+
+  it("does not return a published replacement disposed by a concurrent close", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+
+    const stale = await manager.connect("remote", def);
+    const staleCleanup = deferred();
+    stale.client.close.mockImplementation(() => staleCleanup.promise);
+
+    const reconnecting = manager.reconnect("remote", def, stale);
+    await vi.waitFor(() => expect(stale.client.close).toHaveBeenCalledTimes(1));
+    const fresh = manager.getConnection("remote")!;
+    expect(fresh).not.toBe(stale);
+
+    await manager.close("remote");
+    staleCleanup.resolve();
+
+    await expect(reconnecting).rejects.toThrow("closed while reconnecting");
+    expect(fresh.client.close).toHaveBeenCalledTimes(1);
+    expect(manager.getConnection("remote")).toBeUndefined();
+  });
+
+  it("keeps a published replacement successful while reporting stale cleanup failure", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const debug = vi.spyOn(logger, "debug").mockImplementation(() => undefined);
+
+    const stale = await manager.connect("remote", def);
+    const cleanupFailure = new Error("stale cleanup failed");
+    stale.client.close.mockRejectedValueOnce(cleanupFailure);
+
+    const fresh = await manager.reconnect("remote", def, stale);
+
+    expect(manager.getConnection("remote")).toBe(fresh);
+    expect(fresh.status).toBe("connected");
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining("stale cleanup failed"));
+    debug.mockRestore();
   });
 
   it("retains the old route when replacement startup fails", async () => {
