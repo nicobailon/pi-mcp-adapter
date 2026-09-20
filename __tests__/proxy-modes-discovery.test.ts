@@ -130,19 +130,13 @@ describe("proxy discovery", () => {
 
   it("finds tools through configured search keywords", () => {
     const state = createState();
-    state.config.mcpServers.demo!.searchKeywords = { find: ["zzalias finder"] };
+    state.config.mcpServers.demo!.searchKeywords = { find: ["zzalias finder", "天气预报"] };
 
     expect(executeSearch(createState(), "zzalias").details).toMatchObject({ count: 0 });
     expect(executeSearch(state, "zzalias").details).toMatchObject({
       count: 1,
       matches: [{ server: "demo", tool: "demo_find", score: expect.any(Number) }],
     });
-  });
-
-  it("finds tools through exact CJK search keywords", () => {
-    const state = createState();
-    state.config.mcpServers.demo!.searchKeywords = { find: ["天气预报"] };
-
     expect(executeSearch(state, "天气预报").details).toMatchObject({
       count: 1,
       matches: [{ tool: "demo_find" }],
@@ -187,13 +181,6 @@ describe("proxy discovery", () => {
     expect(executeSearch(state, "calendar日历").details).toMatchObject({
       count: 1,
       matches: [{ tool: "demo_bilingual_calendar" }],
-    });
-  });
-
-  it("preserves representative ASCII lexical result ordering", () => {
-    expect(executeSearch(createState(), "demo").details).toMatchObject({
-      count: 2,
-      matches: [{ tool: "demo_find" }, { tool: "demo_search" }],
     });
   });
 

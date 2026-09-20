@@ -12,8 +12,8 @@ const MIN_STEM_LENGTH = 4;
 
 /**
  * Preserve legacy ASCII alphanumeric runs. For each non-ASCII Unicode word
- * run, emit at most 64 distributed adjacent bigrams; single characters do not
- * become broad substring matches.
+ * run, emit at most 64 adjacent bigrams; single characters do not become broad
+ * substring matches.
  */
 const MAX_UNICODE_BIGRAMS_PER_RUN = 64;
 const SEARCH_RUN = /[a-z0-9]+|(?:(?![a-z0-9])[\p{L}\p{N}\p{M}])+/gu;
@@ -97,12 +97,14 @@ export function tokenize(value: string): string[] {
       tokens.push(run);
       continue;
     }
-    const characters = [...run];
-    const available = characters.length - 1;
-    const count = Math.min(available, MAX_UNICODE_BIGRAMS_PER_RUN);
-    for (let index = 0; index < count; index++) {
-      const start = count === available ? index : Math.floor(index * (available - 1) / (count - 1));
-      tokens.push(characters[start]! + characters[start + 1]!);
+    let previous = "";
+    let emitted = 0;
+    for (const character of run) {
+      if (previous) {
+        tokens.push(previous + character);
+        if (++emitted === MAX_UNICODE_BIGRAMS_PER_RUN) break;
+      }
+      previous = character;
     }
   }
   return tokens;
