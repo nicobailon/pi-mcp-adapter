@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { abortable } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
-import { getToolApprovalIdentity, rememberToolApproval } from "./session-approvals.ts";
+import { getServerApprovalIdentity, getToolApprovalIdentity, rememberToolApproval } from "./session-approvals.ts";
 import {
   getToolNameCandidates,
   matchesToolPattern,
@@ -137,6 +137,9 @@ export async function ensureToolCallApproved(
   origin: McpToolApprovalOrigin = toolMeta.resourceUri ? "resource" : "proxy",
   approvalMetadata?: ReadonlyMap<string, readonly ToolMetadata[]>,
 ): Promise<ToolCallApprovalResult> {
+  const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
+  const approvedServers = state.approvedServers ??= new Map();
+  const serverIdentity = getServerApprovalIdentity(state, serverName);
   const brokerDecision = await requestBrokerApproval(state, serverName, toolMeta, args, origin, signal);
   if (brokerDecision === "allow_once") return { ok: true };
   if (brokerDecision === "allow_for_session") {
@@ -144,6 +147,15 @@ export async function ensureToolCallApproved(
     return { ok: true };
   }
   if (brokerDecision === "deny") return { ok: false, reason: "denied" };
+
+  const serverGrant = approvedServers.get(serverName);
+  const liveServerIdentity = getServerApprovalIdentity(state, serverName);
+  if (serverGrant && state.approvedServers === approvedServers
+    && serverGrant.definition === liveServerIdentity?.definition && serverGrant.hash === liveServerIdentity?.hash) {
+    ownedSignal?.throwIfAborted();
+    return { ok: true };
+  }
+  approvedServers.delete(serverName);
 
   const { cacheKey } = getToolApprovalIdentity(serverName, toolMeta, args);
   const approvedToolCalls = state.approvedToolCalls ??= new Map<string, true>();
@@ -163,15 +175,25 @@ export async function ensureToolCallApproved(
   const sanitized = sanitizeTerminalText(json);
   const preview = sanitized.length > 500 ? `${sanitized.slice(0, 500)}...` : sanitized;
   const title = `MCP: ${sanitizeTerminalText(serverName)} wants to run ${sanitizeTerminalText(toolMeta.originalName)}`;
-  const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
+  const serverScope = "Allow server for this session permits all tools and arguments on this server until reload or session/branch change. Other security and UI consent checks still apply.";
   const decision = await abortable(
     state.ui.select(
-      `${title}\n\nArguments:\n${preview}`,
-      ["Allow once", "Allow for session", "Deny"],
+      `${title}\n\nArguments:\n${preview}\n\n${serverScope}`,
+      ["Allow once", "Allow for session", "Allow server for this session", "Deny"],
     ),
     ownedSignal,
   );
 
+  if (decision === "Allow server for this session") {
+    ownedSignal?.throwIfAborted();
+    const currentIdentity = getServerApprovalIdentity(state, serverName);
+    if (!serverIdentity || state.approvedServers !== approvedServers
+      || currentIdentity?.definition !== serverIdentity.definition || currentIdentity.hash !== serverIdentity.hash) {
+      return { ok: false, reason: "denied" };
+    }
+    approvedServers.set(serverName, serverIdentity);
+    return { ok: true };
+  }
   if (decision === "Allow once") {
     return { ok: true };
   }
