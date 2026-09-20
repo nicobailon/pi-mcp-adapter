@@ -19,6 +19,10 @@ const MAX_UNICODE_BIGRAMS_PER_RUN = 64;
 const ASCII_ALPHANUMERIC = /^[a-z0-9]$/;
 const UNICODE_WORD_CHARACTER = /^[\p{L}\p{N}\p{M}]$/u;
 
+function isSingleUnicodeCharacter(value: string): boolean {
+  return !ASCII_ALPHANUMERIC.test(value) && [...value].length === 1;
+}
+
 const FIELD_WEIGHTS = {
   name: 12,
   originalName: 10,
@@ -98,10 +102,14 @@ export function tokenize(value: string): string[] {
   const flush = () => {
     if (asciiRun) tokens.push(asciiRun);
     asciiRun = "";
-    if (unicodeRun.length > 1) {
-      const count = Math.min(unicodeRun.length - 1, MAX_UNICODE_BIGRAMS_PER_RUN);
+    if (unicodeRun.length === 1) {
+      tokens.push(unicodeRun[0]!);
+    } else if (unicodeRun.length > 1) {
+      const available = unicodeRun.length - 1;
+      const count = Math.min(available, MAX_UNICODE_BIGRAMS_PER_RUN);
       for (let index = 0; index < count; index++) {
-        tokens.push(unicodeRun[index]! + unicodeRun[index + 1]!);
+        const start = count === available ? index : Math.floor(index * (available - 1) / (count - 1));
+        tokens.push(unicodeRun[start]! + unicodeRun[start + 1]!);
       }
     }
     unicodeRun = [];
@@ -150,6 +158,7 @@ function scorePreparedToolMatch(
   let phraseMatched = false;
   let wholeFieldExact = false;
   const matchedTokens = new Set<string>();
+  const exactOnly = queryTokens.length === 1 && isSingleUnicodeCharacter(queryTokens[0]!);
 
   for (const [field, value, fieldTokens] of prepared.fields) {
     const weight = FIELD_WEIGHTS[field];
@@ -157,10 +166,10 @@ function scorePreparedToolMatch(
       score += weight * 14;
       phraseMatched = true;
       wholeFieldExact = true;
-    } else if (value.startsWith(normalizedQuery)) {
+    } else if (!exactOnly && value.startsWith(normalizedQuery)) {
       score += weight * 9;
       phraseMatched = true;
-    } else if (value.includes(normalizedQuery)) {
+    } else if (!exactOnly && value.includes(normalizedQuery)) {
       score += weight * 6;
       phraseMatched = true;
     }
@@ -169,10 +178,10 @@ function scorePreparedToolMatch(
       if (fieldTokens.includes(token)) {
         score += weight * 4;
         matchedTokens.add(token);
-      } else if (fieldTokens.some(fieldToken => fieldToken.startsWith(token) || (fieldToken.length >= MIN_STEM_LENGTH && token.startsWith(fieldToken)))) {
+      } else if (!exactOnly && fieldTokens.some(fieldToken => fieldToken.startsWith(token) || (fieldToken.length >= MIN_STEM_LENGTH && token.startsWith(fieldToken)))) {
         score += weight * 2;
         matchedTokens.add(token);
-      } else if (value.includes(token)) {
+      } else if (!exactOnly && value.includes(token)) {
         score += weight;
         matchedTokens.add(token);
       }
@@ -190,10 +199,10 @@ function scorePreparedToolMatch(
         phraseScore = Math.max(phraseScore, weight * 14);
         phraseMatched = true;
         wholeFieldExact = true;
-      } else if (phrase.startsWith(normalizedQuery)) {
+      } else if (!exactOnly && phrase.startsWith(normalizedQuery)) {
         phraseScore = Math.max(phraseScore, weight * 9);
         phraseMatched = true;
-      } else if (phrase.includes(normalizedQuery)) {
+      } else if (!exactOnly && phrase.includes(normalizedQuery)) {
         phraseScore = Math.max(phraseScore, weight * 6);
         phraseMatched = true;
       }
@@ -204,10 +213,10 @@ function scorePreparedToolMatch(
       if (prepared.keywordTokens.includes(token)) {
         score += weight * 4;
         matchedTokens.add(token);
-      } else if (prepared.keywordTokens.some(keywordToken => keywordToken.startsWith(token) || (keywordToken.length >= MIN_STEM_LENGTH && token.startsWith(keywordToken)))) {
+      } else if (!exactOnly && prepared.keywordTokens.some(keywordToken => keywordToken.startsWith(token) || (keywordToken.length >= MIN_STEM_LENGTH && token.startsWith(keywordToken)))) {
         score += weight * 2;
         matchedTokens.add(token);
-      } else if (prepared.keywordPhrases.some(phrase => phrase.includes(token))) {
+      } else if (!exactOnly && prepared.keywordPhrases.some(phrase => phrase.includes(token))) {
         score += weight;
         matchedTokens.add(token);
       }
