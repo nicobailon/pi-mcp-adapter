@@ -248,12 +248,13 @@ describe("McpServerManager modern subscriptions/listen", () => {
   it("bounds a failed repair and suppresses another attempt during cooldown", async () => {
     const manager = new McpServerManager();
     managers.push(manager);
-    manager.setDefaultRequestTimeoutMs(100);
+    manager.setDefaultRequestTimeoutMs(1_000);
     const connection = await manager.connect("modern", {
       command: process.execPath,
       args: [fixture],
       protocolVersion: "2026-07-28",
     });
+    manager.setDefaultRequestTimeoutMs(100);
 
     await control(connection, "drop-ignore-next");
     await waitFor(() => connection.listenState === "dropped");

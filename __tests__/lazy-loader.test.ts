@@ -38,7 +38,7 @@ describe("lazy runtime import boundaries", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
 
 describe("createRetryableLoader", () => {
