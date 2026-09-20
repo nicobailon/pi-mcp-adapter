@@ -296,6 +296,16 @@ describe("callToolViaTaskSession", () => {
     expect(close).toHaveBeenCalled();
   });
 
+  it("cancels the remote task when the signal aborted while callTool was resolving", async () => {
+    const { execution, cancel } = fakeExecution(new TaskCancelledError());
+    const { session } = fakeSession(execution);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(callToolViaTaskSession(session, { name: "t", args: {}, signal: controller.signal }))
+      .rejects.toThrow();
+    expect(cancel).toHaveBeenCalled();
+  });
+
   it("does not register a cancel hook for immediate results", async () => {
     const { execution, cancel } = fakeExecution(
       { status: "completed", result: { content: [] } },

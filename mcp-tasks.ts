@@ -383,11 +383,14 @@ export async function callToolViaTaskSession(
   let onAbort: (() => void) | undefined;
   if (signal !== undefined && execution.kind === "task") {
     // settle({ signal }) only stops waiting locally; propagate the abort as a
-    // cooperative remote cancellation so the server can stop the work.
+    // cooperative remote cancellation so the server can stop the work. The
+    // signal may have aborted while callTool was resolving, so fire directly
+    // for an abort the listener would miss.
     onAbort = () => {
       void execution.cancel().catch(() => {});
     };
-    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
   }
   try {
     const settlement = await execution.settle(signal === undefined ? {} : { signal });

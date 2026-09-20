@@ -1076,8 +1076,13 @@ export class McpServerManager {
               : {}),
             ...(this.samplingConfig
               ? {
-                  onSampling: (request: Parameters<typeof handleSamplingRequest>[1]) =>
-                    handleSamplingRequest({ ...this.samplingConfig!, serverName: name }, request),
+                  onSampling: (request: Parameters<typeof handleSamplingRequest>[1], signal?: AbortSignal) =>
+                    handleSamplingRequest({
+                      ...this.samplingConfig!,
+                      serverName: name,
+                      // Cancelling the task should also stop the local sampling run.
+                      getSignal: () => combineAbortSignals(this.samplingConfig!.getSignal(), signal),
+                    }, request),
                 }
               : {}),
           });
