@@ -7,7 +7,7 @@ const DEFAULTS = {
     semanticSearch: false, scriptEvaluation: false, allowedServers: [], model: "jev-1.13.0",
     requestTimeoutMs: 5_000, maxRetries: 0, maxStateBytes: 262_144,
     maxQuestionsPerRequest: 64, maxEvaluationsPerScript: 8,
-    maxEvaluationBytesPerScript: 524_288, semanticCandidateLimit: 127,
+    maxEvaluationBytesPerScript: 524_288, maxEvaluationTokensPerScript: 32_768, semanticCandidateLimit: 127,
     semanticMinProbability: 0.2,
 };
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
@@ -61,6 +61,7 @@ export function validateJevSettings(value) {
         maxQuestionsPerRequest: integer(input.maxQuestionsPerRequest, DEFAULTS.maxQuestionsPerRequest, 1, 128, "settings.jev.maxQuestionsPerRequest"),
         maxEvaluationsPerScript: integer(input.maxEvaluationsPerScript, DEFAULTS.maxEvaluationsPerScript, 1, 32, "settings.jev.maxEvaluationsPerScript"),
         maxEvaluationBytesPerScript: integer(input.maxEvaluationBytesPerScript, DEFAULTS.maxEvaluationBytesPerScript, 1, 4_194_304, "settings.jev.maxEvaluationBytesPerScript"),
+        maxEvaluationTokensPerScript: integer(input.maxEvaluationTokensPerScript, DEFAULTS.maxEvaluationTokensPerScript, 1, 1_000_000, "settings.jev.maxEvaluationTokensPerScript"),
         semanticCandidateLimit: integer(input.semanticCandidateLimit, DEFAULTS.semanticCandidateLimit, 2, 127, "settings.jev.semanticCandidateLimit"),
         semanticMinProbability: probability,
     };

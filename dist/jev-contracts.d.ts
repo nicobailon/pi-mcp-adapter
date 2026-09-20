@@ -68,6 +68,7 @@ export interface ResolvedJevSettings {
     maxQuestionsPerRequest: number;
     maxEvaluationsPerScript: number;
     maxEvaluationBytesPerScript: number;
+    maxEvaluationTokensPerScript: number;
     semanticCandidateLimit: number;
     semanticMinProbability: number;
 }

@@ -572,7 +572,7 @@ Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — t
 
 #### Opt-in Jev evaluation and semantic search
 
-Jev is disabled by default: configuring a key alone performs no credential lookup or network I/O. Enabled evaluations use pinned model `jev-1.13.0` at the fixed origin `https://api.typesafe.ai`. Review TypeSafe's current privacy and retention policies before sending data.
+Jev is disabled by default: configuring a key alone performs no credential lookup or network I/O. Enabled evaluations use pinned model `jev-1.13.0` at the fixed origin `https://api.typesafe.ai`. Review TypeSafe's current [legal terms](https://docs.typesafe.ai/legal), including privacy and retention, before opt-in; a no-training commitment does not mean zero retention.
 
 On desktops, store the API key in the OS keyring (recommended):
 
@@ -589,7 +589,8 @@ pi-mcp-adapter key status typesafe
     "jev": {
       "semanticSearch": true,
       "scriptEvaluation": true,
-      "allowedServers": ["github"]
+      "allowedServers": ["github"],
+      "maxEvaluationTokensPerScript": 32768
     }
   }
 }
@@ -597,9 +598,11 @@ pi-mcp-adapter key status typesafe
 
 Request semantic discovery explicitly with `mcp({ search: "triage customer reports", searchMode: "semantic" })` or `tools.search({ query: "triage customer reports", searchMode: "semantic" })`. Regex is incompatible. Timeout, rate-limit, and service failures return marked lexical fallback; credential, policy, configuration, and response failures do not.
 
-Optional `jev` controls bound timeout/retries, request and script budgets, semantic candidates (at most 127), and minimum probability. The endpoint, headers, and SDK logging are not configurable.
+Optional `jev` controls bound timeout/retries, request and script budgets, semantic candidates (at most 127), and minimum probability. The cumulative token budget uses provider-reported input plus output usage. Exact pre-response admission is unavailable without the provider tokenizer, so byte/question/state limits bound requests before dispatch; a response that exceeds the remaining token budget is discarded and exhausts it. The endpoint, headers, and SDK logging are not configurable.
 
 `await jev.evaluate({ state, questions, sources })` returns `{ ok, data }` or `{ ok: false, error }`. `sources` must name every MCP server represented in `state`; this is a declaration, not automatic tracking. Script count/byte/deadline limits apply, and later `tools.call` operations still require normal authentication and approval. See `examples/jev-semantic-filter.mjs` and `examples/jev-accessibility-loop.mjs`.
+
+No paid live evaluation has been run. Because these features remain default-off, a paid live interoperability check requires separate authorization and is a pre-enable/release gate, not part of normal installation or CI.
 
 For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. Run that code with the default-on `mcpScript` tool. For a single MCP call, search, describe, status check, or auth action, use `mcp` instead. Set `settings.scriptMode` to `false` to hide both the scripting tool and its bundled skill.
 

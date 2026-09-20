@@ -109,6 +109,28 @@ describe("mcpScript jev.evaluate", () => {
     expect(providerCalls).toBe(1);
   });
 
+  it("enforces cumulative provider-reported tokens at exact and overshoot boundaries", async () => {
+    const exactEvaluator = evaluatorReturning(success);
+    const exact = await runMcpScript(
+      makeState({ scriptEvaluation: true, maxEvaluationTokensPerScript: 19 }),
+      `return [await jev.evaluate(${JSON.stringify(input)}), await jev.evaluate(${JSON.stringify(input)})];`,
+      2_000, undefined, undefined, exactEvaluator,
+    );
+    expect(JSON.parse(text(exact))).toMatchObject([{ ok: true }, { ok: false, error: { code: "budget_exhausted" } }]);
+    expect(exactEvaluator).toHaveBeenCalledTimes(1);
+
+    const overshootEvaluator = evaluatorReturning(success);
+    const overshoot = await runMcpScript(
+      makeState({ scriptEvaluation: true, maxEvaluationTokensPerScript: 18 }),
+      `return [await jev.evaluate(${JSON.stringify(input)}), await jev.evaluate(${JSON.stringify(input)})];`,
+      2_000, undefined, undefined, overshootEvaluator,
+    );
+    const results = JSON.parse(text(overshoot));
+    expect(results).toMatchObject([{ ok: false, error: { code: "budget_exhausted" } }, { ok: false, error: { code: "budget_exhausted" } }]);
+    expect(JSON.stringify(results)).not.toContain("answers");
+    expect(overshootEvaluator).toHaveBeenCalledTimes(1);
+  });
+
   it("charges evaluation responses to the shared 16 MiB transfer budget", async () => {
     const oversized = { ok: true, data: { ...success.data, padding: "x".repeat(16 * 1024 * 1024) } } as unknown as JevEvaluationEnvelope;
     const result = await runMcpScript(makeState(), `const value = await jev.evaluate(${JSON.stringify(input)}); return value.ok ? "unexpected" : value.error.code;`, 4_000, undefined, undefined, evaluatorReturning(oversized));

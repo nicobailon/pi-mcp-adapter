@@ -417,6 +417,8 @@ export interface McpSettings {
         maxQuestionsPerRequest?: number;
         maxEvaluationsPerScript?: number;
         maxEvaluationBytesPerScript?: number;
+        /** Cumulative provider-reported input plus output tokens per script. Defaults to 32768. */
+        maxEvaluationTokensPerScript?: number;
         /** Maximum semantic candidates per request. Defaults to 127; range 2..127. */
         semanticCandidateLimit?: number;
         semanticMinProbability?: number;

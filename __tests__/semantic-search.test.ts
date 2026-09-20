@@ -140,6 +140,8 @@ describe("semantic search", () => {
     expect(ranked.ok && ranked.matches.map(match => match.tool.name).slice(0, 2)).toEqual(["demo_tool_1", "demo_tool_0"]);
     const none = await semanticSearch(state, "query", undefined, undefined, choiceEvaluator("none"));
     expect(none).toMatchObject({ ok: true, matches: [], backend: { abstained: true } });
+    const inconsistentNone = await semanticSearch(state, "query", undefined, undefined, choiceEvaluator("none", { c0: 0.9, none: 0.1 }));
+    expect(inconsistentNone).toMatchObject({ ok: true, matches: [], backend: { abstained: true } });
     state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo", "other"], semanticMinProbability: 0.9 };
     const below = await semanticSearch(state, "query", undefined, undefined, choiceEvaluator("demo_tool_0"));
     expect(below).toMatchObject({ ok: true, matches: [], backend: { abstained: true } });
@@ -203,5 +205,21 @@ describe("semantic search", () => {
       evaluator,
     );
     expect(result.details).toMatchObject({ error: "timeout", calls: [{ operation: "search", query: "umbrella", ok: false, error: "incomplete" }] });
+  });
+
+  it("applies the script token budget to semantic worker searches", async () => {
+    const state = stateWithTools();
+    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo", "other"], maxEvaluationTokensPerScript: 14 };
+    const evaluator = choiceEvaluator("other_weather");
+    const result = await runMcpScript(
+      state,
+      'return [await tools.search({ query: "umbrella", searchMode: "semantic" }), await tools.search({ query: "umbrella", searchMode: "semantic" })]',
+      2_000, undefined, undefined, undefined, evaluator,
+    );
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject([
+      { error: { code: "budget_exhausted" } },
+      { error: { code: "budget_exhausted" } },
+    ]);
+    expect(evaluator).toHaveBeenCalledTimes(1);
   });
 });

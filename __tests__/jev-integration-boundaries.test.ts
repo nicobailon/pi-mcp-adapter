@@ -56,7 +56,9 @@ describe("Jev integration boundaries", () => {
     expect(pkg.files).toEqual(expect.arrayContaining(["examples/jev-semantic-filter.mjs", "examples/jev-accessibility-loop.mjs"]));
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
     expect(readme).toContain("https://api.typesafe.ai");
+    expect(readme).toContain("https://docs.typesafe.ai/legal");
     expect(readme).toContain("privacy and retention");
+    expect(readme).toContain("no-training commitment does not mean zero retention");
     expect(readme).toContain("Stdio MCP subprocesses inherit the host environment");
     expect(readme).toContain("disabled by default");
   });

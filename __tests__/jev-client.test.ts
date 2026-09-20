@@ -75,6 +75,10 @@ describe("Jev host client", () => {
   it("enforces settings, JSON, question, source, and byte limits", async () => {
     expect(() => validateJevSettings({ model: "jev-latest" })).toThrow("pinned");
     expect(validateJevSettings(undefined).semanticCandidateLimit).toBe(127);
+    expect(validateJevSettings(undefined).maxEvaluationTokensPerScript).toBe(32_768);
+    expect(validateJevSettings({ maxEvaluationTokensPerScript: 1 }).maxEvaluationTokensPerScript).toBe(1);
+    expect(() => validateJevSettings({ maxEvaluationTokensPerScript: 0 })).toThrow("1 to 1000000");
+    expect(() => validateJevSettings({ maxEvaluationTokensPerScript: 1_000_001 })).toThrow("1 to 1000000");
     expect(validateJevSettings({ semanticCandidateLimit: 127 }).semanticCandidateLimit).toBe(127);
     expect(() => validateJevSettings({ semanticCandidateLimit: 128 })).toThrow("2 to 127");
     const limits = validateJevSettings({ maxStateBytes: 4 });

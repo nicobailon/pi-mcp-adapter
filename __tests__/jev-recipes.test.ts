@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error Packaged JavaScript example intentionally has no declaration surface.
 import { runAccessibilityLoop } from "../examples/jev-accessibility-loop.mjs";
+// @ts-expect-error Packaged JavaScript example intentionally has no declaration surface.
+import { filterIssuesForTriage } from "../examples/jev-semantic-filter.mjs";
 
 const tree = (observationId: string, nodes = [{ id: "button", actions: ["focus"] }]) => ({
   ok: true,
@@ -94,5 +96,34 @@ describe("bounded accessibility recipe", () => {
     const result = await runAccessibilityLoop({ call: calls }, { evaluate: vi.fn().mockResolvedValue(answer("a0")) }, { ...options, maxSteps: 1 });
     expect(result).toEqual({ status: "stop", reason: "step-budget" });
     expect(calls).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("semantic issue filter", () => {
+  const tools = () => ({
+    search: vi.fn().mockResolvedValue({ items: [{ path: "github_list" }] }),
+    call: vi.fn().mockResolvedValue({ ok: true, data: { structuredContent: { issues: [{ title: "one" }, { title: "two" }] } } }),
+  });
+
+  it("evaluates relevance and regression together, then filters in JavaScript", async () => {
+    const evaluate = vi.fn(async input => {
+      expect(Object.keys(input.questions)).toEqual(["relevant_issue0", "regression_issue0", "relevant_issue1", "regression_issue1"]);
+      return { ok: true, data: { answers: {
+        relevant_issue0: { type: "noul", noul: 0.9 }, regression_issue0: { type: "noul", noul: 0.8 },
+        relevant_issue1: { type: "noul", noul: 0.9 }, regression_issue1: { type: "noul", noul: 0.2 },
+      } } };
+    });
+    const result = await filterIssuesForTriage(tools(), { evaluate });
+    expect(result).toMatchObject({ status: "matched", issues: [{ id: "issue0", title: "one" }] });
+    expect(evaluate).toHaveBeenCalledOnce();
+  });
+
+  it("abstains on low signals and forwards evaluation errors", async () => {
+    const low = { ok: true, data: { answers: {
+      relevant_issue0: { type: "noul", noul: 0.2 }, regression_issue0: { type: "noul", noul: 0.9 },
+      relevant_issue1: { type: "noul", noul: 0.1 }, regression_issue1: { type: "noul", noul: 0.1 },
+    } } };
+    await expect(filterIssuesForTriage(tools(), { evaluate: vi.fn().mockResolvedValue(low) })).resolves.toEqual({ status: "no-match" });
+    await expect(filterIssuesForTriage(tools(), { evaluate: vi.fn().mockResolvedValue({ ok: false, error: { code: "timeout" } }) })).resolves.toEqual({ status: "stop", error: { code: "timeout" } });
   });
 });

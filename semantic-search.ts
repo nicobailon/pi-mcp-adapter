@@ -167,7 +167,7 @@ export async function semanticSearch(
     .sort((a, b) => b.probability - a.probability || a.candidate.id.localeCompare(b.candidate.id));
   const top = ranked[0];
   const noneProbability = answer.probabilities.none ?? 0;
-  const abstained = !top || noneProbability >= top.probability || top.probability < settings.semanticMinProbability;
+  const abstained = answer.choice === "none" || !top || noneProbability >= top.probability || top.probability < settings.semanticMinProbability;
   const matches = abstained ? [] : ranked.map(({ candidate, probability }) => ({ server: candidate.server, tool: candidate.tool, score: probability }));
   return {
     ok: true,

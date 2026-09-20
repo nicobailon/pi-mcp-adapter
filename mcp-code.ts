@@ -210,6 +210,18 @@ export async function runMcpScript(
   const jevSettings = validateJevSettings(state.config.settings?.jev);
   let evaluationAttempts = 0;
   let evaluationBytes = 0;
+  let evaluationTokensRemaining = jevSettings.maxEvaluationTokensPerScript;
+  const tokenBudgetExhausted = (): JevEvaluationEnvelope => ({ ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation token budget exhausted." } });
+  const chargeEvaluationTokens = (envelope: JevEvaluationEnvelope): JevEvaluationEnvelope => {
+    if (!envelope.ok) return envelope;
+    const used = envelope.data.usage.inputTokens + envelope.data.usage.outputTokens;
+    if (!Number.isSafeInteger(used) || used < 0 || used > evaluationTokensRemaining) {
+      evaluationTokensRemaining = 0;
+      return tokenBudgetExhausted();
+    }
+    evaluationTokensRemaining -= used;
+    return envelope;
+  };
   const evaluationBudget: JevBudget = {
     consume(bytes) {
       if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > jevSettings.maxEvaluationBytesPerScript - evaluationBytes) return false;
@@ -223,6 +235,8 @@ export async function runMcpScript(
     let envelope: JevEvaluationEnvelope;
     if (++evaluationAttempts > jevSettings.maxEvaluationsPerScript) {
       envelope = { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation count budget exhausted." } };
+    } else if (evaluationTokensRemaining === 0) {
+      envelope = tokenBudgetExhausted();
     } else {
       envelope = await jevEvaluator(state, input as JevEvaluateInput, {
         purpose: "script",
@@ -230,6 +244,7 @@ export async function runMcpScript(
         budget: evaluationBudget,
       });
     }
+    envelope = chargeEvaluationTokens(envelope);
     throwIfAborted(callSignal);
     if (!reserveIntermediateBytes(JSON.stringify(envelope))) {
       envelope = { ok: false, error: { code: "budget_exhausted", message: "TypeSafe evaluation exceeds the remaining mcpScript intermediate transfer budget (16 MiB per script)." } };
@@ -266,7 +281,11 @@ export async function runMcpScript(
         return { items: [], total: 0, hasMore: false, nextOffset: null, error: { code: "invalid_search_mode", message: "Semantic search cannot be combined with regex search." } };
       }
       const semantic = searchMode === "semantic"
-        ? await semanticSearch(state, query, server, callSignal, semanticEvaluator)
+        ? await semanticSearch(state, query, server, callSignal, async (semanticState, semanticInput, options) => {
+            if (evaluationTokensRemaining === 0) return tokenBudgetExhausted();
+            const envelope = await (semanticEvaluator ?? evaluateJev)(semanticState, semanticInput, options);
+            return chargeEvaluationTokens(envelope);
+          })
         : undefined;
       if (semantic && !semantic.ok) {
         error = semantic.error.code;
