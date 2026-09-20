@@ -26,7 +26,6 @@ test("packed bearer storage recovers through the root helper from dist", { skip:
   try {
     await extractPackedPackage(fixtureRoot);
     const packageRoot = path.join(fixtureRoot, "node_modules", "pi-mcp-adapter");
-    // Replace only this fixture's dependency symlink, never the real native store.
     await rm(path.join(packageRoot, "node_modules"));
     const nativeRoot = path.join(packageRoot, "node_modules", "@napi-rs", "keyring");
     await mkdir(nativeRoot, { recursive: true });
