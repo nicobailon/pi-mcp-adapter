@@ -78,6 +78,11 @@ function printHelp(log = console.log) {
   log("  pi-mcp-adapter token set <server>     Store a token read from stdin (masked prompt or pipe; never argv)");
   log("  pi-mcp-adapter token status <server>  Report whether a stored token matches the configured URL");
   log("  pi-mcp-adapter token remove <server>  Remove the stored token");
+  log("");
+  log("TypeSafe API key storage:");
+  log("  pi-mcp-adapter key set typesafe     Store a key read from stdin (masked prompt or pipe; never argv)");
+  log("  pi-mcp-adapter key status typesafe  Report the effective credential source without revealing it");
+  log("  pi-mcp-adapter key remove typesafe  Remove the stored key");
 }
 
 function readJsonFile(filePath) {
@@ -214,8 +219,8 @@ async function importTokenModules(error) {
   }
 }
 
-function readTokenFromStdin(stdin) {
-  if (stdin.isTTY) return readTokenMasked(stdin);
+function readSecretFromStdin(stdin, prompt = "Enter bearer token (input hidden): ") {
+  if (stdin.isTTY) return readSecretMasked(stdin, prompt);
   return new Promise((resolve, reject) => {
     let data = "";
     stdin.setEncoding("utf8");
@@ -228,9 +233,9 @@ function readTokenFromStdin(stdin) {
 }
 
 // Raw-mode masked prompt: the token never echoes to the terminal.
-function readTokenMasked(stdin) {
+function readSecretMasked(stdin, prompt) {
   return new Promise((resolve, reject) => {
-    process.stderr.write("Enter bearer token (input hidden): ");
+    process.stderr.write(prompt);
     stdin.setRawMode(true);
     stdin.resume();
     stdin.setEncoding("utf8");
@@ -306,7 +311,7 @@ async function runToken(argv, log, error, stdin) {
   }
 
   if (action === "set") {
-    const token = await readTokenFromStdin(stdin);
+    const token = await readSecretFromStdin(stdin);
     if (!token) {
       error("No token provided on stdin.");
       return 1;
@@ -352,6 +357,48 @@ async function runToken(argv, log, error, stdin) {
   return 0;
 }
 
+async function runKey(argv, log, error, stdin) {
+  const [action, provider, ...extra] = argv;
+  if (!["set", "status", "remove"].includes(action) || provider !== "typesafe") {
+    error("Usage: pi-mcp-adapter key <set|status|remove> typesafe");
+    error("`key set` reads the API key from stdin only. Never pass the key as an argument.");
+    return 1;
+  }
+  if (extra.length > 0) {
+    error("Unexpected extra arguments. The API key must not be passed on the command line; pipe it on stdin or use the interactive prompt.");
+    return 1;
+  }
+  let store;
+  try { store = await import("./dist/jev-key-store.js"); }
+  catch (err) {
+    error("Unable to load TypeSafe key command module.");
+    error(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+
+  if (action === "set") {
+    const apiKey = await readSecretFromStdin(stdin, "Enter TypeSafe API key (input hidden): ");
+    if (!apiKey) { error("No API key provided on stdin."); return 1; }
+    try { store.saveJevApiKey(apiKey); }
+    catch (err) { error(err instanceof Error ? err.message : "TypeSafe API key could not be stored."); return 1; }
+    log("TypeSafe API key stored in the OS secure credential store.");
+    if (Object.hasOwn(process.env, "TYPESAFE_API_KEY")) log("Note: TYPESAFE_API_KEY is present and overrides the stored key.");
+    return 0;
+  }
+  if (action === "status") {
+    const status = store.resolveJevCredential();
+    if (status.status === "present") { log(`source=${status.source}`); return 0; }
+    if (status.status === "unavailable") { error(`unavailable: ${status.message}`); return 1; }
+    log("missing");
+    return 1;
+  }
+  try { store.removeJevApiKey(); }
+  catch (err) { error(err instanceof Error ? err.message : "TypeSafe API key could not be removed."); return 1; }
+  log("TypeSafe API key removed from the OS secure credential store.");
+  if (Object.hasOwn(process.env, "TYPESAFE_API_KEY")) log("TYPESAFE_API_KEY is still present and overrides the stored key.");
+  return 0;
+}
+
 export async function main(argv = process.argv.slice(2), log = console.log, error = console.error, stdin = process.stdin) {
   const [command, ...rest] = argv;
 
@@ -362,6 +409,10 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
 
   if (command === "token") {
     return runToken(rest, log, error, stdin);
+  }
+
+  if (command === "key") {
+    return runKey(rest, log, error, stdin);
   }
 
   if (command === "install") {

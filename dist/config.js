@@ -9,6 +9,7 @@ import { getAgentPluginSummaries, loadAgentPluginConfigs } from "./agent-plugin-
 import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "./agent-plugin-provenance.js";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
+import { validateJevSettings } from "./jev-client.js";
 import { formatServerNamespace, isServerDisabled } from "./types.js";
 import { parseJsonWithComments, toStringRecord } from "./utils.js";
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
@@ -696,9 +697,19 @@ function validateConfig(raw) {
     return {
         mcpServers: toServerEntries(raw.mcpServers ?? raw["mcp-servers"]),
         ...(Array.isArray(raw.imports) ? { imports: raw.imports } : {}),
-        ...(raw.settings !== undefined ? { settings: raw.settings } : {}),
+        ...(raw.settings !== undefined ? { settings: parseSettings(raw.settings) } : {}),
         ...(raw.claudePlugins !== undefined ? { claudePlugins: parseClaudePlugins(raw.claudePlugins) } : {}),
     };
+}
+function parseSettings(value) {
+    if (!isRecord(value))
+        throw new Error("settings must be an object");
+    const settings = { ...value };
+    if (value.jev !== undefined) {
+        validateJevSettings(value.jev);
+        settings.jev = value.jev;
+    }
+    return settings;
 }
 function parseClaudePlugins(value) {
     if (!Array.isArray(value)) {

@@ -1,0 +1,12 @@
+import type { McpExtensionState } from "./state.ts";
+import { TYPESAFE_API_ORIGIN } from "./jev-key-store.ts";
+import type { JevBudget, JevEvaluateInput, JevEvaluationEnvelope, ResolvedJevSettings } from "./jev-contracts.ts";
+export { TYPESAFE_API_ORIGIN };
+export type { ResolvedJevSettings } from "./jev-contracts.ts";
+export declare function validateJevSettings(value: unknown): ResolvedJevSettings;
+export declare function validateJevEvaluateInput(value: unknown, limits: ResolvedJevSettings): JevEvaluateInput;
+export declare function evaluateJev(state: McpExtensionState, value: JevEvaluateInput, options: {
+    purpose: "script" | "semantic-search";
+    signal?: AbortSignal;
+    budget?: JevBudget;
+}): Promise<JevEvaluationEnvelope>;

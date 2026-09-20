@@ -1943,3 +1943,19 @@ describe("config discovery", () => {
     expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "chrome-devtools")?.entry.protocolVersion).toBeUndefined();
   });
 });
+
+describe("Jev config validation", () => {
+  it("accepts bounded settings and rejects unpinned models at the file boundary", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-mcp-jev-config-"));
+    const valid = join(root, "valid.json");
+    const invalid = join(root, "invalid.json");
+    writeJson(valid, { settings: { jev: { scriptEvaluation: true, allowedServers: ["safe"], model: "jev-1.13.0", maxRetries: 1 } }, mcpServers: {} });
+    writeJson(invalid, { settings: { jev: { scriptEvaluation: true, model: "jev-latest" } }, mcpServers: {} });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(valid, root).settings?.jev).toMatchObject({ scriptEvaluation: true, model: "jev-1.13.0", maxRetries: 1 });
+    expect(loadMcpConfig(invalid, root).settings?.jev).toBeUndefined();
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.any(Error));
+    rmSync(root, { recursive: true, force: true });
+  });
+});

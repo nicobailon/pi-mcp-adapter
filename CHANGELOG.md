@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added secure OS-keyring persistence and bounded, fixed-origin host client foundations for the opt-in TypeSafe Jev integration, including `pi-mcp-adapter key` management. Part of [#611](https://github.com/nicobailon/pi-mcp-adapter/issues/611). Thanks to [@nicobailon](https://github.com/nicobailon).
 - `/mcp edit [project|global]` opens the shared MCP config in an editor (Ctrl+G opens `$EDITOR`), refuses text that is not a JSONC object, and reloads after a save. Closes #593. Thanks to [@turisanapo](https://github.com/turisanapo) for PR #594.
 
 ### Changed

@@ -1,14 +1,7 @@
 import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-const require = createRequire(import.meta.url);
+import { createSecureKeyringStore, getTestSecureKeyringEntries, getTestSecureKeyringReadCount, removeTestSecureKeyringEntry, resetTestSecureKeyring, setTestSecureKeyringEntry } from "./secure-keyring.js";
 const BEARER_SECRET_SERVICE = "pi-mcp-adapter.bearer";
-const TEST_AUTH_STORE_ENV = "PI_MCP_ADAPTER_TEST_AUTH_STORE";
 const BEARER_SECRET_CHUNK_SIZE = 1000;
-const BEARER_SECRET_VALUE_LIMIT = 1280;
-let KeyringEntryClass;
-const memoryBearerEntries = new Map();
-let testBearerSecretStoreReadCount = 0;
 export class BearerCredentialStoreError extends Error {
     code = "BEARER_CREDENTIAL_STORE_UNAVAILABLE";
     operation;
@@ -18,133 +11,8 @@ export class BearerCredentialStoreError extends Error {
         this.operation = operation;
     }
 }
-const memoryBearerSecretStore = {
-    read(account) {
-        testBearerSecretStoreReadCount++;
-        return memoryBearerEntries.get(account);
-    },
-    write(account, payload) {
-        memoryBearerEntries.set(account, payload);
-    },
-    remove(account) {
-        memoryBearerEntries.delete(account);
-    },
-};
-const sizeLimitedBearerSecretStore = {
-    read(account) {
-        testBearerSecretStoreReadCount++;
-        return memoryBearerEntries.get(account);
-    },
-    write(account, payload) {
-        if (payload.length > BEARER_SECRET_VALUE_LIMIT) {
-            throw new Error(`Value of 'password encoded as UTF-16' is longer than the platform limit of ${BEARER_SECRET_VALUE_LIMIT * 2} chars`);
-        }
-        memoryBearerEntries.set(account, payload);
-    },
-    remove(account) {
-        memoryBearerEntries.delete(account);
-    },
-};
-const unavailableBearerSecretStore = {
-    read() {
-        testBearerSecretStoreReadCount++;
-        throw new Error("simulated secure credential store unavailable");
-    },
-    write() {
-        throw new Error("simulated secure credential store unavailable");
-    },
-    remove() {
-        throw new Error("simulated secure credential store unavailable");
-    },
-};
-const keyringBearerSecretStore = {
-    read(account) {
-        return getKeyringEntry(account).getPassword() ?? undefined;
-    },
-    write(account, payload) {
-        getKeyringEntry(account).setPassword(payload);
-    },
-    remove(account) {
-        getKeyringEntry(account).deleteCredential();
-    },
-};
 function getBearerSecretStore() {
-    if (process.env[TEST_AUTH_STORE_ENV] === "memory")
-        return memoryBearerSecretStore;
-    if (process.env[TEST_AUTH_STORE_ENV] === "sizelimited")
-        return sizeLimitedBearerSecretStore;
-    if (process.env[TEST_AUTH_STORE_ENV] === "unavailable")
-        return unavailableBearerSecretStore;
-    return keyringBearerSecretStore;
-}
-function getKeyringEntry(account) {
-    try {
-        KeyringEntryClass ??= loadKeyringEntryClass();
-        return new KeyringEntryClass(BEARER_SECRET_SERVICE, account);
-    }
-    catch (error) {
-        throw new Error("Bearer token secure credential storage is unavailable. Configure the OS credential store and retry.", { cause: error });
-    }
-}
-function loadKeyringEntryClass(keyringRequire = require, platform = process.platform, arch = process.arch) {
-    try {
-        return keyringRequire("@napi-rs/keyring").Entry;
-    }
-    catch (loaderError) {
-        try {
-            return loadKeyringNativeBindingFallback(keyringRequire, platform, arch).Entry;
-        }
-        catch (fallbackError) {
-            const message = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-            throw new Error(`Failed to load @napi-rs/keyring; absolute-path native binding fallback also failed: ${message}`, { cause: loaderError });
-        }
-    }
-}
-function loadKeyringNativeBindingFallback(keyringRequire, platform, arch) {
-    const targets = getKeyringNativeBindingSuffixes(platform, arch).map(suffix => ({
-        packageName: `@napi-rs/keyring-${suffix}`,
-        bindingFile: `keyring.${suffix}.node`,
-    }));
-    let lastError;
-    for (const target of targets) {
-        try {
-            const packageJsonPath = keyringRequire.resolve(`${target.packageName}/package.json`);
-            return keyringRequire(join(dirname(packageJsonPath), target.bindingFile));
-        }
-        catch (error) {
-            lastError = error;
-        }
-    }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
-}
-function getKeyringNativeBindingSuffixes(platform, arch) {
-    if (platform === "darwin") {
-        if (arch === "arm64")
-            return ["darwin-arm64"];
-        if (arch === "x64")
-            return ["darwin-x64"];
-    }
-    if (platform === "win32") {
-        if (arch === "arm64")
-            return ["win32-arm64-msvc"];
-        if (arch === "x64")
-            return ["win32-x64-msvc"];
-        if (arch === "ia32")
-            return ["win32-ia32-msvc"];
-    }
-    if (platform === "linux") {
-        if (arch === "arm64")
-            return ["linux-arm64-gnu", "linux-arm64-musl"];
-        if (arch === "arm")
-            return ["linux-arm-gnueabihf"];
-        if (arch === "riscv64")
-            return ["linux-riscv64-gnu"];
-        if (arch === "x64")
-            return ["linux-x64-gnu", "linux-x64-musl"];
-    }
-    if (platform === "freebsd" && arch === "x64")
-        return ["freebsd-x64"];
-    return [];
+    return createSecureKeyringStore(BEARER_SECRET_SERVICE);
 }
 function getBearerAccount(serverName) {
     if (typeof serverName !== "string") {
@@ -318,19 +186,18 @@ export function inspectBearerTokenForUrl(serverName, serverUrl) {
     }
 }
 export function resetTestBearerTokenStore() {
-    memoryBearerEntries.clear();
-    testBearerSecretStoreReadCount = 0;
+    resetTestSecureKeyring();
 }
 export function getTestBearerTokenStoreEntries() {
-    return [...memoryBearerEntries.entries()];
+    return getTestSecureKeyringEntries().filter(([key]) => key.startsWith(`${BEARER_SECRET_SERVICE}\0`)).map(([key, value]) => [key.slice(BEARER_SECRET_SERVICE.length + 1), value]);
 }
 export function removeTestBearerTokenStoreEntry(account) {
-    memoryBearerEntries.delete(account);
+    removeTestSecureKeyringEntry(BEARER_SECRET_SERVICE, account);
 }
 export function setTestBearerTokenStoreEntry(account, payload) {
-    memoryBearerEntries.set(account, payload);
+    setTestSecureKeyringEntry(BEARER_SECRET_SERVICE, account, payload);
 }
 export function getTestBearerTokenStoreReadCount() {
-    return testBearerSecretStoreReadCount;
+    return getTestSecureKeyringReadCount();
 }
 //# sourceMappingURL=mcp-bearer-store.js.map

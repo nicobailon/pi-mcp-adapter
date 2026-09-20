@@ -15,6 +15,10 @@
     "config.ts",
     "metadata-cache.ts",
     "mcp-bearer-store.ts",
+    "secure-keyring.ts",
+    "jev-contracts.ts",
+    "jev-key-store.ts",
+    "jev-client.ts",
     "types.ts"
   ]
 }
