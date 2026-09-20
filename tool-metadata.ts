@@ -19,6 +19,7 @@ export function buildToolMetadata(
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
   const seenNames = new Set<string>();
+  const collidingNames = new Set<string>();
   const effectivePrefix = resolveToolPrefix(definition, prefix);
   const hasToolFilters =
     (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
@@ -86,7 +87,16 @@ export function buildToolMetadata(
     }
 
     const name = formatToolName(tool.name, serverName, effectivePrefix);
+    if (collidingNames.has(name)) {
+      failedTools.push(tool.name);
+      continue;
+    }
     if (seenNames.has(name)) {
+      const existing = metadata.findIndex((candidate) => candidate.name === name);
+      if (existing !== -1) failedTools.push(metadata[existing]!.originalName);
+      metadata.splice(existing, 1);
+      collidingNames.add(name);
+      failedTools.push(tool.name);
       continue;
     }
 
@@ -123,7 +133,16 @@ export function buildToolMetadata(
       }
 
       const name = formatToolName(baseName, serverName, effectivePrefix);
+      if (collidingNames.has(name)) {
+        failedTools.push(baseName);
+        continue;
+      }
       if (seenNames.has(name)) {
+        const existing = metadata.findIndex((candidate) => candidate.name === name);
+        if (existing !== -1) failedTools.push(metadata[existing]!.originalName);
+        metadata.splice(existing, 1);
+        collidingNames.add(name);
+        failedTools.push(baseName);
         continue;
       }
       seenNames.add(name);

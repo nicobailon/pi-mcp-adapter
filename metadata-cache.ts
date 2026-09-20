@@ -203,6 +203,7 @@ export function reconstructToolMetadata(
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
   const seenNames = new Set<string>();
+  const collidingNames = new Set<string>();
   const effectivePrefix = resolveToolPrefix(definition, prefix);
   const hasToolFilters =
     (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
@@ -223,7 +224,13 @@ export function reconstructToolMetadata(
     }
 
     const name = formatToolName(tool.name, serverName, effectivePrefix);
+    if (collidingNames.has(name)) {
+      continue;
+    }
     if (seenNames.has(name)) {
+      const existing = metadata.findIndex((candidate) => candidate.name === name);
+      metadata.splice(existing, 1);
+      collidingNames.add(name);
       continue;
     }
     seenNames.add(name);
@@ -249,7 +256,13 @@ export function reconstructToolMetadata(
       }
 
       const name = formatToolName(baseName, serverName, effectivePrefix);
+      if (collidingNames.has(name)) {
+        continue;
+      }
       if (seenNames.has(name)) {
+        const existing = metadata.findIndex((candidate) => candidate.name === name);
+        metadata.splice(existing, 1);
+        collidingNames.add(name);
         continue;
       }
       seenNames.add(name);

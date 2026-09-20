@@ -74,6 +74,7 @@ export function resolveDirectTools(
   if (!cache) return specs;
 
   const seenNames = new Set<string>();
+  const collidingNames = new Set<string>();
 
   const envSelection = envOverride ? parseDirectToolSelectors(envOverride) : null;
   const globalDirect = config.settings?.directTools;
@@ -139,8 +140,12 @@ export function resolveDirectTools(
         console.warn(`MCP: skipping direct tool "${prefixedName}" (collides with builtin)`);
         continue;
       }
+      if (collidingNames.has(prefixedName)) continue;
       if (seenNames.has(prefixedName)) {
-        console.warn(`MCP: skipping duplicate direct tool "${prefixedName}" from "${serverName}"`);
+        const owners = specs.filter((spec) => spec.prefixedName === prefixedName).map((spec) => spec.serverName);
+        specs.splice(0, specs.length, ...specs.filter((spec) => spec.prefixedName !== prefixedName));
+        collidingNames.add(prefixedName);
+        console.warn(`MCP: skipping colliding direct tool "${prefixedName}" from ${[...owners, serverName].map((name) => `"${name}"`).join(", ")}`);
         continue;
       }
       seenNames.add(prefixedName);
@@ -166,8 +171,12 @@ export function resolveDirectTools(
           console.warn(`MCP: skipping direct resource tool "${prefixedName}" (collides with builtin)`);
           continue;
         }
+        if (collidingNames.has(prefixedName)) continue;
         if (seenNames.has(prefixedName)) {
-          console.warn(`MCP: skipping duplicate direct resource tool "${prefixedName}" from "${serverName}"`);
+          const owners = specs.filter((spec) => spec.prefixedName === prefixedName).map((spec) => spec.serverName);
+          specs.splice(0, specs.length, ...specs.filter((spec) => spec.prefixedName !== prefixedName));
+          collidingNames.add(prefixedName);
+          console.warn(`MCP: skipping colliding direct resource tool "${prefixedName}" from ${[...owners, serverName].map((name) => `"${name}"`).join(", ")}`);
           continue;
         }
         seenNames.add(prefixedName);

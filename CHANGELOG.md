@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Development and peer dependency coverage now includes Pi 0.86.
+- Self-namespaced MCP tools no longer receive duplicate prefixes, and proxy calls now resolve unique canonical-name candidates while failing closed on collisions and ambiguity. Fixes [#609](https://github.com/nicobailon/pi-mcp-adapter/issues/609). Thanks to [@elkaix](https://github.com/elkaix) for the report.
 - Namespace proxy tools can now be disabled with `settings.namespaceProxyTools: false`. Thanks to [@k03mad](https://github.com/k03mad) for PR #592.
 - The bundled `mcp-scripting` skill is now discovered alongside the default-on `mcpScript` tool and hidden with it when `settings.scriptMode` is `false`. Thanks to [@zhangyoufu](https://github.com/zhangyoufu) for PR #583.
 

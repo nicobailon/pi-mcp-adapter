@@ -178,6 +178,19 @@ describe("resolveServerFromToolName", () => {
 });
 
 describe("direct tool selector candidates", () => {
+	it.each([
+		["server", "firecrawl", "firecrawl_search"],
+		["short", "firecrawl-mcp", "firecrawl_search"],
+		["mcp", "firecrawl", "mcp__firecrawl_search"],
+		["none", "firecrawl", "firecrawl_search"],
+	] as const)("does not duplicate a self namespace in %s mode", (mode, server, expected) => {
+		expect(formatToolName(expected, server, mode)).toBe(expected);
+	});
+
+	it("keeps dot sanitation and dashed tool names unchanged", () => {
+		expect(formatToolName("demo.search-item", "demo", "server")).toBe("demo_search-item");
+	});
+
 	it("keeps hyphen and underscore prefixes distinct while matching legacy escaped prefixes", () => {
 		const hyphenCandidates = getToolNameCandidates("do_thing", "my-server", "server");
 		const underscoreCandidates = getToolNameCandidates("do_thing", "my_server", "server");

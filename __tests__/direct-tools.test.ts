@@ -375,7 +375,7 @@ describe("direct tool metadata bootstrap", () => {
     ]);
   });
 
-  it("keeps duplicate direct names reserved by failed-backoff servers", () => {
+  it("keeps duplicate direct names fail-closed when one server is in backoff", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const config: McpConfig = {
       settings: { toolPrefix: "none", directTools: true, warnOnLargeDirectTools: false },
@@ -402,9 +402,7 @@ describe("direct tool metadata bootstrap", () => {
       },
     };
 
-    expect(resolveDirectTools(config, cache, "none").map(tool => [tool.serverName, tool.prefixedName])).toEqual([
-      ["failed", "search"],
-    ]);
+    expect(resolveDirectTools(config, cache, "none")).toEqual([]);
     expect(resolveDirectTools(config, cache, "none", undefined, new Set(["failed"]))).toEqual([]);
   });
 
@@ -682,7 +680,7 @@ describe("excludeTools filtering", () => {
     ]);
   });
 
-  it("keeps the first raw tool when sanitized live metadata names collide", () => {
+  it("omits all raw tools when sanitized live metadata names collide", () => {
     const { metadata } = buildToolMetadata(
       [
         { name: "namespace.tool", description: "Dotted" },
@@ -695,13 +693,10 @@ describe("excludeTools filtering", () => {
       "server",
     );
 
-    expect(metadata.map((tool) => [tool.name, tool.originalName, tool.description])).toEqual([
-      ["demo_namespace_tool", "namespace.tool", "Dotted"],
-      ["demo_read_namespace_tool", "read_namespace.tool", "Tool before colliding resource"],
-    ]);
+    expect(metadata).toEqual([]);
   });
 
-  it("keeps the first raw tool when sanitized cached metadata names collide", () => {
+  it("omits all raw tools when sanitized cached metadata names collide", () => {
     const reconstructed = reconstructToolMetadata(
       "demo",
       {
@@ -718,10 +713,7 @@ describe("excludeTools filtering", () => {
       { command: "npx", args: ["-y", "demo"] },
     );
 
-    expect(reconstructed.map((tool) => [tool.name, tool.originalName, tool.description])).toEqual([
-      ["demo_namespace_tool", "namespace.tool", "Dotted"],
-      ["demo_read_namespace_tool", "read_namespace.tool", "Tool before colliding resource"],
-    ]);
+    expect(reconstructed).toEqual([]);
   });
 
   it("filters excluded tools during direct tool registration from cache", () => {
@@ -815,9 +807,8 @@ describe("excludeTools filtering", () => {
     expect(resolveDirectTools(config, cache, "server").map((spec) => [spec.serverName, spec.prefixedName])).toEqual([
       ["my_server", "my_server_get"],
       ["my-server", "my-server_get"],
-      ["my server", "my_20_server_get"],
     ]);
-    expect(warn).toHaveBeenCalledWith('MCP: skipping duplicate direct tool "my_20_server_get" from "my_20_server"');
+    expect(warn).toHaveBeenCalledWith('MCP: skipping colliding direct tool "my_20_server_get" from "my server", "my_20_server"');
   });
 
   it("honors per-server toolPrefix during direct tool registration from cache", () => {

@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { formatSchema } from "../tool-metadata.ts";
+import { buildToolMetadata, formatSchema } from "../tool-metadata.ts";
+
+describe("buildToolMetadata names", () => {
+  it("fails closed when ordinary and self-prefixed tools share a canonical name", () => {
+    const result = buildToolMetadata(
+      [{ name: "search" }, { name: "demo_search" }],
+      [],
+      { command: "demo" },
+      "demo",
+      "server",
+    );
+
+    expect(result.metadata).toEqual([]);
+    expect(result.failedTools).toEqual(expect.arrayContaining(["search", "demo_search"]));
+  });
+});
 
 describe("formatSchema", () => {
   it("keeps simple object schemas compact", () => {

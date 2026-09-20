@@ -235,7 +235,7 @@ describe("resolveMcpToolReferences", () => {
       ["second", { definition: second, tools: [{ name: "get" }] }],
     ]);
 
-    expect(resolveMcpToolReferences(["mcp:first/get"], config, cache).names).toEqual(["get"]);
+    expect(resolveMcpToolReferences(["mcp:first/get"], config, cache).names).toEqual([]);
     const result = resolveMcpToolReferences(["mcp:second/get"], config, cache);
     expect(result.names).toEqual([]);
     expect(result.diagnostics[0]).toContain("no registered tool");
@@ -288,7 +288,7 @@ describe("resolveMcpToolReferences", () => {
     const config = configFor({ demo: definition });
     const cache = cacheFor([["demo", { definition, tools: [{ name: "namespace.tool" }, { name: "namespace_tool" }] }]]);
 
-    expect(resolveMcpToolReferences(["mcp:demo/namespace.tool"], config, cache).names).toEqual(["demo_namespace_tool"]);
+    expect(resolveMcpToolReferences(["mcp:demo/namespace.tool"], config, cache).names).toEqual([]);
     const result = resolveMcpToolReferences(["mcp:demo/namespace_tool"], config, cache);
     expect(result.names).toEqual([]);
     expect(result.diagnostics[0]).toContain("no registered tool");

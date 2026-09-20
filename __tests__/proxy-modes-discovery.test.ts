@@ -410,7 +410,11 @@ describe("proxy discovery", () => {
 
     const result = await executeCall(state, "codegraph_explore", { query: "identity provider" }, "codegraph");
 
-    expect(result.details).toMatchObject({ server: "codegraph", tool: "codegraph_explore" });
+    expect(result.details).toMatchObject({
+      server: "codegraph",
+      tool: "codegraph_explore",
+      canonicalTool: "codegraph_codegraph_explore",
+    });
     expect(result.details).not.toMatchObject({ error: "tool_not_found" });
     expect(callTool).toHaveBeenCalledWith(
       { name: "codegraph_explore", arguments: { query: "identity provider" }, _meta: undefined },
@@ -418,7 +422,7 @@ describe("proxy discovery", () => {
     );
   });
 
-  it("fails closed for same-server displayed and raw exact-name collisions", async () => {
+  it("gives an exact canonical name precedence over a same-server alias", async () => {
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
     const state = {
       config: { mcpServers: { demo: { command: "demo" } } },
@@ -439,18 +443,39 @@ describe("proxy discovery", () => {
     } as unknown as McpExtensionState;
 
     expect(executeDescribe(state, "demo_search", "demo").details).toMatchObject({
-      error: "ambiguous_tool",
       server: "demo",
+      tool: { originalName: "search" },
     });
     await expect(executeCall(state, "demo_search", {}, "demo")).resolves.toMatchObject({
-      details: { error: "ambiguous_tool", server: "demo" },
+      details: { server: "demo", tool: "search", canonicalTool: "demo_search" },
     });
-    expect(callTool).not.toHaveBeenCalled();
+    expect(callTool).toHaveBeenCalledWith(
+      { name: "search", arguments: {}, _meta: undefined },
+      undefined,
+    );
 
     expect(executeDescribe(state, "demo_search").details).toMatchObject({
       server: "demo",
       tool: { originalName: "search" },
     });
+  });
+
+  it("fails closed when a bare candidate alias is globally ambiguous", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "called" }] }));
+    const state = {
+      config: { mcpServers: { first: { command: "first" }, second: { command: "second" } } },
+      toolMetadata: new Map([
+        ["first", [{ name: "first_search", originalName: "search", description: "First" }]],
+        ["second", [{ name: "second_search", originalName: "search", description: "Second" }]],
+      ]),
+      manager: { getConnection: () => ({ status: "connected", client: { callTool } }) },
+      failureTracker: new Map(),
+    } as unknown as McpExtensionState;
+
+    await expect(executeCall(state, "search", {})).resolves.toMatchObject({
+      details: { error: "ambiguous_tool", requestedTool: "search" },
+    });
+    expect(callTool).not.toHaveBeenCalled();
   });
 
   it("fails closed for same-server normalized displayed and raw-name collisions", async () => {

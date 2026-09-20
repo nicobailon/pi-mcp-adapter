@@ -817,6 +817,9 @@ export function formatToolName(
 ): string {
   const p = getServerPrefix(serverName, prefix);
   const sanitized = toolName.replace(/\./g, "_");
+  if (p && sanitized.startsWith(`${p}_`) && sanitized.length > p.length + 1) {
+    return sanitized;
+  }
   return p ? `${p}_${sanitized}` : sanitized;
 }
 
