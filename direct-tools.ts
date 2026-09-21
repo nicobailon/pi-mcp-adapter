@@ -28,6 +28,7 @@ type DirectAutoAuthResult =
 export {
   DIRECT_TOOLS_ADVISORY_THRESHOLD,
   buildProxyDescription,
+  getLargeDirectToolsAdvisory,
   getMissingConfiguredDirectToolServers,
   prepareDirectToolArguments,
   resolveDirectTools,

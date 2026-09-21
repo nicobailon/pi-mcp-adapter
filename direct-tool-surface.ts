@@ -10,6 +10,13 @@ import { resourceNameToToolName } from "./resource-tools.ts";
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 export const DIRECT_TOOLS_ADVISORY_THRESHOLD = 75;
 
+export function getLargeDirectToolsAdvisory(config: McpConfig, specs: readonly DirectToolSpec[]): string | undefined {
+  if (config.settings?.warnOnLargeDirectTools === false) return undefined;
+  const eagerCount = specs.filter((spec) => !spec.lazy).length;
+  if (eagerCount < DIRECT_TOOLS_ADVISORY_THRESHOLD) return undefined;
+  return `MCP: ${eagerCount} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered. Set settings.warnOnLargeDirectTools to false to hide this advisory.`;
+}
+
 /**
  * Recover one model-emitted JSON layer for schema-declared object and array
  * properties, then validate the complete input against the same schema.
@@ -181,12 +188,6 @@ export function resolveDirectTools(
   const emittedSpecs = unavailableServers.size === 0
     ? uniqueSpecs
     : uniqueSpecs.filter((spec) => !unavailableServers.has(spec.serverName));
-
-  // Lazy specs cost nothing at turn start, so they do not count toward the advisory.
-  const eagerCount = emittedSpecs.filter((spec) => !spec.lazy).length;
-  if (config.settings?.warnOnLargeDirectTools !== false && eagerCount >= DIRECT_TOOLS_ADVISORY_THRESHOLD) {
-    console.warn(`MCP: ${eagerCount} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered. Set settings.warnOnLargeDirectTools to false to hide this advisory.`);
-  }
 
   return emittedSpecs;
 }

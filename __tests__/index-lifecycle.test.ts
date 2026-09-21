@@ -109,7 +109,8 @@ vi.mock("../metadata-cache.ts", async (importOriginal) => ({
   loadMetadataCache: mocks.loadMetadataCache,
 }));
 
-vi.mock("../direct-tool-surface.ts", () => ({
+vi.mock("../direct-tool-surface.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../direct-tool-surface.ts")>()),
   buildProxyDescription: mocks.buildProxyDescription,
   getMissingConfiguredDirectToolServers: mocks.getMissingConfiguredDirectToolServers,
   prepareDirectToolArguments: mocks.prepareDirectToolArguments,
@@ -275,6 +276,15 @@ const directToolSpec = {
   description: "Search",
   inputSchema: { type: "object", properties: {} },
 };
+
+function largeDirectToolSpecs() {
+  return Array.from({ length: 75 }, (_, index) => ({
+    serverName: "demo",
+    originalName: `tool_${index}`,
+    prefixedName: `demo_tool_${index}`,
+    description: `Tool ${index}`,
+  }));
+}
 
 async function loadAfterFailedInitialization(state = createState()) {
   mocks.initializeMcp.mockRejectedValueOnce(new Error("first boom")).mockResolvedValueOnce(state);
@@ -2500,6 +2510,124 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.all([first, second]);
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
     expect(mocks.executeStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders the large direct-tools advisory once without writing it to the UI console", async () => {
+    const config = { mcpServers: { demo: { command: "demo", directTools: true } } };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValueOnce([]).mockReturnValue(largeDirectToolSpecs());
+    mocks.initializeMcp.mockResolvedValue(state);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const notify = vi.fn();
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { notify } });
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+    state.onToolMetadataUpdated?.("demo", "resync");
+
+    expect(notify.mock.calls.filter(([, level]) => level === "warning")).toEqual([
+      [expect.stringContaining("75+ direct tools"), "warning"],
+    ]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("does not pre-deliver the previous runtime's advisory after session config suppresses it", async () => {
+    const config = { mcpServers: { demo: { command: "demo", directTools: true } } };
+    const suppressedConfig = { ...config, settings: { warnOnLargeDirectTools: false } };
+    const firstState = createState();
+    firstState.config = config;
+    const secondState = createState();
+    secondState.config = suppressedConfig;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValue(largeDirectToolSpecs());
+    mocks.initializeMcp.mockResolvedValueOnce(firstState).mockResolvedValueOnce(secondState);
+    const firstNotify = vi.fn();
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { notify: firstNotify } });
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(firstState));
+    expect(firstNotify).toHaveBeenCalledWith(expect.stringContaining("75+ direct tools"), "warning");
+
+    mocks.loadMcpConfig.mockReturnValue(suppressedConfig);
+    const secondNotify = vi.fn();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { notify: secondNotify } });
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(secondState));
+
+    expect(secondNotify.mock.calls.filter(([, level]) => level === "warning")).toEqual([]);
+  });
+
+  it("renders the advisory from fresh cache-backed deferred config without initializing", async () => {
+    const definition = { command: "demo", directTools: true };
+    const config = cacheLazyServer(definition);
+    mocks.resolveDirectTools.mockReturnValue(largeDirectToolSpecs());
+    const notify = vi.fn();
+    const setStatus = vi.fn();
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { notify, setStatus } });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("75+ direct tools"), "warning");
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
+
+    mocks.loadMcpConfig.mockReturnValue({ ...config, settings: { warnOnLargeDirectTools: false } });
+    const secondNotify = vi.fn();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { notify: secondNotify, setStatus } });
+
+    expect(secondNotify).not.toHaveBeenCalled();
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the session advisory when warnOnLargeDirectTools is false", async () => {
+    const definition = { command: "demo", directTools: true };
+    const config = cacheLazyServer(definition);
+    config.settings = { warnOnLargeDirectTools: false };
+    mocks.resolveDirectTools.mockReturnValue(largeDirectToolSpecs());
+    const notify = vi.fn();
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { notify, setStatus: vi.fn() } });
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("writes the large direct-tools advisory to the console once in a non-UI session", async () => {
+    const config = { mcpServers: { demo: { command: "demo", directTools: true } } };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockReturnValueOnce([]).mockReturnValue(largeDirectToolSpecs());
+    mocks.initializeMcp.mockResolvedValue(state);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+    state.onToolMetadataUpdated?.("demo", "resync");
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("75+ direct tools"));
+  });
+
+  it("stops deferred startup when advisory notification synchronously shuts down the session", async () => {
+    const definition = { command: "demo", directTools: true };
+    cacheLazyServer(definition);
+    mocks.resolveDirectTools.mockReturnValue(largeDirectToolSpecs());
+    const setStatus = vi.fn();
+    const { handlers } = await loadAdapter();
+    let shutdown: Promise<unknown> | undefined;
+    const notify = vi.fn(() => {
+      shutdown = Promise.resolve(handlers.get("session_shutdown")?.());
+    });
+
+    await handlers.get("session_start")?.({}, { hasUI: true, ui: { notify, setStatus } });
+    await shutdown;
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
   });
 
   it("publishes a themed config-derived footer while keeping the cached runtime deferred", async () => {

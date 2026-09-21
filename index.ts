@@ -8,7 +8,7 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
-import { buildProxyDescription, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
+import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { computeServerHash, isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
@@ -350,6 +350,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
   let directToolsFrozen = false;
+  let largeDirectToolsAdvisoryDelivered = false;
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
@@ -607,6 +608,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   function syncToolSurface(ctx?: ExtensionContext): void {
+    const notificationGeneration = lifecycleGeneration;
+    const notificationOwner = currentOwner;
     const config = state?.config ?? earlyConfig;
     const cache = loadToolSurfaceCache(config);
     const result = syncDirectTools(config, cache);
@@ -620,6 +623,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     syncProxyTool(config, cache, result.specs);
     syncNamespaceTools(config, cache, result.reservedDirectNames, result.activeDirectNames);
+    deliverLargeDirectToolsAdvisory(ctx, config, result.specs);
+    if (ctx && (notificationGeneration !== lifecycleGeneration
+      || notificationOwner !== currentOwner
+      || (notificationOwner && !notificationOwner.isActive()))) {
+      throw notificationOwner?.signal.reason ?? new Error("Stale MCP session after direct-tools advisory");
+    }
+    finalizationGuard?.();
     const changed = result.added.length + result.updated.length + result.deactivated.length;
     if (changed > 0 && ctx?.hasUI) {
       callReentrant(() => ctx.ui.notify(
@@ -627,6 +637,49 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         "info",
       ));
     }
+  }
+
+  function deliverLargeDirectToolsAdvisory(
+    ctx: ExtensionContext | undefined,
+    config: McpConfig,
+    specs: readonly DirectToolSpec[],
+  ): void {
+    if (!ctx || largeDirectToolsAdvisoryDelivered) return;
+    const message = getLargeDirectToolsAdvisory(config, specs);
+    if (!message) return;
+    largeDirectToolsAdvisoryDelivered = true;
+    if (ctx.hasUI) {
+      callReentrant(() => ctx.ui.notify(message, "warning"));
+    } else {
+      console.warn(message);
+    }
+  }
+
+  function getDeferredSessionSnapshot(cwd: string | undefined): {
+    config: McpConfig;
+    specs: DirectToolSpec[];
+    enabledServerCount: number;
+  } | undefined {
+    const config = programmaticConfig
+      ? resolveConfiguredClaudePluginMcp(cloneMcpConfig(sessionConfig), cwd ?? process.cwd())
+      : loadMcpConfig(earlyConfigPath, cwd);
+    const cache = loadMetadataCache();
+    const enabledServers = Object.entries(config.mcpServers)
+      .filter(([, definition]) => !isServerDisabled(definition));
+    if (enabledServers.some(([, definition]) => definition.lifecycle === "eager" || definition.lifecycle === "keep-alive")) {
+      return undefined;
+    }
+    if (!cache || !enabledServers.every(([serverName, definition]) => {
+      const entry = cache.servers[serverName];
+      return entry !== undefined && isServerCacheValid(entry, definition);
+    })) return undefined;
+    if (envRaw !== undefined && envRaw !== "__none__"
+      && getMissingConfiguredDirectToolServers(config, cache, envDirectToolOverride).length > 0) return undefined;
+    return {
+      config,
+      specs: resolveCurrentDirectTools(config, cache),
+      enabledServerCount: enabledServers.length,
+    };
   }
 
   function syncNamespaceTools(
@@ -1029,6 +1082,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   pi.on("session_start", async (_event, ctx) => {
     const generation = ++lifecycleGeneration;
+    largeDirectToolsAdvisoryDelivered = false;
     const previousState = state;
     const previousOwner = currentOwner;
     const previousOAuthRuntime = currentOAuthRuntime;
@@ -1057,12 +1111,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (state) return;
 
     if (!initPromise) {
-      if (deferSessionRuntime) {
-        const serverCount = Object.keys(earlyConfig.mcpServers).length;
+      const deferredSnapshot = deferSessionRuntime ? getDeferredSessionSnapshot(ctx.cwd) : undefined;
+      if (deferredSnapshot) {
+        deliverLargeDirectToolsAdvisory(ctx, deferredSnapshot.config, deferredSnapshot.specs);
+        if (generation !== lifecycleGeneration || !owner.isActive() || currentOwner !== owner) return;
+        const serverCount = Object.keys(deferredSnapshot.config.mcpServers).length;
         const formattedStatus = formatMcpFooterStatus(
-          earlyConfig,
-          enabledEarlyServers.length,
-          serverCount - enabledEarlyServers.length,
+          deferredSnapshot.config,
+          deferredSnapshot.enabledServerCount,
+          serverCount - deferredSnapshot.enabledServerCount,
           0,
         );
         const theme = ctx.ui?.theme;

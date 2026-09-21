@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Large direct-tool advisories now use Pi's renderer in interactive sessions, avoiding raw console output and duplicate warnings. Thanks to [@grivper](https://github.com/grivper) for issue [#633](https://github.com/nicobailon/pi-mcp-adapter/issues/633).
 - Windows contributors can run `npm test` again; the runner now launches npm through `cross-spawn` so hardened Node versions can execute `npm.cmd`. Thanks @insuffer for the fix.
 
 ## [2.35.0] - 2026-09-20

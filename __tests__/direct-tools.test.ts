@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DIRECT_TOOLS_ADVISORY_THRESHOLD, buildProxyDescription, resolveDirectTools } from "../direct-tools.ts";
+import { DIRECT_TOOLS_ADVISORY_THRESHOLD, buildProxyDescription, getLargeDirectToolsAdvisory, resolveDirectTools } from "../direct-tools.ts";
 import {
   computeServerHash,
   getMissingConfiguredDirectToolServers,
@@ -855,7 +855,7 @@ describe("excludeTools filtering", () => {
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["github_search"]);
   });
 
-  it("warns by default without capping when resolved direct tools exceed the README threshold", () => {
+  it("resolves tools deterministically and reports the advisory at the eager-tool threshold", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const tools = Array.from({ length: DIRECT_TOOLS_ADVISORY_THRESHOLD }, (_, index) => ({
       name: `tool_${index}`,
@@ -885,8 +885,11 @@ describe("excludeTools filtering", () => {
     const specs = resolveDirectTools(config, cache, "server");
 
     expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("75+ direct tools"));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("settings.warnOnLargeDirectTools to false"));
+    expect(warn).not.toHaveBeenCalled();
+    expect(getLargeDirectToolsAdvisory(config, specs)).toEqual(expect.stringContaining("75+ direct tools"));
+    expect(getLargeDirectToolsAdvisory(config, specs)).toEqual(expect.stringContaining("settings.warnOnLargeDirectTools to false"));
+    expect(getLargeDirectToolsAdvisory(config, specs.slice(0, -1))).toBeUndefined();
+    expect(getLargeDirectToolsAdvisory(config, specs.map((spec) => ({ ...spec, lazy: true })))).toBeUndefined();
   });
 
   it("suppresses the large direct-tools advisory when configured", () => {
@@ -921,6 +924,7 @@ describe("excludeTools filtering", () => {
 
     expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
     expect(warn).not.toHaveBeenCalled();
+    expect(getLargeDirectToolsAdvisory(config, specs)).toBeUndefined();
   });
 
   it("filters included tools during direct tool registration from cache", () => {
