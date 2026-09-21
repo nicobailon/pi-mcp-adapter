@@ -21,7 +21,7 @@ function state(): McpExtensionState {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe("Jev integration boundaries", () => {
-  it("does no credential or network I/O during real default-disabled extension registration", () => {
+  it("does no credential or network I/O during extension registration", () => {
     vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "memory");
     vi.stubEnv("TYPESAFE_API_KEY", "configured-but-inert");
     resetTestSecureKeyring();
@@ -60,6 +60,6 @@ describe("Jev integration boundaries", () => {
     expect(readme).toContain("privacy and retention");
     expect(readme).toContain("no-training commitment does not mean zero retention");
     expect(readme).toContain("Stdio MCP subprocesses inherit the host environment");
-    expect(readme).toContain("disabled by default");
+    expect(readme).toContain("Script evaluation remains disabled");
   });
 });

@@ -1013,6 +1013,38 @@ export function writeSharedConfigText(filePath, text) {
         throw new Error("top-level value must be an object");
     writeConfigText(filePath, text);
 }
+export function writeJevSemanticSearchConfig(overridePath, cwd, allowedServers, effectiveJev) {
+    const filePath = overridePath ? getPiGlobalConfigPath(overridePath) : getProjectPiConfigPath(cwd);
+    let raw = {};
+    if (existsSync(filePath)) {
+        try {
+            const parsed = parseJsonWithComments(readFileSync(filePath, "utf8"));
+            if (!isRecord(parsed))
+                throw new Error("top-level value must be an object");
+            raw = parsed;
+        }
+        catch (error) {
+            throw new Error(`Failed to update Jev settings at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        }
+    }
+    if (raw.settings !== undefined && !isRecord(raw.settings)) {
+        throw new Error(`Failed to update Jev settings at ${filePath}: settings must be an object`);
+    }
+    const settings = raw.settings;
+    const currentJev = settings?.jev;
+    if (currentJev !== undefined && currentJev !== false && !isRecord(currentJev)) {
+        throw new Error(`Failed to update Jev settings at ${filePath}: settings.jev must be an object or false`);
+    }
+    const jev = isRecord(effectiveJev) ? effectiveJev : isRecord(currentJev) ? currentJev : {};
+    const nextServers = [...new Set(allowedServers)].sort((a, b) => a.localeCompare(b));
+    const nextJev = { ...jev, semanticSearch: true, allowedServers: nextServers };
+    validateJevSettings(nextJev);
+    if (JSON.stringify(jev) === JSON.stringify(nextJev))
+        return { path: filePath, changed: false };
+    raw.settings = { ...settings, jev: nextJev };
+    writeRawConfigObject(filePath, raw);
+    return { path: filePath, changed: true };
+}
 function getServersObject(raw) {
     const existing = raw.mcpServers ?? raw["mcp-servers"] ?? {};
     if (!existing || typeof existing !== "object" || Array.isArray(existing)) {

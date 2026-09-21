@@ -620,11 +620,11 @@ export interface McpSettings {
   warnOnLargeDirectTools?: boolean;
   /** Register the trusted MCP-only JavaScript scripting tool. Defaults to true; set false to hide it. */
   scriptMode?: boolean;
-  /** Optional TypeSafe Jev integrations. Both features are disabled by default. */
+  /** Optional TypeSafe Jev integrations. A valid key enables semantic search; script evaluation remains disabled by default. */
   jev?: false | {
     semanticSearch?: boolean;
     scriptEvaluation?: boolean;
-    /** Explicit allowlist for MCP-derived metadata/results sent to TypeSafe. */
+    /** Restrict semantic-search metadata and allow script-evaluation sources. Semantic search defaults to every enabled server. */
     allowedServers?: string[];
     model?: string;
     requestTimeoutMs?: number;

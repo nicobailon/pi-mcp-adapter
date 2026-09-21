@@ -2,7 +2,7 @@ import { TypeSafeClient } from "@typesafe-ai/sdk";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled } from "./types.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
-import { resolveJevCredential, TYPESAFE_API_ORIGIN } from "./jev-key-store.ts";
+import { resolveJevCredential, TYPESAFE_API_ORIGIN, type JevCredentialResolution } from "./jev-key-store.ts";
 import type { JevAnswer, JevBudget, JevEvaluateInput, JevEvaluationData, JevEvaluationEnvelope, JevJson, JevQuestion, ResolvedJevSettings } from "./jev-contracts.ts";
 
 export { TYPESAFE_API_ORIGIN };
@@ -51,7 +51,7 @@ export function validateJevSettings(value: unknown): ResolvedJevSettings {
   const input = record(value, "settings.jev") as JevSettingsInput;
   const allowed = new Set(Object.keys(DEFAULTS));
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`settings.jev.${key} is not supported`);
-  if (input.allowedServers !== undefined && (!Array.isArray(input.allowedServers) || input.allowedServers.some(name => typeof name !== "string" || name.length === 0 || name.length > 128 || DANGEROUS_KEYS.has(name)))) {
+  if (input.allowedServers !== undefined && (!Array.isArray(input.allowedServers) || input.allowedServers.some(name => typeof name !== "string" || name.length === 0 || DANGEROUS_KEYS.has(name) || /[\u0000-\u001f\u007f]/.test(name)))) {
     throw new Error("settings.jev.allowedServers must contain non-empty safe server names");
   }
   const model = input.model ?? DEFAULTS.model;
@@ -74,6 +74,21 @@ export function validateJevSettings(value: unknown): ResolvedJevSettings {
   };
 }
 
+export function resolveSemanticJevSettings(
+  state: McpExtensionState,
+  credentialResolver: () => JevCredentialResolution = resolveJevCredential,
+): ResolvedJevSettings {
+  const configured = state.config.settings?.jev;
+  const settings = validateJevSettings(configured);
+  if (configured === false || configured?.semanticSearch === false) return settings;
+  const semanticSearch = settings.semanticSearch || credentialResolver().status === "present";
+  const hasExplicitAllowlist = configured !== undefined && Object.hasOwn(configured, "allowedServers");
+  const allowedServers = hasExplicitAllowlist
+    ? settings.allowedServers
+    : Object.keys(state.config.mcpServers).filter((name) => !isServerDisabled(state.config.mcpServers[name]));
+  return { ...settings, semanticSearch, allowedServers };
+}
+
 function validateJson(value: unknown, path: string, seen = new Set<object>()): asserts value is JevJson {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") { if (Number.isFinite(value)) return; throw new Error(`${path} contains a non-finite number`); }
@@ -93,6 +108,9 @@ function validateJson(value: unknown, path: string, seen = new Set<object>()): a
 }
 function validateId(id: string, label: string): void {
   if (id.length === 0 || id.length > 128 || DANGEROUS_KEYS.has(id) || /[\u0000-\u001f\u007f]/.test(id)) throw new Error(`${label} contains an invalid identifier`);
+}
+function validateSource(source: string): void {
+  if (source.length === 0 || DANGEROUS_KEYS.has(source) || /[\u0000-\u001f\u007f]/.test(source)) throw new Error("sources contains an invalid server name");
 }
 function exactKeys(value: Record<string, unknown>, allowed: string[], label: string): void {
   if (Object.keys(value).some(key => !allowed.includes(key))) throw new Error(`${label} contains unsupported fields`);
@@ -134,7 +152,7 @@ export function validateJevEvaluateInput(value: unknown, limits: ResolvedJevSett
   let sources: string[] | undefined;
   if (input.sources !== undefined) {
     if (!Array.isArray(input.sources)) throw new Error("sources must be an array");
-    sources = input.sources.map((source, index) => { if (typeof source !== "string") throw new Error(`sources[${index}] must be a string`); validateId(source, "sources"); return source; });
+    sources = input.sources.map((source, index) => { if (typeof source !== "string") throw new Error(`sources[${index}] must be a string`); validateSource(source); return source; });
     if (new Set(sources).size !== sources.length) throw new Error("sources must not contain duplicates");
   }
   const normalized = { state: input.state, questions: questions as Record<string, JevQuestion>, ...(sources ? { sources } : {}) } as JevEvaluateInput;
@@ -223,7 +241,7 @@ function failure(error: unknown, signal: AbortSignal | undefined, timedOut: bool
 export async function evaluateJev(state: McpExtensionState, value: JevEvaluateInput, options: { purpose: "script" | "semantic-search"; signal?: AbortSignal; budget?: JevBudget; observedSources?: readonly string[] }): Promise<JevEvaluationEnvelope> {
   let settings: ResolvedJevSettings;
   let input: JevEvaluateInput;
-  try { settings = validateJevSettings(state.config.settings?.jev); input = validateJevEvaluateInput(value, settings); }
+  try { settings = options.purpose === "semantic-search" ? resolveSemanticJevSettings(state) : validateJevSettings(state.config.settings?.jev); input = validateJevEvaluateInput(value, settings); }
   catch { return { ok: false, error: { code: "invalid_request", message: "Invalid TypeSafe evaluation request or settings." } }; }
   if ((options.purpose === "script" && !settings.scriptEvaluation) || (options.purpose === "semantic-search" && !settings.semanticSearch)) return { ok: false, error: { code: "disabled", message: "TypeSafe evaluation is disabled." } };
   const sources = new Set([...(input.sources ?? []), ...(options.observedSources ?? [])]);

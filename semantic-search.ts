@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { areJevSourcesAllowed, evaluateJev, validateJevSettings } from "./jev-client.ts";
+import { areJevSourcesAllowed, evaluateJev, resolveSemanticJevSettings } from "./jev-client.ts";
 import type { JevEvaluateInput, JevEvaluationEnvelope } from "./jev-contracts.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { rankToolMatches, type RankedToolMatch } from "./search-ranking.ts";
@@ -112,12 +112,18 @@ export async function semanticSearch(
 ): Promise<SemanticSearchResult> {
   let settings;
   try {
-    settings = validateJevSettings(state.config.settings?.jev);
+    settings = resolveSemanticJevSettings(state);
   } catch {
     return { ok: false, error: { code: "invalid_request", message: "Invalid TypeSafe semantic search settings." } };
   }
   if (!settings.semanticSearch) {
     return { ok: false, error: { code: "disabled", message: "TypeSafe semantic search is disabled." } };
+  }
+  if (settings.allowedServers.length === 0) {
+    return { ok: false, error: { code: "data_policy_denied", message: "Semantic search is enabled, but settings.jev.allowedServers is empty. Run /mcp jev setup or allow specific MCP servers." } };
+  }
+  if (server && !settings.allowedServers.includes(server)) {
+    return { ok: false, error: { code: "data_policy_denied", message: `Server "${server}" is not allowed by settings.jev.allowedServers.` } };
   }
   if (!areJevSourcesAllowed(state, settings, observedSources)) {
     return { ok: false, error: { code: "data_policy_denied", message: "Evaluation sources are not allowed by policy." } };
@@ -127,11 +133,7 @@ export async function semanticSearch(
   }
   const candidates = selectSemanticCandidates(state, query, server, settings.allowedServers, settings.semanticCandidateLimit);
   if (candidates.length === 0) {
-    return {
-      ok: true,
-      matches: [],
-      backend: { requested: "semantic", used: "semantic", degraded: false, model: settings.model, usage: { inputTokens: 0, outputTokens: 0 }, abstained: true },
-    };
+    return { ok: false, error: { code: "no_eligible_tools", message: "Semantic search has no eligible cached tools from the allowed servers. Connect an allowed server or update settings.jev.allowedServers." } };
   }
   const input: JevEvaluateInput = {
     state: {

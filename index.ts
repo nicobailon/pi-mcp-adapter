@@ -1170,6 +1170,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           { value: "tools", label: "tools — List all tools" },
           { value: "prompts", label: "prompts — List all MCP prompts" },
           { value: "setup", label: "setup — Configure MCP servers" },
+          { value: "jev", label: "jev setup — Configure Jev semantic search" },
           { value: "edit", label: "edit — Edit .mcp.json or the global config" },
           { value: "logout", label: "logout — Clear server credentials" },
           { value: "token", label: "token — Manage stored bearer tokens" },
@@ -1181,6 +1182,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
 
       const [, subcommand, argumentPrefix] = argumentMatch;
+      if (subcommand === "jev") {
+        return "setup".startsWith((argumentPrefix ?? "").trimStart())
+          ? [{ value: "jev setup", label: "setup — Configure Jev semantic search" }]
+          : null;
+      }
       if (
         (subcommand !== "reconnect" && subcommand !== "logout" && subcommand !== "disable" && subcommand !== "enable" && subcommand !== "token")
         || argumentPrefix === undefined
@@ -1263,6 +1269,23 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
           const result = await commands.openMcpSetup(state, pi, commandCtx, earlyConfigPath, "setup");
           if (result?.configChanged) {
+            commandOwner?.throwIfInactive();
+            await commandReload();
+            return;
+          }
+          break;
+        }
+        case "jev": {
+          if (parts[1] !== "setup" || parts.length !== 2) {
+            commandCtx.ui?.notify("Usage: /mcp jev setup", "error");
+            break;
+          }
+          if (programmaticConfig) {
+            commandCtx.ui?.notify("Jev setup is unavailable when config is supplied by createMcpAdapter().", "info");
+            break;
+          }
+          commandOwner?.throwIfInactive();
+          if (await commands.setupJevSemanticSearch(state, commandCtx, earlyConfigPath)) {
             commandOwner?.throwIfInactive();
             await commandReload();
             return;
@@ -1707,7 +1730,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
         instructions: Type.Optional(Type.String({ description: "Server name to show that server's usage instructions" })),
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
-        searchMode: Type.Optional(Type.String({ enum: ["lexical", "semantic"], description: "Search backend (default: lexical; semantic must be explicitly enabled)" })),
+        searchMode: Type.Optional(Type.String({ enum: ["lexical", "semantic"], description: "Search backend (default: lexical; semantic is available when a TypeSafe key is configured)" })),
         regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
         limit: optionalNumber({ minimum: 1, description: "Maximum search results to return (default: 12)" }),

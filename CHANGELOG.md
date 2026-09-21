@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/mcp jev setup` checks for a TypeSafe credential, lets you restrict which MCP servers may share semantic-search data, saves the project policy, and reloads Pi automatically.
+
+### Changed
+
+- A valid TypeSafe key now enables semantic search across every enabled MCP tool by default, while script evaluation remains opt-in. Search also explains when an explicit allowlist permits no servers, when allowed servers have no cached tools, and when Jev decides that none of the available tools fit the request.
+
 ## [2.35.0] - 2026-09-20
 
 ### Highlights

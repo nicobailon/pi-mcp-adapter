@@ -515,7 +515,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `warnOnLargeDirectTools` | Show the advisory when 75 or more direct tools resolve (default: `true`). Set to `false` to suppress only this advisory. |
 | `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so metadata updates and explicit reconnects do not rebuild the system prompt. Proxy/search/cache metadata still refreshes. Default: false. |
 | `scriptMode` | Register the MCP-only `mcpScript` plain-JavaScript tool (default: true). Set to `false` to hide it. |
-| `jev` | Optional TypeSafe Jev evaluation settings. `semanticSearch` and `scriptEvaluation` both default to `false`; `allowedServers` is an explicit MCP data-egress allowlist. |
+| `jev` | Optional TypeSafe Jev settings. A valid TypeSafe key enables semantic search across every enabled MCP server by default; `semanticSearch: false` disables it. `scriptEvaluation` remains disabled by default and requires an `allowedServers` source allowlist when enabled. Run `/mcp jev setup` for guided configuration. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. Ignored while any server uses `directTools: "search"`, whose tools are registered inactive and can only be activated through `mcp({ search })`. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
@@ -590,24 +590,26 @@ Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — t
 
 ### MCP Scripting
 
-#### Opt-in Jev evaluation and semantic search
+#### Jev semantic search and opt-in script evaluation
 
-Jev is disabled by default: configuring a key alone performs no credential lookup or network I/O. Enabled evaluations use pinned model `jev-1.13.0` at the fixed origin `https://api.typesafe.ai`. Review TypeSafe's current [legal terms](https://docs.typesafe.ai/legal), including privacy and retention, before opt-in; a no-training commitment does not mean zero retention.
+Semantic search turns on automatically when a valid TypeSafe key is available and considers tools from every enabled MCP server by default. Regular searches remain local; TypeSafe receives data only when semantic search is requested. Script evaluation remains disabled until `scriptEvaluation: true` is configured. Requests use pinned model `jev-1.13.0` at the fixed origin `https://api.typesafe.ai`. Review TypeSafe's current [legal terms](https://docs.typesafe.ai/legal), including privacy and retention; a no-training commitment does not mean zero retention.
 
-On desktops, store the API key in the OS keyring (recommended):
+The quickest desktop setup is:
 
 ```sh
 pi-mcp-adapter key set typesafe
-pi-mcp-adapter key status typesafe
 ```
 
+That is enough to use semantic search across all enabled MCP tools. Run `/mcp jev setup` in Pi when you want to restrict which enabled servers may share semantic-search data. The command saves a project-scoped allowlist and reloads Pi automatically. Verify the stored credential at any time with `pi-mcp-adapter key status typesafe`.
+
 `TYPESAFE_API_KEY` is for CI/headless use and overrides the keyring. Stdio MCP subprocesses inherit the host environment by default, so set `inheritEnv: false` where they must not receive it. The script worker receives no key, SDK, endpoint, headers, or environment.
+
+Semantic search sends the query text, server names, normalized and original tool names, tool paths, and descriptions to TypeSafe. It does not send tool results. `allowedServers` restricts semantic search to named servers. `scriptEvaluation` is a separate opt-in that may send the state and MCP-derived results declared in each evaluation; when enabled, it requires an explicit source allowlist.
 
 ```json
 {
   "settings": {
     "jev": {
-      "semanticSearch": true,
       "scriptEvaluation": true,
       "allowedServers": ["github"],
       "maxEvaluationTokensPerScript": 32768
@@ -616,7 +618,7 @@ pi-mcp-adapter key status typesafe
 }
 ```
 
-Request semantic discovery explicitly with `mcp({ search: "triage customer reports", searchMode: "semantic" })` or `tools.search({ query: "triage customer reports", searchMode: "semantic" })`. Regex is incompatible. Timeout, rate-limit, and service failures return marked lexical fallback; credential, policy, configuration, and response failures do not.
+Request semantic discovery with `mcp({ search: "triage customer reports", searchMode: "semantic" })` or `tools.search({ query: "triage customer reports", searchMode: "semantic" })`. Regex is incompatible. Timeout, rate-limit, and service failures return marked lexical fallback; credential, policy, configuration, and response failures do not. If no allowed server has cached tools, search explains how to connect a server or update the allowlist; if Jev decides no tool fits, the result says that Jev abstained.
 
 Optional `jev` controls bound timeout/retries, request and script budgets, semantic candidates (at most 127), and minimum probability. The cumulative token budget uses provider-reported input plus output usage. Exact pre-response admission is unavailable without the provider tokenizer, so byte/question/state limits bound requests before dispatch; a response that exceeds the remaining token budget is discarded and exhausts it. The endpoint, headers, and SDK logging are not configurable.
 
@@ -929,6 +931,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 | `/mcp` | Interactive panel and first-run onboarding surface |
 | `/pi-mcp` | Alias for `/mcp` when the host reserves `/mcp` |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
+| `/mcp jev setup` | Restrict which servers may share semantic-search data, save the project policy, and reload Pi |
 | `/mcp edit [project\|global]` | Open `.mcp.json` (default) or `~/.config/mcp/mcp.json` in an editor; Ctrl+G opens `$EDITOR`; saves a valid JSONC object and reloads |
 | `/mcp tools` | List all tools |
 | `/mcp prompts` | List all MCP prompts registered as slash commands |

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMcpRuntimeOwner } from "../runtime-owner.ts";
 import type { McpExtensionState } from "../state.ts";
-import { evaluateJev, validateJevEvaluateInput, validateJevSettings } from "../jev-client.ts";
+import { evaluateJev, resolveSemanticJevSettings, validateJevEvaluateInput, validateJevSettings } from "../jev-client.ts";
 import { getTestSecureKeyringReadCount, resetTestSecureKeyring } from "../secure-keyring.ts";
+import { saveJevApiKey } from "../jev-key-store.ts";
 
 function state(jev: Record<string, unknown>): McpExtensionState {
   return { owner: createMcpRuntimeOwner(), config: { mcpServers: { allowed: { command: "x" } }, settings: { jev } } } as unknown as McpExtensionState;
@@ -31,6 +32,32 @@ describe("Jev host client", () => {
     expect(result).toMatchObject({ ok: false, error: { code: "disabled" } });
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(getTestSecureKeyringReadCount()).toBe(0);
+  });
+
+  it("enables semantic search for every enabled server when a credential is available", () => {
+    const runtime = state({});
+    runtime.config.mcpServers.disabled = { command: "x", disabled: true };
+    const present = vi.fn(() => ({ status: "present" as const, source: "keyring" as const, apiKey: "fixture-key" }));
+    expect(resolveSemanticJevSettings(runtime, present)).toMatchObject({
+      semanticSearch: true,
+      scriptEvaluation: false,
+      allowedServers: ["allowed"],
+    });
+
+    runtime.config.settings!.jev = { semanticSearch: false };
+    const disabled = resolveSemanticJevSettings(runtime, present);
+    expect(disabled.semanticSearch).toBe(false);
+    expect(present).toHaveBeenCalledOnce();
+
+    runtime.config.settings!.jev = {};
+    expect(resolveSemanticJevSettings(runtime, () => ({ status: "missing" }))).toMatchObject({
+      semanticSearch: false,
+      allowedServers: ["allowed"],
+    });
+
+    delete process.env.TYPESAFE_API_KEY;
+    saveJevApiKey("stored-key");
+    expect(resolveSemanticJevSettings(runtime).semanticSearch).toBe(true);
   });
 
   it("uses the fixed HTTPS origin, rejects redirects, and validates a response", async () => {
@@ -81,6 +108,7 @@ describe("Jev host client", () => {
     expect(() => validateJevSettings({ maxEvaluationTokensPerScript: 1_000_001 })).toThrow("1 to 1000000");
     expect(validateJevSettings({ semanticCandidateLimit: 127 }).semanticCandidateLimit).toBe(127);
     expect(() => validateJevSettings({ semanticCandidateLimit: 128 })).toThrow("2 to 127");
+    expect(validateJevEvaluateInput({ ...input, sources: ["x".repeat(129)] }, validateJevSettings(undefined)).sources).toEqual(["x".repeat(129)]);
     const limits = validateJevSettings({ maxStateBytes: 4 });
     expect(() => validateJevEvaluateInput(input, limits)).toThrow("maxStateBytes");
     const denied = await evaluateJev(state({ scriptEvaluation: true, allowedServers: [] }), input, { purpose: "script" });

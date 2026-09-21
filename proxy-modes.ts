@@ -793,7 +793,10 @@ function renderSearchResults(
       : Object.keys(state.config.mcpServers)
         .filter(name => !isServerDisabled(state.config.mcpServers[name]) && state.manager.isConnecting(name))
         .sort((a, b) => a.localeCompare(b));
-    const msg = server ? `No tools matching "${query}" in "${server}"` : `No tools matching "${query}"`;
+    const scope = server ? ` in "${server}"` : "";
+    const msg = backend?.requested === "semantic" && backend.used === "semantic" && backend.abstained
+      ? `Jev found no suitable tool for "${query}"${scope}`
+      : `No tools matching "${query}"${scope}`;
     const connectingMessage = connectingServers.length === 1
       ? ` Server "${connectingServers[0]}" is still connecting; retry in a moment.`
       : connectingServers.length > 1

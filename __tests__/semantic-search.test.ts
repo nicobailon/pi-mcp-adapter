@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runMcpScript } from "../mcp-code.ts";
 import { executeSearch } from "../proxy-modes.ts";
 import { semanticSearch, type SemanticSearchEvaluator } from "../semantic-search.ts";
 import type { JevEvaluateInput, JevEvaluationEnvelope } from "../jev-contracts.ts";
 import type { McpExtensionState } from "../state.ts";
+
+afterEach(() => vi.unstubAllEnvs());
 
 function stateWithTools(count = 3): McpExtensionState {
   const abort = new AbortController();
@@ -89,8 +91,38 @@ describe("semantic search", () => {
     const state = stateWithTools();
     state.config.settings!.jev = { semanticSearch: false, allowedServers: ["demo"] };
     const evaluator = choiceEvaluator("none");
+    vi.stubEnv("TYPESAFE_API_KEY", "configured-key");
     const result = await gatewaySemantic(state, "anything", evaluator);
     expect(result.details).toMatchObject({ error: "disabled" });
+    expect(evaluator).not.toHaveBeenCalled();
+  });
+
+  it("uses every enabled server by default when a credential is available", async () => {
+    const state = stateWithTools();
+    delete state.config.settings;
+    state.config.mcpServers.other!.disabled = true;
+    vi.stubEnv("TYPESAFE_API_KEY", "configured-key");
+    const inspect = vi.fn(async (_state: McpExtensionState, input: JevEvaluateInput) => {
+      expect(input.sources).toEqual(["demo"]);
+      return choiceEvaluator("demo_tool_0")(_state, input, { purpose: "semantic-search" });
+    });
+    const result = await semanticSearch(state, "invoices", undefined, undefined, inspect);
+    expect(result.ok && result.matches[0]?.server).toBe("demo");
+    expect(result.ok && result.matches).toHaveLength(3);
+  });
+
+  it("explains missing policy and catalog setup before evaluating", async () => {
+    const state = stateWithTools();
+    const evaluator = choiceEvaluator("none");
+    state.config.settings!.jev = { semanticSearch: true, allowedServers: [] };
+    const noServers = await gatewaySemantic(state, "anything", evaluator);
+    expect(noServers.content[0].text).toContain("settings.jev.allowedServers is empty");
+    expect(noServers.details).toMatchObject({ error: "data_policy_denied" });
+
+    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo"] };
+    const blockedServer = await executeSearch(state, "anything", false, "other", false, 12, 0, "semantic", undefined, evaluator);
+    expect(blockedServer.details).toMatchObject({ error: "data_policy_denied" });
+    expect(blockedServer.content[0].text).toContain('Server "other" is not allowed');
     expect(evaluator).not.toHaveBeenCalled();
   });
 
@@ -100,7 +132,7 @@ describe("semantic search", () => {
     state.failureTracker.set("demo", Date.now());
     const evaluator = choiceEvaluator("none");
     const result = await semanticSearch(state, "anything", undefined, undefined, evaluator);
-    expect(result).toMatchObject({ ok: true, matches: [], backend: { abstained: true } });
+    expect(result).toMatchObject({ ok: false, error: { code: "no_eligible_tools" } });
     expect(evaluator).not.toHaveBeenCalled();
 
     state.failureTracker.clear();
@@ -140,6 +172,8 @@ describe("semantic search", () => {
     expect(ranked.ok && ranked.matches.map(match => match.tool.name).slice(0, 2)).toEqual(["demo_tool_1", "demo_tool_0"]);
     const none = await semanticSearch(state, "query", undefined, undefined, choiceEvaluator("none"));
     expect(none).toMatchObject({ ok: true, matches: [], backend: { abstained: true } });
+    const renderedNone = await gatewaySemantic(state, "query", choiceEvaluator("none"));
+    expect(renderedNone.content[0].text).toBe('Jev found no suitable tool for "query"');
     const inconsistentNone = await semanticSearch(state, "query", undefined, undefined, choiceEvaluator("none", { c0: 0.9, none: 0.1 }));
     expect(inconsistentNone).toMatchObject({ ok: true, matches: [], backend: { abstained: true } });
     state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo", "other"], semanticMinProbability: 0.9 };

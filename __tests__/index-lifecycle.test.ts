@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   openMcpAuthPanel: vi.fn(),
   openMcpPanel: vi.fn(),
   openMcpSetup: vi.fn(),
+  setupJevSemanticSearch: vi.fn(),
   getPiGlobalConfigPath: vi.fn(() => "/tmp/agent/mcp.json"),
   getProjectConfigPath: vi.fn(() => "/tmp/project/.mcp.json"),
   writeSharedServerEntry: vi.fn((path: string) => path),
@@ -133,6 +134,7 @@ vi.mock("../commands.ts", async () => {
   openMcpAuthPanel: mocks.openMcpAuthPanel,
   openMcpPanel: mocks.openMcpPanel,
   openMcpSetup: mocks.openMcpSetup,
+  setupJevSemanticSearch: mocks.setupJevSemanticSearch,
   };
 });
 
@@ -2976,6 +2978,7 @@ describe("mcpAdapter session lifecycle", () => {
       "tools",
       "prompts",
       "setup",
+      "jev",
       "edit",
       "logout",
       "token",
@@ -3001,6 +3004,9 @@ describe("mcpAdapter session lifecycle", () => {
     ]);
     expect(commandDef.getArgumentCompletions("enable not")).toEqual([
       { value: "enable notion", label: "notion" },
+    ]);
+    expect(commandDef.getArgumentCompletions("jev s")).toEqual([
+      { value: "jev setup", label: "setup — Configure Jev semantic search" },
     ]);
     expect(commandDef.getArgumentCompletions("tools anything")).toBeNull();
     expect(api.registerCommand.mock.calls.some((call: any[]) => call[0] === "mcp-reconnect")).toBe(false);
@@ -3126,6 +3132,25 @@ describe("mcpAdapter session lifecycle", () => {
     expect(reload).toHaveBeenCalledTimes(1);
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
     expect(mocks.flushMetadataCache).not.toHaveBeenCalledWith(initialState);
+  });
+
+  it("reloads after `/mcp jev setup` enables semantic search", async () => {
+    const initialState = createState();
+    mocks.initializeMcp.mockResolvedValue(initialState);
+    mocks.setupJevSemanticSearch.mockResolvedValue(true);
+
+    const { api, handlers } = await loadAdapter();
+    const ui = { notify: vi.fn() };
+    const reload = vi.fn().mockResolvedValue(undefined);
+    await handlers.get("session_start")?.({}, { hasUI: true, ui });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+    await commandDef.handler("jev setup", { hasUI: true, ui, reload });
+
+    expect(mocks.setupJevSemanticSearch).toHaveBeenCalledWith(initialState, expect.any(Object), undefined);
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it("opens the auth picker for `/mcp-auth` without args in UI sessions", async () => {
