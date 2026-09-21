@@ -101,7 +101,8 @@ describe("package.json dependency policy", () => {
       packageJson.devDependencies ?? {},
       packageJson.peerDependencies ?? {},
     ];
-    const registrySemver = /^(?:[~^]?\d+\.\d+\.\d+|\*)(?:\s*\|\|\s*(?:[~^]?\d+\.\d+\.\d+|\*))*$/;
+    const version = String.raw`[~^]?\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?`;
+    const registrySemver = new RegExp(`^(?:${version}|\\*)(?:\\s*\\|\\|\\s*(?:${version}|\\*))*$`);
 
     for (const dependencies of dependencyGroups) {
       for (const spec of Object.values(dependencies)) {
