@@ -1071,6 +1071,38 @@ describe("mcpAdapter session lifecycle", () => {
     expect(result.details.path).toBe("/tmp/agent/mcp.json");
   });
 
+  it("denies agent install before validating or producing any install side effects", async () => {
+    const state = createState();
+    state.config.settings = { allowInstall: false };
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: { allowInstall: false } });
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { api, handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, {});
+    const proxyTool = registeredTool(api, "mcp");
+    const result = await proxyTool.execute(
+      "call-install",
+      { action: "install", url: "not a URL", target: "invalid" },
+      undefined,
+      undefined,
+      { cwd: "/tmp/project" },
+    );
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "MCP install is disabled by configuration." }],
+      details: { mode: "install", error: "install_disabled" },
+    });
+    expect(mocks.installModuleStarted).not.toHaveBeenCalled();
+    expect(mocks.getPiGlobalConfigPath).not.toHaveBeenCalled();
+    expect(mocks.getProjectConfigPath).not.toHaveBeenCalled();
+    expect(state.config.mcpServers).toEqual({});
+    expect(state.provisionalInstalls).toBeUndefined();
+    expect(state.lifecycle.registerServer).not.toHaveBeenCalled();
+    expect(mocks.executeConnect).not.toHaveBeenCalled();
+    expect(mocks.executeAuthStart).not.toHaveBeenCalled();
+    expect(mocks.writeSharedServerEntry).not.toHaveBeenCalled();
+  });
+
   it("persists an OAuth MCP URL and starts watched authorization", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);

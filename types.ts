@@ -589,6 +589,8 @@ export type { JevAnswer, JevErrorCode, JevEvaluateInput, JevEvaluationData, JevE
 
 export interface McpSettings {
   toolPrefix?: ToolPrefix;
+  /** Allow agents to persist remote MCP endpoints with the install action. Defaults to true. */
+  allowInstall?: boolean;
   /** Show the plug prefix in MCP status and connection text (default: true). Set to false to disable it. */
   showStatusIcon?: boolean;
   /** Footer status verbosity: full details, compact connected/enabled count, or no footer status. Defaults to full. */

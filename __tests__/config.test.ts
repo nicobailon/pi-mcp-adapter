@@ -646,7 +646,7 @@ describe("config discovery", () => {
     const realProject = realpathSync(project);
 
     writeJson(join(home, ".config", "mcp", "mcp.json"), {
-      settings: { idleTimeout: 5, requestTimeoutMs: 1500, showStatusIcon: true },
+      settings: { idleTimeout: 5, requestTimeoutMs: 1500, showStatusIcon: true, allowInstall: true },
       mcpServers: {
         shared: { command: "generic" },
         genericOnly: { command: "generic-only" },
@@ -654,7 +654,7 @@ describe("config discovery", () => {
     });
 
     writeJson(join(home, ".pi", "agent", "mcp.json"), {
-      settings: { toolPrefix: "short", directTools: true },
+      settings: { toolPrefix: "short", directTools: true, allowInstall: false },
       mcpServers: {
         shared: { command: "pi-global" },
         piOnly: { command: "pi-only" },
@@ -691,6 +691,7 @@ describe("config discovery", () => {
       showStatusIcon: false,
       toolPrefix: "none",
       directTools: true,
+      allowInstall: false,
       autoAuth: true,
       oauthDir: ".pi/oauth",
     });

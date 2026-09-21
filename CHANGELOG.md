@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `settings.allowInstall` so constrained and headless agents can be prevented from adding remote MCP endpoints. Thanks to [@gastmaier](https://github.com/gastmaier) for [#638](https://github.com/nicobailon/pi-mcp-adapter/issues/638).
 - Added `settings.exposeResources` to disable resource-tool synthesis globally while allowing per-server overrides. Thanks to [@rakesh-vs](https://github.com/rakesh-vs) for [#636](https://github.com/nicobailon/pi-mcp-adapter/pull/636).
 
 ### Changed

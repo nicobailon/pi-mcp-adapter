@@ -1589,6 +1589,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         details: { mode: "install", error: "programmatic_config" },
       };
     }
+    if (targetState.config.settings?.allowInstall === false) {
+      return {
+        content: [{ type: "text" as const, text: "MCP install is disabled by configuration." }],
+        details: { mode: "install", error: "install_disabled" },
+      };
+    }
     if (target !== undefined && target !== "global" && target !== "project") {
       return {
         content: [{ type: "text" as const, text: "MCP install target must be 'global' or 'project'." }],
