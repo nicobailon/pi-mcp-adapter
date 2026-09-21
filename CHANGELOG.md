@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `settings.exposeResources` to disable resource-tool synthesis globally while allowing per-server overrides. Thanks to [@rakesh-vs](https://github.com/rakesh-vs) for [#636](https://github.com/nicobailon/pi-mcp-adapter/pull/636).
+
 ### Changed
 
 - Added compatibility with Pi 0.87.0.
