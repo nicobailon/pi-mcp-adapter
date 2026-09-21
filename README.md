@@ -422,7 +422,7 @@ mcp({ action: "install", url: "https://example.com/mcp" })
 
 Install validates and connects the endpoint. New entries use a name derived from the hostname and are saved to Pi's global MCP config; existing URL entries are reused without rewriting. Pass `server` to choose a name or `target: "project"` to save to the project's `.mcp.json`. Unsafe URLs, name collisions, and failed connections are not persisted.
 
-To prevent agents in constrained or headless environments from adding remote endpoints, set `settings.allowInstall` to `false` in an MCP config (`mcp.json` or `.mcp.json`, using any of the MCP config locations above), not Pi's `settings.json`. Only the agent-facing `mcp({ action: "install" })` transaction is blocked; existing connect, search, tool-call, authentication, runtime registration, and interactive setup behavior is unchanged. Omit the setting or set it to `true` to preserve install behavior. Normal config precedence applies, so later MCP config sources can override earlier ones.
+To block URL installation in constrained or headless environments, set `settings.allowInstall` to `false` in an MCP config file (`mcp.json` or `.mcp.json`); Pi's `settings.json` does not control this option. This disables only `mcp({ action: "install" })`: connections, search, tool calls, authentication, runtime registration, and interactive setup remain available. Omit the setting or set it to `true` to allow installation. Normal config precedence applies.
 
 In exclusive config mode, a project target must be the active config path; otherwise use the global target. URL install cannot promote runtime-registered servers: save their complete definitions manually so required headers and transport/auth settings are retained.
 
@@ -497,7 +497,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | Setting | Description |
 |---------|-------------|
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. |
-| `allowInstall` | Allow the agent-facing URL install action (default: `true`). Set to `false` to prevent agents from adding remote MCP endpoints; other MCP operations are unchanged. |
+| `allowInstall` | Allow URL installation through the `mcp` tool (default: `true`). Set to `false` to block it. |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
 | `showStatusIcon` | Show the plug icon in MCP status and connection text (default: `true`). Set to `false` for plain `MCP: ...` text. |
