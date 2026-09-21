@@ -93,10 +93,14 @@ describe("Jev setup", () => {
     vi.stubEnv("PI_CODING_AGENT_DIR", join(root, "agent"));
     writeFileSync(join(root, ".mcp.json"), JSON.stringify({
       mcpServers: { demo: { command: "demo" } },
-      settings: { jev: false },
+      settings: { jev: { semanticSearch: true, allowedServers: ["demo"] } },
     }));
 
-    writeJevSemanticSearchConfig(undefined, root, ["demo"], false);
+    expect(writeJevSemanticSearchConfig(undefined, root, ["demo"], { semanticSearch: true, allowedServers: ["demo"] }).changed).toBe(true);
+    writeFileSync(join(root, ".mcp.json"), JSON.stringify({
+      mcpServers: { demo: { command: "demo" }, other: { command: "other" } },
+      settings: { jev: { semanticSearch: true, allowedServers: ["demo", "other"] } },
+    }));
     expect(loadMcpConfig(undefined, root).settings?.jev).toMatchObject({
       semanticSearch: true,
       allowedServers: ["demo"],

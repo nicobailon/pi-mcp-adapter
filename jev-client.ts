@@ -20,6 +20,15 @@ const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 type JevSettingsInput = Partial<ResolvedJevSettings>;
 type Host = { client: TypeSafeClient };
 const hosts = new WeakMap<McpExtensionState, Host>();
+const credentials = new WeakMap<McpExtensionState, Extract<JevCredentialResolution, { status: "present" }>>();
+
+function resolveCredential(state: McpExtensionState): JevCredentialResolution {
+  const existing = credentials.get(state);
+  if (existing) return existing;
+  const credential = resolveJevCredential();
+  if (credential.status === "present") credentials.set(state, credential);
+  return credential;
+}
 
 export function areJevSourcesAllowed(state: McpExtensionState, settings: ResolvedJevSettings, sources: Iterable<string>): boolean {
   for (const source of sources) {
@@ -76,12 +85,12 @@ export function validateJevSettings(value: unknown): ResolvedJevSettings {
 
 export function resolveSemanticJevSettings(
   state: McpExtensionState,
-  credentialResolver: () => JevCredentialResolution = resolveJevCredential,
+  credentialResolver?: () => JevCredentialResolution,
 ): ResolvedJevSettings {
   const configured = state.config.settings?.jev;
   const settings = validateJevSettings(configured);
   if (configured === false || configured?.semanticSearch === false) return settings;
-  const semanticSearch = settings.semanticSearch || credentialResolver().status === "present";
+  const semanticSearch = settings.semanticSearch || (credentialResolver ? credentialResolver() : resolveCredential(state)).status === "present";
   const hasExplicitAllowlist = configured !== undefined && Object.hasOwn(configured, "allowedServers");
   const allowedServers = hasExplicitAllowlist
     ? settings.allowedServers
@@ -218,7 +227,7 @@ function fixedOriginFetch(input: string, init?: RequestInit): Promise<Response> 
 function getHost(state: McpExtensionState, settings: ResolvedJevSettings): Host | JevEvaluationEnvelope {
   const existing = hosts.get(state);
   if (existing) return existing;
-  const credential = resolveJevCredential();
+  const credential = resolveCredential(state);
   if (credential.status === "missing") return { ok: false, error: { code: "credential_missing", message: "TypeSafe API key is not configured." } };
   if (credential.status === "unavailable") return { ok: false, error: { code: "credential_unavailable", message: credential.message } };
   const host = { client: new TypeSafeClient({ apiKey: credential.apiKey, baseURL: TYPESAFE_API_ORIGIN, defaultModel: settings.model, logLevel: "off", retry: { maxRetries: settings.maxRetries }, timeout: settings.requestTimeoutMs, defaultHeaders: {}, fetch: fixedOriginFetch }) };

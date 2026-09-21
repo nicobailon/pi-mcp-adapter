@@ -60,6 +60,21 @@ describe("Jev host client", () => {
     expect(resolveSemanticJevSettings(runtime).semanticSearch).toBe(true);
   });
 
+  it("reuses a keyring credential throughout semantic evaluation", async () => {
+    delete process.env.TYPESAFE_API_KEY;
+    saveJevApiKey("stored-key");
+    const runtime = state({});
+    expect(resolveSemanticJevSettings(runtime).semanticSearch).toBe(true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      model: "jev-1.13.0",
+      answers: { route: { type: "choice", choice: "yes", confidence: 1, probabilities: { yes: 1, no: 0 } } },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    expect(await evaluateJev(runtime, input, { purpose: "semantic-search" })).toMatchObject({ ok: true });
+    expect(getTestSecureKeyringReadCount()).toBe(1);
+  });
+
   it("uses the fixed HTTPS origin, rejects redirects, and validates a response", async () => {
     process.env.TYPESAFE_BASE_URL = "https://evil.test";
     process.env.TYPESAFE_DEFAULT_MODEL = "jev-latest";

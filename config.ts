@@ -1207,7 +1207,7 @@ export function writeJevSemanticSearchConfig(
   const nextServers = [...new Set(allowedServers)].sort((a, b) => a.localeCompare(b));
   const nextJev = { ...jev, semanticSearch: true, allowedServers: nextServers };
   validateJevSettings(nextJev);
-  if (JSON.stringify(jev) === JSON.stringify(nextJev)) return { path: filePath, changed: false };
+  if (isRecord(currentJev) && JSON.stringify(currentJev) === JSON.stringify(nextJev)) return { path: filePath, changed: false };
   raw.settings = { ...settings, jev: nextJev };
   writeRawConfigObject(filePath, raw);
   return { path: filePath, changed: true };

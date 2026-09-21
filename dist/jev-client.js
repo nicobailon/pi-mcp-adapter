@@ -12,6 +12,16 @@ const DEFAULTS = {
 };
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const hosts = new WeakMap();
+const credentials = new WeakMap();
+function resolveCredential(state) {
+    const existing = credentials.get(state);
+    if (existing)
+        return existing;
+    const credential = resolveJevCredential();
+    if (credential.status === "present")
+        credentials.set(state, credential);
+    return credential;
+}
 export function areJevSourcesAllowed(state, settings, sources) {
     for (const source of sources) {
         const server = state.config.mcpServers[source];
@@ -74,12 +84,12 @@ export function validateJevSettings(value) {
         semanticMinProbability: probability,
     };
 }
-export function resolveSemanticJevSettings(state, credentialResolver = resolveJevCredential) {
+export function resolveSemanticJevSettings(state, credentialResolver) {
     const configured = state.config.settings?.jev;
     const settings = validateJevSettings(configured);
     if (configured === false || configured?.semanticSearch === false)
         return settings;
-    const semanticSearch = settings.semanticSearch || credentialResolver().status === "present";
+    const semanticSearch = settings.semanticSearch || (credentialResolver ? credentialResolver() : resolveCredential(state)).status === "present";
     const hasExplicitAllowlist = configured !== undefined && Object.hasOwn(configured, "allowedServers");
     const allowedServers = hasExplicitAllowlist
         ? settings.allowedServers
@@ -256,7 +266,7 @@ function getHost(state, settings) {
     const existing = hosts.get(state);
     if (existing)
         return existing;
-    const credential = resolveJevCredential();
+    const credential = resolveCredential(state);
     if (credential.status === "missing")
         return { ok: false, error: { code: "credential_missing", message: "TypeSafe API key is not configured." } };
     if (credential.status === "unavailable")
