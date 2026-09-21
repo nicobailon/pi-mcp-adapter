@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- HTTP streams authenticated with `requestHeadersCommand` remain cancellable after garbage collection.
+- HTTP streams authenticated with `requestHeadersCommand` remain cancellable after garbage collection. Thanks to [@zaini](https://github.com/zaini) for PR #619.
 - Direct tools now recover stringified array and object arguments declared through type arrays and schema unions without coercing values that are valid strings. Thanks to [@sashkachan](https://github.com/sashkachan) for issue [#606](https://github.com/nicobailon/pi-mcp-adapter/issues/606).
 - Default tool search now supports CJK text, including unseparated mixed-script queries and configured search keywords, while retaining bounded lexical matching. Thanks to [@wjunhere](https://github.com/wjunhere) for issue [#607](https://github.com/nicobailon/pi-mcp-adapter/issues/607).
 - Command-backed bearer tokens now refresh through a TTL cache, and keep-alive bearer connections reconnect after a 401. Thanks to [@kesor](https://github.com/kesor) for PR #608.
