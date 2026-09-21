@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../logger.ts";
+import { beginOAuthRevocation, resetTestAuthSecretStore, saveAuthEntry } from "../mcp-auth.ts";
+
+type OAuthProviderLike = {
+  tokens?: () => Promise<unknown>;
+};
 
 type TransportOptions = {
   requestInit?: { headers?: Record<string, string> };
+  authProvider?: OAuthProviderLike;
 };
 
 type HttpTransportMock = {
@@ -15,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   clients: [] as any[],
   httpTransports: [] as HttpTransportMock[],
   connectImplementations: [] as Array<() => Promise<void>>,
+  taskAttachImplementations: [] as Array<() => Promise<unknown>>,
 }));
 
 vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
@@ -50,11 +57,28 @@ vi.mock("../npx-resolver.ts", () => ({
   resolveNpxBinary: vi.fn(async () => null),
 }));
 
+vi.mock("../mcp-tasks.ts", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  attachTaskSession: vi.fn(() =>
+    mocks.taskAttachImplementations.shift()?.() ?? Promise.resolve(undefined)),
+}));
+
 describe("McpServerManager.reconnect", () => {
+  const originalAuthStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+
   beforeEach(() => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    resetTestAuthSecretStore();
     mocks.clients.length = 0;
     mocks.httpTransports.length = 0;
     mocks.connectImplementations.length = 0;
+    mocks.taskAttachImplementations.length = 0;
+  });
+
+  afterEach(() => {
+    if (originalAuthStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+    else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = originalAuthStore;
+    resetTestAuthSecretStore();
   });
 
   function deferred<T = void>() {
@@ -69,6 +93,96 @@ describe("McpServerManager.reconnect", () => {
 
   // Each HTTP connection uses one client and one Streamable HTTP transport.
   const def = { url: "https://example.test/mcp" };
+
+  it("reconnects explicit OAuth servers with an owned auth provider", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const oauthDef = { ...def, auth: "oauth" as const };
+
+    const stale = await manager.connect("explicit", oauthDef);
+    const fresh = await manager.reconnect("explicit", oauthDef, stale);
+
+    expect(fresh.status).toBe("connected");
+    expect(mocks.httpTransports.at(-1)!.options.authProvider).toBeDefined();
+  });
+
+  it("reconnects implicit OAuth servers with stored tokens", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    saveAuthEntry("stored", { tokens: { accessToken: "stored-token" } }, def.url);
+    const manager = new McpServerManager();
+
+    const stale = await manager.connect("stored", def);
+    const fresh = await manager.reconnect("stored", def, stale);
+    const authProvider = mocks.httpTransports.at(-1)!.options.authProvider;
+
+    expect(fresh.status).toBe("connected");
+    expect(await authProvider?.tokens?.()).toMatchObject({ access_token: "stored-token" });
+  });
+
+  it("escalates an anonymous reconnect to implicit OAuth after a 401", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const stale = await manager.connect("challenged", def);
+    mocks.connectImplementations.push(
+      () => Promise.reject(new Error("Error POSTing to endpoint (HTTP 401): Unauthorized")),
+    );
+
+    const fresh = await manager.reconnect("challenged", def, stale);
+
+    expect(fresh.status).toBe("connected");
+    expect(mocks.httpTransports.at(-2)!.options.authProvider).toBeUndefined();
+    expect(mocks.httpTransports.at(-1)!.options.authProvider).toBeDefined();
+  });
+
+  it("publishes a valid needs-auth result from an OAuth reconnect", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const oauthDef = { ...def, auth: "oauth" as const };
+    const stale = await manager.connect("expired", oauthDef);
+    mocks.connectImplementations.push(
+      () => Promise.reject(new Error("Error POSTing to endpoint (HTTP 401): Unauthorized")),
+    );
+
+    const needsAuth = await manager.reconnect("expired", oauthDef, stale);
+
+    expect(needsAuth.status).toBe("needs-auth");
+    expect(needsAuth.credentialsInvalidated).toBe(true);
+    expect(manager.getConnection("expired")).toBe(needsAuth);
+    expect(stale.status).toBe("closed");
+  });
+
+  it.each(["connect-first", "reconnect-first"] as const)(
+    "shares one OAuth attempt when connect and reconnect overlap on needs-auth (%s)",
+    async order => {
+      const { McpServerManager } = await import("../server-manager.ts");
+      const manager = new McpServerManager();
+      const oauthDef = { ...def, auth: "oauth" as const };
+      mocks.connectImplementations.push(
+        () => Promise.reject(new Error("Error POSTing to endpoint (HTTP 401): Unauthorized")),
+      );
+      const needsAuth = await manager.connect(`overlap-${order}`, oauthDef);
+      expect(needsAuth.status).toBe("needs-auth");
+
+      const candidateStart = deferred();
+      mocks.connectImplementations.push(() => candidateStart.promise);
+      const first = order === "connect-first"
+        ? manager.connect(`overlap-${order}`, oauthDef)
+        : manager.reconnect(`overlap-${order}`, oauthDef, needsAuth);
+      await vi.waitFor(() => expect(mocks.clients).toHaveLength(2));
+      const second = order === "connect-first"
+        ? manager.reconnect(`overlap-${order}`, oauthDef, needsAuth)
+        : manager.connect(`overlap-${order}`, oauthDef);
+
+      await Promise.resolve();
+      expect(mocks.clients).toHaveLength(2);
+      candidateStart.resolve();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      expect(secondResult).toBe(firstResult);
+      expect(firstResult.status).toBe("connected");
+      expect(manager.getConnection(`overlap-${order}`)).toBe(firstResult);
+    },
+  );
 
   it("is single-flight: concurrent reconnects for the same server share one underlying reconnect", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
@@ -87,6 +201,51 @@ describe("McpServerManager.reconnect", () => {
     // Exactly one new connection was established, not one per caller.
     expect(mocks.clients.length).toBe(1);
     expect(manager.getConnection("remote")).toBe(c1);
+  });
+
+  it("does not publish a reconnect superseded by an incompatible OAuth attempt during task attachment", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const oauthDef = { ...def, auth: "oauth" as const };
+    const stale = await manager.connect("attachment-race", oauthDef);
+    const attachmentStarted = deferred();
+    const finishAttachment = deferred();
+    mocks.taskAttachImplementations.push(async () => {
+      attachmentStarted.resolve();
+      await finishAttachment.promise;
+      return undefined;
+    });
+
+    const reconnecting = manager.reconnect("attachment-race", oauthDef, stale);
+    await attachmentStarted.promise;
+    const releaseRevocation = beginOAuthRevocation("attachment-race");
+    releaseRevocation();
+    const replacement = await manager.reconnect("attachment-race", oauthDef, stale);
+    const delayedCandidate = mocks.clients[1];
+
+    finishAttachment.resolve();
+    await expect(reconnecting).rejects.toThrow("closed while reconnecting");
+
+    expect(manager.getConnection("attachment-race")).toBe(replacement);
+    expect(replacement.client).not.toBe(delayedCandidate);
+    expect(delayedCandidate.close).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { command: "fake-server", caFile: "/tmp/ca.pem" },
+    { socket: "/tmp/mcp.sock", caFile: "/tmp/ca.pem" },
+  ])("rejects caFile on a non-HTTP reconnect before replacement startup (%j)", async invalidDefinition => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const stale = await manager.connect("invalid-ca-reconnect", def);
+    const clientsBeforeReconnect = mocks.clients.length;
+
+    await expect(manager.reconnect("invalid-ca-reconnect", invalidDefinition, stale))
+      .rejects.toThrow("caFile is only supported for HTTPS HTTP servers");
+
+    expect(mocks.clients).toHaveLength(clientsBeforeReconnect);
+    expect(manager.getConnection("invalid-ca-reconnect")).toBe(stale);
+    expect(stale.status).toBe("connected");
   });
 
   it("identity guard: never tears down a connection it did not prove stale", async () => {
