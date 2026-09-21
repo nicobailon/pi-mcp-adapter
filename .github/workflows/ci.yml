@@ -55,3 +55,24 @@ jobs:
 
       - run: npm ci
       - run: npm test -- --run __tests__/mcp-code.test.ts
+
+  windows-recheck-paths:
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - name: Exercise recheck native executable resolution
+        env:
+          RECHECK_BACKEND: native
+        run: node -e "const assert = require('node:assert/strict'); const fs = require('node:fs'); const manifest = require.resolve('recheck-windows-x64/package.json'); const executable = manifest.replace(/package\.json$/, 'recheck.exe'); assert.notEqual(executable, manifest); assert.ok(executable.endsWith('\\recheck.exe')); assert.ok(fs.statSync(executable).isFile()); assert.equal(require('recheck').checkSync('(a+)+$', '').status, 'vulnerable');"
+      - name: Exercise recheck JAR fallback resolution
+        env:
+          RECHECK_BACKEND: java
+        run: node -e "const assert = require('node:assert/strict'); const fs = require('node:fs'); const manifest = require.resolve('recheck-jar/package.json'); const jar = manifest.replace(/package\.json$/, 'recheck.jar'); assert.notEqual(jar, manifest); assert.ok(jar.endsWith('\\recheck.jar')); assert.ok(fs.statSync(jar).isFile()); assert.equal(require('recheck').checkSync('(a+)+$', '').status, 'vulnerable');"
