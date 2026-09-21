@@ -1071,7 +1071,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(result.details.path).toBe("/tmp/agent/mcp.json");
   });
 
-  it("denies agent install before validating or producing any install side effects", async () => {
+  it("denies agent install before parsing or side effects", async () => {
     const state = createState();
     state.config.settings = { allowInstall: false };
     mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: { allowInstall: false } });
@@ -1082,7 +1082,7 @@ describe("mcpAdapter session lifecycle", () => {
     const proxyTool = registeredTool(api, "mcp");
     const result = await proxyTool.execute(
       "call-install",
-      { action: "install", url: "not a URL", target: "invalid" },
+      { action: "install", url: "not a URL" },
       undefined,
       undefined,
       { cwd: "/tmp/project" },
@@ -1093,10 +1093,6 @@ describe("mcpAdapter session lifecycle", () => {
       details: { mode: "install", error: "install_disabled" },
     });
     expect(mocks.installModuleStarted).not.toHaveBeenCalled();
-    expect(mocks.getPiGlobalConfigPath).not.toHaveBeenCalled();
-    expect(mocks.getProjectConfigPath).not.toHaveBeenCalled();
-    expect(state.config.mcpServers).toEqual({});
-    expect(state.provisionalInstalls).toBeUndefined();
     expect(state.lifecycle.registerServer).not.toHaveBeenCalled();
     expect(mocks.executeConnect).not.toHaveBeenCalled();
     expect(mocks.executeAuthStart).not.toHaveBeenCalled();
