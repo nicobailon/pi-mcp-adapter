@@ -19,10 +19,11 @@ import {
   SANDBOX_RESOURCE_PATH_PREFIX,
 } from "./sandbox-proxy-template.ts";
 import { logger } from "./logger.ts";
-import type { McpServerManager } from "./server-manager.ts";
+import type { McpServerManager, ServerConnection } from "./server-manager.ts";
 import type { McpExtensionState } from "./state.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
+import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { extractUiToolVisibility, isUiToolCallableByApp, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
@@ -530,6 +531,19 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         try {
           options.manager.touch(options.serverName);
           options.manager.incrementInFlight(options.serverName);
+          const callTool = async (conn: ServerConnection) => {
+            await options.manager.ensureListen?.(options.serverName, conn);
+            const requestOptions = options.manager.getRequestOptions?.(options.serverName);
+            if (conn.taskSession) {
+              return callToolViaTaskSession(conn.taskSession, {
+                name: callArgs.name,
+                args: callArgs.arguments,
+                requestTimeoutMs: requestOptions?.timeout,
+                signal: requestOptions?.signal,
+              });
+            }
+            return conn.client.callTool(callArgs, requestOptions);
+          };
           const result = options.config
             ? await withSessionRecovery(
                 {
@@ -538,15 +552,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
                   ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
                 },
                 options.serverName,
-                async (conn) => {
-                  await options.manager.ensureListen?.(options.serverName, conn);
-                  return conn.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName));
-                },
+                callTool,
               )
-            : await (async () => {
-                await options.manager.ensureListen?.(options.serverName, connection);
-                return connection.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName));
-              })();
+            : await callTool(connection);
           sendJson(res, 200, { ok: true, result });
         } finally {
           options.manager.decrementInFlight(options.serverName);

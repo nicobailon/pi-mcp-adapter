@@ -74,19 +74,28 @@ describe("UiServer /proxy/tools/call session recovery", () => {
     }
   });
 
-  it("recovers a terminated Streamable HTTP session transparently, when config is supplied", async () => {
+  it("recovers task-session tool calls transparently when config is supplied", async () => {
 
-
+    const staleTaskCall = vi.fn().mockRejectedValueOnce(httpError(404, "Session not found"));
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(httpError(404, "Session not found")) },
+      client: { callTool: vi.fn() },
+      taskSession: { callTool: staleTaskCall },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
+    const result = { content: [{ type: "text", text: "tool result" }] };
+    const freshTaskCall = vi.fn().mockResolvedValue({
+      kind: "immediate",
+      cancel: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      settle: vi.fn().mockResolvedValue({ outcome: { status: "completed", result } }),
+    });
     const fresh = {
       status: "connected",
       transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }) },
+      client: { callTool: vi.fn() },
+      taskSession: { callTool: freshTaskCall },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
 
@@ -96,7 +105,7 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => ({ timeout: 4321 })),
     } as unknown as McpServerManager;
 
     const config: McpConfig = { mcpServers: { "test-server": { url: "https://api.example.com/mcp" } } };
@@ -115,13 +124,15 @@ describe("UiServer /proxy/tools/call session recovery", () => {
 
     const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
       method: "POST",
-      body: { token: handle.sessionToken, params: { name: "some_tool", arguments: {} } },
+      body: { token: handle.sessionToken, params: { name: "some_tool", arguments: '{"query":"value"}' } },
     });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "tool result" }] } });
-    expect((stale.client.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
-    expect((fresh.client.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect(staleTaskCall).toHaveBeenCalledWith("some_tool", { query: "value" }, { requestTimeoutMs: 4321 });
+    expect(freshTaskCall).toHaveBeenCalledWith("some_tool", { query: "value" }, { requestTimeoutMs: 4321 });
+    expect((stale.client.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect((fresh.client.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     expect(manager.reconnect).toHaveBeenCalledWith("test-server", config.mcpServers["test-server"], stale);
   });
 

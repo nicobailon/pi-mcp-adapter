@@ -53,6 +53,7 @@ export const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks";
 const RAW_REQUEST_ID_PREFIX = "pi-mcp-tasks-";
 
 const DEFAULT_RAW_REQUEST_TIMEOUT_MS = 60_000;
+const LATE_TASK_HANDLE_GRACE_MS = 60_000;
 
 type JsonRpcResponseShape = { kind: "result"; result: unknown } | {
   kind: "error";
@@ -60,9 +61,15 @@ type JsonRpcResponseShape = { kind: "result"; result: unknown } | {
 };
 
 interface PendingRawRequest {
+  id: string;
   resolve: (response: JsonRpcResponseShape) => void;
   reject: (error: Error) => void;
-  cleanup: () => void;
+  state: "pending" | "observing";
+  signal?: AbortSignal;
+  onAbort?: () => void;
+  requestTimer?: ReturnType<typeof setTimeout>;
+  observationTimer?: ReturnType<typeof setTimeout>;
+  observationController?: AbortController;
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -134,39 +141,39 @@ export class RawRequestChannel {
     const timeoutMs = options?.context?.requestTimeoutMs ?? this.defaultTimeoutMs;
 
     return new Promise<JsonRpcResponseShape>((resolve, reject) => {
-      let onAbort: (() => void) | undefined;
-      const cleanup = () => {
-        clearTimeout(timer);
-        if (signal && onAbort) signal.removeEventListener("abort", onAbort);
-        this.pending.delete(id);
+      const entry: PendingRawRequest = {
+        id,
+        resolve,
+        reject,
+        state: "pending",
+        ...(signal === undefined ? {} : { signal }),
+        ...(message.method === "tools/call" ? { observationController: new AbortController() } : {}),
       };
-      const timer = setTimeout(() => {
-        cleanup();
-        reject(new Error(`MCP task request "${message.method}" timed out after ${timeoutMs}ms`));
+      entry.requestTimer = setTimeout(() => {
+        this.terminateLocalWait(entry, new Error(`MCP task request "${message.method}" timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, cleanup });
+      this.pending.set(id, entry);
       if (signal) {
-        onAbort = () => {
-          const entry = this.pending.get(id);
-          if (!entry) return;
-          entry.cleanup();
-          reject(abortError(signal));
+        entry.onAbort = () => {
+          this.terminateLocalWait(entry, abortError(signal));
         };
-        signal.addEventListener("abort", onAbort, { once: true });
+        signal.addEventListener("abort", entry.onAbort, { once: true });
       }
       const fail = (error: unknown) => {
-        const entry = this.pending.get(id);
-        if (!entry) return;
-        entry.cleanup();
-        reject(error instanceof Error ? error : new Error(String(error)));
+        if (this.pending.get(id) !== entry) return;
+        const wasPending = entry.state === "pending";
+        this.finishRequest(entry, true);
+        if (wasPending) reject(error instanceof Error ? error : new Error(String(error)));
       };
       // ext-tasks supplies the SEP-2663 Mcp-Name routing header (and any
-      // host headers) via context.headers; requestSignal lets the transport
-      // abort the underlying request stream on caller abort.
+      // host headers) via context.headers. A task-producing tools/call owns
+      // its transport observation independently from the caller's wait.
       try {
         Promise.resolve(this.transport.send(message, {
           ...(options?.context?.headers === undefined ? {} : { headers: options.context.headers }),
-          ...(signal === undefined ? {} : { requestSignal: signal }),
+          ...(entry.observationController !== undefined
+            ? { requestSignal: entry.observationController.signal }
+            : signal === undefined ? {} : { requestSignal: signal }),
         })).catch(fail);
       } catch (error) {
         fail(error);
@@ -177,9 +184,17 @@ export class RawRequestChannel {
   private consumeRawResponse(message: JSONRPCMessage): boolean {
     if (!("id" in message) || typeof message.id !== "string") return false;
     if (!message.id.startsWith(RAW_REQUEST_ID_PREFIX)) return false;
+    // A server request may choose any string ID, including our client-side
+    // prefix. Method-bearing frames still belong to the SDK request handler.
+    if ("method" in message) return false;
     const entry = this.pending.get(message.id);
-    if (!entry) return true; // ours, but already timed out/aborted — drop it
-    entry.cleanup();
+    if (!entry) return true; // ours, but already completed or its bounded observation expired
+    const wasObserving = entry.state === "observing";
+    this.finishRequest(entry, true);
+    if (wasObserving) {
+      this.cancelLateTask(message);
+      return true;
+    }
     if ("error" in message) {
       const { code, message: errorMessage, data } = message.error;
       entry.resolve({ kind: "error", error: { code, message: errorMessage, ...(data === undefined ? {} : { data }) } });
@@ -191,12 +206,54 @@ export class RawRequestChannel {
     return true;
   }
 
+  private terminateLocalWait(entry: PendingRawRequest, error: Error): void {
+    if (this.pending.get(entry.id) !== entry || entry.state !== "pending") return;
+    if (entry.observationController === undefined) {
+      this.finishRequest(entry, false);
+    } else {
+      entry.state = "observing";
+      this.clearLocalWait(entry);
+      entry.observationTimer = setTimeout(() => {
+        this.finishRequest(entry, true);
+      }, LATE_TASK_HANDLE_GRACE_MS);
+    }
+    entry.reject(error);
+  }
+
+  private clearLocalWait(entry: PendingRawRequest): void {
+    if (entry.requestTimer !== undefined) clearTimeout(entry.requestTimer);
+    delete entry.requestTimer;
+    if (entry.signal !== undefined && entry.onAbort !== undefined) {
+      entry.signal.removeEventListener("abort", entry.onAbort);
+    }
+    delete entry.onAbort;
+  }
+
+  private finishRequest(entry: PendingRawRequest, abortObservation: boolean): void {
+    if (this.pending.get(entry.id) !== entry) return;
+    this.clearLocalWait(entry);
+    if (entry.observationTimer !== undefined) clearTimeout(entry.observationTimer);
+    delete entry.observationTimer;
+    this.pending.delete(entry.id);
+    if (abortObservation) entry.observationController?.abort();
+  }
+
+  private cancelLateTask(message: JSONRPCMessage): void {
+    if (!("result" in message) || !isJsonRecord(message.result)) return;
+    if (message.result.resultType !== "task" || typeof message.result.taskId !== "string") return;
+    const taskId = message.result.taskId;
+    void this.rawDispatch(
+      { method: "tasks/cancel", params: { taskId } },
+      { context: { headers: { "Mcp-Name": taskId } } },
+    ).catch(() => {});
+  }
+
   rejectAll(reason: string): void {
     const entries = [...this.pending.values()];
-    this.pending.clear();
     for (const entry of entries) {
-      entry.cleanup();
-      entry.reject(new Error(reason));
+      const wasPending = entry.state === "pending";
+      this.finishRequest(entry, true);
+      if (wasPending) entry.reject(new Error(reason));
     }
   }
 }

@@ -33,6 +33,47 @@ describe("MCP elicitation", () => {
     mocks.open.mockResolvedValue(undefined);
   });
 
+  it("stops awaiting form UI output when the task is cancelled", async () => {
+    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    let resolveSelection!: (value: string) => void;
+    const ui = createUi({
+      select: vi.fn(() => new Promise<string>(resolve => { resolveSelection = resolve; })),
+    });
+    const controller = new AbortController();
+    const pending = handleElicitationRequest({ serverName: "demo", ui, allowUrl: true }, request({
+      mode: "form",
+      message: "Confirm",
+      requestedSchema: { type: "object", properties: {} },
+    }), controller.signal);
+
+    controller.abort(new Error("task cancelled"));
+    await expect(pending).rejects.toThrow("task cancelled");
+    resolveSelection("Continue");
+  });
+
+  it("stops awaiting a URL browser handoff and does not accept it after task cancellation", async () => {
+    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    let resolveOpen!: () => void;
+    mocks.open.mockImplementationOnce(() => new Promise<void>(resolve => { resolveOpen = resolve; }));
+    const onUrlAccepted = vi.fn();
+    const ui = createUi({ select: vi.fn().mockResolvedValue("Open") });
+    const controller = new AbortController();
+    const pending = handleElicitationRequest({ serverName: "demo", ui, allowUrl: true, onUrlAccepted }, request({
+      mode: "url",
+      message: "Authorize",
+      elicitationId: "auth-cancelled",
+      url: "https://example.com/authorize",
+    }), controller.signal);
+
+    await vi.waitFor(() => expect(mocks.open).toHaveBeenCalled());
+    controller.abort(new Error("task cancelled"));
+    await expect(pending).rejects.toThrow("task cancelled");
+    resolveOpen();
+    await Promise.resolve();
+    expect(onUrlAccepted).not.toHaveBeenCalled();
+    expect(ui.notify).not.toHaveBeenCalled();
+  });
+
   it("collects a form with stock Pi dialogs and lets the user review it before sending", async () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = createUi({

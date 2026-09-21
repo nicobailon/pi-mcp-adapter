@@ -47,6 +47,36 @@ function connectedTransport(): { transport: Transport & { sent: SentFrame[] }; s
   return { transport, sdkReceived, sdkClosed };
 }
 
+function honorRequestSignalTeardown(transport: Transport & { sent: SentFrame[] }) {
+  const streams = new Map<string, { open: boolean; signal: AbortSignal; onAbort: () => void }>();
+  const originalSend = transport.send.bind(transport);
+  transport.send = async (message, options) => {
+    await originalSend(message, options);
+    const id = "id" in message && typeof message.id === "string" ? message.id : undefined;
+    const signal = options?.requestSignal;
+    if (id === undefined || signal === undefined) return;
+    const stream = { open: !signal.aborted, signal, onAbort: () => { stream.open = false; } };
+    signal.addEventListener("abort", stream.onAbort, { once: true });
+    streams.set(id, stream);
+  };
+  return {
+    isOpen(id: string) {
+      return streams.get(id)?.open === true;
+    },
+    signalFor(id: string) {
+      return streams.get(id)?.signal;
+    },
+    deliver(message: JSONRPCMessage) {
+      if (!("id" in message) || typeof message.id !== "string") return;
+      const stream = streams.get(message.id);
+      if (!stream?.open) return;
+      transport.onmessage?.(message);
+      stream.signal.removeEventListener("abort", stream.onAbort);
+      streams.delete(message.id);
+    },
+  };
+}
+
 describe("RawRequestChannel", () => {
   it("resolves rawDispatch with a correlated result without forwarding it to the SDK handler", async () => {
     const { transport, sdkReceived } = connectedTransport();
@@ -107,6 +137,22 @@ describe("RawRequestChannel", () => {
     expect(sdkClosed).toEqual([1]);
   });
 
+  it("forwards method-bearing server requests even when their string ID uses the raw-request prefix", () => {
+    const { transport, sdkReceived } = connectedTransport();
+    const channel = new RawRequestChannel(transport);
+    channel.attach();
+    const serverRequest = {
+      jsonrpc: "2.0",
+      id: "pi-mcp-tasks-server-request",
+      method: "elicitation/create",
+      params: { message: "Choose", requestedSchema: { type: "object", properties: {} } },
+    } as JSONRPCMessage;
+
+    transport.onmessage?.(serverRequest);
+
+    expect(sdkReceived).toEqual([serverRequest]);
+  });
+
   it("resolves JSON-RPC error responses as error-kind results", async () => {
     const { transport } = connectedTransport();
     const channel = new RawRequestChannel(transport);
@@ -143,6 +189,84 @@ describe("RawRequestChannel", () => {
     expect(sdkReceived).toHaveLength(0);
   });
 
+  it("cancels a task whose handle arrives after the tools/call was aborted", async () => {
+    vi.useFakeTimers();
+    try {
+      const { transport, sdkReceived } = connectedTransport();
+      const streams = honorRequestSignalTeardown(transport);
+      const channel = new RawRequestChannel(transport);
+      channel.attach();
+      const controller = new AbortController();
+      const pending = channel.rawDispatch(
+        { method: "tools/call", params: { name: "slow_tool", arguments: {} } },
+        { signal: controller.signal },
+      );
+      const callRequest = transport.sent[0]!.message as { id: string };
+
+      controller.abort();
+      await expect(pending).rejects.toThrow();
+      const observationSignal = streams.signalFor(callRequest.id);
+      expect(observationSignal).not.toBe(controller.signal);
+      expect(streams.isOpen(callRequest.id)).toBe(true);
+      streams.deliver({
+        jsonrpc: "2.0",
+        id: callRequest.id,
+        result: { resultType: "task", taskId: "late-abort-task", status: "working" },
+      } as JSONRPCMessage);
+      expect(observationSignal?.aborted).toBe(true);
+
+      const cancel = transport.sent[1]!;
+      expect(cancel.message).toMatchObject({
+        method: "tasks/cancel",
+        params: { taskId: "late-abort-task" },
+      });
+      expect(cancel.options).toMatchObject({ headers: { "Mcp-Name": "late-abort-task" } });
+      transport.onmessage?.({
+        jsonrpc: "2.0",
+        id: (cancel.message as { id: string }).id,
+        result: { resultType: "complete" },
+      } as JSONRPCMessage);
+      expect(sdkReceived).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds how long an aborted tools/call is retained for a late task handle", async () => {
+    vi.useFakeTimers();
+    try {
+      const { transport, sdkReceived } = connectedTransport();
+      const streams = honorRequestSignalTeardown(transport);
+      const channel = new RawRequestChannel(transport);
+      channel.attach();
+      const controller = new AbortController();
+      const pending = channel.rawDispatch(
+        { method: "tools/call", params: { name: "slow_tool", arguments: {} } },
+        { signal: controller.signal },
+      );
+      const callRequest = transport.sent[0]!.message as { id: string };
+
+      controller.abort();
+      await expect(pending).rejects.toThrow();
+      expect(streams.isOpen(callRequest.id)).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(streams.isOpen(callRequest.id)).toBe(false);
+
+      streams.deliver({
+        jsonrpc: "2.0",
+        id: callRequest.id,
+        result: { resultType: "task", taskId: "expired-task", status: "working" },
+      } as JSONRPCMessage);
+      expect(transport.sent).toHaveLength(1);
+      expect(sdkReceived).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("times out a dispatch that never receives a response", async () => {
     vi.useFakeTimers();
     try {
@@ -153,6 +277,46 @@ describe("RawRequestChannel", () => {
       const assertion = expect(pending).rejects.toThrow(/timed out after 50ms/);
       await vi.advanceTimersByTimeAsync(60);
       await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a task whose handle arrives after the tools/call timed out", async () => {
+    vi.useFakeTimers();
+    try {
+      const { transport } = connectedTransport();
+      const streams = honorRequestSignalTeardown(transport);
+      const channel = new RawRequestChannel(transport, 50);
+      channel.attach();
+      const pending = channel.rawDispatch({
+        method: "tools/call",
+        params: { name: "slow_tool", arguments: {} },
+      });
+      const callRequest = transport.sent[0]!.message as { id: string };
+      const assertion = expect(pending).rejects.toThrow(/timed out after 50ms/);
+
+      await vi.advanceTimersByTimeAsync(60);
+      await assertion;
+      expect(streams.isOpen(callRequest.id)).toBe(true);
+      streams.deliver({
+        jsonrpc: "2.0",
+        id: callRequest.id,
+        result: { resultType: "task", taskId: "late-timeout-task", status: "working" },
+      } as JSONRPCMessage);
+
+      const cancel = transport.sent[1]!;
+      expect(cancel.message).toMatchObject({
+        method: "tasks/cancel",
+        params: { taskId: "late-timeout-task" },
+      });
+      expect(cancel.options).toMatchObject({ headers: { "Mcp-Name": "late-timeout-task" } });
+      transport.onmessage?.({
+        jsonrpc: "2.0",
+        id: (cancel.message as { id: string }).id,
+        result: { resultType: "complete" },
+      } as JSONRPCMessage);
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }

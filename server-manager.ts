@@ -1066,12 +1066,12 @@ export class McpServerManager {
             clientCapabilities: this.buildClientCapabilities(),
             ...(this.elicitationConfig
               ? {
-                  onElicitation: (request: Parameters<typeof handleElicitationRequest>[1]) =>
+                  onElicitation: (request: Parameters<typeof handleElicitationRequest>[1], signal?: AbortSignal) =>
                     handleElicitationRequest({
                       ...this.elicitationConfig!,
                       serverName: name,
                       onUrlAccepted: elicitationId => this.rememberUrlElicitation(name, elicitationId),
-                    }, request),
+                    }, request, signal),
                 }
               : {}),
             ...(this.samplingConfig

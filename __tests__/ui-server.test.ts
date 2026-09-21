@@ -737,11 +737,12 @@ describe("UiServer", () => {
   });
 
   describe("POST /proxy/tools/call", () => {
-    it("proxies tool call to MCP server", async () => {
+    it("falls back to the plain MCP client when no task session exists", async () => {
       const mockClient = {
         callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }),
       };
-      const requestOptions = { timeout: 4321 };
+      const controller = new AbortController();
+      const requestOptions = { timeout: 4321, signal: controller.signal };
       const manager = createMockManager({
         getConnection: vi.fn().mockReturnValue({
           status: "connected",
@@ -770,6 +771,87 @@ describe("UiServer", () => {
         name: "some_tool",
         arguments: { arg1: "value1" },
       }, requestOptions);
+    });
+
+    it("routes headless tool calls through the task session", async () => {
+      const result = { content: [{ type: "text", text: "task result" }] };
+      const taskCallTool = vi.fn().mockResolvedValue({
+        kind: "immediate",
+        cancel: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        settle: vi.fn().mockResolvedValue({ outcome: { status: "completed", result } }),
+      });
+      const clientCallTool = vi.fn();
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool: clientCallTool },
+          taskSession: { callTool: taskCallTool },
+          tools: [{ name: "some_tool" }],
+        }),
+        getRequestOptions: vi.fn().mockReturnValue({ timeout: 4321 }),
+      });
+      handle = await startUiServer(createServerOptions({ manager }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: '{"arg1":"value1"}' },
+        },
+      });
+
+      expect(res.body).toEqual({ ok: true, result });
+      expect(taskCallTool).toHaveBeenCalledWith(
+        "some_tool",
+        { arg1: "value1" },
+        { requestTimeoutMs: 4321 },
+      );
+      expect(clientCallTool).not.toHaveBeenCalled();
+    });
+
+    it("propagates runtime-owner aborts to task execution and cancellation", async () => {
+      const controller = new AbortController();
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      const close = vi.fn().mockResolvedValue(undefined);
+      const taskCallTool = vi.fn().mockResolvedValue({
+        kind: "task",
+        cancel,
+        close,
+        settle: vi.fn(({ signal }: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        })),
+      });
+      const clientCallTool = vi.fn();
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool: clientCallTool },
+          taskSession: { callTool: taskCallTool },
+          tools: [{ name: "some_tool" }],
+        }),
+        getRequestOptions: vi.fn().mockReturnValue({ timeout: 4321, signal: controller.signal }),
+      });
+      handle = await startUiServer(createServerOptions({ manager }));
+
+      const pending = request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: {} },
+        },
+      });
+      await vi.waitFor(() => expect(taskCallTool).toHaveBeenCalled());
+      controller.abort(new Error("runtime owner stopped"));
+
+      await expect(pending).resolves.toMatchObject({ status: 500 });
+      expect(taskCallTool).toHaveBeenCalledWith("some_tool", {}, {
+        requestTimeoutMs: 4321,
+        signal: controller.signal,
+      });
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(close).toHaveBeenCalledOnce();
+      expect(clientCallTool).not.toHaveBeenCalled();
     });
 
     it("parses JSON-string arguments without dropping quoted fields", async () => {
