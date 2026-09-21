@@ -376,7 +376,20 @@ function mergeClaudePluginMcpDefaults(
     console.warn(`Claude plugin MCP server "${name}" is shadowed by higher-precedence server "${higherName}" because both normalize to the same namespace`);
     return false;
   }));
-  return mergeConfigs({ mcpServers: defaults }, higherPrecedenceConfig);
+  return applySettingDefaults(mergeConfigs({ mcpServers: defaults }, higherPrecedenceConfig));
+}
+
+function applySettingDefaults(config: McpConfig): McpConfig {
+  if (config.settings?.exposeResources === undefined) return config;
+  const globalExposeResources = config.settings.exposeResources;
+  const mcpServers: Record<string, ServerEntry> = {};
+  for (const [name, entry] of Object.entries(config.mcpServers)) {
+    mcpServers[name] = {
+      ...entry,
+      ...(entry.exposeResources === undefined ? { exposeResources: globalExposeResources } : {}),
+    };
+  }
+  return { ...config, mcpServers };
 }
 
 function getMergedSettings(overridePath?: string, cwd = process.cwd()): McpSettings | undefined {
