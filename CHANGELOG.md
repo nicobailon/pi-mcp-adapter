@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added compatibility with Pi 0.87.0.
 
+### Fixed
+
+- Search-mode direct tools are held inactive at session start and before model requests, while tools selected by search remain active until the session ends. Thanks to [@VoidInTheShell](https://github.com/VoidInTheShell) for [PR #640](https://github.com/nicobailon/pi-mcp-adapter/pull/640).
+
 ## [2.36.0] - 2026-09-21
 
 ### Highlights

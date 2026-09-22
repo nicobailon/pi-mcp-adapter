@@ -3588,17 +3588,32 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     const { default: mcpAdapter } = await import("../index.ts");
     const { api, handlers } = createPi();
     const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    let actionMethodsReady = false;
+    const runtimeGetActiveTools = api.getActiveTools.getMockImplementation();
+    api.getActiveTools.mockImplementation(() => {
+      if (!actionMethodsReady) throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
+      return runtimeGetActiveTools?.();
+    });
     mcpAdapter(api);
+    const activeToolsBeforeSession = activeTools();
+    actionMethodsReady = true;
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
     await Promise.resolve();
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
-    return { api, activeTools, proxyTool };
+    return { api, handlers, activeTools, activeToolsBeforeSession, proxyTool };
   }
 
-  it("registers lazy tools but holds them out of the active set", async () => {
-    const { api, activeTools } = await boot();
-    expect(api.registerTool.mock.calls.map((call: any[]) => call[0].name)).toEqual(expect.arrayContaining(["demo_alpha", "demo_beta"]));
+  it("holds registered lazy tools at session start", async () => {
+    const { activeTools, activeToolsBeforeSession } = await boot();
+    expect(activeToolsBeforeSession).toEqual(expect.arrayContaining(["demo_alpha", "demo_beta"]));
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+  });
+
+  it("re-holds unsearched tools reactivated before a request", async () => {
+    const { api, handlers, activeTools } = await boot();
+    api.setActiveTools([...activeTools(), "demo_alpha"]);
+    await handlers.get("before_agent_start")?.({}, {});
     expect(activeTools()).toEqual(["bash", "mcp"]);
   });
 
@@ -3608,14 +3623,18 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     expect(proxyTool).toBeDefined();
   });
 
-  it("search activates the matches additively and reports them as addedToolNames", async () => {
-    const { activeTools, proxyTool } = await boot();
+  it("keeps search activations until the next session", async () => {
+    const { handlers, activeTools, proxyTool } = await boot();
     mocks.executeSearch.mockReturnValue(searchResult("alpha", "gamma"));
     const result = await proxyTool.execute("call-1", { search: "q" });
     expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha", "demo_gamma"]);
     expect(result.addedToolNames).toEqual(["demo_alpha", "demo_gamma"]);
     expect(result.content[0].text).toContain("Activated as direct tools: demo_alpha, demo_gamma");
     expect(result.content[0].text).toContain("Found 2"); // the search text is kept
+    await handlers.get("before_agent_start")?.({}, {});
+    expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha", "demo_gamma"]);
+    await handlers.get("session_start")?.({}, {});
+    expect(activeTools()).toEqual(["bash", "mcp"]);
   });
 
   it("a search-mode tool selected eagerly becomes active, even if search never activated it", async () => {

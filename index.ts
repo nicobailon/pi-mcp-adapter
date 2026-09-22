@@ -341,8 +341,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const fallbackDeactivatedTools = new Set<string>();
   // directTools: "search" — registered inactive, activated by mcp({ search }).
   const lazyDirectTools = new Set<string>();
-  // The lazy tools a search has activated; every other lazy tool is held out
-  // of the active set. Per process: nothing here survives a restart.
   const searchActivatedTools = new Set<string>();
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
   const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
@@ -445,14 +443,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const activeTools = getActiveToolsIfReady();
     if (!activeTools) return;
     const next = activeTools.filter((name) => !lazyDirectTools.has(name) || searchActivatedTools.has(name));
-    if (next.length !== activeTools.length) {
-      try {
-        pi.setActiveTools(next);
-      } catch {
-        // setActiveTools can throw if the runtime is invalidated mid-hold
-        // (session reload); the next event re-holds from the new state.
-      }
-    }
+    if (next.length !== activeTools.length) pi.setActiveTools(next);
   }
 
   /**
@@ -1088,6 +1079,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    // Reset before any await so replacement sessions cannot inherit activation.
+    searchActivatedTools.clear();
+    holdLazyToolsInactive();
     const generation = ++lifecycleGeneration;
     largeDirectToolsAdvisoryDelivered = false;
     const previousState = state;
@@ -1116,14 +1110,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
     if (generation !== lifecycleGeneration || !owner.isActive()) return;
     if (state) return;
-
-    // Load-time registration runs during extension loading, when pi rejects
-    // action methods, so the holdLazyToolsInactive() call inside
-    // syncDirectTools was a no-op and search-mode direct tools stayed active
-    // for the first agent turn. Hold them now: session_start fires before
-    // before_agent_start and the first LLM request, while action methods are
-    // already bound. Covers both the deferred-runtime path and the eager path.
-    holdLazyToolsInactive();
 
     if (!initPromise) {
       const deferredSnapshot = deferSessionRuntime ? getDeferredSessionSnapshot(ctx.cwd) : undefined;
@@ -1163,22 +1149,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     await initializationStarted;
   });
 
-  // Belt-and-suspenders for the load-time race: hold search-mode tools
-  // inactive again before every agent turn. Idempotent — it only calls
-  // setActiveTools when the active set actually contains lazy tools that
-  // search has not activated (in this process), so the prompt cache stays
-  // stable once the set is correct. Other extensions that rebuild the active
-  // set from getAllTools() in before_agent_start (e.g. permission filters)
-  // can re-activate held tools after our hold; agent_start fires after those
-  // handlers but before the next turn's LLM request, so holding there wins
-  // the race regardless of handler order.
-  pi.on("agent_start", async () => {
-    holdLazyToolsInactive();
-  });
-
-  pi.on("before_agent_start", async () => {
-    holdLazyToolsInactive();
-  });
+  // Other extensions can reactivate registered tools after session_start.
+  pi.on("before_agent_start", holdLazyToolsInactive);
 
   pi.on("session_tree", (_event, ctx) => {
     const currentState = state;
