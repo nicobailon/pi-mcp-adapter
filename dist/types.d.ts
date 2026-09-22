@@ -398,6 +398,8 @@ export interface McpSettings {
     agentPluginPaths?: string[];
     idleTimeout?: number;
     requestTimeoutMs?: number;
+    /** Defer lazy runtime startup even when persisted metadata is missing or invalid. Defaults to false. */
+    deferWithMissingMetadata?: boolean;
     directTools?: boolean | "search";
     /** Register per-server mcp__<server> namespace proxies. Defaults to true. */
     namespaceProxyTools?: boolean;

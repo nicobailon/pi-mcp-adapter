@@ -605,6 +605,8 @@ export interface McpSettings {
   agentPluginPaths?: string[];
   idleTimeout?: number; // minutes, default 10, 0 to disable
   requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
+  /** Defer lazy runtime startup even when persisted metadata is missing or invalid. Defaults to false. */
+  deferWithMissingMetadata?: boolean;
   directTools?: boolean | "search";
   /** Register per-server mcp__<server> namespace proxies. Defaults to true. */
   namespaceProxyTools?: boolean;

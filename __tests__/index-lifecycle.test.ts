@@ -1303,7 +1303,7 @@ describe("mcpAdapter session lifecycle", () => {
     const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
     const actualCache = await vi.importActual<typeof import("../metadata-cache.ts")>("../metadata-cache.ts");
     const config = {
-      settings: { disableProxyTool: true as const, scriptMode: false },
+      settings: { disableProxyTool: true as const, scriptMode: false, deferWithMissingMetadata: true },
       mcpServers: {
         demo: {
           url: "https://demo.example.com/mcp",
@@ -1378,13 +1378,14 @@ describe("mcpAdapter session lifecycle", () => {
     const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
     mcpAdapter(api);
     await handlers.get("session_start")?.({}, {});
-    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
 
     expect(actualCache.isServerCacheValid(diskEntry, config.mcpServers.demo)).toBe(false);
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "demo_lookup" }));
     const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
 
     const first = await proxyTool.execute("call-1", { connect: "demo" });
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
     expect(first.addedToolNames).toEqual(["demo_lookup", "demo_read_guide"]);
     expect(activeTools()).toEqual(["bash", "fallback_read_manual", "demo_lookup", "demo_read_guide"]);
     expect(api.registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "demo_unselected" }));
@@ -2540,6 +2541,46 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.executeStatus).toHaveBeenCalledTimes(2);
   });
 
+  it("opts into deferral while omitting invalid cached direct and namespace surfaces", async () => {
+    const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
+    const validDirect = { command: "valid-direct", directTools: true };
+    const invalidDirect = { command: "invalid-direct", directTools: true };
+    const validProxy = { command: "valid-proxy" };
+    const invalidProxy = { command: "invalid-proxy" };
+    const config = {
+      settings: { deferWithMissingMetadata: true },
+      mcpServers: { validDirect, invalidDirect, validProxy, invalidProxy },
+    };
+    const entry = (definition: Record<string, unknown>, ttlMs?: number) => ({
+      configHash: computeServerHash(definition),
+      cachedAt: Date.now(),
+      ttlMs,
+      tools: [{ name: "search" }],
+      resources: [],
+    });
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.loadMetadataCache.mockReturnValue({
+      version: 1,
+      servers: {
+        validDirect: entry(validDirect),
+        invalidDirect: entry(invalidDirect, 0),
+        validProxy: entry(validProxy),
+        invalidProxy: entry(invalidProxy, 0),
+      },
+    });
+    mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
+
+    const { api, handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
+    expect(registeredTool(api, "mcp")).toBeDefined();
+    expect(registeredTool(api, "validDirect_search")).toBeDefined();
+    expect(registeredTool(api, "invalidDirect_search")).toBeUndefined();
+    expect(registeredTool(api, "mcp__validProxy")).toBeDefined();
+    expect(registeredTool(api, "mcp__invalidProxy")).toBeUndefined();
+  });
+
   it("renders the large direct-tools advisory once without writing it to the UI console", async () => {
     const config = { mcpServers: { demo: { command: "demo", directTools: true } } };
     const state = createState();
@@ -2740,21 +2781,64 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.initializeMcp).not.toHaveBeenCalled();
   });
 
-  it("initializes when any enabled server lacks valid cached metadata", async () => {
+  it("initializes by default when any enabled server has zero-TTL metadata", async () => {
     const cachedDefinition = { command: "cached" };
-    const missingDefinition = { command: "missing" };
-    const config = { mcpServers: { cached: cachedDefinition, missing: missingDefinition } };
+    const invalidDefinition = { command: "invalid" };
+    const config = { mcpServers: { cached: cachedDefinition, invalid: invalidDefinition } };
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.loadMetadataCache.mockReturnValue({
       version: 1,
-      servers: { cached: { configHash: computeServerHash(cachedDefinition), cachedAt: Date.now(), tools: [], resources: [] } },
+      servers: {
+        cached: { configHash: computeServerHash(cachedDefinition), cachedAt: Date.now(), tools: [], resources: [] },
+        invalid: { configHash: computeServerHash(invalidDefinition), cachedAt: Date.now(), ttlMs: 0, tools: [], resources: [] },
+      },
     });
     mocks.initializeMcp.mockResolvedValue(createState());
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false });
 
     await vi.waitFor(() => expect(mocks.initializeMcp).toHaveBeenCalledTimes(1));
+  });
+
+  it.each(["eager", "keep-alive"] as const)("starts for %s lifecycle despite metadata deferral", async (lifecycle) => {
+    mocks.loadMcpConfig.mockReturnValue({
+      settings: { deferWithMissingMetadata: true },
+      mcpServers: { demo: { command: "demo", lifecycle } },
+    });
+    mocks.initializeMcp.mockResolvedValue(createState());
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+
+    await vi.waitFor(() => expect(mocks.initializeMcp).toHaveBeenCalledTimes(1));
+  });
+
+  it("starts for a cold environment-selected direct tool despite metadata deferral", async () => {
+    process.env.MCP_DIRECT_TOOLS = "demo/search";
+    mocks.loadMcpConfig.mockReturnValue({
+      settings: { deferWithMissingMetadata: true },
+      mcpServers: { demo: { command: "demo" } },
+    });
+    mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["demo"]);
+    mocks.initializeMcp.mockResolvedValue(createState());
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-evaluates metadata deferral for the session cwd", async () => {
+    const earlyConfig = { settings: { deferWithMissingMetadata: true }, mcpServers: { early: { command: "early" } } };
+    const sessionConfig = { settings: { deferWithMissingMetadata: true }, mcpServers: { cwd: { command: "cwd" } } };
+    mocks.loadMcpConfig.mockReturnValueOnce(earlyConfig).mockReturnValue(sessionConfig);
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false, cwd: "/session/project" });
+
+    expect(mocks.loadMcpConfig).toHaveBeenLastCalledWith(undefined, "/session/project");
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
   });
 
   it.each([

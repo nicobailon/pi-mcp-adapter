@@ -56,6 +56,24 @@ const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_FAILURE_MESSAGE_MAX_CHARS = 1_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
 
+function canDeferSessionRuntime(
+  config: McpConfig,
+  cache: MetadataCache | null,
+  hasColdEnvironmentDirectTools: boolean,
+): boolean {
+  const enabledServers = Object.entries(config.mcpServers)
+    .filter(([, definition]) => !isServerDisabled(definition));
+  if (enabledServers.some(([, definition]) => definition.lifecycle === "eager" || definition.lifecycle === "keep-alive")) {
+    return false;
+  }
+  if (hasColdEnvironmentDirectTools) return false;
+  return config.settings?.deferWithMissingMetadata === true
+    || (cache !== null && enabledServers.every(([serverName, definition]) => {
+      const entry = cache.servers[serverName];
+      return entry !== undefined && isServerCacheValid(entry, definition);
+    }));
+}
+
 export interface McpServerRegistration {
   dispose(): Promise<void>;
 }
@@ -320,17 +338,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const envRaw = process.env.MCP_DIRECT_TOOLS;
   const envDirectToolOverride = parseEnvDirectToolOverride(envRaw);
   const namespaceEnvOverride = resolveNamespaceEnvOverride(envRaw, envDirectToolOverride);
-  const enabledEarlyServers = Object.entries(earlyConfig.mcpServers)
-    .filter(([, definition]) => !isServerDisabled(definition));
-  const hasStartupServer = enabledEarlyServers.some(([, definition]) =>
-    definition.lifecycle === "eager" || definition.lifecycle === "keep-alive");
-  const hasUsableCachedMetadata = earlyCache !== null && enabledEarlyServers.every(([serverName, definition]) => {
-    const entry = earlyCache.servers[serverName];
-    return entry !== undefined && isServerCacheValid(entry, definition);
-  });
+  const hasStartupServer = Object.values(earlyConfig.mcpServers).some((definition) =>
+    !isServerDisabled(definition) && (definition.lifecycle === "eager" || definition.lifecycle === "keep-alive"));
   const hasColdEnvironmentDirectTools = envRaw !== undefined && envRaw !== "__none__"
     && getMissingConfiguredDirectToolServers(earlyConfig, earlyCache, envDirectToolOverride).length > 0;
-  const deferSessionRuntime = !hasStartupServer && hasUsableCachedMetadata && !hasColdEnvironmentDirectTools;
+  const deferSessionRuntime = canDeferSessionRuntime(earlyConfig, earlyCache, hasColdEnvironmentDirectTools);
   const registeredDirectTools = new Map<string, string>();
   const registeredDirectToolServers = new Map<string, string>();
   const registeredDirectToolVersions = new Map<string, number>();
@@ -664,15 +676,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const cache = loadMetadataCache();
     const enabledServers = Object.entries(config.mcpServers)
       .filter(([, definition]) => !isServerDisabled(definition));
-    if (enabledServers.some(([, definition]) => definition.lifecycle === "eager" || definition.lifecycle === "keep-alive")) {
-      return undefined;
-    }
-    if (!cache || !enabledServers.every(([serverName, definition]) => {
-      const entry = cache.servers[serverName];
-      return entry !== undefined && isServerCacheValid(entry, definition);
-    })) return undefined;
-    if (envRaw !== undefined && envRaw !== "__none__"
-      && getMissingConfiguredDirectToolServers(config, cache, envDirectToolOverride).length > 0) return undefined;
+    const hasColdEnvironmentDirectTools = envRaw !== undefined && envRaw !== "__none__"
+      && getMissingConfiguredDirectToolServers(config, cache, envDirectToolOverride).length > 0;
+    if (!canDeferSessionRuntime(config, cache, hasColdEnvironmentDirectTools)) return undefined;
     return {
       config,
       specs: resolveCurrentDirectTools(config, cache),

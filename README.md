@@ -474,6 +474,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
     "allowInstall": false,
     "idleTimeout": 10,
     "requestTimeoutMs": 30000,
+    "deferWithMissingMetadata": false,
     "showStatusIcon": true,
     "mcpFooterStatus": "full",
     "toolResultRendering": "compact",
@@ -500,6 +501,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `allowInstall` | Allow URL installation through the `mcp` tool (default: `true`). Set to `false` to block it. |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
+| `deferWithMissingMetadata` | Allow lazy startup to defer when persisted metadata is missing or invalid (default: `false`). See [Direct Tools](#direct-tools) for the startup tradeoff. |
 | `showStatusIcon` | Show the plug icon in MCP status and connection text (default: `true`). Set to `false` for plain `MCP: ...` text. |
 | `mcpFooterStatus` | MCP footer verbosity: `"full"` (default), `"compact"` for `MCP connected/enabled`, or `"off"` to clear the persistent footer status. `/mcp status` remains available. |
 | `toolResultRendering` | MCP tool result row style: `"compact"` (default) uses self-rendered rows, or `"boxed"` restores the legacy Pi boxed tool row. |
@@ -796,6 +798,8 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
 Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`. If 75+ direct tools resolve, the adapter prints an advisory but still registers the tools you configured. Set `settings.warnOnLargeDirectTools` to `false` to suppress this advisory.
 
 Direct tools register from the metadata cache in the Pi agent dir (`~/.pi/agent/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only while the cache populates, then the extension hot-loads the refreshed direct tools into the current session. When `mcp({ connect: "<server>" })` is what discovers them, the connect result lists the new tools in `addedToolNames`, so Pi can load their definitions from that point in the transcript instead of rewriting the active tool list. Servers that advertise MCP list-change notifications refresh the current session when their tool or resource list changes. On Pi versions that expose `pi.unregisterTool()`, stale direct tools are removed from the registry during refresh; older Pi versions still deactivate them from the active tool set. To force a refresh: `/mcp reconnect <server>`.
+
+For faster startup, set `settings.deferWithMissingMetadata` to `true`. Missing or invalid metadata (expired, mismatched, or non-cacheable) contributes no direct tools, namespace wrappers, prompts, resources, search catalog, or counts until the first MCP operation initializes the runtime and hot-loads authoritative live metadata; the generic `mcp` gateway remains available. `eager`/`keep-alive` servers and cold environment-selected direct tools still start immediately. Leave this off when a complete initial surface matters more than startup latency.
 
 Models sometimes encode an object or array argument as a JSON string. Set `settings.strictDirectToolArguments` to `true` to recover one such layer for schema-declared object and array properties, then validate the complete input against the advertised schema before execution.
 
