@@ -3637,6 +3637,20 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     expect(activeTools()).toEqual(["bash", "mcp"]);
   });
 
+  it("does not let a search from a replaced session reactivate tools", async () => {
+    const { handlers, activeTools, proxyTool } = await boot();
+    const pendingSearch = createDeferred<ReturnType<typeof searchResult>>();
+    mocks.executeSearch.mockReturnValue(pendingSearch.promise);
+    const execution = proxyTool.execute("call-1", { search: "q" });
+    await vi.waitFor(() => expect(mocks.executeSearch).toHaveBeenCalledOnce());
+
+    await handlers.get("session_start")?.({}, {});
+    pendingSearch.resolve(searchResult("alpha"));
+
+    await expect(execution).rejects.toThrow("MCP extension session restarted");
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+  });
+
   it("a search-mode tool selected eagerly becomes active, even if search never activated it", async () => {
     const { activeTools, proxyTool } = await boot();
     expect(activeTools()).toEqual(["bash", "mcp"]);
