@@ -355,9 +355,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const namespaceEnvOverride = resolveNamespaceEnvOverride(envRaw, envDirectToolOverride);
   const hasStartupServer = Object.values(earlyConfig.mcpServers).some((definition) =>
     !isServerDisabled(definition) && (definition.lifecycle === "eager" || definition.lifecycle === "keep-alive"));
-  const hasColdEnvironmentDirectTools = envRaw !== undefined && envRaw !== "__none__"
-    && getMissingConfiguredDirectToolServers(earlyConfig, earlyCache, envDirectToolOverride).length > 0;
-  const deferSessionRuntime = canDeferSessionRuntime(earlyConfig, earlyCache, hasColdEnvironmentDirectTools);
   const registeredDirectTools = new Map<string, string>();
   const registeredDirectToolServers = new Map<string, string>();
   const registeredDirectToolVersions = new Map<string, number>();
@@ -1131,7 +1128,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (state) return;
 
     if (!initPromise) {
-      const deferredSnapshot = deferSessionRuntime ? getDeferredSessionSnapshot(ctx.cwd) : undefined;
+      const deferredSnapshot = getDeferredSessionSnapshot(ctx.cwd);
       if (deferredSnapshot) {
         const directResult = syncDirectTools(deferredSnapshot.config, deferredSnapshot.cache);
         syncProxyTool(deferredSnapshot.config, deferredSnapshot.cache, directResult.specs);

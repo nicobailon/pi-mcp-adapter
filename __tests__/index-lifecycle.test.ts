@@ -2823,6 +2823,38 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
   });
 
+  it("lets the session cwd opt into deferral when the early config cannot defer", async () => {
+    const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
+    const earlyConfig = { mcpServers: { early: { command: "early" } } };
+    const direct = { command: "cwd-direct", directTools: true };
+    const sessionConfig = {
+      settings: { deferWithMissingMetadata: true },
+      mcpServers: { direct, missing: { command: "missing" } },
+    };
+    mocks.loadMcpConfig.mockReturnValueOnce(earlyConfig).mockReturnValue(sessionConfig);
+    mocks.loadMetadataCache.mockReturnValue({
+      version: 1,
+      servers: {
+        direct: {
+          configHash: computeServerHash(direct),
+          cachedAt: Date.now(),
+          tools: [{ name: "search" }],
+          resources: [],
+        },
+      },
+    });
+    mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
+
+    const { api, handlers } = await loadAdapter();
+    expect(registeredTool(api, "direct_search")).toBeUndefined();
+
+    await handlers.get("session_start")?.({}, { hasUI: false, cwd: "/session/project" });
+
+    expect(mocks.initializeMcp).not.toHaveBeenCalled();
+    expect(registeredTool(api, "direct_search")).toBeDefined();
+    expect(registeredTool(api, "mcp")).toBeDefined();
+  });
+
   it("removes early cached surfaces when the session cwd removes their servers", async () => {
     const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
     const direct = { command: "direct", directTools: true };
