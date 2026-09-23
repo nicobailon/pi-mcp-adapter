@@ -813,7 +813,20 @@ function loadImportedConfig(
           const entries = isRecord(mcp.servers)
             ? { ...Object.fromEntries(Object.entries(mcp).filter(([name]) => name !== "servers" && name !== "timeout")), ...mcp.servers }
             : mcp;
-          merged = mergeOpenCodeConfigs(merged, { ...imported, mcp: entries });
+          const normalized = Object.fromEntries(Object.entries(entries).map(([name, entry]) => {
+            if (!isRecord(entry) || !isRecord(entry.oauth)) return [name, entry];
+            const { client_id, client_secret, auth_server_metadata_url, ...oauth } = entry.oauth;
+            return [name, {
+              ...entry,
+              oauth: {
+                ...oauth,
+                ...(client_id !== undefined ? { clientId: client_id } : {}),
+                ...(client_secret !== undefined ? { clientSecret: client_secret } : {}),
+                ...(auth_server_metadata_url !== undefined ? { authServerMetadataUrl: auth_server_metadata_url } : {}),
+              },
+            }];
+          }));
+          merged = mergeOpenCodeConfigs(merged, { ...imported, mcp: normalized });
           highestPrecedencePath = path;
         }
       } catch (error) {
@@ -1040,9 +1053,9 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
         } else if (raw.oauth && typeof raw.oauth === "object" && !Array.isArray(raw.oauth)) {
           const oauth = raw.oauth as Record<string, unknown>;
           mapped.auth = "oauth";
-          const clientId = oauth.clientId ?? oauth.client_id;
-          const clientSecret = oauth.clientSecret ?? oauth.client_secret;
-          const authServerMetadataUrl = oauth.authServerMetadataUrl ?? oauth.auth_server_metadata_url;
+          const clientId = oauth.clientId;
+          const clientSecret = oauth.clientSecret;
+          const authServerMetadataUrl = oauth.authServerMetadataUrl;
           mapped.oauth = {
             ...(typeof clientId === "string" ? { clientId } : {}),
             ...(typeof clientSecret === "string" ? { clientSecret } : {}),

@@ -1790,6 +1790,31 @@ describe("config discovery", () => {
     ]);
   });
 
+  it("applies project v2 OAuth overrides over global v1 aliases", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-oauth-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-oauth-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
+    writeJson(join(home, ".config", "opencode", "opencode.json"), {
+      mcp: { remote: { type: "remote", url: "https://example.test/mcp", oauth: {
+        clientId: "global-id", clientSecret: "global-secret", authServerMetadataUrl: "https://global.test/metadata", scope: "global-scope",
+      } } },
+    });
+    writeJson(join(project, "opencode.json"), {
+      mcp: { servers: { remote: { oauth: {
+        client_id: "project-id", client_secret: "project-secret", auth_server_metadata_url: "https://project.test/metadata",
+      } } } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers.remote).toEqual({
+      url: "https://example.test/mcp", auth: "oauth", oauth: {
+        clientId: "project-id", clientSecret: "project-secret", authServerMetadataUrl: "https://project.test/metadata", scope: "global-scope",
+      },
+    });
+  });
+
   it("does not load OpenCode files without an explicit import", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-explicit-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-explicit-project-"));
