@@ -1762,6 +1762,34 @@ describe("config discovery", () => {
     });
   });
 
+  it("imports OpenCode v2 project servers through host discovery", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-v2-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-v2-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".pi", "agent", "mcp.json"), { settings: { hostConfigDiscovery: "on" }, mcpServers: {} });
+    writeJson(join(project, "opencode.json"), {
+      mcp: {
+        timeout: { startup: 120000 },
+        servers: {
+          datagrip: { type: "remote", url: "http://127.0.0.1:64402/stream", oauth: false, headers: { IJ_MCP_SERVER_PROJECT_PATH: "/tmp/project" } },
+          playwright: { type: "local", command: ["direnv", "exec", ".", "./scripts/playwright-mcp.sh"], environment: { PLAYWRIGHT_USE_PROXY: "1" } },
+          paused: { type: "local", command: ["node", "paused.js"], disabled: true },
+        },
+      },
+    });
+
+    const { loadMcpConfig, getMcpDiscoverySummary } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers).toMatchObject({
+      datagrip: { url: "http://127.0.0.1:64402/stream", oauth: false, headers: { IJ_MCP_SERVER_PROJECT_PATH: "/tmp/project" } },
+      playwright: { command: "direnv", args: ["exec", ".", "./scripts/playwright-mcp.sh"], env: { PLAYWRIGHT_USE_PROXY: "1" } },
+    });
+    expect(Object.keys(loadMcpConfig().mcpServers).sort()).toEqual(["datagrip", "playwright"]);
+    expect(getMcpDiscoverySummary().imports).toEqual([
+      expect.objectContaining({ kind: "opencode", serverCount: 2 }),
+    ]);
+  });
+
   it("does not load OpenCode files without an explicit import", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-explicit-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-explicit-project-"));

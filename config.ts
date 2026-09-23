@@ -806,7 +806,14 @@ function loadImportedConfig(
       try {
         const value = readImportedConfig(path);
         if (value && typeof value === "object" && !Array.isArray(value)) {
-          merged = mergeOpenCodeConfigs(merged, value as Record<string, unknown>);
+          const imported = value as Record<string, unknown>;
+          const mcp = isRecord(imported.mcp) ? imported.mcp : {};
+          // OpenCode v2 nests definitions under mcp.servers; normalize before
+          // merging so project overrides retain the existing merge semantics.
+          const entries = isRecord(mcp.servers)
+            ? { ...Object.fromEntries(Object.entries(mcp).filter(([name]) => name !== "servers" && name !== "timeout")), ...mcp.servers }
+            : mcp;
+          merged = mergeOpenCodeConfigs(merged, { ...imported, mcp: entries });
           highestPrecedencePath = path;
         }
       } catch (error) {
@@ -1006,7 +1013,7 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
     if (kind === "opencode") {
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
       const raw = entry as Record<string, unknown>;
-      if (raw.enabled === false) continue;
+      if (raw.enabled === false || raw.disabled === true) continue;
 
       if (raw.type === "local" && Array.isArray(raw.command) && raw.command.length > 0 && raw.command.every((value): value is string => typeof value === "string")) {
         const env = toStringRecord(raw.environment);
@@ -1033,12 +1040,15 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
         } else if (raw.oauth && typeof raw.oauth === "object" && !Array.isArray(raw.oauth)) {
           const oauth = raw.oauth as Record<string, unknown>;
           mapped.auth = "oauth";
+          const clientId = oauth.clientId ?? oauth.client_id;
+          const clientSecret = oauth.clientSecret ?? oauth.client_secret;
+          const authServerMetadataUrl = oauth.authServerMetadataUrl ?? oauth.auth_server_metadata_url;
           mapped.oauth = {
-            ...(typeof oauth.clientId === "string" ? { clientId: oauth.clientId } : {}),
-            ...(typeof oauth.clientSecret === "string" ? { clientSecret: oauth.clientSecret } : {}),
+            ...(typeof clientId === "string" ? { clientId } : {}),
+            ...(typeof clientSecret === "string" ? { clientSecret } : {}),
             ...(typeof oauth.clientMetadataUrl === "string" ? { clientMetadataUrl: oauth.clientMetadataUrl } : {}),
             ...(typeof oauth.scope === "string" ? { scope: oauth.scope } : {}),
-            ...(typeof oauth.authServerMetadataUrl === "string" ? { authServerMetadataUrl: oauth.authServerMetadataUrl } : {}),
+            ...(typeof authServerMetadataUrl === "string" ? { authServerMetadataUrl } : {}),
             ...(typeof oauth.skipIssuerMetadataValidation === "boolean"
               ? { skipIssuerMetadataValidation: oauth.skipIssuerMetadataValidation }
               : {}),
