@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- System One (Jev) decisions can use a configured HTTPS endpoint and endpoint-scoped credential while retaining the TypeSafe default. Thanks to [@jagaliano](https://github.com/jagaliano) for [PR #645](https://github.com/nicobailon/pi-mcp-adapter/pull/645).
 - Added opt-in `settings.deferWithMissingMetadata` to defer lazy MCP runtime startup without exposing invalid cached surfaces. Thanks to [@j62268781-alt](https://github.com/j62268781-alt) for [#641](https://github.com/nicobailon/pi-mcp-adapter/issues/641).
 - Added `settings.allowInstall` to block remote endpoint installation by constrained or headless agents. Thanks to [@gastmaier](https://github.com/gastmaier) for [#638](https://github.com/nicobailon/pi-mcp-adapter/issues/638).
 - Added `settings.exposeResources` to disable resource-tool synthesis globally while allowing per-server overrides. Thanks to [@rakesh-vs](https://github.com/rakesh-vs) for [#636](https://github.com/nicobailon/pi-mcp-adapter/pull/636).
