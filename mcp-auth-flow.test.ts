@@ -140,6 +140,19 @@ describe("mcp-auth-flow", () => {
   })
 
   describe("getValidToken", () => {
+    it("returns null for an expired access token without a refresh token", async () => {
+      const serverName = "expired-no-refresh-test"
+      const serverUrl = "https://expired-no-refresh.example.com/mcp"
+      await updateTokens(serverName, {
+        accessToken: "expired-access",
+        expiresAt: Date.now() / 1000 - 3600,
+      }, serverUrl)
+
+      assert.strictEqual(await getAuthStatus(serverName), "expired")
+      assert.strictEqual(await getValidToken(serverName, serverUrl), null)
+      clearAllCredentials(serverName)
+    })
+
     it("should not attempt refresh or wipe credentials when stored client info is a config-pre-registered stub", async () => {
       const serverName = "stub-refresh-test"
       const serverUrl = "https://stub-refresh.example.com/mcp"

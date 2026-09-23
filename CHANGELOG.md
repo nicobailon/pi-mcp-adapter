@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Expired OAuth access tokens without a refresh token are no longer returned as valid. Thanks to [@benjaminsirb](https://github.com/benjaminsirb) for [#644](https://github.com/nicobailon/pi-mcp-adapter/issues/644).
 - Search-mode direct tools are held inactive at session start and before model requests, while tools selected by search remain active until the session ends. Thanks to [@VoidInTheShell](https://github.com/VoidInTheShell) for [PR #640](https://github.com/nicobailon/pi-mcp-adapter/pull/640).
 
 ## [2.36.0] - 2026-09-21

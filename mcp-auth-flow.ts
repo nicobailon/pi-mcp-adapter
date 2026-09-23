@@ -1191,9 +1191,8 @@ export async function getValidToken(
     }
   }
 
-  // No expiration info or no refresh token, assume valid
   authority()
-  return entry.tokens
+  return null
 }
 
 /**
