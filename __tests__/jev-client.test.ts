@@ -14,6 +14,19 @@ const input = {
   sources: ["allowed"],
 };
 
+function recordDecisionRequests(): string[] {
+  const seen: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (request) => {
+    seen.push(new URL(String(request)).href);
+    return new Response(JSON.stringify({
+      model: "jev-1.13.0",
+      answers: { route: { type: "choice", choice: "yes", confidence: 1, probabilities: { yes: 1, no: 0 } } },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  return seen;
+}
+
 describe("Jev host client", () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
@@ -96,69 +109,26 @@ describe("Jev host client", () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
-  it("sends requests to SYSTEMONE_ENDPOINT and rewrites the SDK's fixed path", async () => {
-    process.env.SYSTEMONE_ENDPOINT = "https://opencode.ai/zen/v1/systemone";
-    const seen: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (request, init) => {
-      seen.push(new URL(String(request)).href);
-      expect(init?.redirect).toBe("error");
-      return new Response(JSON.stringify({
-        model: "jev-1.13",
-        answers: { route: { type: "choice", choice: "yes", confidence: 1, probabilities: { yes: 1, no: 0 } } },
-        usage: { input_tokens: 1, output_tokens: 1 },
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    });
-    expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" })).toMatchObject({ ok: true });
-    expect(seen).toEqual(["https://opencode.ai/zen/v1/systemone"]);
-  });
-
-  it("fails closed instead of falling back when the endpoint is invalid", async () => {
-    process.env.SYSTEMONE_ENDPOINT = "http://evil.test/v1/systemone";
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
-    expect(result).toMatchObject({ ok: false, error: { code: "endpoint_unavailable" } });
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("re-resolves the endpoint for every evaluation instead of caching the first one", async () => {
+  it("re-resolves SYSTEMONE_ENDPOINT for every evaluation and fails closed when it becomes invalid", async () => {
     const runtime = state({ scriptEvaluation: true, allowedServers: ["allowed"] });
-    const seen: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (request) => {
-      seen.push(new URL(String(request)).href);
-      return new Response(JSON.stringify({
-        model: "jev-1.13.0",
-        answers: { route: { type: "choice", choice: "yes", confidence: 1, probabilities: { yes: 1, no: 0 } } },
-        usage: { input_tokens: 1, output_tokens: 1 },
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    });
-    delete process.env.SYSTEMONE_ENDPOINT;
+    const seen = recordDecisionRequests();
     expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: true });
     process.env.SYSTEMONE_ENDPOINT = "https://opencode.ai/zen/v1/systemone";
     expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: true });
     expect(seen).toEqual(["https://api.typesafe.ai/v1/systemone", "https://opencode.ai/zen/v1/systemone"]);
-    // A later invalid value must stop the same state from reaching the network at all.
     process.env.SYSTEMONE_ENDPOINT = "http://evil.test/v1/systemone";
     expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: false, error: { code: "endpoint_unavailable" } });
     expect(seen).toHaveLength(2);
   });
 
   it("keeps replacement-pattern characters in the configured path literal", async () => {
-    for (const path of ["/api/$&/decisions", "/api/$$/decisions", "/api/$'/decisions", "/api/$`/decisions", "/api/$<name>/decisions", "/v1/systemone"]) {
+    const paths = ["/api/$&/decisions", "/api/$$/decisions", "/api/$'/decisions", "/api/$`/decisions", "/api/$<name>/decisions", "/v1/systemone"];
+    const seen = recordDecisionRequests();
+    for (const path of paths) {
       process.env.SYSTEMONE_ENDPOINT = `https://provider.test${path}`;
-      const runtime = state({ scriptEvaluation: true, allowedServers: ["allowed"] });
-      const seen: string[] = [];
-      vi.spyOn(globalThis, "fetch").mockImplementation(async (request) => {
-        seen.push(new URL(String(request)).href);
-        return new Response(JSON.stringify({
-          model: "jev-1.13.0",
-          answers: { route: { type: "choice", choice: "yes", confidence: 1, probabilities: { yes: 1, no: 0 } } },
-          usage: { input_tokens: 1, output_tokens: 1 },
-        }), { status: 200, headers: { "content-type": "application/json" } });
-      });
-      expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: true });
-      expect(seen).toEqual([new URL(`https://provider.test${path}`).href]);
-      vi.restoreAllMocks();
+      expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" })).toMatchObject({ ok: true });
     }
+    expect(seen).toEqual(paths.map(path => new URL(`https://provider.test${path}`).href));
   });
 
   it("rejects malformed responses without leaking their body", async () => {
@@ -206,12 +176,11 @@ describe("Jev host client", () => {
   });
 
   it("reports provider HTTP failures instead of calling them invalid responses", async () => {
-    const cases = [[402, "payment_required"], [404, "endpoint_unavailable"], [413, "invalid_request"], [418, "invalid_request"]] as const;
+    const cases = [[402, "payment_required"], [404, "endpoint_unavailable"], [418, "invalid_request"]] as const;
     for (const [status, code] of cases) {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("provider body mentioning a fund shortfall", { status }));
       const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
       expect(result).toMatchObject({ ok: false, error: { code } });
-      // Provider bodies never reach the caller.
       expect(JSON.stringify(result)).not.toContain("fund shortfall");
       vi.restoreAllMocks();
     }

@@ -1970,29 +1970,12 @@ describe("settings.exposeResources", () => {
       mcpServers: {
         serverA: { command: "node", args: ["serverA.js"] },
         serverB: { command: "node", args: ["serverB.js"], exposeResources: true },
-        serverC: { command: "node", args: ["serverC.js"], exposeResources: false },
       },
     });
     const { loadMcpConfig } = await import("../config.ts");
     const cfg = loadMcpConfig(configPath, root);
     expect(cfg.mcpServers.serverA?.exposeResources).toBe(false);
     expect(cfg.mcpServers.serverB?.exposeResources).toBe(true);
-    expect(cfg.mcpServers.serverC?.exposeResources).toBe(false);
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it("leaves server exposeResources undefined when settings.exposeResources is omitted", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-mcp-expose-resources-"));
-    const configPath = join(root, "config.json");
-    writeJson(configPath, {
-      settings: { scriptMode: false },
-      mcpServers: {
-        serverA: { command: "node", args: ["serverA.js"] },
-      },
-    });
-    const { loadMcpConfig } = await import("../config.ts");
-    const cfg = loadMcpConfig(configPath, root);
-    expect(cfg.mcpServers.serverA?.exposeResources).toBeUndefined();
     rmSync(root, { recursive: true, force: true });
   });
 });

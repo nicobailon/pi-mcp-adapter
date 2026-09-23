@@ -373,7 +373,6 @@ describe("cli System One key helper", () => {
     expect(await main(["key", "status", "typesafe"], line => status.push(line), () => {}, keyStdin(""))).toBe(0);
     expect(status).toEqual(["source=keyring", "endpoint=https://opencode.ai/zen/v1/systemone"]);
     delete process.env.SYSTEMONE_ENDPOINT;
-    // The credential is scoped to the endpoint it was stored for.
     expect(await main(["key", "status", "systemone"], () => {}, () => {}, keyStdin(""))).toBe(1);
   });
 
@@ -405,7 +404,7 @@ describe("cli System One key helper", () => {
     process.env.TYPESAFE_API_KEY = "environment-secret";
     const logs: string[] = [];
     expect(await main(["key", "remove", "systemone"], line => logs.push(line), () => {}, keyStdin(""))).toBe(0);
-    expect(logs.join("\n")).toContain("still present and overrides");
+    expect(logs.join("\n")).toContain("TYPESAFE_API_KEY is present and overrides");
     expect(logs.join("\n")).not.toContain("environment-secret");
   });
 });

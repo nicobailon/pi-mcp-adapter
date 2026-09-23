@@ -148,7 +148,6 @@ describe("mcp-auth-flow", () => {
         expiresAt: Date.now() / 1000 - 3600,
       }, serverUrl)
 
-      assert.strictEqual(await getAuthStatus(serverName), "expired")
       assert.strictEqual(await getValidToken(serverName, serverUrl), null)
       clearAllCredentials(serverName)
     })

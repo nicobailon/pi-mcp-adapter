@@ -1,7 +1,6 @@
 import type { McpExtensionState } from "./state.ts";
-import { JEV_DEFAULT_ENDPOINT, TYPESAFE_API_ORIGIN, type JevCredentialResolution } from "./jev-key-store.ts";
+import { type JevCredentialResolution } from "./jev-key-store.ts";
 import type { JevBudget, JevEvaluateInput, JevEvaluationEnvelope, ResolvedJevSettings } from "./jev-contracts.ts";
-export { JEV_DEFAULT_ENDPOINT, TYPESAFE_API_ORIGIN };
 export type { ResolvedJevSettings } from "./jev-contracts.ts";
 export declare function areJevSourcesAllowed(state: McpExtensionState, settings: ResolvedJevSettings, sources: Iterable<string>): boolean;
 export declare function validateJevSettings(value: unknown): ResolvedJevSettings;

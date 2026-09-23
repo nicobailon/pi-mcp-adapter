@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getTestSecureKeyringReadCount, resetTestSecureKeyring, setTestSecureKeyringEntry } from "../secure-keyring.ts";
 import {
-  JEV_DEFAULT_ENDPOINT,
   JEV_KEYRING_ACCOUNT,
   JEV_KEYRING_SERVICE,
   TYPESAFE_API_ORIGIN,
-  defaultJevEndpoint,
   jevKeyringAccount,
   removeJevApiKey,
   resolveJevCredential,
@@ -40,9 +38,11 @@ describe("System One endpoint and credential storage", () => {
   });
 
   it("defaults to the TypeSafe endpoint", () => {
-    expect(resolveJevEndpoint()).toEqual({ status: "resolved", source: "default", endpoint: defaultJevEndpoint() });
-    expect(defaultJevEndpoint().href).toBe(JEV_DEFAULT_ENDPOINT);
-    expect(TYPESAFE_API_ORIGIN).toBe("https://api.typesafe.ai");
+    expect(resolveJevEndpoint()).toEqual({
+      status: "resolved",
+      source: "default",
+      endpoint: { href: "https://api.typesafe.ai/v1/systemone", origin: "https://api.typesafe.ai", path: "/v1/systemone" },
+    });
   });
 
   it("uses an explicit environment override without touching keyring", () => {
@@ -68,7 +68,6 @@ describe("System One endpoint and credential storage", () => {
     expect(resolution).toMatchObject({ status: "unavailable" });
     expect(resolution.status === "unavailable" && resolution.message).toContain("is a TypeSafe credential");
     expect(JSON.stringify(resolution)).not.toContain("legacy-typesafe-secret");
-    // An explicitly named System One key is still honored for the same endpoint.
     process.env.SYSTEMONE_API_KEY = "opencode-secret";
     expect(resolveJevCredential(process.env, opencode)).toEqual({ status: "present", source: "environment", apiKey: "opencode-secret" });
   });
@@ -77,9 +76,7 @@ describe("System One endpoint and credential storage", () => {
     const opencode = endpointOf(OPENCODE_ENDPOINT);
     saveJevApiKey("opencode-keyring-key", opencode);
     process.env.TYPESAFE_API_KEY = "legacy-typesafe-secret";
-    // The stored credential for this endpoint still wins; the legacy name is not a blocker.
     expect(resolveJevCredential(process.env, opencode)).toEqual({ status: "present", source: "keyring", apiKey: "opencode-keyring-key" });
-    // With nothing stored for this endpoint, the refusal explains itself instead of reporting a bare miss.
     removeJevApiKey(opencode);
     const resolution = resolveJevCredential(process.env, opencode);
     expect(resolution).toMatchObject({ status: "unavailable" });
@@ -105,7 +102,6 @@ describe("System One endpoint and credential storage", () => {
 
   it("disables credentials entirely when the configured endpoint is invalid", () => {
     setTestSecureKeyringEntry(JEV_KEYRING_SERVICE, JEV_KEYRING_ACCOUNT, JSON.stringify({ version: 1, provider: "typesafe", origin: TYPESAFE_API_ORIGIN, apiKey: "stored-secret" }));
-    // No silent fall back to the default provider: the keyring is never consulted.
     expect(resolveJevCredential({ SYSTEMONE_ENDPOINT: "http://evil.test/x" } as NodeJS.ProcessEnv)).toMatchObject({ status: "unavailable" });
     expect(getTestSecureKeyringReadCount()).toBe(0);
   });

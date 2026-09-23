@@ -2,13 +2,9 @@ import { TypeSafeClient } from "@typesafe-ai/sdk";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled } from "./types.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
-import {
-  JEV_DEFAULT_ENDPOINT, JEV_SDK_PATH, resolveJevCredential, resolveJevEndpoint, TYPESAFE_API_ORIGIN,
-  type JevCredentialResolution, type ResolvedJevEndpoint,
-} from "./jev-key-store.ts";
+import { JEV_SDK_PATH, resolveJevCredential, resolveJevEndpoint, type JevCredentialResolution, type ResolvedJevEndpoint } from "./jev-key-store.ts";
 import type { JevAnswer, JevBudget, JevEvaluateInput, JevEvaluationData, JevEvaluationEnvelope, JevJson, JevQuestion, ResolvedJevSettings } from "./jev-contracts.ts";
 
-export { JEV_DEFAULT_ENDPOINT, TYPESAFE_API_ORIGIN };
 export type { ResolvedJevSettings } from "./jev-contracts.ts";
 
 const DEFAULTS: ResolvedJevSettings = {
@@ -27,9 +23,8 @@ const hosts = new WeakMap<McpExtensionState, Host>();
 const credentials = new WeakMap<McpExtensionState, CredentialCacheEntry>();
 
 /**
- * Cached per endpoint so a changed `SYSTEMONE_ENDPOINT` cannot reuse another provider's credential. The endpoint
- * itself is re-resolved on every operation: caching it would keep sending payloads to a provider the operator has
- * already switched away from, or stop noticing that the configured endpoint became invalid.
+ * Cached per endpoint so a changed `SYSTEMONE_ENDPOINT` cannot reuse another provider's credential. Callers
+ * re-resolve the endpoint on every operation so a switched or newly invalid endpoint takes effect immediately.
  */
 function resolveCredential(state: McpExtensionState, endpoint: ResolvedJevEndpoint): JevCredentialResolution {
   const existing = credentials.get(state);
@@ -39,14 +34,9 @@ function resolveCredential(state: McpExtensionState, endpoint: ResolvedJevEndpoi
   return credential;
 }
 
-/**
- * Credential for whatever endpoint this state resolves to. An unusable endpoint yields `unavailable` rather than
- * a credential from somewhere else, so an opt-in feature cannot turn itself on against the wrong provider.
- */
 function credentialForState(state: McpExtensionState): JevCredentialResolution {
   const resolution = resolveJevEndpoint();
-  if (resolution.status === "unavailable") return { status: "unavailable", message: resolution.message };
-  return resolveCredential(state, resolution.endpoint);
+  return resolution.status === "unavailable" ? resolution : resolveCredential(state, resolution.endpoint);
 }
 
 export function areJevSourcesAllowed(state: McpExtensionState, settings: ResolvedJevSettings, sources: Iterable<string>): boolean {
@@ -246,7 +236,7 @@ function validateResponse(value: unknown, input: JevEvaluateInput): JevEvaluatio
 function createPinnedEndpointFetch(endpoint: ResolvedJevEndpoint): (input: string, init?: RequestInit) => Promise<Response> {
   return (input, init) => {
     // A replacer function keeps `$&`, `$$`, and friends in the configured path literal.
-    const target = String(input).replace(JEV_SDK_PATH, () => endpoint.path);
+    const target = input.replace(JEV_SDK_PATH, () => endpoint.path);
     const url = new URL(target);
     if (url.origin !== endpoint.origin || url.pathname !== endpoint.path || url.search !== "" || url.hash !== "") {
       throw new Error("Jev request endpoint rejected");
@@ -273,14 +263,12 @@ function failure(error: unknown, signal: AbortSignal | undefined, timedOut: bool
   // Provider and gateway bodies are never echoed; only the status is used to classify the failure.
   const status = typeof error === "object" && error !== null && "status" in error ? (error as { status?: unknown }).status : undefined;
   if (status === 401 || status === 403) return { ok: false, error: { code: "authentication_failed", message: "Jev authentication failed." } };
-  if (status === 402) return { ok: false, error: { code: "payment_required", message: "Jev provider reports insufficient funds for this account." } };
+  if (status === 402) return { ok: false, error: { code: "payment_required", message: "Jev provider requires payment for this account." } };
   // A configurable endpoint makes a wrong path a configuration error, not a malformed response.
   if (status === 404 || status === 405 || status === 410) return { ok: false, error: { code: "endpoint_unavailable", message: "Jev endpoint was not found; check SYSTEMONE_ENDPOINT." } };
   if (status === 408) return { ok: false, error: { code: "timeout", message: "Jev evaluation timed out.", retryable: true } };
-  if (status === 413) return { ok: false, error: { code: "invalid_request", message: "Jev rejected the evaluation request as too large." } };
   if (status === 429) return { ok: false, error: { code: "rate_limited", message: "Jev rate limit exceeded.", retryable: true } };
   if (typeof status === "number" && status >= 500) return { ok: false, error: { code: "service_unavailable", message: "Jev service is unavailable.", retryable: true } };
-  if (status === 400 || status === 422) return { ok: false, error: { code: "invalid_request", message: "Jev rejected the evaluation request." } };
   if (typeof status === "number" && status >= 400) return { ok: false, error: { code: "invalid_request", message: `Jev rejected the evaluation request (HTTP ${status}).` } };
   if (error instanceof Error && (error.name === "APIConnectionError" || error.name === "APITimeoutError")) return { ok: false, error: { code: "service_unavailable", message: "Jev service is unavailable.", retryable: true } };
   return { ok: false, error: { code: "invalid_response", message: "Jev returned an invalid response." } };

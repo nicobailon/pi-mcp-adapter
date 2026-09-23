@@ -380,15 +380,10 @@ function mergeClaudePluginMcpDefaults(
 }
 
 function applySettingDefaults(config: McpConfig): McpConfig {
-  if (config.settings?.exposeResources === undefined) return config;
-  const globalExposeResources = config.settings.exposeResources;
-  const mcpServers: Record<string, ServerEntry> = {};
-  for (const [name, entry] of Object.entries(config.mcpServers)) {
-    mcpServers[name] = {
-      ...entry,
-      ...(entry.exposeResources === undefined ? { exposeResources: globalExposeResources } : {}),
-    };
-  }
+  const exposeResources = config.settings?.exposeResources;
+  if (exposeResources === undefined) return config;
+  const mcpServers = Object.fromEntries(Object.entries(config.mcpServers)
+    .map(([name, entry]) => [name, entry.exposeResources === undefined ? { ...entry, exposeResources } : entry]));
   return { ...config, mcpServers };
 }
 

@@ -56,37 +56,16 @@ const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_FAILURE_MESSAGE_MAX_CHARS = 1_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
 
-function getEnabledServersWithoutValidMetadata(config: McpConfig, cache: MetadataCache | null): string[] {
-  return Object.entries(config.mcpServers).flatMap(([serverName, definition]) => {
-    if (isServerDisabled(definition)) return [];
+function hasEnabledServerWithoutValidMetadata(
+  config: McpConfig,
+  cache: MetadataCache | null,
+  directSpecs: readonly DirectToolSpec[] = [],
+): boolean {
+  return Object.entries(config.mcpServers).some(([serverName, definition]) => {
+    if (isServerDisabled(definition) || directSpecs.some((spec) => spec.serverName === serverName)) return false;
     const entry = cache?.servers[serverName];
-    return entry === undefined || !isServerCacheValid(entry, definition) ? [serverName] : [];
+    return entry === undefined || !isServerCacheValid(entry, definition);
   });
-}
-
-function hasEnabledServerWithoutValidSurface(
-  config: McpConfig,
-  cache: MetadataCache | null,
-  directSpecs: readonly DirectToolSpec[],
-): boolean {
-  const directServers = new Set(directSpecs.map(({ serverName }) => serverName));
-  return getEnabledServersWithoutValidMetadata(config, cache)
-    .some((serverName) => !directServers.has(serverName));
-}
-
-function canDeferSessionRuntime(
-  config: McpConfig,
-  cache: MetadataCache | null,
-  hasColdEnvironmentDirectTools: boolean,
-): boolean {
-  const enabledServers = Object.entries(config.mcpServers)
-    .filter(([, definition]) => !isServerDisabled(definition));
-  if (enabledServers.some(([, definition]) => definition.lifecycle === "eager" || definition.lifecycle === "keep-alive")) {
-    return false;
-  }
-  if (hasColdEnvironmentDirectTools) return false;
-  return config.settings?.deferWithMissingMetadata === true
-    || (cache !== null && getEnabledServersWithoutValidMetadata(config, cache).length === 0);
 }
 
 export interface McpServerRegistration {
@@ -686,16 +665,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ? resolveConfiguredClaudePluginMcp(cloneMcpConfig(sessionConfig), cwd ?? process.cwd())
       : loadMcpConfig(earlyConfigPath, cwd);
     const cache = loadMetadataCache();
-    const enabledServers = Object.entries(config.mcpServers)
-      .filter(([, definition]) => !isServerDisabled(definition));
-    const hasColdEnvironmentDirectTools = envRaw !== undefined && envRaw !== "__none__"
-      && getMissingConfiguredDirectToolServers(config, cache, envDirectToolOverride).length > 0;
-    if (!canDeferSessionRuntime(config, cache, hasColdEnvironmentDirectTools)) return undefined;
-    return {
-      config,
-      cache,
-      enabledServerCount: enabledServers.length,
-    };
+    const enabledServers = Object.values(config.mcpServers).filter((definition) => !isServerDisabled(definition));
+    if (enabledServers.some((definition) => definition.lifecycle === "eager" || definition.lifecycle === "keep-alive")) return undefined;
+    if (envRaw !== undefined && envRaw !== "__none__"
+      && getMissingConfiguredDirectToolServers(config, cache, envDirectToolOverride).length > 0) return undefined;
+    if (config.settings?.deferWithMissingMetadata !== true
+      && (cache === null || hasEnabledServerWithoutValidMetadata(config, cache))) return undefined;
+    return { config, cache, enabledServerCount: enabledServers.length };
   }
 
   function syncNamespaceTools(
@@ -1130,26 +1106,22 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (!initPromise) {
       const deferredSnapshot = getDeferredSessionSnapshot(ctx.cwd);
       if (deferredSnapshot) {
-        const directResult = syncDirectTools(deferredSnapshot.config, deferredSnapshot.cache);
-        syncProxyTool(deferredSnapshot.config, deferredSnapshot.cache, directResult.specs);
-        syncNamespaceTools(
-          deferredSnapshot.config,
-          deferredSnapshot.cache,
-          directResult.reservedDirectNames,
-          directResult.activeDirectNames,
-        );
+        const { config, cache, enabledServerCount } = deferredSnapshot;
+        const directResult = syncDirectTools(config, cache);
+        syncProxyTool(config, cache, directResult.specs);
+        syncNamespaceTools(config, cache, directResult.reservedDirectNames, directResult.activeDirectNames);
         // Pi cannot unregister commands. Wait until cwd is authoritative, and
         // under the opt-in wait for live metadata, before exposing prompts.
-        if (deferredSnapshot.config.settings?.deferWithMissingMetadata !== true) {
-          registerPromptCommands(resolveCachedPrompts(deferredSnapshot.config));
+        if (config.settings?.deferWithMissingMetadata !== true) {
+          registerPromptCommands(resolveCachedPrompts(config));
         }
-        deliverLargeDirectToolsAdvisory(ctx, deferredSnapshot.config, directResult.specs);
+        deliverLargeDirectToolsAdvisory(ctx, config, directResult.specs);
         if (generation !== lifecycleGeneration || !owner.isActive() || currentOwner !== owner) return;
-        const serverCount = Object.keys(deferredSnapshot.config.mcpServers).length;
+        const serverCount = Object.keys(config.mcpServers).length;
         const formattedStatus = formatMcpFooterStatus(
-          deferredSnapshot.config,
-          deferredSnapshot.enabledServerCount,
-          serverCount - deferredSnapshot.enabledServerCount,
+          config,
+          enabledServerCount,
+          serverCount - enabledServerCount,
           0,
         );
         const theme = ctx.ui?.theme;
@@ -2019,7 +1991,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       || directSpecs.length === 0
       || hasSearchModeSpecs
       || missingConfiguredDirectToolServers.length > 0
-      || hasEnabledServerWithoutValidSurface(config, cache, directSpecs);
+      || hasEnabledServerWithoutValidMetadata(config, cache, directSpecs);
 
     if (shouldRegisterProxyTool) {
       const description = buildProxyDescription(config);

@@ -1,23 +1,13 @@
 import { createSecureKeyringStore } from "./secure-keyring.js";
 /** The Jev decisions endpoint used when `SYSTEMONE_ENDPOINT` is not set. */
 export const JEV_DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
-/**
- * Environment variable naming the System One decisions endpoint. The name follows the wire surface every provider
- * exposes (`/v1/systemone`, `/zen/v1/systemone`, `/provider/v1/systemone`) so it stays provider-neutral; the module
- * itself keeps the `Jev` name used across the rest of the adapter.
- */
-export const SYSTEMONE_ENDPOINT_ENV = "SYSTEMONE_ENDPOINT";
-/** Environment variable holding the System One API key. */
-export const SYSTEMONE_API_KEY_ENV = "SYSTEMONE_API_KEY";
-/**
- * Pre-endpoint name for {@link SYSTEMONE_API_KEY_ENV}. Still read for the default endpoint, and still wins over the
- * keyring there, so an existing TypeSafe environment keeps working unchanged; `SYSTEMONE_API_KEY` takes precedence
- * when both are set. It carries a TypeSafe-issued credential, so it is never sent to any other endpoint.
- */
-export const LEGACY_TYPESAFE_API_KEY_ENV = "TYPESAFE_API_KEY";
-/** @deprecated Kept because sibling modules import it. Use {@link JEV_DEFAULT_ENDPOINT}. */
+const SYSTEMONE_ENDPOINT_ENV = "SYSTEMONE_ENDPOINT";
+const SYSTEMONE_API_KEY_ENV = "SYSTEMONE_API_KEY";
+/** TypeSafe-issued key: honored only for the default endpoint and never sent anywhere else. */
+const LEGACY_TYPESAFE_API_KEY_ENV = "TYPESAFE_API_KEY";
+/** Origin recorded in version 1 credential records. */
 export const TYPESAFE_API_ORIGIN = "https://api.typesafe.ai";
-/** @deprecated Legacy credential account, still readable for the default endpoint. Accounts are now derived from the endpoint. */
+/** Version 1 credential account, still read for the default endpoint. */
 export const JEV_KEYRING_ACCOUNT = "typesafe@sha256(https://api.typesafe.ai)";
 export const JEV_KEYRING_SERVICE = "pi-mcp-adapter.service-key";
 const MAX_ENDPOINT_LENGTH = 512;
@@ -39,9 +29,8 @@ function validateApiKey(value) {
     return value;
 }
 /**
- * Validates a configured endpoint. The endpoint is operator-supplied, so it is constrained to a single absolute
- * HTTPS URL without credentials, query, or fragment: that keeps the pinned-fetch check below exact-match, and
- * stops a stray value from redirecting requests or smuggling a query string.
+ * Constrains the operator-supplied endpoint to an absolute HTTPS URL without credentials, query, or fragment, so
+ * the pinned fetch can match it exactly and a stray value cannot redirect requests or smuggle a query string.
  */
 function parseEndpoint(raw, label) {
     if (typeof raw !== "string" || raw.trim().length === 0)
@@ -84,27 +73,24 @@ export function resolveJevEndpoint(env = process.env) {
     }
     return { status: "resolved", source: "default", endpoint: parseEndpoint(JEV_DEFAULT_ENDPOINT, "the default Jev endpoint") };
 }
-export function defaultJevEndpoint() {
-    return parseEndpoint(JEV_DEFAULT_ENDPOINT, "the default Jev endpoint");
-}
 /** Keyring account for an endpoint, so keys for different providers coexist instead of overwriting each other. */
 export function jevKeyringAccount(endpoint) {
-    return `systemone@sha256(${typeof endpoint === "string" ? endpoint : endpoint.href})`;
+    return `systemone@sha256(${endpoint.href})`;
 }
 function store() {
     return createSecureKeyringStore(JEV_KEYRING_SERVICE);
 }
-function requireEndpoint(endpoint, env) {
+function requireEndpoint(endpoint) {
     if (endpoint)
         return endpoint;
-    const resolution = resolveJevEndpoint(env);
+    const resolution = resolveJevEndpoint();
     if (resolution.status === "unavailable")
         throw new Error(resolution.message);
     return resolution.endpoint;
 }
 /**
- * Reads one stored credential. Version 1 records were written before the endpoint was configurable, so they are
- * accepted only for the default endpoint and only from the legacy account.
+ * Version 1 records were written before the endpoint was configurable, so they are accepted only for the default
+ * endpoint.
  */
 function parseStoredKey(payload, endpoint) {
     let value;
@@ -154,7 +140,7 @@ export function resolveJevCredential(env = process.env, endpoint, secretStore = 
     else {
         const resolution = resolveJevEndpoint(env);
         if (resolution.status === "unavailable")
-            return { status: "unavailable", message: resolution.message };
+            return resolution;
         target = resolution.endpoint;
     }
     if (Object.hasOwn(env, SYSTEMONE_API_KEY_ENV)) {
@@ -196,7 +182,7 @@ export function resolveJevCredential(env = process.env, endpoint, secretStore = 
     return { status: "missing" };
 }
 export function saveJevApiKey(apiKey, endpoint, secretStore = store()) {
-    const target = requireEndpoint(endpoint, process.env);
+    const target = requireEndpoint(endpoint);
     const record = { version: 2, endpoint: target.href, apiKey: validateApiKey(apiKey) };
     try {
         secretStore.write(jevKeyringAccount(target), JSON.stringify(record));
@@ -206,7 +192,7 @@ export function saveJevApiKey(apiKey, endpoint, secretStore = store()) {
     }
 }
 export function removeJevApiKey(endpoint, secretStore = store()) {
-    const target = requireEndpoint(endpoint, process.env);
+    const target = requireEndpoint(endpoint);
     try {
         secretStore.remove(jevKeyringAccount(target));
         if (target.href === JEV_DEFAULT_ENDPOINT)

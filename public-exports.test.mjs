@@ -154,7 +154,7 @@ test("System One key CLI loads built secure-store modules from the packed packag
       'if (remove.code !== 0) process.exit(4);',
     ].join("\n")], {
       cwd: fixtureRoot,
-      env: { ...process.env, PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory", SYSTEMONE_API_KEY: undefined },
+      env: { ...process.env, PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory", SYSTEMONE_API_KEY: undefined, TYPESAFE_API_KEY: undefined },
       encoding: "utf8",
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);

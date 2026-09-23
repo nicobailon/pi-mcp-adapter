@@ -259,13 +259,14 @@ function registeredCommand(api: ReturnType<typeof createPi>["api"], name: string
   return api.registerCommand.mock.calls.find((call: any[]) => call[0] === name)?.[1];
 }
 
+function cacheEntry(definition: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return { configHash: computeServerHash(definition), cachedAt: Date.now(), tools: [{ name: "search" }], resources: [], ...extra };
+}
+
 function cacheLazyServer(definition: Record<string, unknown>, tools = [{ name: "search" }]) {
   const config = { mcpServers: { demo: definition } };
   mocks.loadMcpConfig.mockReturnValue(config);
-  mocks.loadMetadataCache.mockReturnValue({
-    version: 1,
-    servers: { demo: { configHash: computeServerHash(definition), cachedAt: Date.now(), tools, resources: [] } },
-  });
+  mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { demo: cacheEntry(definition, { tools }) } });
   return config;
 }
 
@@ -2549,20 +2550,10 @@ describe("mcpAdapter session lifecycle", () => {
       settings: { deferWithMissingMetadata: true, disableProxyTool: true },
       mcpServers: { validDirect, invalidProxy },
     };
-    const entry = (definition: Record<string, unknown>, ttlMs?: number) => ({
-      configHash: computeServerHash(definition),
-      cachedAt: Date.now(),
-      ttlMs,
-      tools: [{ name: "search" }],
-      resources: [],
-    });
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.loadMetadataCache.mockReturnValue({
       version: 1,
-      servers: {
-        validDirect: entry(validDirect),
-        invalidProxy: entry(invalidProxy, 0),
-      },
+      servers: { validDirect: cacheEntry(validDirect), invalidProxy: cacheEntry(invalidProxy, { ttlMs: 0 }) },
     });
     mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
 
@@ -2782,10 +2773,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.loadMetadataCache.mockReturnValue({
       version: 1,
-      servers: {
-        cached: { configHash: computeServerHash(cachedDefinition), cachedAt: Date.now(), tools: [], resources: [] },
-        invalid: { configHash: computeServerHash(invalidDefinition), cachedAt: Date.now(), ttlMs: 0, tools: [], resources: [] },
-      },
+      servers: { cached: cacheEntry(cachedDefinition, { tools: [] }), invalid: cacheEntry(invalidDefinition, { tools: [], ttlMs: 0 }) },
     });
     mocks.initializeMcp.mockResolvedValue(createState());
 
@@ -2832,17 +2820,7 @@ describe("mcpAdapter session lifecycle", () => {
       mcpServers: { direct, missing: { command: "missing" } },
     };
     mocks.loadMcpConfig.mockReturnValueOnce(earlyConfig).mockReturnValue(sessionConfig);
-    mocks.loadMetadataCache.mockReturnValue({
-      version: 1,
-      servers: {
-        direct: {
-          configHash: computeServerHash(direct),
-          cachedAt: Date.now(),
-          tools: [{ name: "search" }],
-          resources: [],
-        },
-      },
-    });
+    mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { direct: cacheEntry(direct) } });
     mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
 
     const { api, handlers } = await loadAdapter();
@@ -2859,24 +2837,13 @@ describe("mcpAdapter session lifecycle", () => {
     const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
     const direct = { command: "direct", directTools: true };
     const proxy = { command: "proxy" };
-    const earlyConfig = {
-      mcpServers: { direct, proxy },
-    };
-    const entry = (definition: Record<string, unknown>) => ({
-      configHash: computeServerHash(definition),
-      cachedAt: Date.now(),
-      tools: [{ name: "search" }],
-      resources: [],
-    });
+    const earlyConfig = { mcpServers: { direct, proxy } };
     mocks.loadMcpConfig
       .mockReturnValueOnce(earlyConfig)
       .mockReturnValue({ settings: { deferWithMissingMetadata: true }, mcpServers: {} });
     mocks.loadMetadataCache.mockReturnValue({
       version: 1,
-      servers: {
-        direct: entry(direct),
-        proxy: { ...entry(proxy), prompts: [{ name: "brief" }] },
-      },
+      servers: { direct: cacheEntry(direct), proxy: cacheEntry(proxy, { prompts: [{ name: "brief" }] }) },
     });
     mocks.resolveDirectTools.mockImplementation(actualDirectTools.resolveDirectTools);
 
@@ -2897,18 +2864,7 @@ describe("mcpAdapter session lifecycle", () => {
   it("registers cached prompt commands at session start without metadata deferral", async () => {
     const definition = { command: "demo" };
     mocks.loadMcpConfig.mockReturnValue({ mcpServers: { demo: definition } });
-    mocks.loadMetadataCache.mockReturnValue({
-      version: 1,
-      servers: {
-        demo: {
-          configHash: computeServerHash(definition),
-          cachedAt: Date.now(),
-          tools: [],
-          resources: [],
-          prompts: [{ name: "brief" }],
-        },
-      },
-    });
+    mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { demo: cacheEntry(definition, { tools: [], prompts: [{ name: "brief" }] }) } });
 
     const { api, handlers } = await loadAdapter();
 
@@ -3750,10 +3706,9 @@ describe("directTools: \"search\" — registered inactive, activated by search",
     const { api, handlers } = createPi();
     const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
     let actionMethodsReady = false;
-    const runtimeGetActiveTools = api.getActiveTools.getMockImplementation();
     api.getActiveTools.mockImplementation(() => {
       if (!actionMethodsReady) throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
-      return runtimeGetActiveTools?.();
+      return activeTools();
     });
     mcpAdapter(api);
     const activeToolsBeforeSession = activeTools();

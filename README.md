@@ -422,7 +422,7 @@ mcp({ action: "install", url: "https://example.com/mcp" })
 
 Install validates and connects the endpoint. New entries use a name derived from the hostname and are saved to Pi's global MCP config; existing URL entries are reused without rewriting. Pass `server` to choose a name or `target: "project"` to save to the project's `.mcp.json`. Unsafe URLs, name collisions, and failed connections are not persisted.
 
-To block URL installation in constrained or headless environments, set `settings.allowInstall` to `false` in an MCP config file (`mcp.json` or `.mcp.json`); Pi's `settings.json` does not control this option. This disables only `mcp({ action: "install" })`: connections, search, tool calls, authentication, runtime registration, and interactive setup remain available. Omit the setting or set it to `true` to allow installation. Normal config precedence applies.
+Set `settings.allowInstall` to `false` in an MCP config file (`mcp.json` or `.mcp.json`, not Pi's `settings.json`) to block `mcp({ action: "install" })` for constrained or headless agents. Connect, search, tool calls, authentication, runtime registration, and interactive setup are unaffected.
 
 In exclusive config mode, a project target must be the active config path; otherwise use the global target. URL install cannot promote runtime-registered servers: save their complete definitions manually so required headers and transport/auth settings are retained.
 
@@ -522,7 +522,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so metadata updates and explicit reconnects do not rebuild the system prompt. Proxy/search/cache metadata still refreshes. Default: false. |
 | `scriptMode` | Register the MCP-only `mcpScript` plain-JavaScript tool (default: true). Set to `false` to hide it. |
 | `exposeResources` | Expose MCP resources as tools (default: `true`). Set to `false` to disable globally across all servers. Per-server `exposeResources` overrides this. |
-| `jev` | Optional System One Jev settings. A valid System One key enables semantic search across every enabled MCP server by default; `semanticSearch: false` disables it. `scriptEvaluation` remains disabled by default and requires an `allowedServers` source allowlist when enabled. Set `jev: false` to disable both features; omitting the block, or setting `{}`, still enables semantic search automatically once a credential exists. Run `/mcp jev setup` for guided configuration. |
+| `jev` | Optional System One Jev settings. A valid System One key enables semantic search across every enabled MCP server by default; `semanticSearch: false` disables it. `scriptEvaluation` remains disabled by default and requires an `allowedServers` source allowlist when enabled. `jev: false` disables both. Run `/mcp jev setup` for guided configuration. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. Ignored while any server uses `directTools: "search"`, whose tools are registered inactive and can only be activated through `mcp({ search })`. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
@@ -638,13 +638,13 @@ System One decisions are the same API at different origins, so pointing at anoth
 
 These are example configurations, subject to each provider's current documentation ([OpenCode Zen](https://opencode.ai/docs/zen/), [Command Code](https://commandcode.ai/docs/provider), [TypeSafe](https://docs.typesafe.ai/)).
 
-The endpoint must be an absolute `https` URL with a path. A set-but-invalid `SYSTEMONE_ENDPOINT` disables Jev instead of falling back to the default, so judgment payloads never reach a provider you did not name. Treat the endpoint as trusted configuration: whatever it points at receives the effective API key and the judgment payload. `allowedServers` still restricts which MCP-derived data may be included. Credentials are stored per endpoint, so switching endpoints does not overwrite a key you already saved; set the model with:
+The endpoint must be an absolute `https` URL with a path. A set-but-invalid `SYSTEMONE_ENDPOINT` disables Jev instead of falling back to the default. Treat the endpoint as trusted configuration: it receives the API key and the judgment payload. Credentials are stored per endpoint, so switching endpoints does not overwrite a saved key. Set the model with:
 
 ```json
 { "settings": { "jev": { "model": "jev-1.13" } } }
 ```
 
-The API key environment variable is `SYSTEMONE_API_KEY`. The older `TYPESAFE_API_KEY` name still works for the default TypeSafe endpoint. It is a TypeSafe-issued credential, so it is never sent to another endpoint: when `SYSTEMONE_ENDPOINT` points elsewhere the variable is ignored and a credential stored for that endpoint is used instead. If nothing resolves for the configured endpoint, Jev reports the refusal rather than a bare missing key.
+The older `TYPESAFE_API_KEY` variable still works for the default TypeSafe endpoint and is never sent to any other endpoint.
 
 Semantic search sends the query text, server names, normalized and original tool names, tool paths, and descriptions to the configured endpoint. It does not send tool results. `allowedServers` restricts semantic search to named servers. `scriptEvaluation` is a separate opt-in that may send the state and MCP-derived results declared in each evaluation; when enabled, it requires an explicit source allowlist.
 
@@ -820,7 +820,7 @@ Each direct tool costs ~150-300 tokens in the system prompt (name + description 
 
 Direct tools register from the metadata cache in the Pi agent dir (`~/.pi/agent/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only while the cache populates, then the extension hot-loads the refreshed direct tools into the current session. When `mcp({ connect: "<server>" })` is what discovers them, the connect result lists the new tools in `addedToolNames`, so Pi can load their definitions from that point in the transcript instead of rewriting the active tool list. Servers that advertise MCP list-change notifications refresh the current session when their tool or resource list changes. On Pi versions that expose `pi.unregisterTool()`, stale direct tools are removed from the registry during refresh; older Pi versions still deactivate them from the active tool set. To force a refresh: `/mcp reconnect <server>`.
 
-For faster startup, set `settings.deferWithMissingMetadata` to `true`. Missing or invalid metadata (expired, mismatched, or non-cacheable) contributes no direct tools, namespace wrappers, prompts, resources, search catalog, or counts until the first MCP operation initializes the runtime and hot-loads authoritative live metadata; the generic `mcp` gateway remains available. Because Pi cannot unregister slash commands, cached prompt commands are registered only after the session cwd is known and, with this setting enabled, are held until live initialization. `eager`/`keep-alive` servers and cold environment-selected direct tools still start immediately. Leave this off when a complete initial surface matters more than startup latency.
+For faster startup, set `settings.deferWithMissingMetadata` to `true`. Servers with missing or invalid metadata (expired, mismatched, or non-cacheable) then contribute no tools, prompts, resources, or search entries until the first MCP operation starts the runtime and loads live metadata; the `mcp` gateway stays available. Because Pi cannot unregister slash commands, cached prompt commands also wait for live metadata under this setting. `eager`/`keep-alive` servers and cold `MCP_DIRECT_TOOLS` selections still start immediately.
 
 Models sometimes encode an object or array argument as a JSON string. Set `settings.strictDirectToolArguments` to `true` to recover one such layer for schema-declared object and array properties, then validate the complete input against the advertised schema before execution.
 
