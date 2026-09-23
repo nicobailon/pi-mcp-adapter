@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { JsonSchemaType } from "@modelcontextprotocol/client";
 import { createJsonSchemaValidator } from "../json-schema-validator.ts";
 
@@ -83,6 +83,30 @@ describe("createJsonSchemaValidator", () => {
     expect(validate(schema, { name: "ok" }).valid).toBe(true);
     expect(validate(schema, { name: "" }).valid).toBe(false);
     expect(validate(schema, { name: "ok", extra: true }).valid).toBe(false);
+  });
+
+  it.each([draft07, undefined])("accepts schemars numeric formats without warnings (%s)", $schema => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const schema = {
+        ...($schema ? { $schema } : {}),
+        type: "object",
+        properties: {
+          limit: { type: "integer", format: "uint64", minimum: 0 },
+          small: { type: "integer", format: "uint8", minimum: 0, maximum: 255 },
+          offset: { type: "integer", format: "int32" },
+        },
+      };
+
+      expect(validate(schema, { limit: 5, small: 255, offset: -1 }).valid).toBe(true);
+      expect(validate(schema, { limit: -1 }).valid).toBe(false);
+      expect(validate(schema, { limit: 1.5 }).valid).toBe(false);
+      expect(validate(schema, { small: 256 }).valid).toBe(false);
+      expect(validate(schema, { offset: 2 ** 40 }).valid).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not downgrade an unsupported explicit dialect", () => {

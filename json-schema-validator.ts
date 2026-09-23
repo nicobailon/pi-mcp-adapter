@@ -11,6 +11,20 @@ import type {
 // ajv-formats types target its bundled ajv; the runtime accepts both instances.
 const addFormats = addFormatsImport as unknown as (instance: Ajv) => void;
 
+// Rust servers built with schemars annotate numbers with these formats. The
+// `type`, `minimum`, and `maximum` keywords already carry the constraint, so
+// registering them as always-valid only stops Ajv's "unknown format" warnings.
+// int32, int64, float, and double are omitted: ajv-formats validates them.
+const SCHEMARS_NUMERIC_FORMATS = [
+  "int", "int8", "int16", "int128",
+  "uint", "uint8", "uint16", "uint32", "uint64", "uint128",
+];
+
+function addKnownFormats(ajv: Ajv): void {
+  addFormats(ajv);
+  for (const format of SCHEMARS_NUMERIC_FORMATS) ajv.addFormat(format, true);
+}
+
 type SchemaDialect =
   | { status: "unstamped" }
   | { status: "stamped"; uri: string };
@@ -44,7 +58,7 @@ export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
         draft2020Validator ??= (() => {
           const Ajv2020 = Ajv2020Import as unknown as typeof Ajv;
           const ajv = new Ajv2020({ strict: false, allErrors: true });
-          addFormats(ajv);
+          addKnownFormats(ajv);
           return new AjvJsonSchemaValidator(ajv);
         })();
         return draft2020Validator.getValidator<T>(schema);
@@ -60,7 +74,7 @@ export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
           validateSchema: false,
           allErrors: true,
         });
-        addFormats(ajv);
+        addKnownFormats(ajv);
         return new AjvJsonSchemaValidator(ajv);
       })();
       return draft07Validator.getValidator<T>(schema);
