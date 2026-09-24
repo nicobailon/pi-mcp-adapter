@@ -103,15 +103,15 @@ describe("OAuth native keyring Entry reuse", () => {
     expect(inspectAuthForUrl("one", url).status).toBe("unavailable");
   });
 
-  it("caches a fresh missing Entry but retries a cached null only once per read", () => {
+  it("reuses a healthy missing Entry and observes a later external write", () => {
     expect(getAuthEntry("missing")).toBeUndefined();
     expect(constructed).toHaveLength(1);
     expect(getAuthEntry("missing")).toBeUndefined();
-    expect(constructed).toHaveLength(2);
+    expect(constructed).toHaveLength(1);
     const account = constructed.at(-1)!.account;
     backing.set(account, payload("external"));
     expect(getAuthEntry("missing")?.tokens?.accessToken).toBe("external");
-    expect(constructed).toHaveLength(2);
+    expect(constructed).toHaveLength(1);
   });
 
   it("invalidates on writes and removes, without retaining the remove Entry", () => {

@@ -210,7 +210,7 @@ interface AuthEntryChunkManifest {
 }
 
 let KeyringEntryClass: KeyringEntryConstructor | undefined;
-const keyringEntries = new Map<string, KeyringEntry>();
+const keyringEntries = new Map<string, { entry: KeyringEntry; hasReturnedValue: boolean }>();
 const memoryAuthEntries = new Map<string, string>();
 
 let testAuthSecretStoreReadCount = 0;
@@ -242,8 +242,12 @@ const keyringAuthSecretStore: AuthSecretStore = {
     const cached = keyringEntries.get(account);
     if (cached) {
       try {
-        const value = cached.getPassword();
-        if (value !== null) return value;
+        const value = cached.entry.getPassword();
+        if (value !== null) {
+          cached.hasReturnedValue = true;
+          return value;
+        }
+        if (!cached.hasReturnedValue) return undefined;
       } catch {
         // A stale native Entry may survive a keyring daemon restart. Retry once.
       }
@@ -251,14 +255,14 @@ const keyringAuthSecretStore: AuthSecretStore = {
     }
     const fresh = getKeyringEntry(account);
     const value = fresh.getPassword();
-    keyringEntries.set(account, fresh);
+    keyringEntries.set(account, { entry: fresh, hasReturnedValue: value !== null });
     return value ?? undefined;
   },
   write(account, payload) {
     keyringEntries.delete(account);
     const fresh = getKeyringEntry(account);
     fresh.setPassword(payload);
-    keyringEntries.set(account, fresh);
+    keyringEntries.set(account, { entry: fresh, hasReturnedValue: true });
   },
   remove(account) {
     keyringEntries.delete(account);
