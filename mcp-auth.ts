@@ -210,7 +210,7 @@ interface AuthEntryChunkManifest {
 }
 
 let KeyringEntryClass: KeyringEntryConstructor | undefined;
-const keyringEntries = new Map<string, { entry: KeyringEntry; hasReturnedValue: boolean }>();
+const keyringEntries = new Map<string, KeyringEntry>();
 const memoryAuthEntries = new Map<string, string>();
 
 let testAuthSecretStoreReadCount = 0;
@@ -242,12 +242,8 @@ const keyringAuthSecretStore: AuthSecretStore = {
     const cached = keyringEntries.get(account);
     if (cached) {
       try {
-        const value = cached.entry.getPassword();
-        if (value !== null) {
-          cached.hasReturnedValue = true;
-          return value;
-        }
-        if (!cached.hasReturnedValue) return undefined;
+        // keyring v2 throws for provider/session failures; null means the credential is absent.
+        return cached.getPassword() ?? undefined;
       } catch {
         // A stale native Entry may survive a keyring daemon restart. Retry once.
       }
@@ -255,14 +251,14 @@ const keyringAuthSecretStore: AuthSecretStore = {
     }
     const fresh = getKeyringEntry(account);
     const value = fresh.getPassword();
-    keyringEntries.set(account, { entry: fresh, hasReturnedValue: value !== null });
+    keyringEntries.set(account, fresh);
     return value ?? undefined;
   },
   write(account, payload) {
     keyringEntries.delete(account);
     const fresh = getKeyringEntry(account);
     fresh.setPassword(payload);
-    keyringEntries.set(account, { entry: fresh, hasReturnedValue: true });
+    keyringEntries.set(account, fresh);
   },
   remove(account) {
     keyringEntries.delete(account);

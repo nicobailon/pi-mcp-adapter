@@ -24,14 +24,12 @@ describe("OAuth native keyring Entry reuse", () => {
 
   class FakeEntry {
     failRead = false;
-    nullRead = false;
     constructor(readonly service: string, readonly account: string) {
       constructed.push(this);
     }
     getPassword(): string | null {
       if (freshReadError && constructed.indexOf(this) >= freshFailureAfter) throw freshReadError;
       if (this.failRead) throw new Error("stale entry");
-      if (this.nullRead) return null;
       return backing.get(this.account) ?? null;
     }
     setPassword(value: string): void { backing.set(this.account, value); }
@@ -75,12 +73,11 @@ describe("OAuth native keyring Entry reuse", () => {
     expect(constructed).toHaveLength(count);
   });
 
-  it.each(["null", "throw"] as const)("retries one stale cached %s read with a fresh Entry", (failure) => {
+  it("retries one stale cached read with a fresh Entry", () => {
     saveAuthEntry("one", { tokens: { accessToken: "first" } }, url);
     const stale = constructed.at(-1)!;
     backing.set(stale.account, payload("new"));
-    if (failure === "null") stale.nullRead = true;
-    else stale.failRead = true;
+    stale.failRead = true;
     const count = constructed.length;
     expect(getAuthEntry("one")?.tokens?.accessToken).toBe("new");
     expect(constructed).toHaveLength(count + 1);
