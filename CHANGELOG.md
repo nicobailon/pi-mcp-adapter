@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP stdio server commands, arguments, and working directories support home-relative paths. Thanks to [@FRFlo](https://github.com/FRFlo) for [PR #655](https://github.com/nicobailon/pi-mcp-adapter/pull/655).
+- Set `MCP_UI_VIEWER=orca` to open MCP UI windows in Orca. Thanks to [@jaesimio](https://github.com/jaesimio) for [PR #654](https://github.com/nicobailon/pi-mcp-adapter/pull/654).
+
 ### Fixed
 
 - `mcpScript` no longer asks models to load its intentionally hidden manual skill. Thanks to [@k03mad](https://github.com/k03mad) for [#659](https://github.com/nicobailon/pi-mcp-adapter/issues/659).
+- OAuth credential reads now reuse a healthy keyring Entry without retaining secret values, avoiding repeated native sessions while still observing external updates. Thanks to [@mmarabel](https://github.com/mmarabel) for [#657](https://github.com/nicobailon/pi-mcp-adapter/issues/657).
+- Suppressing MCP UI windows with `MCP_UI_VIEWER=none` / `off` / `disabled` no longer prints raw output into the TUI. Thanks to [@andreafspeziale](https://github.com/andreafspeziale) for [#656](https://github.com/nicobailon/pi-mcp-adapter/issues/656).
 - The published package now includes the OAuth guide linked from the README. Thanks to [@dajiaohuang](https://github.com/dajiaohuang) for [PR #653](https://github.com/nicobailon/pi-mcp-adapter/pull/653).
 - OpenCode v2 configs now import. Servers under `mcp.servers` are picked up, `disabled: true` servers are skipped, and the snake_case OAuth fields `client_id`, `client_secret`, and `auth_server_metadata_url` are mapped. OpenCode v1 configs keep working. Thanks to [@sleroq](https://github.com/sleroq) for [PR #650](https://github.com/nicobailon/pi-mcp-adapter/pull/650).
 - Tools from Rust MCP servers, such as DBX, no longer print Ajv `unknown format "uint64" ignored` warnings on every call. Number formats like `uint64`, `uint32`, `uint`, and `uint8` are now recognized, and `type`/`minimum` still validate the values. Thanks to [@nightlitten](https://github.com/nightlitten) for [#649](https://github.com/nicobailon/pi-mcp-adapter/issues/649).

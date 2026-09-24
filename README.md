@@ -113,6 +113,13 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 | `<Pi agent dir>/mcp.json` | Pi global override and compatibility imports (`~/.pi/agent/mcp.json` by default) |
 | `.pi/mcp.json` | Pi project override |
 
+For local stdio servers, a leading `~/` is expanded to the current user's home
+directory in `command`, `args`, and `cwd`. On Windows, the equivalent `~\\`
+form is supported too; on POSIX, backslashes remain literal filename
+characters. Bare commands such as
+`node`, `bunx`, or `git` continue to resolve through `PATH`.
+Built-in Agent Plugin arguments remain literal; this path expansion applies to native and shared MCP configuration.
+
 Pi-specific files are the write targets for imported or shared global servers when Pi needs to persist adapter-only settings such as `directTools`.
 
 ### Agent Plugins
@@ -847,7 +854,7 @@ MCP servers can ship interactive UIs via the [MCP UI](https://github.com/MCP-UI-
 3. pi-mcp-adapter fetches the UI HTML and opens it in an iframe
 4. The UI can call MCP tools and send messages back to the agent
 
-**Native rendering:** On macOS, if [Glimpse](https://github.com/hazat/glimpse) is installed (`pi install npm:glimpseui`), UIs open in a native WKWebView window instead of a browser tab. Set `MCP_UI_VIEWER=browser` to force the browser, `MCP_UI_VIEWER=glimpse` to require native rendering, or `MCP_UI_VIEWER=none` (also accepts `off` / `disabled`) to suppress the window entirely — the tool still runs and its inline result is returned to the agent, but no browser or native window opens. This is useful for headless setups, CI, or users who want the tool output delivered inline as text only. When suppressed, a one-line info notification shows the UI URL so it can still be opened manually if needed.
+**Native rendering:** On macOS, if [Glimpse](https://github.com/hazat/glimpse) is installed (`pi install npm:glimpseui`), UIs open in a native WKWebView window instead of a browser tab. Set `MCP_UI_VIEWER=browser` to force the browser, `MCP_UI_VIEWER=glimpse` to require native rendering, `MCP_UI_VIEWER=orca` to open in the [Orca](https://github.com/orca) built-in browser (falls back to the system browser if Orca is unavailable), or `MCP_UI_VIEWER=none` (also accepts `off` / `disabled`) to suppress the window entirely — the tool still runs and its inline result is returned to the agent, but no browser or native window opens. This is useful for headless setups, CI, or users who want the tool output delivered inline as text only. When suppressed, a one-line info notification shows the UI URL so it can still be opened manually if needed.
 
 **Bidirectional communication:** The UI talks back. When it sends a prompt or intent, the message is stored and `triggerTurn()` wakes the agent. The agent retrieves messages via `mcp({ action: "ui-messages" })` and responds, enabling conversational UIs where the app and agent collaborate in real-time.
 

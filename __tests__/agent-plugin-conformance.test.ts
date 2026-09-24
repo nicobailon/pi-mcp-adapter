@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { loadAgentPluginConfigs } from "../agent-plugin-loader.ts";
 import { isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "../agent-plugin-provenance.ts";
 import { cloneMcpConfig, loadMcpConfig } from "../config.ts";
@@ -65,7 +65,7 @@ describe("built-in Agent Plugin conformance", () => {
       echo: {
         type: "stdio",
         command: "node",
-        args: [argvEchoServer, "${PLUGIN_ROOT}", "${PLUGIN_LITERAL_ENV_HOST}"],
+        args: [argvEchoServer, "${PLUGIN_ROOT}", "${PLUGIN_LITERAL_ENV_HOST}", "~/literal-arg"],
         env: Object.fromEntries([
           ["PLUGIN_LITERAL_ENV", "${PLUGIN_LITERAL_ENV_HOST}"],
           ["__proto__", "literal-proto-env"],
@@ -81,7 +81,7 @@ describe("built-in Agent Plugin conformance", () => {
       const result = await connection.client.callTool({ name: "echo", arguments: {} });
       const seen = JSON.parse(firstText(result));
       expect(seen).toEqual({
-        argv: [realpathSync(root), "${PLUGIN_LITERAL_ENV_HOST}"],
+        argv: [realpathSync(root), "${PLUGIN_LITERAL_ENV_HOST}", "~/literal-arg"],
         cwd: realpathSync(root),
         literalEnv: "${PLUGIN_LITERAL_ENV_HOST}",
         protoEnv: "literal-proto-env",
@@ -198,20 +198,36 @@ describe("built-in Agent Plugin conformance", () => {
 
   it("keeps native stdio interpolation unchanged", async () => {
     process.env.NATIVE_PLUGIN_TEST = "expanded";
+    process.env.INNER = "inner-expanded";
+    process.env.OUTER = "${INNER}";
+    process.env.NODE_BINARY = process.execPath;
     const root = temp();
     const manager = new McpServerManager(root);
     try {
       const definition = cloneMcpConfig({ mcpServers: { native: {
-        command: "node",
-        args: [argvEchoServer, "${NATIVE_PLUGIN_TEST}"],
+        command: "${NODE_BINARY}",
+        args: [argvEchoServer, "~/native-arg", "${NATIVE_PLUGIN_TEST}", "${OUTER}"],
         env: { PLUGIN_LITERAL_ENV: "${NATIVE_PLUGIN_TEST}" },
-        cwd: root,
+        cwd: "~/",
       } } }).mcpServers.native;
+      expect(computeServerHash({ command: "${NODE_BINARY}" }, { NODE_BINARY: "one" }))
+        .not.toBe(computeServerHash({ command: "${NODE_BINARY}" }, { NODE_BINARY: "two" }));
       const connection = await manager.connect("native", definition);
       const result = await connection.client.callTool({ name: "echo", arguments: {} });
       const seen = JSON.parse(firstText(result));
-      expect(seen.argv).toEqual(["expanded"]);
+      expect(seen.argv).toEqual([join(homedir(), "native-arg"), "expanded", "${INNER}"]);
+      expect(seen.cwd).toBe(homedir());
       expect(seen.literalEnv).toBe("expanded");
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it("expands a home-relative native command before launch", async () => {
+    const manager = new McpServerManager(temp());
+    try {
+      await expect(manager.connect("native", { command: "~/.pi-mcp-adapter-missing-command" }))
+        .rejects.toThrow(join(homedir(), ".pi-mcp-adapter-missing-command"));
     } finally {
       await manager.close();
     }

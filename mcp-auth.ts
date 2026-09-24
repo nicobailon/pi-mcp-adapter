@@ -210,6 +210,7 @@ interface AuthEntryChunkManifest {
 }
 
 let KeyringEntryClass: KeyringEntryConstructor | undefined;
+const keyringEntries = new Map<string, KeyringEntry>();
 const memoryAuthEntries = new Map<string, string>();
 
 let testAuthSecretStoreReadCount = 0;
@@ -238,12 +239,29 @@ const memoryAuthSecretStore: AuthSecretStore = {
 
 const keyringAuthSecretStore: AuthSecretStore = {
   read(account) {
-    return getKeyringEntry(account).getPassword() ?? undefined;
+    const cached = keyringEntries.get(account);
+    if (cached) {
+      try {
+        // keyring v2 throws for provider/session failures; null means the credential is absent.
+        return cached.getPassword() ?? undefined;
+      } catch {
+        // A stale native Entry may survive a keyring daemon restart. Retry once.
+      }
+      keyringEntries.delete(account);
+    }
+    const fresh = getKeyringEntry(account);
+    const value = fresh.getPassword();
+    keyringEntries.set(account, fresh);
+    return value ?? undefined;
   },
   write(account, payload) {
-    getKeyringEntry(account).setPassword(payload);
+    keyringEntries.delete(account);
+    const fresh = getKeyringEntry(account);
+    fresh.setPassword(payload);
+    keyringEntries.set(account, fresh);
   },
   remove(account) {
+    keyringEntries.delete(account);
     getKeyringEntry(account).deleteCredential();
   },
 };
@@ -305,7 +323,14 @@ const keyRevokedAuthSecretStore: AuthSecretStore = {
 export function resetTestAuthSecretStore(): void {
   memoryAuthEntries.clear();
   authEntryCache.clear();
+  keyringEntries.clear();
   testAuthSecretStoreReadCount = 0;
+}
+
+/** Install a fake native Entry for OAuth storage tests without opening a real keyring. */
+export function setTestKeyringEntryClass(entryClass: KeyringEntryConstructor | undefined): void {
+  keyringEntries.clear();
+  KeyringEntryClass = entryClass;
 }
 
 export function resetAuthEntryCache(): void {
