@@ -33,7 +33,7 @@ describe("package.json files", () => {
 
     expect(guide).toBe("OAUTH.md");
     expect(packageJson.files).toContain(guide);
-    expect(readFileSync(join(repoRoot, "OAUTH.md"), "utf-8").trim().length).toBeGreaterThan(0);
+    expect(readFileSync(join(repoRoot, "OAUTH.md"), "utf-8")).toMatch(/^## Token Storage$/m);
   });
 
   it("exports source entry points and plain Node host helpers", () => {
