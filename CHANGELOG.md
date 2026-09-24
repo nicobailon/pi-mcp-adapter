@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Metadata refreshes no longer re-activate the `mcp` gateway tool after the host or another extension removed it from the active set; only the adapter's own fallback deactivation is undone.
+- Metadata refreshes respect host removal of the `mcp` gateway unless the adapter actually removed it through active-set fallback and still owns that deactivation. On hosts without `unregisterTool`, the gateway is hidden when direct tools cover the server and restored when needed; observing it active relinquishes fallback ownership. An unobserved host reactivation and removal between syncs cannot be distinguished from the adapter's deactivation. Thanks to [@xulongwu4](https://github.com/xulongwu4) for [PR #665](https://github.com/nicobailon/pi-mcp-adapter/pull/665).
 - `mcpScript` no longer asks models to load its intentionally hidden manual skill. Thanks to [@k03mad](https://github.com/k03mad) for [#659](https://github.com/nicobailon/pi-mcp-adapter/issues/659).
 - OAuth credential reads now reuse a healthy keyring Entry without retaining secret values, avoiding repeated native sessions while still observing external updates. Thanks to [@mmarabel](https://github.com/mmarabel) for [#657](https://github.com/nicobailon/pi-mcp-adapter/issues/657).
 - Suppressing MCP UI windows with `MCP_UI_VIEWER=none` / `off` / `disabled` no longer prints raw output into the TUI. Thanks to [@andreafspeziale](https://github.com/andreafspeziale) for [#656](https://github.com/nicobailon/pi-mcp-adapter/issues/656).

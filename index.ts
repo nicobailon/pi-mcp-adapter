@@ -502,17 +502,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const unregisterTool = (pi as ExtensionAPI & { unregisterTool?: (name: string) => boolean }).unregisterTool;
     const unregistered = toolNames.filter((toolName) => callReentrant(() => unregisterTool?.(toolName)) === true);
     const fallbackNames = toolNames.filter((toolName) => !unregistered.includes(toolName));
-    const remove = new Set(toolNames);
     const activeTools = getActiveToolsIfReady();
-    if (!activeTools || activeTools.length === 0) {
-      for (const toolName of fallbackNames) fallbackDeactivatedTools.add(toolName);
-      return unregistered;
-    }
+    if (!activeTools) return unregistered;
+    const removedFallbackNames = fallbackNames.filter((name) => activeTools.includes(name));
+    if (removedFallbackNames.length === 0) return unregistered;
+    const remove = new Set(removedFallbackNames);
     const nextActiveTools = activeTools.filter((name) => !remove.has(name));
-    if (nextActiveTools.length !== activeTools.length) {
-      for (const toolName of fallbackNames) fallbackDeactivatedTools.add(toolName);
-      callReentrant(() => pi.setActiveTools(nextActiveTools));
-    }
+    callReentrant(() => pi.setActiveTools(nextActiveTools));
+    for (const toolName of removedFallbackNames) fallbackDeactivatedTools.add(toolName);
     return unregistered;
   }
 
@@ -1999,13 +1996,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         finalizationRegistrations?.add("mcp");
         registerProxyTool(description);
         finalizationGuard?.();
-        return;
       }
-      // Only restore the gateway when this adapter soft-deactivated it (no
-      // unregisterTool on the host). Anything else that removed it — the user,
-      // another extension — made a choice a metadata refresh must not undo.
       const activeTools = getActiveToolsIfReady();
-      if (activeTools && !activeTools.includes("mcp") && fallbackDeactivatedTools.delete("mcp")) {
+      if (activeTools?.includes("mcp")) {
+        // Observed host reactivation ends our fallback ownership. A later
+        // host removal must not be mistaken for our own deactivation.
+        fallbackDeactivatedTools.delete("mcp");
+      } else if (activeTools && fallbackDeactivatedTools.delete("mcp")) {
+        // Only undo a fallback deactivation that the adapter still owns.
         callReentrant(() => pi.setActiveTools([...activeTools, "mcp"]));
       }
       return;
