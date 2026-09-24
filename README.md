@@ -118,6 +118,7 @@ directory in `command`, `args`, and `cwd`. On Windows, the equivalent `~\\`
 form is supported too; on POSIX, backslashes remain literal filename
 characters. Bare commands such as
 `node`, `bunx`, or `git` continue to resolve through `PATH`.
+Built-in Agent Plugin arguments remain literal; this path expansion applies to native and shared MCP configuration.
 
 Pi-specific files are the write targets for imported or shared global servers when Pi needs to persist adapter-only settings such as `directTools`.
 

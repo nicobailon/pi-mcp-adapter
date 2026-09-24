@@ -208,13 +208,26 @@ describe("built-in Agent Plugin conformance", () => {
         command: "${NODE_BINARY}",
         args: [argvEchoServer, "~/native-arg", "${NATIVE_PLUGIN_TEST}", "${OUTER}"],
         env: { PLUGIN_LITERAL_ENV: "${NATIVE_PLUGIN_TEST}" },
-        cwd: root,
+        cwd: "~/",
       } } }).mcpServers.native;
+      expect(computeServerHash({ command: "${NODE_BINARY}" }, { NODE_BINARY: "one" }))
+        .not.toBe(computeServerHash({ command: "${NODE_BINARY}" }, { NODE_BINARY: "two" }));
       const connection = await manager.connect("native", definition);
       const result = await connection.client.callTool({ name: "echo", arguments: {} });
       const seen = JSON.parse(firstText(result));
       expect(seen.argv).toEqual([join(homedir(), "native-arg"), "expanded", "${INNER}"]);
+      expect(seen.cwd).toBe(homedir());
       expect(seen.literalEnv).toBe("expanded");
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it("expands a home-relative native command before launch", async () => {
+    const manager = new McpServerManager(temp());
+    try {
+      await expect(manager.connect("native", { command: "~/.pi-mcp-adapter-missing-command" }))
+        .rejects.toThrow(join(homedir(), ".pi-mcp-adapter-missing-command"));
     } finally {
       await manager.close();
     }
