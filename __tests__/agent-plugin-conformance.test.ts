@@ -65,7 +65,7 @@ describe("built-in Agent Plugin conformance", () => {
       echo: {
         type: "stdio",
         command: "node",
-        args: [argvEchoServer, "${PLUGIN_ROOT}", "${PLUGIN_LITERAL_ENV_HOST}"],
+        args: [argvEchoServer, "${PLUGIN_ROOT}", "${PLUGIN_LITERAL_ENV_HOST}", "~/literal-arg"],
         env: Object.fromEntries([
           ["PLUGIN_LITERAL_ENV", "${PLUGIN_LITERAL_ENV_HOST}"],
           ["__proto__", "literal-proto-env"],
@@ -81,7 +81,7 @@ describe("built-in Agent Plugin conformance", () => {
       const result = await connection.client.callTool({ name: "echo", arguments: {} });
       const seen = JSON.parse(firstText(result));
       expect(seen).toEqual({
-        argv: [realpathSync(root), "${PLUGIN_LITERAL_ENV_HOST}"],
+        argv: [realpathSync(root), "${PLUGIN_LITERAL_ENV_HOST}", "~/literal-arg"],
         cwd: realpathSync(root),
         literalEnv: "${PLUGIN_LITERAL_ENV_HOST}",
         protoEnv: "literal-proto-env",

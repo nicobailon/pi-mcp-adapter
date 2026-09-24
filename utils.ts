@@ -257,7 +257,7 @@ export function expandHomePath(value: string | undefined): string | undefined {
   const resolved = value;
   if (resolved === "~") return homedir();
   if (resolved.startsWith("~/") || (platform() === "win32" && resolved.startsWith("~\\"))) {
-    const suffix = resolved.slice(2).replace(/[\\/]/g, sep);
+    const suffix = platform() === "win32" ? resolved.slice(2).replace(/[\\/]/g, sep) : resolved.slice(2);
     return join(homedir(), suffix);
   }
   return resolved;
