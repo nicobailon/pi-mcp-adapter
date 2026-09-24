@@ -163,28 +163,35 @@ describe("MCP_UI_VIEWER=none", () => {
   it.each(["none", "off", "disabled"])("suppresses window opening for %s", async (value) => {
     process.env.MCP_UI_VIEWER = value;
     const { state } = makeState();
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let runtime: Awaited<ReturnType<typeof maybeStartUiSession>>;
 
-    const runtime = await maybeStartUiSession(state, {
-      serverName: "demo",
-      toolName: "app",
-      toolArgs: {},
-      uiResourceUri: "ui://app",
-    });
+    try {
+      runtime = await maybeStartUiSession(state, {
+        serverName: "demo",
+        toolName: "app",
+        toolArgs: {},
+        uiResourceUri: "ui://app",
+      });
 
-    expect(runtime).toMatchObject({ viewer: "suppressed", windowOpen: false });
-    expect(runtime?.url).toContain("http://localhost:");
-    expect(state.openBrowser).not.toHaveBeenCalled();
-    expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
-    expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
-    expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("MCP UI window suppressed"), "info");
-    const handle = state.uiServer;
-    expect(state.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining(`-L ${handle.proxyPort}:127.0.0.1:${handle.proxyPort}`),
-      "info",
-    );
-    expect(state.ui.notify).toHaveBeenCalledWith(expect.not.stringContaining("Tool still ran"), "info");
+      expect(runtime).toMatchObject({ viewer: "suppressed", windowOpen: false });
+      expect(runtime?.url).toContain("http://localhost:");
+      expect(state.openBrowser).not.toHaveBeenCalled();
+      expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
+      expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
+      expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("MCP UI window suppressed"), "info");
+      const handle = state.uiServer;
+      expect(state.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining(`-L ${handle.proxyPort}:127.0.0.1:${handle.proxyPort}`),
+        "info",
+      );
+      expect(state.ui.notify).toHaveBeenCalledWith(expect.not.stringContaining("Tool still ran"), "info");
+      expect(consoleSpy).not.toHaveBeenCalled();
 
-    runtime?.close("test-cleanup");
+    } finally {
+      runtime?.close("test-cleanup");
+      consoleSpy.mockRestore();
+    }
   });
 
   it("reports suppressed UI state in proxy tool results", async () => {

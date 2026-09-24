@@ -247,10 +247,18 @@ export function resolveServerUrl(definition: Pick<ServerEntry, "url">, environme
 export function resolveConfigPath(value: string | undefined, environment: NodeJS.ProcessEnv = process.env): string | undefined {
   if (value === undefined) return undefined;
 
-  const resolved = interpolateEnvVars(value, environment);
+  return expandHomePath(interpolateEnvVars(value, environment));
+}
+
+/** Expand a leading home-directory marker without interpolating environment variables. */
+export function expandHomePath(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+
+  const resolved = value;
   if (resolved === "~") return homedir();
-  if (resolved.startsWith("~/") || resolved.startsWith("~\\")) {
-    return join(homedir(), resolved.slice(2));
+  if (resolved.startsWith("~/") || (platform() === "win32" && resolved.startsWith("~\\"))) {
+    const suffix = platform() === "win32" ? resolved.slice(2).replace(/[\\/]/g, sep) : resolved.slice(2);
+    return join(homedir(), suffix);
   }
   return resolved;
 }

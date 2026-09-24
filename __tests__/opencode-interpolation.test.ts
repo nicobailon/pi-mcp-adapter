@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { extractOAuthConfig } from "../mcp-auth-flow.ts";
 import {
   interpolateEnvRecord,
@@ -46,6 +48,15 @@ describe("OpenCode environment interpolation", () => {
       scope: "scope-interpolated",
       skipIssuerMetadataValidation: true,
     });
+  });
+
+  it("expands home-relative paths", () => {
+    expect(resolveConfigPath("~/bin/server")).toBe(join(homedir(), "bin", "server"));
+    expect(resolveConfigPath("~/folder\\name")).toBe(join(homedir(), process.platform === "win32" ? "folder/name" : "folder\\name"));
+    expect(resolveConfigPath("~\\bin\\server")).toBe(
+      process.platform === "win32" ? join(homedir(), "bin", "server") : "~\\bin\\server",
+    );
+    expect(resolveConfigPath("~/bin/server", { HOME: "/home/test" })).toBe(join(homedir(), "bin", "server"));
   });
 
   it("resolves command secrets without executing cache-facing expressions", () => {

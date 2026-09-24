@@ -192,7 +192,7 @@ export interface UiServerHandle {
   sessionToken: string;
   serverName: string;
   toolName: string;
-  viewer?: "browser" | "glimpse" | "suppressed";
+  viewer?: "browser" | "glimpse" | "orca" | "suppressed";
   windowOpen?: boolean;
   close: (reason?: string) => void;
   sendToolInput: (args: Record<string, unknown>) => void;
