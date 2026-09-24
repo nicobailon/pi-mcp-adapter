@@ -35,7 +35,7 @@ export interface UiSessionRequest {
   onNeedsAuth?: SessionRecoveryDeps["onNeedsAuth"];
 }
 
-export type UiSessionViewer = "browser" | "glimpse" | "suppressed";
+export type UiSessionViewer = "browser" | "glimpse" | "orca" | "suppressed";
 
 export interface UiSessionRuntime {
   serverName: string;
@@ -141,6 +141,19 @@ async function openInBrowser(state: McpExtensionState, url: string, signal: Abor
     state.ui?.notify(`MCP UI browser open failed: ${message}`, "warning");
     return message;
   }
+}
+
+async function openInOrcaBrowser(url: string, signal: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  await new Promise<void>((resolve, reject) => {
+    execFile("orca", ["goto", "--url", url], { timeout: 10000, signal }, (error) => {
+      if (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
 function isRemoteSession(): boolean {
@@ -499,33 +512,17 @@ export async function maybeStartUiSession(
           openedOnHost,
         }), openError === null ? "info" : "warning");
       };
-      const glimpseDetected = !remoteByEnv && isGlimpseAvailable();
-      const useGlimpse = !remoteByEnv && (viewerPref === "glimpse" ||
-        (viewerPref !== "browser" && glimpseDetected));
-
-      if (useGlimpse) {
+      // Handle Orca browser viewer
+      if (viewerPref === "orca") {
         try {
-          const glimpseHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden}iframe{width:100%;height:100%;border:none}</style></head><body><iframe src="${handle.url}"></iframe></body></html>`;
-          const glimpseWindow = await openGlimpseWindow(glimpseHtml, {
-            title: `MCP · ${request.serverName} · ${request.toolName}`,
-            width: 1000,
-            height: 800,
-            onClosed: () => {
-              if (active) handle.close("glimpse-closed");
-            },
-          });
-          if (state.owner?.isActive() === false || runtimeSignal.aborted) {
-            glimpseWindow.close();
-            throwIfAborted(runtimeSignal);
-            throw new Error("MCP Glimpse window became stale before registration");
-          }
-          activeGlimpseWindow = glimpseWindow;
-          viewer = "glimpse";
+          await openInOrcaBrowser(handle.url, runtimeSignal);
           if (remoteLikely) {
             await emitRemoteHint(null, true);
           }
+          viewer = "orca";
         } catch (error) {
-          log.debug("Glimpse unavailable, using browser", {
+          if (isAbortError(error, runtimeSignal)) throw error;
+          log.debug("Orca browser failed, using fallback", {
             error: error instanceof Error ? error.message : String(error),
           });
           const openError = await openInBrowser(state, handle.url, runtimeSignal);
@@ -535,9 +532,46 @@ export async function maybeStartUiSession(
           viewer = "browser";
         }
       } else {
-        const openError = await openInBrowser(state, handle.url, runtimeSignal);
-        if (openError !== null || remoteLikely) {
-          await emitRemoteHint(openError);
+        const glimpseDetected = !remoteByEnv && isGlimpseAvailable();
+        const useGlimpse = !remoteByEnv && (viewerPref === "glimpse" ||
+          (viewerPref !== "browser" && glimpseDetected));
+
+        if (useGlimpse) {
+          try {
+            const glimpseHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden}iframe{width:100%;height:100%;border:none}</style></head><body><iframe src="${handle.url}"></iframe></body></html>`;
+            const glimpseWindow = await openGlimpseWindow(glimpseHtml, {
+              title: `MCP · ${request.serverName} · ${request.toolName}`,
+              width: 1000,
+              height: 800,
+              onClosed: () => {
+                if (active) handle.close("glimpse-closed");
+              },
+            });
+            if (state.owner?.isActive() === false || runtimeSignal.aborted) {
+              glimpseWindow.close();
+              throwIfAborted(runtimeSignal);
+              throw new Error("MCP Glimpse window became stale before registration");
+            }
+            activeGlimpseWindow = glimpseWindow;
+            viewer = "glimpse";
+            if (remoteLikely) {
+              await emitRemoteHint(null, true);
+            }
+          } catch (error) {
+            log.debug("Glimpse unavailable, using browser", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            const openError = await openInBrowser(state, handle.url, runtimeSignal);
+            if (openError !== null || remoteLikely) {
+              await emitRemoteHint(openError);
+            }
+            viewer = "browser";
+          }
+        } else {
+          const openError = await openInBrowser(state, handle.url, runtimeSignal);
+          if (openError !== null || remoteLikely) {
+            await emitRemoteHint(openError);
+          }
         }
       }
     }
