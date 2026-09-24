@@ -42,6 +42,8 @@ describe("runMcpScript", () => {
       description: expect.stringContaining("multiple MCP tool calls in one request"),
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
     }));
+    const scriptTool = registerTool.mock.calls.find(([tool]) => tool.name === "mcpScript")?.[0];
+    expect(scriptTool.description).not.toContain("Load the mcp-scripting skill");
     expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp_script" }));
   });
 
