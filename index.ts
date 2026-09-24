@@ -2001,8 +2001,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         finalizationGuard?.();
         return;
       }
+      // Only restore the gateway when this adapter soft-deactivated it (no
+      // unregisterTool on the host). Anything else that removed it — the user,
+      // another extension — made a choice a metadata refresh must not undo.
       const activeTools = getActiveToolsIfReady();
-      if (activeTools && !activeTools.includes("mcp")) {
+      if (activeTools && !activeTools.includes("mcp") && fallbackDeactivatedTools.delete("mcp")) {
         callReentrant(() => pi.setActiveTools([...activeTools, "mcp"]));
       }
       return;

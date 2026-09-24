@@ -1446,6 +1446,87 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.setActiveTools).not.toHaveBeenCalled();
   });
 
+  it("does not re-activate the mcp gateway tool after the host removed it from the active set", async () => {
+    const config = {
+      mcpServers: {
+        demo: { command: "demo", directTools: true },
+      },
+    };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([])
+      .mockReturnValue([
+        { serverName: "demo", originalName: "search", prefixedName: "demo_search", description: "Search demo" },
+      ]);
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeConnect.mockImplementation(async (currentState: any) => {
+      currentState.onToolMetadataUpdated?.("demo", "proxy-connect");
+      return { content: [{ type: "text", text: "connected" }] };
+    });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+
+    // The host (e.g. a code-mode extension that routes MCP through its own tool) hides the gateway.
+    api.setActiveTools(["bash"]);
+    api.setActiveTools.mockClear();
+
+    await proxyTool.execute("call-1", { connect: "demo" });
+
+    expect(activeTools()).toEqual(["bash", "demo_search"]);
+    expect(api.setActiveTools).not.toHaveBeenCalled();
+  });
+
+  it("re-activates the mcp gateway tool it deactivated through the active-set fallback", async () => {
+    const config = {
+      settings: { disableProxyTool: true },
+      mcpServers: {
+        demo: { command: "demo", directTools: true },
+      },
+    };
+    const search = { serverName: "demo", originalName: "search", prefixedName: "demo_search", description: "Search demo" };
+    let specs: Array<typeof search> = [];
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools.mockImplementation(() => specs);
+    mocks.reconnectServers.mockImplementation(async (currentState: any) => {
+      currentState.onToolMetadataUpdated?.("demo", "command-reconnect");
+    });
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi({ unregisterTool: false });
+    const tracked = trackRuntimeToolActivation(api, ["bash"]);
+    const activeTools = () => tracked().filter((name) => name !== "mcpScript");
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+
+    // Direct tools cover the server: the gateway is dropped via the active-set fallback.
+    specs = [search];
+    await commandDef.handler("reconnect demo", { hasUI: false });
+    expect(activeTools()).toEqual(["bash", "demo_search"]);
+
+    // Direct tools go away again: the adapter undoes its own deactivation.
+    specs = [];
+    await commandDef.handler("reconnect demo", { hasUI: false });
+    expect(activeTools()).toEqual(["bash", "mcp"]);
+  });
+
+
   it("returns the proxy connect result untouched when no direct tools were added", async () => {
     const config = {
       mcpServers: {
