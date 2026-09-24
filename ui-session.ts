@@ -486,7 +486,6 @@ export async function maybeStartUiSession(
         `If this session is remote, run ssh -L ${handle.port}:127.0.0.1:${handle.port} -L ${handle.proxyPort}:127.0.0.1:${handle.proxyPort} <this-host> first.`,
         "info",
       );
-      log.info("Suppressing MCP UI window (MCP_UI_VIEWER=" + viewerPref + ")", { url: handle.url });
     } else {
       const remoteLikely = remoteByEnv || await hasActiveRemoteLogin();
       const emitRemoteHint = async (openError: string | null, openedOnHost = false) => {
