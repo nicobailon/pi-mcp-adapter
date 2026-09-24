@@ -98,7 +98,7 @@ describe("MCP_UI_VIEWER=orca", () => {
     expect(vi.mocked(execFile)).toHaveBeenCalledWith(
       "orca",
       ["goto", "--url", expect.stringContaining("http://")],
-      expect.any(Object),
+      expect.objectContaining({ timeout: 10000, signal: expect.anything() }),
       expect.any(Function),
     );
     expect(state.openBrowser).not.toHaveBeenCalled();
@@ -134,6 +134,33 @@ describe("MCP_UI_VIEWER=orca", () => {
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
 
     runtime?.close("test-cleanup");
+  });
+
+  it("does not fall back to the system browser after cancellation", async () => {
+    process.env.MCP_UI_VIEWER = "orca";
+    process.env.SSH_CONNECTION = "test";
+    const controller = new AbortController();
+    vi.mocked(execFile).mockImplementation((...args: any[]) => {
+      const options = args[2] as { signal: AbortSignal };
+      const callback = args[args.length - 1];
+      options.signal.addEventListener("abort", () => callback(options.signal.reason), { once: true });
+      return undefined as any;
+    });
+    const { state } = makeState();
+
+    const pending = maybeStartUiSession(state, {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(execFile).toHaveBeenCalledWith("orca", expect.anything(), expect.anything(), expect.anything()));
+    controller.abort(new Error("test cancellation"));
+
+    await expect(pending).rejects.toThrow("test cancellation");
+    expect(state.openBrowser).not.toHaveBeenCalled();
+    state.uiServer?.close("test-cleanup");
   });
 
   it("ignores the Orca viewer preference when suppressed", async () => {
