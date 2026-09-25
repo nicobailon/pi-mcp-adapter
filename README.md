@@ -71,7 +71,7 @@ Precedence is (later entries win):
 5. `.mcp.json`
 6. `.pi/mcp.json`
 
-Ancestor discovery is off by default. To opt in, set `settings.ancestorConfigRoots` in a user-global config above, or in the explicitly selected `--mcp-config`/`configPath` file, for example `"ancestorConfigRoots": ["~/work/team"]`. Each root must be an explicit absolute path or `~/...`, resolve to an existing directory under `$HOME`, and contain the canonical cwd. If several roots match, only the nearest (deepest) is used. Project `.mcp.json` and `.pi/mcp.json` files cannot enable discovery or extend the boundary.
+Ancestor discovery is off by default. To opt in, set `settings.ancestorConfigRoots` in a user-global config above, or in the explicitly selected `--mcp-config`/`configPath` file, for example `"ancestorConfigRoots": ["~/work/team"]`. Each root must be an explicit absolute path or `~/...` and resolve to an existing directory under `$HOME`. Roots that do not contain the canonical cwd are ignored. If several roots match, only the nearest (deepest) is used. Project `.mcp.json` and `.pi/mcp.json` files cannot enable discovery or extend the boundary.
 
 Within the selected root, existing `.mcp.json` and `<configDir>/mcp.json` (normally `.pi/mcp.json`) files load between steps 4 and 5, from the root through parent(cwd), farthest first. Nearer directories override farther ones, Pi overrides shared config within each directory, and cwd files win over ancestors. Search never goes above the configured root or `$HOME`; the boundary limits discovery but is not a file-ownership or symlink-target sandbox. Only configure roots whose project files you trust. `/mcp setup` write targets and project-local `/mcp disable` and `/mcp enable` overrides are unchanged.
 
@@ -515,7 +515,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `collapsedResultLines` | Number of result text lines to show before expansion: `1`, `2`, or `3`. Defaults to `1` in compact mode and `3` in boxed mode. |
 | `notifyOnStartupConnect` | Show successful startup connection notices (default: `true`). Set to `false` to suppress routine `MCP: N servers connected (M tools)` notices. Connection errors and authentication warnings remain visible. |
 | `hostConfigDiscovery` | Host-specific config policy: `"off"` (default), `"prompt"` (detect/report only), or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
-| `ancestorConfigRoots` | Trusted absolute or `~/...` roots for opt-in ancestor config discovery. Only user-global or explicitly selected config may set it; the deepest root containing cwd is used. |
+| `ancestorConfigRoots` | Trusted absolute or `~/...` roots for opt-in ancestor config discovery. Only user-global or explicitly selected config may set it; roots outside cwd are ignored and the deepest matching root is used. |
 | `agentPluginPaths` | Agent Plugins package directories to load MCP servers from. Relative paths resolve from the active project cwd. |
 | `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
 | `oauthDir` | Legacy OAuth `tokens.json` import directory for this MCP config. Relative paths resolve from the active project cwd. `MCP_OAUTH_DIR` still wins when set. Persistent OAuth credentials are stored in the OS credential store, not this directory. |

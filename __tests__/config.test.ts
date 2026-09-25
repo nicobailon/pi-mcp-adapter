@@ -175,6 +175,17 @@ describe("config discovery", () => {
       expect(loadMcpConfig(explicit, cwd).mcpServers.explicit.command).toBe("loaded");
     });
 
+    it("ignores an existing root outside cwd without warning", async () => {
+      const unrelated = join(home, "unrelated");
+      mkdirSync(unrelated);
+      writeJson(join(home, ".pi", "agent", "mcp.json"), { settings: { ancestorConfigRoots: [unrelated] }, mcpServers: {} });
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { loadMcpConfig } = await import("../config.ts");
+
+      expect(loadMcpConfig(undefined, cwd).mcpServers).toEqual({});
+      expect(warning).not.toHaveBeenCalled();
+    });
+
     it.each(["relative", "outside", "escaping", "missing", "file"])("rejects invalid configured root: %s", async (kind) => {
       const file = join(home, "not-a-directory");
       writeFileSync(file, "x");

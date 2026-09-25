@@ -621,10 +621,10 @@ function getConfiguredAncestorRoot(globalSources: ConfigSourceSpec[], cwd: strin
     }
     try {
       const root = realpathSync(expanded);
-      if (!statSync(root).isDirectory() || !isWithin(home, root) || !isWithin(root, canonicalCwd)) throw new Error();
-      valid.push(root);
+      if (!statSync(root).isDirectory() || !isWithin(home, root)) throw new Error();
+      if (isWithin(root, canonicalCwd)) valid.push(root);
     } catch {
-      console.warn(`Invalid settings.ancestorConfigRoots entry ${JSON.stringify(entry)}: expected an existing directory under HOME containing cwd`);
+      console.warn(`Invalid settings.ancestorConfigRoots entry ${JSON.stringify(entry)}: expected an existing directory under HOME`);
     }
   }
   return valid.sort((left, right) => right.length - left.length)[0];
