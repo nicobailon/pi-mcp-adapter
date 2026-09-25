@@ -7,6 +7,7 @@ import {
   formatMcpDirectToolCallLines,
   formatMcpScriptToolCallLines,
   formatMcpProxyToolCallLines,
+  formatMcpScriptCallSummary,
   formatMcpToolResultIdentity,
   formatMcpToolResultLines,
   renderMcpProxyToolCall,
@@ -214,6 +215,94 @@ describe("MCP tool result renderer", () => {
     expect(call.render(120)).toEqual([]);
     expect(state.compactInputPreview).toBeUndefined();
     expect(output).not.toContain(code);
+  });
+
+  it("titles compact mcpScript rows with the tools the script called", () => {
+    const state: { compactTitle?: string; compactInputPreview?: string } = {};
+    const code = 'await tools.call("demo_" + name, {}); emit("secret-script-code");';
+    const call = createMcpScriptToolCallRenderer()(
+      { code },
+      plainTheme,
+      { isError: false, isPartial: false, expanded: false, state },
+    );
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "done\nextra" }], {
+        mode: "script",
+        calls: [
+          { operation: "describe", path: "demo_search", ok: true, durationMs: 1 },
+          { operation: "call", path: "demo_search", ok: true, durationMs: 2 },
+          { operation: "call", path: "demo_search", ok: true, durationMs: 2 },
+          { operation: "call", path: "demo_fetch", ok: true, durationMs: 3 },
+        ],
+      }),
+      collapsedOptions,
+      plainTheme,
+      { isError: false, state },
+    ).render(120).join("\n");
+
+    expect(call.render(120)).toEqual([]);
+    expect(output).toContain("mcpScript demo_search×2, demo_fetch · describe → done");
+    expect(output).not.toContain("secret-script-code");
+    expect(output).not.toContain("extra");
+  });
+
+  it("titles compact mcpScript rows even without call renderer state", () => {
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "(no output)" }], { mode: "script", timeoutMs: 30_000 }),
+      collapsedOptions,
+      plainTheme,
+      { isError: false },
+    ).render(80).join("\n");
+
+    expect(output).toBe("mcpScript → (no output)");
+  });
+
+  it("summarizes mcpScript call traces", () => {
+    const call = (path: string, ok = true) => (ok
+      ? { operation: "call", path, ok, durationMs: 1 }
+      : { operation: "call", path, ok, error: "tool_not_found", durationMs: 1 });
+
+    expect(formatMcpScriptCallSummary({ mode: "call", server: "demo", tool: "search" })).toBeNull();
+    expect(formatMcpScriptCallSummary(undefined)).toBeNull();
+    expect(formatMcpScriptCallSummary({ mode: "script" })).toBe("");
+    expect(formatMcpScriptCallSummary({
+      mode: "script",
+      calls: [call("a"), call("b"), call("c"), call("d"), call("e"), call("a")],
+    })).toBe("a×2, b, c, d, +1 more");
+    expect(formatMcpScriptCallSummary({
+      mode: "script",
+      calls: [
+        call("demo_search"),
+        call("demo_missing", false),
+        { operation: "search", query: "demo", ok: true, durationMs: 1 },
+      ],
+    })).toBe("(1 failed) demo_search, demo_missing · search");
+    expect(formatMcpScriptCallSummary({
+      mode: "script",
+      calls: [
+        { operation: "describe", path: "demo_search", ok: true, durationMs: 1 },
+        { operation: "describe", path: "demo_fetch", ok: true, durationMs: 1 },
+      ],
+    })).toBe("describe demo_search, demo_fetch");
+  });
+
+  it("keeps a failed-call marker visible when a narrow row truncates the mcpScript tool list", () => {
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "{}" }], {
+        mode: "script",
+        calls: [
+          { operation: "call", path: "demo_a_really_long_tool_name", ok: true, durationMs: 1 },
+          { operation: "call", path: "demo_another_really_long_tool_name", ok: false, error: "call_failed", durationMs: 1 },
+        ],
+      }),
+      collapsedOptions,
+      plainTheme,
+      { isError: false },
+    ).render(60).join("\n");
+
+    expect(output.startsWith("mcpScript (1 failed) demo_")).toBe(true);
+    expect(output).not.toContain("demo_another_really_long_tool_name");
+    expect(output).toContain("→ {}");
   });
 
   it("skips leading blank lines in collapsed previews", () => {
