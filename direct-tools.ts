@@ -10,7 +10,7 @@ import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from 
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { isServerDisabled } from "./types.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
-import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl } from "./utils.ts";
+import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl, withToolCallIdMeta } from "./utils.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
@@ -127,7 +127,7 @@ export function createDirectToolExecutor(
   getInitPromise: () => Promise<McpExtensionState> | null,
   spec: DirectToolSpec
 ): DirectToolExecute {
-  return async function execute(_toolCallId, params, signal) {
+  return async function execute(toolCallId, params, signal) {
     throwIfAborted(signal);
     let state = getState();
     const initPromise = getInitPromise();
@@ -302,6 +302,7 @@ export function createDirectToolExecutor(
           })
         : null;
 
+      const requestMeta = withToolCallIdMeta(uiSession?.requestMeta, toolCallId);
       const result = await withSessionRecovery<ClientCallToolResult>(
         {
           manager: state.manager,
@@ -316,7 +317,7 @@ export function createDirectToolExecutor(
             return await callToolViaTaskSession(conn.taskSession, {
               name: spec.originalName,
               args: normalizedParams ?? {},
-              meta: uiSession?.requestMeta,
+              meta: requestMeta,
               signal: ownedSignal,
               requestTimeoutMs: requestOptions?.timeout,
             }) as unknown as ClientCallToolResult;
@@ -324,7 +325,7 @@ export function createDirectToolExecutor(
           return abortable(conn.client.callTool({
             name: spec.originalName,
             arguments: normalizedParams,
-            _meta: uiSession?.requestMeta,
+            _meta: requestMeta,
           }, requestOptions), ownedSignal);
         },
       );

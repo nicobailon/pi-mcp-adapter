@@ -103,6 +103,8 @@ export type ExecuteNamespaceCall = (
   getPiTools: GetPiTools,
   signal: AbortSignal | undefined,
   origin: "proxy",
+  internalDelivery: undefined,
+  toolCallId: string,
 ) => Promise<AgentToolResult<Record<string, unknown>>>;
 
 function namespaceExecute(
@@ -114,7 +116,7 @@ function namespaceExecute(
   getPiTools: GetPiTools,
 ) {
   return async (
-    _toolCallId: string,
+    toolCallId: string,
     params: { tool?: string; args?: Record<string, unknown> },
     signal: AbortSignal | undefined,
     _onUpdate: unknown,
@@ -166,6 +168,8 @@ function namespaceExecute(
       getPiTools,
       signal,
       "proxy",
+      undefined,
+      toolCallId,
     );
   };
 }

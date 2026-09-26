@@ -13,7 +13,7 @@ import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
-import { formatAuthRequiredMessage, formatMcpStatus, normalizeToolArguments, resolveServerUrl, truncateAtWord } from "./utils.ts";
+import { formatAuthRequiredMessage, formatMcpStatus, normalizeToolArguments, resolveServerUrl, truncateAtWord, withToolCallIdMeta } from "./utils.ts";
 import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
@@ -1151,6 +1151,8 @@ export async function executeCall(
   origin?: "proxy" | "script",
   // Internal consumers own successful data delivery; origin remains approval metadata only.
   internalDelivery?: { onSuccess: (data: unknown) => void },
+  // The Pi tool call that asked for this MCP call; forwarded in the request `_meta`.
+  toolCallId?: string,
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
@@ -1605,6 +1607,7 @@ export async function executeCall(
         })
       : null;
 
+    const requestMeta = withToolCallIdMeta(uiSession?.requestMeta, toolCallId);
     const result = await withSessionRecovery<ClientCallToolResult>(
       {
         manager: state.manager,
@@ -1619,7 +1622,7 @@ export async function executeCall(
           return await callToolViaTaskSession(conn.taskSession, {
             name: toolMeta.originalName,
             args: normalizedArgs ?? {},
-            meta: uiSession?.requestMeta,
+            meta: requestMeta,
             signal: ownedSignal,
             requestTimeoutMs: requestOptions?.timeout,
           }) as unknown as ClientCallToolResult;
@@ -1627,7 +1630,7 @@ export async function executeCall(
         return abortable(conn.client.callTool({
           name: toolMeta.originalName,
           arguments: normalizedArgs,
-          _meta: uiSession?.requestMeta,
+          _meta: requestMeta,
         }, requestOptions), ownedSignal);
       },
     );

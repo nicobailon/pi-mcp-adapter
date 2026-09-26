@@ -69,7 +69,10 @@ describe("AbortSignal propagation", () => {
     const result = await inFlight;
     expect(result.content[0].text).toContain("Failed to call tool: user cancelled");
     expect(result.details.error).toBe("aborted");
-    expect(callTool).toHaveBeenCalledWith({ name: "slow", arguments: {}, _meta: undefined }, { signal: controller.signal });
+    expect(callTool).toHaveBeenCalledWith(
+      { name: "slow", arguments: {}, _meta: { "pi-mcp-adapter/toolCallId": "call-1" } },
+      { signal: controller.signal },
+    );
     expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
   });
 
