@@ -267,28 +267,27 @@ export async function initializeMcp(
 
   const allServerEntries = Object.entries(config.mcpServers);
   const serverEntries = allServerEntries.filter(([, definition]) => !isServerDisabled(definition));
-  if (serverEntries.length === 0) {
-    if (allServerEntries.length > 0 && hasUI) {
-      ui?.notify(`MCP: All ${allServerEntries.length} server(s) are disabled`, "info");
-    }
-    publishMcpStatusSnapshot(state);
-    return state;
+  if (serverEntries.length === 0 && allServerEntries.length > 0 && hasUI) {
+    ui?.notify(`MCP: All ${allServerEntries.length} server(s) are disabled`, "info");
   }
 
   const idleSetting = typeof config.settings?.idleTimeout === "number" ? config.settings.idleTimeout : 10;
   lifecycle.setGlobalIdleTimeout(idleSetting);
 
-  const cachePath = getMetadataCachePath();
-  const cacheFileExists = existsSync(cachePath);
-  let cache = loadMetadataCache();
+  let cache: ReturnType<typeof loadMetadataCache> = null;
   let bootstrapAll = false;
 
-  if (!cacheFileExists) {
-    bootstrapAll = true;
-    saveMetadataCache({ version: 1, servers: {} });
-  } else if (!cache) {
-    cache = { version: 1, servers: {} };
-    saveMetadataCache(cache);
+  if (serverEntries.length > 0) {
+    const cachePath = getMetadataCachePath();
+    const cacheFileExists = existsSync(cachePath);
+    cache = loadMetadataCache();
+    if (!cacheFileExists) {
+      bootstrapAll = true;
+      saveMetadataCache({ version: 1, servers: {} });
+    } else if (!cache) {
+      cache = { version: 1, servers: {} };
+      saveMetadataCache(cache);
+    }
   }
 
   const prefix = config.settings?.toolPrefix ?? "server";

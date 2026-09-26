@@ -12,9 +12,11 @@ const mocks = vi.hoisted(() => ({
   getMissingConfiguredDirectToolServers: vi.fn(() => [] as string[]),
   isServerCacheValid: vi.fn(() => false),
   buildToolMetadata: vi.fn(() => ({ metadata: [], failedTools: [] })),
+  saveMetadataCache: vi.fn((cache: { version: 1; servers: Record<string, unknown> }) => { mocks.cache = cache; }),
 }));
 
-vi.mock("../config.ts", () => ({
+vi.mock("../config.ts", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../config.ts")>(),
   loadMcpConfig: vi.fn(() => mocks.config),
   resolveConfiguredOAuthDir: vi.fn((raw, cwd = process.cwd()) => {
     if (raw === undefined || raw === null) return undefined;
@@ -24,7 +26,8 @@ vi.mock("../config.ts", () => ({
   }),
 }));
 
-vi.mock("../metadata-cache.ts", () => ({
+vi.mock("../metadata-cache.ts", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../metadata-cache.ts")>(),
   computeServerHash: vi.fn(() => "hash"),
   createCachedToolSelectorCandidateIndex: mocks.createCachedToolSelectorCandidateIndex,
   getMetadataCachePath: vi.fn(() => mocks.cachePath),
@@ -33,9 +36,7 @@ vi.mock("../metadata-cache.ts", () => ({
   loadMetadataCache: vi.fn(() => mocks.cache),
   reconstructToolMetadata: vi.fn(() => []),
   reconstructPromptMetadata: vi.fn(() => []),
-  saveMetadataCache: vi.fn((cache) => {
-    mocks.cache = cache;
-  }),
+  saveMetadataCache: mocks.saveMetadataCache,
   serializeResources: vi.fn(() => []),
   serializeTools: vi.fn(() => []),
   serializePrompts: vi.fn(() => []),
@@ -62,6 +63,7 @@ function createManager() {
   let metadataListChanged: ((serverName: string, reason: string) => void) | undefined;
   const connection = {
     status: "connected" as const,
+    definition: { command: "demo", lifecycle: "keep-alive", directTools: false },
     tools: [],
     resources: [],
   };
@@ -76,6 +78,7 @@ function createManager() {
     setSamplingConfig: vi.fn(),
     setElicitationConfig: vi.fn(),
     getConnection: vi.fn(() => current),
+    isConnecting: vi.fn(() => false),
     getAllConnections: vi.fn(() => current ? new Map([["srv", current]]) : new Map()),
     connect: vi.fn(async () => {
       current = connection;
@@ -111,7 +114,8 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     mocks.getMissingConfiguredDirectToolServers.mockReset().mockReturnValue([]);
     mocks.createCachedToolSelectorCandidateIndex.mockClear();
     mocks.isServerCacheValid.mockReset().mockReturnValue(false);
-    mocks.buildToolMetadata.mockClear();
+    mocks.buildToolMetadata.mockReset().mockReturnValue({ metadata: [], failedTools: [] });
+    mocks.saveMetadataCache.mockReset().mockImplementation(cache => { mocks.cache = cache; });
   });
 
   afterEach(() => {
@@ -238,6 +242,106 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     await (state.lifecycle as any).checkConnections();
 
     expect(mocks.manager.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { scenario: "missing cache and no configured servers", disabled: false, cacheExists: false },
+    { scenario: "invalid cache and all configured servers disabled", disabled: true, cacheExists: true },
+  ])("initializes with $scenario without repairing an unwritable cache", async ({ disabled, cacheExists }) => {
+    mocks.cache = null;
+    mocks.config = {
+      settings: {},
+      mcpServers: disabled ? { srv: { command: "demo", disabled: true } } : {},
+    };
+    if (cacheExists) writeFileSync(mocks.cachePath, "invalid cache");
+    mocks.saveMetadataCache.mockImplementation(() => { throw new Error("cache directory is unwritable"); });
+    const { initializeMcp } = await import("../init.ts");
+    const ui = { setStatus: vi.fn(), notify: vi.fn() };
+
+    const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
+      cwd: tempDir,
+      hasUI: true,
+      mode: "tui",
+      ui,
+    } as any);
+
+    expect(state.config.mcpServers).toEqual(mocks.config.mcpServers);
+    expect(mocks.manager.connect).not.toHaveBeenCalled();
+    expect(mocks.saveMetadataCache).not.toHaveBeenCalled();
+    if (disabled) {
+      expect(ui.notify).toHaveBeenCalledWith("MCP: All 1 server(s) are disabled", "info");
+    }
+    await state.owner.stop("test completed");
+  });
+
+  it("still reports cache write failures with an enabled configured server", async () => {
+    mocks.cache = null;
+    mocks.saveMetadataCache.mockImplementation(() => { throw new Error("cache directory is unwritable"); });
+    const { initializeMcp } = await import("../init.ts");
+
+    await expect(initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
+      cwd: tempDir,
+      hasUI: false,
+      mode: "headless",
+    } as any)).rejects.toThrow("cache directory is unwritable");
+  });
+
+  it("publishes tools from a runtime keep-alive server after an all-disabled startup", async () => {
+    mocks.cache = null;
+    mocks.config = {
+      settings: {},
+      mcpServers: { disabled: { command: "disabled", disabled: true } },
+    };
+    mocks.manager = createManager();
+    mocks.manager.connect.mockImplementation(async (_name: string, definition: unknown) => {
+      const connection = {
+        status: "connected",
+        definition,
+        tools: [{ name: "find_records", description: "Find records" }],
+        resources: [],
+      };
+      mocks.manager.getConnection.mockReturnValue(connection);
+      mocks.manager.getAllConnections.mockReturnValue(new Map([["plugin", connection]]));
+      return connection;
+    });
+    mocks.buildToolMetadata.mockImplementation((tools: { name: string; description: string }[]) => ({
+      metadata: tools.map(tool => ({ name: `plugin_${tool.name}`, originalName: tool.name, description: tool.description })),
+      failedTools: [],
+    }));
+    const { default: adapter, MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const listeners = new Map<string, (request: any) => void>();
+    const registeredTools = new Map<string, any>();
+    const events = {
+      on: (event: string, listener: (request: any) => void) => { listeners.set(event, listener); },
+      emit: (event: string, request: any) => { listeners.get(event)?.(request); },
+    };
+    const pi = {
+      events,
+      getFlag: vi.fn(() => undefined),
+      registerTool: vi.fn((tool: any) => registeredTools.set(tool.name, tool)),
+      registerFlag: vi.fn(),
+      registerCommand: vi.fn(),
+      on: vi.fn((event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler)),
+      getAllTools: vi.fn(() => []),
+      getActiveTools: vi.fn(() => ["mcp"]),
+    } as any;
+    const ui = { setStatus: vi.fn(), notify: vi.fn() };
+    const ctx = { cwd: tempDir, hasUI: true, mode: "tui", ui } as any;
+    adapter(pi);
+    await handlers.get("session_start")?.({}, ctx);
+    await vi.waitFor(() => expect(ui.notify).toHaveBeenCalledWith("MCP: All 1 server(s) are disabled", "info"));
+
+    const request = { version: 1, name: "plugin", definition: { command: "demo", lifecycle: "keep-alive" } } as any;
+    events.emit(MCP_RUNTIME_REGISTER_EVENT, request);
+    expect(request.result?.ok).toBe(true);
+    await handlers.get("input")?.();
+    const gateway = registeredTools.get("mcp");
+    const result = await gateway.execute("call", { search: "find_records" }, undefined, undefined, ctx);
+    expect(mocks.manager.connect).toHaveBeenCalledTimes(1);
+    expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining("plugin_find_records") })]));
+    await request.result.registration.dispose();
+    await handlers.get("session_shutdown")?.({}, ctx);
   });
 
   it("records direct-tool bootstrap failures", async () => {
