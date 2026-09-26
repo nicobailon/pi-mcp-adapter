@@ -264,11 +264,11 @@ describe("MCP tool result renderer", () => {
 
     expect(formatMcpScriptCallSummary({ mode: "call", server: "demo", tool: "search" })).toBeNull();
     expect(formatMcpScriptCallSummary(undefined)).toBeNull();
-    expect(formatMcpScriptCallSummary({ mode: "script" })).toBe("");
+    expect(formatMcpScriptCallSummary({ mode: "script" })).toEqual({ title: "mcpScript", preview: "" });
     expect(formatMcpScriptCallSummary({
       mode: "script",
       calls: [call("a"), call("b"), call("c"), call("d"), call("e"), call("a")],
-    })).toBe("a×2, b, c, d, +1 more");
+    })).toEqual({ title: "mcpScript", preview: "a×2, b, c, d, +1 more" });
     expect(formatMcpScriptCallSummary({
       mode: "script",
       calls: [
@@ -276,17 +276,44 @@ describe("MCP tool result renderer", () => {
         call("demo_missing", false),
         { operation: "search", query: "demo", ok: true, durationMs: 1 },
       ],
-    })).toBe("(1 failed) demo_search, demo_missing · search");
+    })).toEqual({ title: "mcpScript ✗1", preview: "demo_search, demo_missing · search" });
     expect(formatMcpScriptCallSummary({
       mode: "script",
       calls: [
         { operation: "describe", path: "demo_search", ok: true, durationMs: 1 },
         { operation: "describe", path: "demo_fetch", ok: true, durationMs: 1 },
       ],
-    })).toBe("describe demo_search, demo_fetch");
+    })).toEqual({ title: "mcpScript", preview: "describe demo_search, demo_fetch" });
   });
 
-  it("keeps a failed-call marker visible when a narrow row truncates the mcpScript tool list", () => {
+  it("sanitizes script-supplied tool paths in the mcpScript summary", () => {
+    const call = (path: string) => ({ operation: "call", path, ok: false, error: "tool_not_found", durationMs: 1 });
+    const summary = formatMcpScriptCallSummary({
+      mode: "script",
+      calls: [
+        call("demo_a\nfake second row"),
+        call("\u001b[31mdemo_red\u001b[0m\r"),
+        call("\u001b]8;;https://example.test\u0007demo_link\u001b]8;;\u0007"),
+        call("\u001b[2J"),
+      ],
+    });
+
+    expect(summary).toEqual({
+      title: "mcpScript ✗4",
+      preview: "demo_a fake second row, demo_red, demo_link · call",
+    });
+
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "{}" }], { mode: "script", calls: [call("demo_a\nfake second row")] }),
+      collapsedOptions,
+      plainTheme,
+      { isError: false },
+    ).render(120);
+
+    expect(output).toEqual(["mcpScript ✗1 demo_a fake second row → {}"]);
+  });
+
+  it("keeps the failed-call count in the title when a narrow row truncates the mcpScript tool list", () => {
     const output = renderMcpToolResult(
       result([{ type: "text", text: "{}" }], {
         mode: "script",
@@ -300,9 +327,25 @@ describe("MCP tool result renderer", () => {
       { isError: false },
     ).render(60).join("\n");
 
-    expect(output.startsWith("mcpScript (1 failed) demo_")).toBe(true);
+    expect(output.startsWith("mcpScript ✗1 demo_")).toBe(true);
     expect(output).not.toContain("demo_another_really_long_tool_name");
     expect(output).toContain("→ {}");
+  });
+
+  it("keeps the failed-call count visible when a narrow row drops the mcpScript preview", () => {
+    const component = renderMcpToolResult(
+      result([{ type: "text", text: "{}" }], {
+        mode: "script",
+        calls: [{ operation: "call", path: "demo_search", ok: false, error: "call_failed", durationMs: 1 }],
+      }),
+      collapsedOptions,
+      plainTheme,
+      { isError: false },
+    );
+
+    for (const width of [17, 20, 25]) {
+      expect(component.render(width)).toEqual(["mcpScript ✗1 → {}"]);
+    }
   });
 
   it("skips leading blank lines in collapsed previews", () => {

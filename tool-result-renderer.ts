@@ -1,5 +1,6 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { sanitizeTerminalText } from "./utils.ts";
 
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -338,18 +339,27 @@ export function createMcpScriptToolCallRenderer(options = resolveMcpToolRenderOp
 const MCP_SCRIPT_TITLE = "mcpScript";
 const MCP_SCRIPT_SUMMARY_MAX_TOOLS = 4;
 
+export interface McpScriptCallSummary {
+  /** `mcpScript`, or `mcpScript ✗N` when N traced operations failed. */
+  title: string;
+  /** What the script touched; "" when it made no MCP operations. */
+  preview: string;
+}
+
 /**
- * Short list of what an mcpScript run touched, from the `details.calls` trace:
- * distinct tool paths in first-call order with repeat counts, then other operation
- * counts, e.g. `(1 failed) github_search_issues×6, slack_post_message · search`.
+ * Compact-row title and preview for an mcpScript run, from the `details.calls` trace.
+ * The preview lists distinct tool paths in first-call order with repeat counts, then other
+ * operation counts, e.g. `github_search_issues×6, slack_post_message · search`.
  * Scripts that only describe tools list the described paths instead (`describe a, b`).
- * The failure marker leads so width truncation never hides it.
- * Returns null for non-script results and "" for scripts that made no MCP operations.
+ * The failure count goes in the title, not the preview: narrow rows drop the preview first,
+ * and `mcpScript ✗N` fits the 12-column minimum prefix for single-digit counts.
+ * Traced paths are script-supplied, so they are sanitized before display.
+ * Returns null for non-script results.
  */
 export function formatMcpScriptCallSummary(
   details: McpToolResultDetails | undefined,
   maxTools = MCP_SCRIPT_SUMMARY_MAX_TOOLS,
-): string | null {
+): McpScriptCallSummary | null {
   if (details?.mode !== "script") return null;
   const operations = Array.isArray(details.calls) ? details.calls : [];
   const callCounts = new Map<string, number>();
@@ -362,8 +372,9 @@ export function formatMcpScriptCallSummary(
     if (typeof kind !== "string") continue;
     if (ok === false) failed += 1;
     const target = kind === "call" ? callCounts : kind === "describe" ? describeCounts : null;
-    if (target && typeof path === "string") {
-      target.set(path, (target.get(path) ?? 0) + 1);
+    const name = typeof path === "string" ? sanitizeTerminalText(path) : "";
+    if (target && name) {
+      target.set(name, (target.get(name) ?? 0) + 1);
     } else {
       metaCounts.set(kind, (metaCounts.get(kind) ?? 0) + 1);
     }
@@ -385,8 +396,10 @@ export function formatMcpScriptCallSummary(
     if (describes > 0) metaCounts.set("describe", describes);
   }
   const meta = [...metaCounts].map(([kind, count]) => withCount(kind, count)).join(", ");
-  const body = [tools, meta].filter(Boolean).join(" · ");
-  return [failed > 0 ? `(${failed} failed)` : "", body].filter(Boolean).join(" ");
+  return {
+    title: failed > 0 ? `${MCP_SCRIPT_TITLE} ✗${failed}` : MCP_SCRIPT_TITLE,
+    preview: [tools, meta].filter(Boolean).join(" · "),
+  };
 }
 
 function blockToLines(block: McpToolContentBlock): string[] {
@@ -507,10 +520,11 @@ export function renderMcpToolResult(
   if (!expanded && renderOptions.resultRendering === "compact") {
     const display = formatMcpToolResultLines(result, false, renderOptions.collapsedResultLines);
     const scriptSummary = formatMcpScriptCallSummary(result.details);
-    const title = context?.state?.compactTitle
-      ?? (scriptSummary !== null ? MCP_SCRIPT_TITLE : formatMcpToolResultIdentity(result.details))
+    const title = scriptSummary?.title
+      ?? context?.state?.compactTitle
+      ?? formatMcpToolResultIdentity(result.details)
       ?? "";
-    const inputPreview = scriptSummary || context?.state?.compactInputPreview || "";
+    const inputPreview = scriptSummary ? scriptSummary.preview : context?.state?.compactInputPreview ?? "";
     return new CompactMcpToolResult(title, inputPreview, display, activeTheme);
   }
 
