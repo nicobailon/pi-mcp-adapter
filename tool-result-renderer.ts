@@ -1,6 +1,5 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { sanitizeTerminalText } from "./utils.ts";
 
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -354,15 +353,19 @@ export interface McpScriptCallSummary {
   preview: string;
 }
 
+const PLAIN_TOOL_PATH = /^[A-Za-z0-9_.\/:@-]+$/;
+
 /**
- * Traced paths are script-supplied. Show a path verbatim only when it is already terminal-safe;
- * otherwise show it as an escaped JSON string, so it cannot break the row and stays distinct
- * from the clean path it may resemble (`demo_red` vs `"\u001b[31mdemo_red"`).
+ * Traced paths are script-supplied. Only identifier-like paths (what MCP tool names look like)
+ * are shown bare. Anything else is shown as a quoted, ASCII-escaped JSON string, so it cannot
+ * break the row, cannot pass for summary syntax (`foo×2`, `a, b`, ` · `, `+1 more`), and stays
+ * distinct from the clean path it may resemble (`demo_red` vs `"\u001b[31mdemo_red"`).
  */
 function formatTracedPath(path: string): string {
-  if (sanitizeTerminalText(path) === path) return path;
-  // JSON.stringify escapes C0 controls, quotes and backslashes; escape DEL and C1 controls too.
-  return JSON.stringify(path).replace(/[\u007f-\u009f]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  if (PLAIN_TOOL_PATH.test(path)) return path;
+  // JSON.stringify quotes and escapes C0 controls, quotes and backslashes; escaping all other
+  // non-ASCII too rules out DEL, C1 controls, bidi overrides and invisible characters.
+  return JSON.stringify(path).replace(/[^\x20-\x7e]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 
 /**

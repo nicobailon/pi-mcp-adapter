@@ -360,6 +360,23 @@ describe("MCP tool result renderer", () => {
     }
   });
 
+  it("quotes traced paths that could pass for mcpScript summary syntax", () => {
+    const call = (path: string) => ({ operation: "call", path, ok: false, error: "tool_not_found", durationMs: 1 });
+
+    expect(formatMcpScriptCallSummary({
+      mode: "script",
+      calls: [call("foo×2"), call("a, b"), call("x · y"), call("+1 more")],
+    })).toEqual({ failed: 4, preview: String.raw`"foo\u00d72", "a, b", "x \u00b7 y", "+1 more"` });
+    expect(formatMcpScriptCallSummary({
+      mode: "script",
+      calls: [call("\u202eevil"), call("zero\u200bwidth")],
+    })?.preview).toBe(String.raw`"\u202eevil", "zero\u200bwidth"`);
+    expect(formatMcpScriptCallSummary({
+      mode: "script",
+      calls: [call("github_search-issues"), call("server/tool.v2:read@main")],
+    })?.preview).toBe("github_search-issues, server/tool.v2:read@main");
+  });
+
   it("shrinks the title rather than the failed-call count on narrow rows", () => {
     const failed = { operation: "call", path: "demo_search", ok: false, error: "call_failed", durationMs: 1 };
     const component = renderMcpToolResult(
