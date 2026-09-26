@@ -1806,7 +1806,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         target: Type.Optional(Type.String({ description: "Install target: 'global' (default) or 'project'" })),
       }),
       renderResult: renderMcpToolResult,
-      async execute(_toolCallId: string, params: {
+      async execute(toolCallId: string, params: {
         tool?: string;
         args?: string | Record<string, unknown>;
         connect?: string;
@@ -1936,7 +1936,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             : proxyModes.executeAuthComplete(proxyState, params.server, input);
         }
         if (params.tool) {
-          const result = await proxyModes.executeCall(proxyState, params.tool, parsedArgs, params.server, getPiTools, signal);
+          const result = await proxyModes.executeCall(proxyState, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, undefined, toolCallId);
           assertRuntimeGuard(proxyGuard);
           if (lazyDirectTools.size === 0) return result;
           // A successful proxy call is as clear a signal as a search hit: the

@@ -2171,6 +2171,9 @@ describe("mcpAdapter session lifecycle", () => {
       undefined,
       expect.any(Function),
       undefined,
+      undefined,
+      undefined,
+      "call-1",
     );
   });
 
@@ -2281,6 +2284,9 @@ describe("mcpAdapter session lifecycle", () => {
       undefined,
       expect.any(Function),
       controller.signal,
+      undefined,
+      undefined,
+      "call-1",
     );
   });
 

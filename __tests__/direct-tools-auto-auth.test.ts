@@ -107,7 +107,7 @@ describe("direct tools auto auth", () => {
     expect(connected.client.callTool).toHaveBeenCalledWith({
       name: "namespace.tool",
       arguments: { q: "hello" },
-      _meta: undefined,
+      _meta: { "pi-mcp-adapter/toolCallId": "id" },
     }, { timeout: 4321 });
     expect(result.content[0].text).toContain("ok");
   });
@@ -151,7 +151,7 @@ describe("direct tools auto auth", () => {
     const result = await inFlight;
 
     expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
-    expect(connection.client.callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: undefined }, requestOptions);
+    expect(connection.client.callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: { "pi-mcp-adapter/toolCallId": "id" } }, requestOptions);
     expect(result.details).toMatchObject({ error: "aborted", server: "demo" });
     expect(result.content[0].text).toContain("request aborted");
   });
