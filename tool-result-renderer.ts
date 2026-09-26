@@ -76,6 +76,8 @@ class CompactMcpToolResult implements Component {
     private readonly inputPreview: string,
     private readonly display: McpToolResultDisplay,
     private readonly theme: RenderTheme,
+    /** Shown after the title and never truncated; the title shrinks instead (e.g. `✗3`). */
+    private readonly status = "",
   ) {}
 
   render(width: number): string[] {
@@ -114,17 +116,23 @@ class CompactMcpToolResult implements Component {
   private renderPrefix(width: number): string {
     if (!this.title) return "";
     const arrow = " → ";
-    if (!this.inputPreview) return `${this.theme.fg("toolTitle", this.title)}${arrow}`;
+    const statusWidth = this.status ? visibleWidth(this.status) + 1 : 0;
+    const head = (maxWidth?: number) => {
+      const title = maxWidth === undefined
+        ? this.title
+        : truncateToWidth(this.title, Math.max(1, maxWidth - statusWidth), "…");
+      const status = this.status ? ` ${this.theme.fg("error", this.status)}` : "";
+      return `${this.theme.fg("toolTitle", title)}${status}`;
+    };
+    if (!this.inputPreview) return `${head()}${arrow}`;
 
     const maxPrefixWidth = Math.max(12, Math.floor(width * 0.55));
-    const titleWidth = visibleWidth(this.title);
+    const titleWidth = visibleWidth(this.title) + statusWidth;
     const inputWidth = Math.max(0, maxPrefixWidth - titleWidth - 1);
-    if (inputWidth <= 3) {
-      return `${this.theme.fg("toolTitle", truncateToWidth(this.title, maxPrefixWidth, "…"))}${arrow}`;
-    }
+    if (inputWidth <= 3) return `${head(maxPrefixWidth)}${arrow}`;
 
     const input = truncateToWidth(this.inputPreview, inputWidth, "…");
-    return `${this.theme.fg("toolTitle", this.title)} ${this.theme.fg("muted", input)}${arrow}`;
+    return `${head()} ${this.theme.fg("muted", input)}${arrow}`;
   }
 }
 
@@ -340,20 +348,30 @@ const MCP_SCRIPT_TITLE = "mcpScript";
 const MCP_SCRIPT_SUMMARY_MAX_TOOLS = 4;
 
 export interface McpScriptCallSummary {
-  /** `mcpScript`, or `mcpScript ✗N` when N traced operations failed. */
-  title: string;
+  /** Traced operations that failed; the compact row shows it as `mcpScript ✗N`. */
+  failed: number;
   /** What the script touched; "" when it made no MCP operations. */
   preview: string;
 }
 
 /**
- * Compact-row title and preview for an mcpScript run, from the `details.calls` trace.
+ * Traced paths are script-supplied. Show a path verbatim only when it is already terminal-safe;
+ * otherwise show it as an escaped JSON string, so it cannot break the row and stays distinct
+ * from the clean path it may resemble (`demo_red` vs `"\u001b[31mdemo_red"`).
+ */
+function formatTracedPath(path: string): string {
+  if (sanitizeTerminalText(path) === path) return path;
+  // JSON.stringify escapes C0 controls, quotes and backslashes; escape DEL and C1 controls too.
+  return JSON.stringify(path).replace(/[\u007f-\u009f]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
+/**
+ * Failure count and compact-row preview for an mcpScript run, from the `details.calls` trace.
  * The preview lists distinct tool paths in first-call order with repeat counts, then other
  * operation counts, e.g. `github_search_issues×6, slack_post_message · search`.
  * Scripts that only describe tools list the described paths instead (`describe a, b`).
- * The failure count goes in the title, not the preview: narrow rows drop the preview first,
- * and `mcpScript ✗N` fits the 12-column minimum prefix for single-digit counts.
- * Traced paths are script-supplied, so they are sanitized before display.
+ * The failure count is rendered as a title status, not in the preview: narrow rows drop the
+ * preview first, and the status is never truncated (the title shrinks instead).
  * Returns null for non-script results.
  */
 export function formatMcpScriptCallSummary(
@@ -372,9 +390,8 @@ export function formatMcpScriptCallSummary(
     if (typeof kind !== "string") continue;
     if (ok === false) failed += 1;
     const target = kind === "call" ? callCounts : kind === "describe" ? describeCounts : null;
-    const name = typeof path === "string" ? sanitizeTerminalText(path) : "";
-    if (target && name) {
-      target.set(name, (target.get(name) ?? 0) + 1);
+    if (target && typeof path === "string") {
+      target.set(path, (target.get(path) ?? 0) + 1);
     } else {
       metaCounts.set(kind, (metaCounts.get(kind) ?? 0) + 1);
     }
@@ -382,7 +399,7 @@ export function formatMcpScriptCallSummary(
 
   const withCount = (name: string, count: number) => (count > 1 ? `${name}×${count}` : name);
   const listPaths = (counts: Map<string, number>) => {
-    const names = [...counts].map(([path, count]) => withCount(path, count));
+    const names = [...counts].map(([path, count]) => withCount(formatTracedPath(path), count));
     return names.length > maxTools
       ? [...names.slice(0, maxTools), `+${names.length - maxTools} more`].join(", ")
       : names.join(", ");
@@ -396,10 +413,7 @@ export function formatMcpScriptCallSummary(
     if (describes > 0) metaCounts.set("describe", describes);
   }
   const meta = [...metaCounts].map(([kind, count]) => withCount(kind, count)).join(", ");
-  return {
-    title: failed > 0 ? `${MCP_SCRIPT_TITLE} ✗${failed}` : MCP_SCRIPT_TITLE,
-    preview: [tools, meta].filter(Boolean).join(" · "),
-  };
+  return { failed, preview: [tools, meta].filter(Boolean).join(" · ") };
 }
 
 function blockToLines(block: McpToolContentBlock): string[] {
@@ -520,11 +534,12 @@ export function renderMcpToolResult(
   if (!expanded && renderOptions.resultRendering === "compact") {
     const display = formatMcpToolResultLines(result, false, renderOptions.collapsedResultLines);
     const scriptSummary = formatMcpScriptCallSummary(result.details);
-    const title = scriptSummary?.title
-      ?? context?.state?.compactTitle
-      ?? formatMcpToolResultIdentity(result.details)
-      ?? "";
-    const inputPreview = scriptSummary ? scriptSummary.preview : context?.state?.compactInputPreview ?? "";
+    if (scriptSummary) {
+      const status = scriptSummary.failed > 0 ? `✗${scriptSummary.failed}` : "";
+      return new CompactMcpToolResult(MCP_SCRIPT_TITLE, scriptSummary.preview, display, activeTheme, status);
+    }
+    const title = context?.state?.compactTitle ?? formatMcpToolResultIdentity(result.details) ?? "";
+    const inputPreview = context?.state?.compactInputPreview ?? "";
     return new CompactMcpToolResult(title, inputPreview, display, activeTheme);
   }
 
