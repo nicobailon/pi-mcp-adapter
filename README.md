@@ -705,7 +705,7 @@ The upstream tool executes before this check and may already have side effects. 
 
 For a tool-restricted subagent, launch the child Pi with its tool allowlist set to `["mcpScript"]`. Have the parent discover MCP tool names with `mcp({ search: "..." })` and include the relevant prefixed names in the child's task; the child can then loop, filter, and chain those MCP calls without filesystem, shell, or edit tools. The adapter's ordinary lazy connection, authentication, abort handling, and approval gates still apply to every call.
 
-`mcpScript` is a trusted agent-authored MCP scripting layer, not an isolation boundary. If you need isolation, run Pi in an isolated environment. It is distinct from Pi's code-mode skill: Pi's skill batches general Pi tools, while `mcpScript` exposes MCP calls only and can be the child's sole tool.
+`mcpScript` runs in an isolated QuickJS/WASM VM with a 64 MiB memory cap and no Node.js, filesystem, network, timer, or process globals. MCP tool calls can still have external side effects and remain subject to the adapter's normal approval gates. It is distinct from Pi's code-mode skill: Pi's skill batches general Pi tools, while `mcpScript` exposes MCP calls only and can be the child's sole tool.
 
 ### MCP Prompts
 

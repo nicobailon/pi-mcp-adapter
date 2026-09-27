@@ -618,4 +618,46 @@ describe("runMcpScript", () => {
       globals: ["undefined", "undefined", "undefined"],
     });
   });
+
+  it("keeps injected function constructors inside QuickJS", async () => {
+    const result = await runMcpScript(state, `
+      const probes = [emit, tools.fixture_echo, console.log].map((fn) =>
+        fn.constructor("return [typeof process, typeof require, typeof fetch, typeof setTimeout]")());
+      return probes;
+    `);
+
+    expect(JSON.parse(textBlocks(result)[0])).toEqual([
+      ["undefined", "undefined", "undefined", "undefined"],
+      ["undefined", "undefined", "undefined", "undefined"],
+      ["undefined", "undefined", "undefined", "undefined"],
+    ]);
+  });
+
+  it("terminates a runaway microtask chain", async () => {
+    const result = await runMcpScript(state, `
+      await new Promise(() => {
+        const spin = () => Promise.resolve().then(spin);
+        spin();
+      });
+    `, 300);
+
+    expect(result.details).toMatchObject({ error: "timeout", timeoutMs: 300 });
+  });
+
+  it("reports QuickJS memory exhaustion as a script error", async () => {
+    const result = await runMcpScript(state, `
+      const values = [];
+      while (true) values.push("x".repeat(1024 * 1024) + values.length);
+    `, 5_000);
+
+    expect(result.details).toMatchObject({ error: "script_error" });
+    expect(textBlocks(result).at(-1)).toMatch(/out of memory/i);
+  });
+
+  it("reports deep recursion as a script error instead of trapping the worker", async () => {
+    const result = await runMcpScript(state, "function recurse() { return recurse(); } recurse();");
+
+    expect(result.details).toMatchObject({ error: "script_error" });
+    expect(textBlocks(result).at(-1)).toMatch(/stack (?:overflow|size exceeded)/i);
+  });
 });

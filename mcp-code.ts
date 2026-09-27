@@ -3,6 +3,7 @@ import { formatWithOptions } from "node:util";
 import { Worker } from "node:worker_threads";
 import { throwIfAborted } from "./abort.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
+import { loadMcpScriptWasm } from "./mcp-script-wasm.ts";
 import { evaluateJev, validateJevSettings } from "./jev-client.ts";
 import type { JevErrorCode, JevEvaluateInput, JevEvaluationEnvelope } from "./jev-contracts.ts";
 import { executeCall } from "./proxy-modes.ts";
@@ -17,6 +18,7 @@ import type { ContentBlock } from "./types.ts";
 
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 const MCP_SCRIPT_INTERMEDIATE_MAX_BYTES = 16 * 1024 * 1024;
+let mcpScriptWasm: ReturnType<typeof loadMcpScriptWasm> | undefined;
 
 class McpScriptTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -374,14 +376,18 @@ export async function runMcpScript(
   let removeAbortListener = () => {};
   let errorCode: "timeout" | "aborted" | "script_error" | undefined;
   let errorMessage: string | undefined;
+  const interrupt = new SharedArrayBuffer(4);
+  const interruptView = new Int32Array(interrupt);
 
   try {
     if (externalSignal?.aborted) {
       throw abortReasonError(externalSignal.reason);
     }
 
+    const wasm = await (mcpScriptWasm ??= loadMcpScriptWasm());
+    if (externalSignal?.aborted) throw abortReasonError(externalSignal.reason);
     worker = new Worker(new URL("./mcp-script-worker.mjs", import.meta.url), {
-      workerData: { code },
+      workerData: { code, wasm, interrupt },
       env: {},
       // The sandbox cannot open files, and the host always terminates this worker.
       // Disable Node's unmanaged FD bookkeeping, which emits false warnings when
@@ -436,6 +442,7 @@ export async function runMcpScript(
       timer = setTimeout(() => {
         callsSnapshot = snapshotCalls();
         timeoutController.abort(timeoutError);
+        Atomics.store(interruptView, 0, 1);
         void activeWorker.terminate();
         reject(timeoutError);
       }, resolvedTimeoutMs);
@@ -444,6 +451,7 @@ export async function runMcpScript(
       ? new Promise<never>((_resolve, reject) => {
           const onAbort = () => {
             callsSnapshot = snapshotCalls();
+            Atomics.store(interruptView, 0, 1);
             void activeWorker.terminate();
             reject(abortReasonError(externalSignal.reason));
           };
@@ -474,6 +482,7 @@ export async function runMcpScript(
     // A script may finish without awaiting every call; abort leftovers so
     // parent-side dispatches do not outlive the script.
     timeoutController.abort(new Error("mcpScript finished"));
+    Atomics.store(interruptView, 0, 1);
     await worker?.terminate();
   }
 
