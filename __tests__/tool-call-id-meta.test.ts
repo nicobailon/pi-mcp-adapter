@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createDirectToolExecutor } from "../direct-tools.ts";
 import { computeServerHash } from "../metadata-cache.ts";
 import { syncNamespaceProxyTools } from "../namespace-tools.ts";
 import { executeCall } from "../proxy-modes.ts";
@@ -48,6 +49,22 @@ describe("withToolCallIdMeta", () => {
 });
 
 describe("tool call id forwarding", () => {
+  it("direct tools forward the tool call id through task sessions", async () => {
+    const taskCallTool = vi.fn(async () => ({
+      kind: "immediate" as const,
+      cancel: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      settle: vi.fn(async () => ({ outcome: { status: "completed" as const, result: { content: [] } } })),
+    }));
+    const state = connectedState({ callTool: vi.fn() });
+    state.manager.getConnection.mockReturnValue({ status: "connected", client: {}, taskSession: { callTool: taskCallTool }, tools: [], resources: [] });
+    const execute = createDirectToolExecutor(() => state, () => null, { serverName: "demo", originalName: "search", prefixedName: "demo_search", description: "Search" });
+
+    await execute("toolu_task", { q: "hello" }, undefined, undefined, {} as any);
+
+    expect(taskCallTool).toHaveBeenCalledWith("search", { q: "hello" }, { metadata: { "pi-mcp-adapter/toolCallId": "toolu_task" } });
+  });
+
   it("proxy calls forward the tool call id they are given", async () => {
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
     const state = connectedState({ callTool });
