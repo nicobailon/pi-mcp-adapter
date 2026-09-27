@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Searching the `/mcp-adapter` panel by server name now finds disabled or unconnected servers, so you can select and enable them. Thanks to [@nazerim](https://github.com/nazerim) for reporting [issue #696](https://github.com/nicobailon/pi-mcp-adapter/issues/696).
 - The project MCP server approval prompt now labels the path as the project config that requires approval, instead of calling it the server's source. A project file that only enables a server you defined globally no longer looks like it defines the command. Thanks to [@nazerim](https://github.com/nazerim) for reporting [issue #695](https://github.com/nicobailon/pi-mcp-adapter/issues/695).
 - MCP config files saved with a UTF-8 byte order mark, as some Windows editors do, now load instead of failing to parse. This covers adapter, shared, and imported JSON configs and imported TOML configs, and `pi-mcp-adapter init` keeps the servers in such a file. Thanks to [@quifox](https://github.com/quifox) for [PR #697](https://github.com/nicobailon/pi-mcp-adapter/pull/697).
+- Adding servers, imports, or direct tools no longer overwrites an existing MCP config file that fails to parse or has the wrong shape. The adapter now reports the error and leaves the file unchanged; empty files can still be initialized. Thanks to [@quifox](https://github.com/quifox) for [PR #693](https://github.com/nicobailon/pi-mcp-adapter/pull/693).
 
 ### Security
 
