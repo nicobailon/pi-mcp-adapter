@@ -9,6 +9,7 @@ import { MCP_APPROVAL_CUSTOM_TYPE, getToolApprovalIdentity, makeToolApprovalKey 
 
 const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn(),
+  holdProjectTrust: false,
   clearFailure: vi.fn(),
   updateStatusBar: vi.fn(),
   flushMetadataCache: vi.fn(),
@@ -71,11 +72,18 @@ const mocks = vi.hoisted(() => ({
   truncateAtWord: vi.fn((text: string) => text),
 }));
 
+// Real initialization resolves project-server trust before connecting servers.
+const initializeMcpResolvingTrust = vi.hoisted(() => (...args: unknown[]) => {
+  const initialization = mocks.initializeMcp(...args);
+  if (!mocks.holdProjectTrust) (args[3] as { onProjectTrustResolved?: () => void } | undefined)?.onProjectTrustResolved?.();
+  return initialization;
+});
+
 vi.mock("../init.ts", async () => {
   mocks.coreModuleStarted();
   if (mocks.coreModuleGate) await mocks.coreModuleGate;
   return {
-    initializeMcp: mocks.initializeMcp,
+    initializeMcp: initializeMcpResolvingTrust,
     clearFailure: mocks.clearFailure,
     updateStatusBar: mocks.updateStatusBar,
     flushMetadataCache: mocks.flushMetadataCache,
@@ -381,6 +389,7 @@ describe("mcpAdapter session lifecycle", () => {
       }
     }
     mocks.coreModuleGate = null;
+    mocks.holdProjectTrust = false;
     mocks.oauthModuleGate = null;
     mocks.commandsModuleGate = null;
     mocks.proxyModuleGate = null;
@@ -804,6 +813,34 @@ describe("mcpAdapter session lifecycle", () => {
     initialization.resolve(state);
     await input;
     expect(state.lifecycle.ensureConverged).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps session_start open until project-server approval is answered", async () => {
+    mocks.holdProjectTrust = true;
+    const config = {
+      mcpServers: {
+        demo: { url: "https://example.test/mcp", lifecycle: "keep-alive" },
+      },
+    };
+    const state = createState();
+    const initialization = createDeferred<typeof state>();
+    let resolveProjectTrust: (() => void) | undefined;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.initializeMcp.mockImplementation((_pi: unknown, _ctx: unknown, _owner: unknown, options: { onProjectTrustResolved?: () => void }) => {
+      resolveProjectTrust = options.onProjectTrustResolved;
+      return initialization.promise;
+    });
+
+    const { handlers } = await loadAdapter();
+    let sessionStarted = false;
+    const sessionStart = Promise.resolve(handlers.get("session_start")?.({}, {}))
+      .then(() => { sessionStarted = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(sessionStarted).toBe(false);
+
+    resolveProjectTrust?.();
+    await sessionStart;
+    expect(sessionStarted).toBe(true);
   });
 
   it("bounds the first-input wait when initialization stalls", async () => {
@@ -2722,7 +2759,7 @@ describe("mcpAdapter session lifecycle", () => {
         mocks.coreModuleStarted();
         await gate.promise;
         return {
-          initializeMcp: mocks.initializeMcp,
+          initializeMcp: initializeMcpResolvingTrust,
           clearFailure: mocks.clearFailure,
           updateStatusBar: mocks.updateStatusBar,
           flushMetadataCache: mocks.flushMetadataCache,

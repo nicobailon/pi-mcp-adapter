@@ -103,6 +103,7 @@ export function isTuiMode(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolea
 type McpInitializationOptions = McpAdapterOptions & {
   oauthRuntime?: McpOAuthRuntime;
   statusEvents?: McpExtensionState["statusEvents"];
+  onProjectTrustResolved?: () => void;
 };
 
 export async function initializeMcp(
@@ -142,6 +143,7 @@ export async function initializeMcp(
   const trustResult = options.config !== undefined
     ? { config: resolveConfiguredClaudePluginMcp(cloneMcpConfig(options.config), cwd), blockedServers: new Map() }
     : await applyProjectServerTrustToConfig(loadMcpConfig(configPath, cwd), ctx);
+  options.onProjectTrustResolved?.();
   const config = trustResult.config;
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd, config.settings?.oauthCredentialStore);
 

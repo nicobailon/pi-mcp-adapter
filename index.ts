@@ -899,14 +899,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             }
           : {}),
         oauthRuntime,
+        // Pi awaits session_start handlers in order. Returning before the approval
+        // dialog settles lets /reload or a later extension replace the editor and
+        // orphan the dialog, leaving initialization pending forever.
+        onProjectTrustResolved: markStarted,
       });
       assertRuntimeGuard(guard);
-      markStarted();
       return initialization;
-    })().catch((error) => {
-      markStarted();
-      throw error;
-    }).then((value) => value);
+    })().finally(markStarted);
     let promise: Promise<McpExtensionState>;
     promise = initializationPromise.then(async (nextState) => {
       if (!owner.isActive() || generation !== lifecycleGeneration || initPromise !== promise) {
