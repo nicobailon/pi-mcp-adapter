@@ -118,6 +118,24 @@ describe("cli init helper", () => {
     expect(output).toContain("No MCP adapter config changes needed.");
   });
 
+  it("preserves existing servers when init updates a config with a UTF-8 BOM", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-bom-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-bom-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    const configPath = join(home, ".pi", "agent", "mcp-adapter.json");
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, '\uFEFF{"mcpServers":{"existing":{"command":"existing-server"}}}');
+    writeJson(join(home, ".cursor", "mcp.json"), { mcpServers: { imported: { command: "cursor-server" } } });
+
+    const { main } = await import("../cli.js");
+    expect(await main(["init", "--discover-host-configs"], () => {}, () => {})).toBe(0);
+    const saved = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(saved.mcpServers.existing).toEqual({ command: "existing-server" });
+    expect(saved.imports).toContain("cursor");
+  });
+
   it("explicitly enables host fallback discovery without changing external files", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-discovery-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-discovery-project-"));

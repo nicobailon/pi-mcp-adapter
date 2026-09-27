@@ -6,8 +6,12 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 import stripJsonComments from "strip-json-comments";
 import type { McpConfig, ServerEntry } from "./types.ts";
 
+export function stripUtf8Bom(raw: string): string {
+  return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+}
+
 export function parseJsonWithComments(raw: string): unknown {
-  return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
+  return JSON.parse(stripJsonComments(stripUtf8Bom(raw), { trailingCommas: true }));
 }
 
 /** Resolve a candidate only when its real path stays within the real root. */

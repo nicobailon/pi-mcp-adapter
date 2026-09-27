@@ -86,7 +86,8 @@ function printHelp(log = console.log) {
 }
 
 function readJsonFile(filePath) {
-  return JSON.parse(stripJsonComments(fs.readFileSync(filePath, "utf-8"), { trailingCommas: true }));
+  const raw = fs.readFileSync(filePath, "utf-8");
+  return JSON.parse(stripJsonComments(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw, { trailingCommas: true }));
 }
 
 function loadPiConfig() {

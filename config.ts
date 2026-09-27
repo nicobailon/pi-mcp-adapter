@@ -11,7 +11,7 @@ import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.ts";
 import { validateJevSettings } from "./jev-client.ts";
 import { formatServerNamespace, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
-import { parseJsonWithComments, toStringRecord } from "./utils.ts";
+import { parseJsonWithComments, stripUtf8Bom, toStringRecord } from "./utils.ts";
 
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [
@@ -932,7 +932,7 @@ function resolveImportCandidates(importKind: ImportKind, cwd: string): ImportedS
 
 function readImportedConfig(path: string): unknown {
   const raw = readFileSync(path, "utf-8");
-  return path.endsWith(".toml") ? parseToml(raw) : parseJsonWithComments(raw);
+  return path.endsWith(".toml") ? parseToml(stripUtf8Bom(raw)) : parseJsonWithComments(raw);
 }
 
 function loadImportedConfig(
