@@ -18,12 +18,20 @@ import type { ContentBlock } from "./types.ts";
 
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 const MCP_SCRIPT_INTERMEDIATE_MAX_BYTES = 16 * 1024 * 1024;
+const MCP_SCRIPT_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
 let mcpScriptWasm: ReturnType<typeof loadMcpScriptWasm> | undefined;
 
 class McpScriptTimeoutError extends Error {
   constructor(timeoutMs: number) {
     super(`mcpScript timed out after ${timeoutMs}ms`);
     this.name = "McpScriptTimeoutError";
+  }
+}
+
+class McpScriptOutputBudgetError extends Error {
+  constructor() {
+    super("mcpScript output exceeds the 16 MiB per-script budget");
+    this.name = "McpScriptOutputBudgetError";
   }
 }
 
@@ -78,6 +86,10 @@ function toContentBlock(value: unknown): ContentBlock {
     }
   }
   return { type: "text", text: formatValue(value) };
+}
+
+function contentBlockBytes(block: ContentBlock): number {
+  return Buffer.byteLength(block.type === "image" ? block.data : block.text, "utf8");
 }
 
 function textFromContent(content: ContentBlock[]): string {
@@ -136,6 +148,7 @@ export async function runMcpScript(
     ? Math.floor(timeoutMs)
     : DEFAULT_MCP_SCRIPT_TIMEOUT_MS;
   const output: ContentBlock[] = [];
+  let outputBytes = 0;
   const externalSignal = combineAbortSignals(state.owner?.signal, signal);
   const timeoutController = new AbortController();
   const callSignal = combineAbortSignals(externalSignal, timeoutController.signal);
@@ -387,7 +400,7 @@ export async function runMcpScript(
     const wasm = await (mcpScriptWasm ??= loadMcpScriptWasm());
     if (externalSignal?.aborted) throw abortReasonError(externalSignal.reason);
     worker = new Worker(new URL("./mcp-script-worker.mjs", import.meta.url), {
-      workerData: { code, wasm, interrupt },
+      workerData: { code, wasm, interrupt, outputMaxBytes: MCP_SCRIPT_OUTPUT_MAX_BYTES },
       env: {},
       // The sandbox cannot open files, and the host always terminates this worker.
       // Disable Node's unmanaged FD bookkeeping, which emits false warnings when
@@ -397,16 +410,36 @@ export async function runMcpScript(
     const activeWorker = worker;
     const execution = new Promise<void>((resolve, reject) => {
       let completed = false;
+      const retainOutput = (value: unknown): boolean => {
+        const block = toContentBlock(value);
+        const bytes = contentBlockBytes(block);
+        if (bytes > MCP_SCRIPT_OUTPUT_MAX_BYTES - outputBytes) return false;
+        outputBytes += bytes;
+        output.push(block);
+        return true;
+      };
+      const rejectOutputBudget = () => {
+        completed = true;
+        const error = new McpScriptOutputBudgetError();
+        callsSnapshot = snapshotCalls();
+        timeoutController.abort(error);
+        Atomics.store(interruptView, 0, 1);
+        void activeWorker.terminate();
+        reject(error);
+      };
       activeWorker.on("message", (value: unknown) => {
         const message = parseWorkerMessage(value);
         if (!message || completed) return;
         if (message.type === "emit") {
-          output.push(toContentBlock(message.block));
+          if (!retainOutput(message.block)) rejectOutputBudget();
           return;
         }
         if (message.type === "done") {
+          if ("returnBlock" in message && !retainOutput(message.returnBlock)) {
+            rejectOutputBudget();
+            return;
+          }
           completed = true;
-          if ("returnBlock" in message) output.push(toContentBlock(message.returnBlock));
           resolve();
           return;
         }

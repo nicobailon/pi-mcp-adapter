@@ -575,6 +575,21 @@ describe("runMcpScript", () => {
     expect(textBlocks(result)).toEqual(["first", "[console.log] second", "last"]);
   });
 
+  it("stops scripts that exceed the emitted output budget and keeps prior blocks", async () => {
+    const result = await runMcpScript(
+      state,
+      'emit("before limit"); for (let i = 0; i < 17; i++) console.log("x".repeat(1024 * 1024)); emit("after limit");',
+    );
+
+    const blocks = textBlocks(result);
+    expect(blocks[0]).toContain("before limit");
+    expect(blocks.join("\n")).not.toContain("after limit");
+    expect(result.details).toMatchObject({
+      error: "script_error",
+      message: "mcpScript output exceeds the 16 MiB per-script budget",
+    });
+  });
+
   it("formats non-JSON values in emitted, returned, and console output", async () => {
     const result = await runMcpScript(
       state,

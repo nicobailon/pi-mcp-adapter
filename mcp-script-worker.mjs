@@ -158,6 +158,20 @@ const PRELUDE_SOURCE = `(function (bridge) {
 
 async function main() {
   const interrupt = new Int32Array(workerData.interrupt);
+  let outputBytes = 0;
+  let outputExceeded = false;
+  const postOutput = (message, block) => {
+    if (outputExceeded) return;
+    const bytes = Buffer.byteLength(block.type === "image" ? block.data : block.text, "utf8");
+    if (bytes > workerData.outputMaxBytes - outputBytes) {
+      outputExceeded = true;
+      post({ type: "error", message: "mcpScript output exceeds the 16 MiB per-script budget" });
+      Atomics.store(interrupt, 0, 1);
+      return;
+    }
+    outputBytes += bytes;
+    post(message);
+  };
   const vm = await QuickJS.create({
     wasm: workerData.wasm,
     memoryLimit: MEMORY_LIMIT_BYTES,
@@ -172,11 +186,15 @@ async function main() {
       const payload = JSON.parse(c.toString());
       post({ type: a.toString(), id: b.toNumber(), ...payload });
     } else if (messageType === "emit") {
-      post({ type: "emit", block: JSON.parse(a.toString()) });
+      const block = JSON.parse(a.toString());
+      postOutput({ type: "emit", block }, block);
     } else if (messageType === "done") {
-      post(a === undefined || a.isUndefined
-        ? { type: "done" }
-        : { type: "done", returnBlock: JSON.parse(a.toString()) });
+      if (a === undefined || a.isUndefined) {
+        post({ type: "done" });
+      } else {
+        const returnBlock = JSON.parse(a.toString());
+        postOutput({ type: "done", returnBlock }, returnBlock);
+      }
     } else if (messageType === "error") {
       post({ type: "error", message: a.toString() });
     }

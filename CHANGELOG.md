@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Replace the `mcpScript` `node:vm` sandbox with a memory-limited QuickJS/WASM VM, preventing injected API functions from exposing the host `Function`, `process`, filesystem, or child-process APIs ([#676](https://github.com/nicobailon/pi-mcp-adapter/issues/676)). Script values now cross the host boundary as JSON; non-JSON emitted and returned values remain readable, but their formatting can differ from Node's `util.inspect` output.
+- Replace the `mcpScript` `node:vm` sandbox with a memory-limited QuickJS/WASM VM, preventing injected API functions from exposing the host `Function`, `process`, filesystem, or child-process APIs ([#676](https://github.com/nicobailon/pi-mcp-adapter/issues/676)). Emitted text and image data are limited to 16 MiB per script. Script values now cross the host boundary as JSON; non-JSON emitted and returned values remain readable, but their formatting can differ from Node's `util.inspect` output.
 
 ### Added
 
