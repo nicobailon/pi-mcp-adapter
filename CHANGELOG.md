@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Repeated words in MCP tool-search queries no longer reduce token coverage and hide otherwise matching tools. Thanks to [@kojizada490-wq](https://github.com/kojizada490-wq) for [PR #678](https://github.com/nicobailon/pi-mcp-adapter/pull/678).
+- Cached tool metadata is invalidated when a stdio server's `inheritEnv` or `literalEnv` setting changes, preventing stale tools from appearing in search or direct registration. Thanks to [@kojizada490-wq](https://github.com/kojizada490-wq) for [PR #683](https://github.com/nicobailon/pi-mcp-adapter/pull/683).
+- Disabled project MCP servers no longer ask for approval or delay interactive startup. Thanks [@ismailokta](https://github.com/ismailokta) for reporting [issue #685](https://github.com/nicobailon/pi-mcp-adapter/issues/685).
+
 ## [3.0.0] - 2026-09-26
 
 ### Highlights
@@ -29,11 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - MCP tool calls now include the id of the Pi tool call that made them, under `_meta["pi-mcp-adapter/toolCallId"]`, so servers can match requests to Pi's tool calls in their logs and traces. Direct tools, the `mcp` tool, and `mcp__<server>` tools send it. `mcpScript` calls do not, because a script is not a single tool call. Thanks to [@sebavalaris](https://github.com/sebavalaris) for [PR #673](https://github.com/nicobailon/pi-mcp-adapter/pull/673).
-
-### Fixed
-
-- Repeated words in MCP tool-search queries no longer reduce token coverage and hide otherwise matching tools. Thanks to [@kojizada490-wq](https://github.com/kojizada490-wq) for [PR #678](https://github.com/nicobailon/pi-mcp-adapter/pull/678).
-- Cached tool metadata is invalidated when a stdio server's `inheritEnv` or `literalEnv` setting changes, preventing stale tools from appearing in search or direct registration. Thanks to [@kojizada490-wq](https://github.com/kojizada490-wq) for [PR #683](https://github.com/nicobailon/pi-mcp-adapter/pull/683).
 
 ## [2.38.0] - 2026-09-26
 

@@ -74,6 +74,30 @@ describe("project MCP server trust", () => {
     expect(result.blockedServers.get("local")?.reason).toBe("untrusted");
   });
 
+  it("does not request approval for an inherited server disabled by project config", async () => {
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), {
+      mcpServers: { inherited: { command: "global", args: ["server.js"] } },
+    });
+    writeJson(join(cwd, ".pi", "mcp-adapter.json"), {
+      mcpServers: { inherited: { disabled: true } },
+    });
+    const { config, trust } = await load();
+    const confirm = vi.fn();
+
+    const result = await trust.applyProjectServerTrust(
+      config.loadMcpConfigWithSources(undefined, cwd),
+      context({ hasUI: true, mode: "tui", ui: { confirm } }),
+    );
+
+    expect(result.config.mcpServers.inherited).toEqual({
+      command: "global",
+      args: ["server.js"],
+      disabled: true,
+    });
+    expect(result.blockedServers.size).toBe(0);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
   it("persists an interactive approval and re-prompts after the definition changes", async () => {
     const path = join(cwd, ".mcp.json");
     writeJson(path, { mcpServers: { local: { command: "node", args: ["one.js"] } } });

@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentPath } from "./agent-dir.ts";
 import type { LoadedMcpConfig } from "./config.ts";
-import type { McpConfig, ProjectServerBlock, ProjectServerBlockReason, ServerDefinition } from "./types.ts";
+import { isServerDisabled, type McpConfig, type ProjectServerBlock, type ProjectServerBlockReason, type ServerDefinition } from "./types.ts";
 
 const APPROVALS_VERSION = 1;
 const APPROVALS_FILE = "mcp-project-approvals.json";
@@ -154,7 +154,7 @@ export async function applyProjectServerTrust(
 
   for (const [name, source] of loaded.projectServers) {
     const definition = config.mcpServers[name];
-    if (!definition) continue;
+    if (!definition || isServerDisabled(definition)) continue;
     const definitionHash = hashProjectServerDefinition(definition);
     const approved = approvals.approvals.some(entry =>
       entry.projectRoot === projectRoot && entry.serverName === name && entry.definitionHash === definitionHash);
