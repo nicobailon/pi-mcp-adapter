@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Repeated words in MCP tool-search queries no longer reduce token coverage and hide otherwise matching tools.
+- Repeated words in MCP tool-search queries no longer reduce token coverage and hide otherwise matching tools. Thanks to [@kojizada490-wq](https://github.com/kojizada490-wq) for [PR #678](https://github.com/nicobailon/pi-mcp-adapter/pull/678).
 
 ## [2.38.0] - 2026-09-26
 
