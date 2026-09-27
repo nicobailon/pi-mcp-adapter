@@ -58,11 +58,14 @@ export function computeServerHash(definition, environment = process.env) {
     // Hash only fields that affect server identity and tool/resource output.
     // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
     // that don't change which tools a server exposes.
+    const isStdio = !!definition.command;
+    const literalEnv = isBuiltInAgentPlugin(definition, "env") || (isStdio && definition.literalEnv === true);
     const identity = {
         command: resolveConfigPath(definition.command, environment),
         args: definition.args,
         socket: resolveConfigPath(definition.socket, environment),
-        env: isBuiltInAgentPlugin(definition, "env") ? definition.env : interpolateEnvRecord(definition.env, environment),
+        env: literalEnv ? definition.env : interpolateEnvRecord(definition.env, environment),
+        ...(isStdio ? { inheritEnv: definition.inheritEnv !== false, literalEnv } : {}),
         cwd: isBuiltInAgentPlugin(definition, "cwd") ? definition.cwd : resolveConfigPath(definition.cwd, environment),
         url: resolveServerUrl(definition, environment),
         headers: isBuiltInAgentPlugin(definition, "headers") ? definition.headers : interpolateEnvRecord(definition.headers, environment),

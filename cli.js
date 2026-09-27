@@ -109,11 +109,8 @@ function loadPiConfig() {
   if (raw.imports !== undefined && (!Array.isArray(raw.imports) || raw.imports.some((value) => typeof value !== "string"))) {
     throw new Error(`Invalid MCP config at ${PI_CONFIG_PATH}: imports must be an array of strings`);
   }
-  const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-
-  const normalized = { ...raw };
-  delete normalized["mcp-servers"];
-  return { ...normalized, mcpServers };
+  const { "mcp-servers": legacyServers, ...normalized } = raw;
+  return { ...normalized, mcpServers: raw.mcpServers ?? legacyServers ?? {} };
 }
 
 function findAvailableImports() {

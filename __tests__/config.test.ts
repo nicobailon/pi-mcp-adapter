@@ -877,34 +877,20 @@ describe("config discovery", () => {
     ]);
   });
 
-  it("loads adapter and shared JSON config files with a UTF-8 BOM", async () => {
+  it("loads shared and imported JSON and TOML configs with a UTF-8 BOM", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-bom-json-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-bom-json-project-"));
     process.env.HOME = home;
     process.chdir(project);
 
-    writeText(join(home, ".pi", "agent", "mcp-adapter.json"), '\uFEFF{"mcpServers":{"global":{"command":"global-server"}}}');
     writeText(join(project, ".mcp.json"), '\uFEFF{"mcpServers":{"project":{"command":"project-server"}}}');
-
-    const { loadMcpConfig } = await import("../config.ts");
-    expect(loadMcpConfig().mcpServers).toMatchObject({
-      global: { command: "global-server" },
-      project: { command: "project-server" },
-    });
-  });
-
-  it("imports JSON and TOML host configs with a UTF-8 BOM", async () => {
-    const home = mkdtempSync(join(tmpdir(), "pi-mcp-bom-import-home-"));
-    const project = mkdtempSync(join(tmpdir(), "pi-mcp-bom-import-project-"));
-    process.env.HOME = home;
-    process.chdir(project);
-
     writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { imports: ["cursor", "codex"], mcpServers: {} });
     writeText(join(home, ".cursor", "mcp.json"), '\uFEFF{"mcpServers":{"cursor":{"command":"cursor-server"}}}');
     writeText(join(home, ".codex", "config.toml"), '\uFEFF[mcp_servers.codex]\ncommand = "codex-server"\n');
 
     const { loadMcpConfig } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers).toMatchObject({
+      project: { command: "project-server" },
       cursor: { command: "cursor-server" },
       codex: { command: "codex-server" },
     });

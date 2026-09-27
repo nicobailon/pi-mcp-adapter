@@ -1334,18 +1334,15 @@ function buildConfigWritePreview(filePath: string, nextRaw: Record<string, unkno
   };
 }
 
-function parseWritableConfigObject(text: string): Record<string, unknown> {
-  if (text.trim() === "") return {};
-  const raw = parseJsonWithComments(text);
-  if (!isRecord(raw)) throw new Error("top-level value must be an object");
-  return raw;
-}
-
 function readRawConfigObject(filePath: string): Record<string, unknown> {
   if (!lstatSync(filePath, { throwIfNoEntry: false })) return {};
 
   try {
-    return parseWritableConfigObject(readFileSync(filePath, "utf-8"));
+    const text = readFileSync(filePath, "utf-8");
+    if (text.trim() === "") return {};
+    const raw = parseJsonWithComments(text);
+    if (!isRecord(raw)) throw new Error("top-level value must be an object");
+    return raw;
   } catch (error) {
     throw new Error(`Failed to read MCP config at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
@@ -1391,14 +1388,7 @@ export function writeJevSemanticSearchConfig(
   effectiveJev?: unknown,
 ): { path: string; changed: boolean } {
   const filePath = overridePath ? getPiGlobalConfigPath(overridePath) : getProjectPiConfigPath(cwd);
-  let raw: Record<string, unknown> = {};
-  if (existsSync(filePath)) {
-    try {
-      raw = parseWritableConfigObject(readFileSync(filePath, "utf8"));
-    } catch (error) {
-      throw new Error(`Failed to update Jev settings at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
-  }
+  const raw = readRawConfigObject(filePath);
   if (raw.settings !== undefined && !isRecord(raw.settings)) {
     throw new Error(`Failed to update Jev settings at ${filePath}: settings must be an object`);
   }
@@ -1456,14 +1446,7 @@ export function writeProjectServerDisabledOverride(
   disabled: boolean,
 ): ServerDisabledOverrideResult {
   const filePath = getProjectPiConfigPath(cwd);
-  let raw: Record<string, unknown> = {};
-  if (existsSync(filePath)) {
-    try {
-      raw = parseWritableConfigObject(readFileSync(filePath, "utf-8"));
-    } catch (error) {
-      throw new Error(`Failed to read project MCP override at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
-  }
+  const raw = readRawConfigObject(filePath);
 
   const serverKey = raw.mcpServers !== undefined ? "mcpServers" : raw["mcp-servers"] !== undefined ? "mcp-servers" : "mcpServers";
   const rawServers = raw[serverKey];

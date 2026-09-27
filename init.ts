@@ -43,7 +43,7 @@ import {
   createSessionApprovalWriter,
   restoreSessionApprovalState,
 } from "./session-approvals.ts";
-export { getFailureAgeSeconds, getFailureMessage, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+export { getFailureAgeSeconds, getFailureMessage } from "./failure-backoff.ts";
 
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
 const failureExpiryTimers = new WeakMap<McpExtensionState, Map<string, ReturnType<typeof setTimeout>>>();

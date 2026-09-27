@@ -3,8 +3,11 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import stripJsonComments from "strip-json-comments";
+export function stripUtf8Bom(raw) {
+    return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+}
 export function parseJsonWithComments(raw) {
-    return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
+    return JSON.parse(stripJsonComments(stripUtf8Bom(raw), { trailingCommas: true }));
 }
 /** Resolve a candidate only when its real path stays within the real root. */
 export function resolveRealContainedPath(root, candidate, allowMissing = false) {

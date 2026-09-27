@@ -68,7 +68,7 @@ describe("Jev setup", () => {
     const path = join(root, "mcp.json");
     writeFileSync(path, "{invalid\n");
 
-    expect(() => writeJevSemanticSearchConfig(path, root, ["demo"])).toThrow("Failed to update Jev settings");
+    expect(() => writeJevSemanticSearchConfig(path, root, ["demo"])).toThrow(`Failed to read MCP config at ${path}`);
     expect(readFileSync(path, "utf8")).toBe("{invalid\n");
   });
 

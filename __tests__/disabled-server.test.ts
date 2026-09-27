@@ -208,7 +208,7 @@ describe("disabled MCP servers", () => {
     mkdirSync(join(cwd, ".pi"));
     writeFileSync(filePath, "{ malformed");
 
-    expect(() => writeProjectServerDisabledOverride(undefined, cwd, "server", true)).toThrow("Failed to read project MCP override");
+    expect(() => writeProjectServerDisabledOverride(undefined, cwd, "server", true)).toThrow(`Failed to read MCP config at ${filePath}`);
     expect(readFileSync(filePath, "utf8")).toBe("{ malformed");
   });
 

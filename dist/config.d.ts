@@ -142,6 +142,6 @@ export declare function writeStarterProjectConfig(cwd?: string): string;
 export declare function previewSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): ConfigWritePreview;
 export declare function writeSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): string;
 export declare function getServerProvenance(overridePath?: string, cwd?: string): Map<string, ServerProvenance>;
-export declare function writeDirectToolsConfig(changes: Map<string, true | string[] | false>, provenance: Map<string, ServerProvenance>, fullConfig: McpConfig): void;
+export declare function writeDirectToolsConfig(changes: Map<string, true | string[] | false>, provenance: Map<string, ServerProvenance>, fullConfig: McpConfig, onFileWritten?: () => void): void;
 export declare function resolveConfiguredOAuthDir(raw: unknown, cwd?: string): string | undefined;
 export {};
