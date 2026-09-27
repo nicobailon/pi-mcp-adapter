@@ -87,9 +87,10 @@ export function canonicalProjectRoot(cwd: string): string {
  * file counts only when it is a regular file (not a symlink to a real worktree's) and git's
  * admin entry for it links back to it; otherwise a directory could claim another checkout's
  * approvals. Worktrees of a regular checkout use that checkout's path, so its existing
- * approvals still apply. Other git directories (bare,
- * `--separate-git-dir`) get a `git-dir:` key, which no canonical path equals, so an admin
- * entry planted in a checkout's tracked files cannot borrow that checkout's approvals.
+ * approvals still apply. Bare repositories (even one stored as a `.git` folder, whose
+ * parent is not a checkout) and `--separate-git-dir` ones get a `git-dir:` key, which no
+ * canonical path equals, so an admin entry planted in a checkout's tracked files cannot
+ * borrow that checkout's approvals.
  * A `--separate-git-dir` main checkout keeps its own path: git records no link back to it.
  */
 function projectApprovalScope(cwd: string): string {
@@ -113,7 +114,8 @@ function linkedWorktreeRepoScope(dotGit: string): string | undefined {
     const backLink = readFileSync(join(adminDir, "gitdir"), "utf8").trim();
     if (realpathSync(resolve(adminDir, backLink)) !== realpathSync(dotGit)) return undefined;
     const commonDir = dirname(dirname(adminDir));
-    return basename(commonDir) === ".git" ? dirname(commonDir) : `git-dir:${commonDir}`;
+    const bare = /^\s*bare\s*=\s*(true|yes|on|1)\s*$/im.test(readFileSync(join(commonDir, "config"), "utf8"));
+    return basename(commonDir) === ".git" && !bare ? dirname(commonDir) : `git-dir:${commonDir}`;
   } catch {
     return undefined;
   }

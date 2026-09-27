@@ -143,9 +143,11 @@ describe("project MCP server trust", () => {
     git(cwd, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-q", "--allow-empty", "-m", "init");
     const worktree = join(root, "worktree");
     git(cwd, "worktree", "add", "-q", worktree);
-    const bare = join(root, "bare.git");
+    // A bare repository stored as container/.git: the container is not a checkout of it.
+    const container = join(root, "container");
+    const bare = join(container, ".git");
     git(root, "clone", "-q", "--bare", cwd, bare);
-    const [bareFirst, bareSecond] = [join(root, "bare-first"), join(root, "bare-second")];
+    const [bareFirst, bareSecond] = [join(container, "first"), join(container, "second")];
     git(bare, "worktree", "add", "-q", bareFirst);
     git(bare, "worktree", "add", "-q", bareSecond);
     const copied = join(root, "copied");
@@ -161,7 +163,7 @@ describe("project MCP server trust", () => {
     writeFileSync(join(planted, "gitdir"), `${join(forged, ".git")}\n`);
     mkdirSync(forged);
     writeFileSync(join(forged, ".git"), `gitdir: ${planted}\n`);
-    for (const dir of [cwd, worktree, bareFirst, bareSecond, copied, symlinked, forged]) {
+    for (const dir of [cwd, worktree, container, bareFirst, bareSecond, copied, symlinked, forged]) {
       writeJson(join(dir, ".mcp.json"), { mcpServers: { local: { command: "node", args: ["server.js"] } } });
     }
     const { config, trust } = await load();
@@ -174,13 +176,14 @@ describe("project MCP server trust", () => {
     await open(cwd);
     await open(worktree);
     expect(confirm).toHaveBeenCalledTimes(1);
+    await open(container);
     await open(bareFirst);
     await open(bareSecond);
-    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(confirm).toHaveBeenCalledTimes(3);
     await open(copied);
     await open(symlinked);
     await open(forged);
-    expect(confirm).toHaveBeenCalledTimes(5);
+    expect(confirm).toHaveBeenCalledTimes(6);
   });
 
   it("skips unapproved servers headlessly unless the global policy allows them", async () => {
