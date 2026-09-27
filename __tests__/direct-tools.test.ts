@@ -13,6 +13,7 @@ import { formatToolName } from "../types.ts";
 import type { McpConfig } from "../types.ts";
 import { reconstructToolMetadata } from "../metadata-cache.ts";
 import { updateServerMetadata } from "../init.ts";
+import { markBuiltInAgentPlugin } from "../agent-plugin-provenance.ts";
 
 const originalHashEnv = {
   MCP_HASH_CWD: process.env.MCP_HASH_CWD,
@@ -154,6 +155,84 @@ describe("metadata cache hashing", () => {
     const modern = computeServerHash({ command: "node", protocolVersion: "2026-07-28" });
 
     expect(new Set([legacy, automatic, modern]).size).toBe(3);
+  });
+
+  it("invalidates cached stdio tools when environment inheritance changes", () => {
+    const definition = { command: "node", inheritEnv: true };
+    const changed = { command: "node", inheritEnv: false };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: computeServerHash(definition),
+          cachedAt: Date.now(),
+          tools: [{ name: "db_query", inputSchema: { type: "object" } }],
+          resources: [],
+        },
+      },
+    };
+
+    expect(computeServerHash({ command: "node" })).toBe(cache.servers.demo.configHash);
+    expect(isServerCacheValid(cache.servers.demo, changed)).toBe(false);
+    expect(resolveDirectTools({ settings: { directTools: true }, mcpServers: { demo: changed } }, cache, "server")).toEqual([]);
+  });
+
+  it("hashes literal stdio env values without interpolating the host environment", () => {
+    const definition = { command: "node", env: { MODE: "${MODE}" } };
+    const literal = { ...definition, literalEnv: true };
+    const environment = { MODE: "expanded" };
+    const entry = {
+      configHash: computeServerHash(definition, environment),
+      cachedAt: Date.now(),
+      tools: [],
+      resources: [],
+    };
+
+    expect(computeServerHash({ ...definition, literalEnv: false }, environment)).toBe(entry.configHash);
+    expect(isServerCacheValid(entry, literal, undefined, environment)).toBe(false);
+    expect(computeServerHash(literal, { MODE: "first" })).toBe(computeServerHash(literal, { MODE: "second" }));
+  });
+
+  it("uses literal env values for built-in Agent Plugin stdio servers", () => {
+    const plugin = markBuiltInAgentPlugin({ command: "node", env: { MODE: "${MODE}" } }, ["env"]);
+    const isolated = markBuiltInAgentPlugin({ command: "node", env: { MODE: "${MODE}" }, inheritEnv: false }, ["env"]);
+
+    expect(computeServerHash(plugin, { MODE: "first" })).toBe(computeServerHash(plugin, { MODE: "second" }));
+    expect(computeServerHash(plugin)).not.toBe(computeServerHash(isolated));
+  });
+
+  it("ignores stdio-only environment flags for non-stdio servers", () => {
+    const remote = { url: "https://example.test/mcp" };
+    expect(computeServerHash({ ...remote, inheritEnv: false, literalEnv: true })).toBe(computeServerHash(remote));
+    const socket = { socket: "/tmp/mcp.sock" };
+    expect(computeServerHash({ ...socket, inheritEnv: false, literalEnv: true })).toBe(computeServerHash(socket));
+  });
+
+  it("preserves old remote caches while invalidating old stdio caches", () => {
+    const cachedAt = Date.now();
+    // Hashes recorded before stdio environment flags joined the cache identity.
+    const urlCache = {
+      configHash: "211503c5c035663196f90839c226a3f67c2e01ff7719c2ed818860072c96d8ec",
+      cachedAt,
+      tools: [],
+      resources: [],
+    };
+    const socketCache = {
+      configHash: "c5e102840a79aec3fd3d129037f379198fb13cdcfa5ffbc96a5f314002e7d188",
+      cachedAt,
+      tools: [],
+      resources: [],
+    };
+    const stdioCache = {
+      configHash: "c7cd5329512fb9b1605e786af247579d1ff2e23f694488e403295ea142b4e9ce",
+      cachedAt,
+      tools: [],
+      resources: [],
+    };
+
+    expect(isServerCacheValid(urlCache, { url: "https://example.test/mcp" })).toBe(true);
+    expect(isServerCacheValid(socketCache, { socket: "/tmp/mcp.sock" })).toBe(true);
+    expect(isServerCacheValid(stdioCache, { command: "node" })).toBe(false);
   });
 
   it("hashes interpolated URLs", () => {
