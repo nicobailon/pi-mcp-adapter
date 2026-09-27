@@ -113,6 +113,23 @@ describe("disabled MCP servers", () => {
     expect(state.manager.connect).not.toHaveBeenCalled();
   });
 
+  it("explains project-trust blocks instead of suggesting /mcp enable", async () => {
+    const state = disabledState();
+    state.blockedProjectServers = new Map([["disabled", { reason: "untrusted", source: { path: "/project/.mcp.json" } }]]);
+    const call = await executeCall(state, "disabled_search", {}, "disabled");
+    const direct = await createDirectToolExecutor(() => state, () => null, {
+      serverName: "disabled",
+      originalName: "search",
+      prefixedName: "disabled_search",
+      description: "cached",
+    })("call", {}, undefined, undefined, {} as any);
+
+    for (const result of [call, direct, await executeConnect(state, "disabled")]) {
+      expect(result.content[0].text).toContain("blocked by project trust");
+      expect(result.content[0].text).not.toContain("/mcp enable");
+    }
+  });
+
   it("rejects manager and UI resource connections for disabled definitions", async () => {
     const manager = new McpServerManager();
     await expect(manager.connect("disabled", { command: "node", disabled: true })).rejects.toThrow("disabled");

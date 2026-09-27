@@ -1,6 +1,7 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
+import { disabledServerReason } from "./project-server-trust.ts";
 import type { DirectToolSpec, McpContent } from "./types.ts";
 import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
@@ -152,7 +153,7 @@ export function createDirectToolExecutor(
 
     const definition = state.config.mcpServers[spec.serverName];
     if (isServerDisabled(definition)) {
-      const message = `MCP server "${spec.serverName}" is disabled. Run /mcp enable ${spec.serverName} and /reload to enable it.`;
+      const message = `MCP server "${spec.serverName}" is ${disabledServerReason(state.blockedProjectServers, spec.serverName)}`;
       return {
         content: [{ type: "text" as const, text: message }],
         details: { error: "server_disabled", server: spec.serverName, message },
