@@ -21,6 +21,10 @@ describe("search ranking", () => {
     expect(scoreToolMatch(tool("search_records", "Find records"), "demo", "search missing")).toBeNull();
   });
 
+  it("does not penalize repeated query tokens", () => {
+    expect(scoreToolMatch(tool("search_records", "Find records"), "demo", "search search")).not.toBeNull();
+  });
+
   it("keeps single-character Unicode query terms", () => {
     expect(scoreToolMatch(tool("weather", "天气和雨"), "demo", "雨")).not.toBeNull();
     expect(scoreToolMatch(tool("calendar", "Calendar events"), "demo", "calendar历")).toBeNull();
