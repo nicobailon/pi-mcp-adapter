@@ -1,9 +1,14 @@
 import { execFile } from "node:child_process";
+import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { createMcpAdapter } from "../index.ts";
 import { runMcpScript } from "../mcp-code.ts";
+import { loadMcpScriptWasm } from "../mcp-script-wasm.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { McpServerManager } from "../server-manager.ts";
@@ -60,6 +65,19 @@ describe("runMcpScript", () => {
 
     expect(registerTool).toHaveBeenCalled();
     expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcpScript" }));
+  });
+
+  it("retries loading QuickJS after a failed wasm read", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mcp-script-wasm-"));
+    const target = join(directory, "quickjs.wasm");
+    try {
+      await expect(loadMcpScriptWasm(target)).rejects.toThrow();
+      const source = createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm");
+      await copyFile(source, target);
+      await expect(loadMcpScriptWasm(target)).resolves.toBeDefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it.runIf(Number.parseInt(process.versions.node, 10) >= 24)(
@@ -588,6 +606,31 @@ describe("runMcpScript", () => {
       error: "script_error",
       message: "mcpScript output exceeds the 16 MiB per-script budget",
     });
+  });
+
+  it("counts image metadata against the emitted output budget", async () => {
+    const result = await runMcpScript(
+      state,
+      `emit("before images");
+      for (let i = 0; i < 17; i++) emit({ type: "image", data: "", mimeType: "x".repeat(1024 * 1024) });
+      emit("after images");`,
+    );
+
+    expect(textBlocks(result)).toContain("before images");
+    expect(textBlocks(result)).not.toContain("after images");
+    expect(result.details).toMatchObject({
+      error: "script_error",
+      message: "mcpScript output exceeds the 16 MiB per-script budget",
+    });
+  });
+
+  it("truncates oversized thrown values before returning them to the host", async () => {
+    const result = await runMcpScript(state, 'throw "x".repeat(1024 * 1024);');
+    const message = String(result.details.message);
+
+    expect(result.details).toMatchObject({ error: "script_error" });
+    expect(Buffer.byteLength(message, "utf8")).toBeLessThanOrEqual(64 * 1024);
+    expect(message).toMatch(/\n\.\.\.\[mcpScript error truncated\]$/);
   });
 
   it("formats non-JSON values in emitted, returned, and console output", async () => {

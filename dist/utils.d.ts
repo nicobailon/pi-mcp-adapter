@@ -30,6 +30,13 @@ export declare function stripOscSequences(text: string): string;
 export declare function sanitizeTerminalText(text: string): string;
 export declare function formatTerminalError(error: unknown): string;
 export declare function truncateAtWord(text: string, target: number): string;
+/**
+ * Request `_meta` key carrying the id of the Pi tool call that made an MCP
+ * `tools/call` request, so a server can correlate the request with the host's
+ * own record of the call (logs, traces, session transcripts).
+ */
+export declare const TOOL_CALL_ID_REQUEST_META_KEY = "pi-mcp-adapter/toolCallId";
+export declare function withToolCallIdMeta(meta: Record<string, unknown> | undefined, toolCallId: string | undefined): Record<string, unknown> | undefined;
 export declare function normalizeDirectToolInputSchema(schema: unknown): Record<string, unknown>;
 export declare function normalizeToolArguments(value: unknown, context?: string): Record<string, unknown>;
 export declare function formatAuthRequiredMessage(config: Pick<McpConfig, "settings">, serverName: string, defaultMessage: string): string;

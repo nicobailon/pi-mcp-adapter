@@ -2,6 +2,8 @@ import { parentPort, workerData } from "node:worker_threads";
 import { JSException, MAX_STACK_SIZE, QuickJS } from "quickjs-wasi";
 
 const MEMORY_LIMIT_BYTES = 64 * 1024 * 1024;
+const ERROR_MAX_BYTES = 64 * 1024;
+const ERROR_TRUNCATION_MARKER = "\n...[mcpScript error truncated]";
 
 function post(message) {
   parentPort?.postMessage(message);
@@ -13,6 +15,23 @@ function errorText(error) {
     return error.stack ? `${head}\n${error.stack}` : head;
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+function truncateErrorMessage(error) {
+  const message = typeof error === "string" ? error : errorText(error);
+  const bytes = Buffer.from(message, "utf8");
+  if (bytes.length <= ERROR_MAX_BYTES) return message;
+  const marker = Buffer.from(ERROR_TRUNCATION_MARKER, "utf8");
+  const prefix = bytes.subarray(0, ERROR_MAX_BYTES - marker.length - 3).toString("utf8").replace(/\uFFFD$/, "");
+  return prefix + ERROR_TRUNCATION_MARKER;
+}
+
+function postError(error) {
+  post({ type: "error", message: truncateErrorMessage(error) });
+}
+
+function contentBlockBytes(block) {
+  return Buffer.byteLength(JSON.stringify(block), "utf8");
 }
 
 /** Silence QuickJS's WASI stdout/stderr so diagnostics cannot corrupt the host TUI. */
@@ -162,10 +181,10 @@ async function main() {
   let outputExceeded = false;
   const postOutput = (message, block) => {
     if (outputExceeded) return;
-    const bytes = Buffer.byteLength(block.type === "image" ? block.data : block.text, "utf8");
+    const bytes = contentBlockBytes(block);
     if (bytes > workerData.outputMaxBytes - outputBytes) {
       outputExceeded = true;
-      post({ type: "error", message: "mcpScript output exceeds the 16 MiB per-script budget" });
+      postError("mcpScript output exceeds the 16 MiB per-script budget");
       Atomics.store(interrupt, 0, 1);
       return;
     }
@@ -196,7 +215,7 @@ async function main() {
         postOutput({ type: "done", returnBlock }, returnBlock);
       }
     } else if (messageType === "error") {
-      post({ type: "error", message: a.toString() });
+      postError(a.toString());
     }
     return vm.undefined;
   });
@@ -216,7 +235,7 @@ async function main() {
       vm.withScope(() => vm.callFunction(settle, api, vm.newNumber(message.id), vm.newString(payload)));
       vm.executePendingJobs();
     } catch (error) {
-      post({ type: "error", message: errorText(error) });
+      postError(error);
     }
   });
 
@@ -227,8 +246,8 @@ async function main() {
     fn.dispose();
     vm.executePendingJobs();
   } catch (error) {
-    post({ type: "error", message: errorText(error) });
+    postError(error);
   }
 }
 
-if (parentPort) main().catch((error) => post({ type: "error", message: errorText(error) }));
+if (parentPort) main().catch(postError);

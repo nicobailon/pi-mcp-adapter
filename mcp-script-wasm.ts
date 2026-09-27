@@ -3,21 +3,22 @@ import { createRequire } from "node:module";
 
 export type McpScriptWasmModule = object;
 
-let cached: Promise<McpScriptWasmModule> | undefined;
+const cached = new Map<string, Promise<McpScriptWasmModule>>();
 
 /** Load and compile the packaged QuickJS runtime once per host process. */
-export function loadMcpScriptWasm(): Promise<McpScriptWasmModule> {
-  if (!cached) {
-    const path = createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm");
+export function loadMcpScriptWasm(path = createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm")): Promise<McpScriptWasmModule> {
+  let module = cached.get(path);
+  if (!module) {
     const webAssembly = (globalThis as unknown as {
       WebAssembly: { compile(bytes: Uint8Array): Promise<McpScriptWasmModule> };
     }).WebAssembly;
-    cached = readFile(path)
+    module = readFile(path)
       .then((bytes) => webAssembly.compile(bytes))
       .catch((error: unknown) => {
-        cached = undefined;
+        cached.delete(path);
         throw error;
       });
+    cached.set(path, module);
   }
-  return cached;
+  return module;
 }

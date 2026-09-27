@@ -19,7 +19,6 @@ import type { ContentBlock } from "./types.ts";
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 const MCP_SCRIPT_INTERMEDIATE_MAX_BYTES = 16 * 1024 * 1024;
 const MCP_SCRIPT_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
-let mcpScriptWasm: ReturnType<typeof loadMcpScriptWasm> | undefined;
 
 class McpScriptTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -89,7 +88,7 @@ function toContentBlock(value: unknown): ContentBlock {
 }
 
 function contentBlockBytes(block: ContentBlock): number {
-  return Buffer.byteLength(block.type === "image" ? block.data : block.text, "utf8");
+  return Buffer.byteLength(JSON.stringify(block), "utf8");
 }
 
 function textFromContent(content: ContentBlock[]): string {
@@ -391,14 +390,34 @@ export async function runMcpScript(
   let errorMessage: string | undefined;
   const interrupt = new SharedArrayBuffer(4);
   const interruptView = new Int32Array(interrupt);
+  const timeoutError = new McpScriptTimeoutError(resolvedTimeoutMs);
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      callsSnapshot = snapshotCalls();
+      timeoutController.abort(timeoutError);
+      Atomics.store(interruptView, 0, 1);
+      void worker?.terminate();
+      reject(timeoutError);
+    }, resolvedTimeoutMs);
+  });
+  const aborted = externalSignal
+    ? new Promise<never>((_resolve, reject) => {
+        const onAbort = () => {
+          callsSnapshot = snapshotCalls();
+          Atomics.store(interruptView, 0, 1);
+          void worker?.terminate();
+          reject(abortReasonError(externalSignal.reason));
+        };
+        if (externalSignal.aborted) onAbort();
+        else {
+          externalSignal.addEventListener("abort", onAbort, { once: true });
+          removeAbortListener = () => externalSignal.removeEventListener("abort", onAbort);
+        }
+      })
+    : new Promise<never>(() => {});
 
   try {
-    if (externalSignal?.aborted) {
-      throw abortReasonError(externalSignal.reason);
-    }
-
-    const wasm = await (mcpScriptWasm ??= loadMcpScriptWasm());
-    if (externalSignal?.aborted) throw abortReasonError(externalSignal.reason);
+    const wasm = await Promise.race([loadMcpScriptWasm(), timeout, aborted]);
     worker = new Worker(new URL("./mcp-script-worker.mjs", import.meta.url), {
       workerData: { code, wasm, interrupt, outputMaxBytes: MCP_SCRIPT_OUTPUT_MAX_BYTES },
       env: {},
@@ -470,29 +489,6 @@ export async function runMcpScript(
         if (!completed && code !== 0) reject(new Error(`mcpScript worker exited with code ${code}`));
       });
     });
-    const timeoutError = new McpScriptTimeoutError(resolvedTimeoutMs);
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        callsSnapshot = snapshotCalls();
-        timeoutController.abort(timeoutError);
-        Atomics.store(interruptView, 0, 1);
-        void activeWorker.terminate();
-        reject(timeoutError);
-      }, resolvedTimeoutMs);
-    });
-    const aborted = externalSignal
-      ? new Promise<never>((_resolve, reject) => {
-          const onAbort = () => {
-            callsSnapshot = snapshotCalls();
-            Atomics.store(interruptView, 0, 1);
-            void activeWorker.terminate();
-            reject(abortReasonError(externalSignal.reason));
-          };
-          externalSignal.addEventListener("abort", onAbort, { once: true });
-          removeAbortListener = () => externalSignal.removeEventListener("abort", onAbort);
-        })
-      : new Promise<never>(() => {});
-
     await Promise.race([execution, timeout, aborted]);
   } catch (error) {
     if (error instanceof McpScriptTimeoutError) {
