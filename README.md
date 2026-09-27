@@ -55,11 +55,6 @@ Preferred project config: `.mcp.json`
 
 Preferred user-global shared config: `~/.config/mcp/mcp.json` (for all projects). Pi also reads the tool-agnostic global paths `~/.agents/mcp.json` and `~/.agents/mcp/mcp.json` as compatibility inputs.
 
-Adapter-owned files are not additional normal setup choices. They hold adapter settings, compatibility imports, and partial server overrides:
-
-- `<Pi agent dir>/mcp-adapter.json` — global adapter config (`~/.pi/agent/mcp-adapter.json` by default)
-- `.pi/mcp-adapter.json` — project adapter override
-
 The adapter does not read Pi's `<Pi agent dir>/mcp.json` or `.pi/mcp.json` at all. If you previously used either file with this adapter, rename it to `mcp-adapter.json`; the format is unchanged, so a plain `mv` works (merge the files if the target already exists). This leaves `mcp.json` exclusively to Pi's built-in MCP support, so Pi and the adapter never start the same servers.
 
 Host-specific configs are detected and shown by `/mcp-adapter setup` and `pi-mcp-adapter init`, but they are compatibility inputs rather than normal setup paths and are not loaded automatically. The normal `/mcp-adapter` panel does not scan host-specific files when `settings.hostConfigDiscovery` is `"off"`. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `pi-mcp-adapter init --discover-host-configs`. The default is `"off"`; `"prompt"` is available for integrations that want detection without activation. Host configs are lower precedence than every normal config source, and `/mcp-adapter setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.

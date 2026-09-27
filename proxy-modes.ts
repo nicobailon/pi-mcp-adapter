@@ -1163,7 +1163,6 @@ export async function executeCall(
   origin?: "proxy" | "script",
   // Internal consumers own successful data delivery; origin remains approval metadata only.
   internalDelivery?: { onSuccess: (data: unknown) => void },
-  // The Pi tool call that asked for this MCP call; forwarded in the request `_meta`.
   toolCallId?: string,
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
@@ -1173,20 +1172,12 @@ export async function executeCall(
   let autoAuthAttempted = false;
   const prefixMode = state.config.settings?.toolPrefix ?? "server";
   const disabledCallResult = (disabledServer: string, metadata?: ToolMetadata): ProxyToolResult => {
-    if (!metadata) {
-      const message = `Server "${disabledServer}" is ${disabledServerReason(state.blockedProjectServers, disabledServer)}`;
-      return {
-        content: [{ type: "text" as const, text: message }],
-        details: { mode: "call", error: "server_disabled", server: disabledServer, requestedTool: toolName, message },
-      };
-    }
     const message = `Server "${disabledServer}" is ${disabledServerReason(state.blockedProjectServers, disabledServer)}`;
-    const identity = metadata.resourceUri
-      ? { server: disabledServer, resourceUri: metadata.resourceUri }
-      : { server: disabledServer, tool: metadata.originalName };
+    let identity: Record<string, string> = { requestedTool: toolName };
+    if (metadata) identity = metadata.resourceUri ? { resourceUri: metadata.resourceUri } : { tool: metadata.originalName };
     return {
       content: [{ type: "text" as const, text: message }],
-      details: { mode: "call", error: "server_disabled", ...identity, message },
+      details: { mode: "call", error: "server_disabled", server: disabledServer, ...identity, message },
     };
   };
 

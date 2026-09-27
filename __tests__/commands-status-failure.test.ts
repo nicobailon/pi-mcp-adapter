@@ -27,7 +27,7 @@ describe("MCP status failure reasons", () => {
     const output = ui.notify.mock.calls[0][0];
     expect(output).toContain("demo: blocked: project server approval required");
     expect(output).toContain("approve it in a trusted interactive session");
-    expect(output).not.toContain("/mcp enable demo");
+    expect(output).not.toContain("/mcp-adapter enable demo");
   });
 
   it("includes the bounded failure reason as a safe single-line status", async () => {

@@ -27,13 +27,6 @@ class McpScriptTimeoutError extends Error {
   }
 }
 
-class McpScriptOutputBudgetError extends Error {
-  constructor() {
-    super("mcpScript output exceeds the 16 MiB per-script budget");
-    this.name = "McpScriptOutputBudgetError";
-  }
-}
-
 type SearchInput = { query?: unknown; server?: unknown; limit?: unknown; offset?: unknown; searchMode?: unknown; regex?: unknown };
 type DescribeInput = { path?: unknown };
 type WorkerMessage =
@@ -85,10 +78,6 @@ function toContentBlock(value: unknown): ContentBlock {
     }
   }
   return { type: "text", text: formatValue(value) };
-}
-
-function contentBlockBytes(block: ContentBlock): number {
-  return Buffer.byteLength(JSON.stringify(block), "utf8");
 }
 
 function textFromContent(content: ContentBlock[]): string {
@@ -431,7 +420,7 @@ export async function runMcpScript(
       let completed = false;
       const retainOutput = (value: unknown): boolean => {
         const block = toContentBlock(value);
-        const bytes = contentBlockBytes(block);
+        const bytes = Buffer.byteLength(JSON.stringify(block), "utf8");
         if (bytes > MCP_SCRIPT_OUTPUT_MAX_BYTES - outputBytes) return false;
         outputBytes += bytes;
         output.push(block);
@@ -439,7 +428,7 @@ export async function runMcpScript(
       };
       const rejectOutputBudget = () => {
         completed = true;
-        const error = new McpScriptOutputBudgetError();
+        const error = new Error("mcpScript output exceeds the 16 MiB per-script budget");
         callsSnapshot = snapshotCalls();
         timeoutController.abort(error);
         Atomics.store(interruptView, 0, 1);

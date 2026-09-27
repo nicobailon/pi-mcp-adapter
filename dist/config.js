@@ -280,8 +280,7 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
     const discoveredHost = !isExclusiveConfigMode() && hostConfigDiscovery === "on"
         ? loadDiscoveredHostConfigs(cwd)
         : { config: { mcpServers: {} }, serverSources: new Map() };
-    const discoveredHostConfig = discoveredHost.config;
-    let config = discoveredHostConfig;
+    let config = discoveredHost.config;
     for (const [name, source] of discoveredHost.serverSources) {
         if (source.scope === "project")
             projectServers.set(name, { path: source.path });

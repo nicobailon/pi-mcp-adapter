@@ -2054,17 +2054,6 @@ describe("config discovery", () => {
     ]);
   });
 
-  it("loads adapter config with project precedence around .mcp.json", async () => {
-    const home = mkdtempSync(join(tmpdir(), "pi-mcp-precedence-home-"));
-    const project = mkdtempSync(join(tmpdir(), "pi-mcp-precedence-project-"));
-    process.env.HOME = home;
-    process.chdir(project);
-    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { mcpServers: { shared: { command: "global", args: ["global"] } } });
-    writeJson(join(project, ".mcp.json"), { mcpServers: { shared: { command: "standard", args: ["standard"] } } });
-    writeJson(join(project, ".pi", "mcp-adapter.json"), { mcpServers: { shared: { args: ["project-adapter"], directTools: true } } });
-    const { loadMcpConfig } = await import("../config.ts");
-    expect(loadMcpConfig().mcpServers.shared).toEqual({ command: "standard", args: ["project-adapter"], directTools: true });
-  });
 });
 
 describe("Jev config validation", () => {

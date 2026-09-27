@@ -126,7 +126,7 @@ describe("disabled MCP servers", () => {
 
     for (const result of [call, direct, await executeConnect(state, "disabled")]) {
       expect(result.content[0].text).toContain("blocked by project trust");
-      expect(result.content[0].text).not.toContain("/mcp enable");
+      expect(result.content[0].text).not.toContain("/mcp-adapter enable");
     }
   });
 

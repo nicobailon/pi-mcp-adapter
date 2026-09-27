@@ -342,11 +342,7 @@ export function truncateAtWord(text: string, target: number): string {
   return truncated + "...";
 }
 
-/**
- * Request `_meta` key carrying the id of the Pi tool call that made an MCP
- * `tools/call` request, so a server can correlate the request with the host's
- * own record of the call (logs, traces, session transcripts).
- */
+/** Request `_meta` key that lets MCP servers correlate a call with the Pi tool call that made it. */
 export const TOOL_CALL_ID_REQUEST_META_KEY = "pi-mcp-adapter/toolCallId";
 
 export function withToolCallIdMeta(

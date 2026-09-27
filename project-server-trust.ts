@@ -8,6 +8,7 @@ import type { McpConfig, ProjectServerBlock, ProjectServerBlockReason, ServerDef
 
 const APPROVALS_VERSION = 1;
 const APPROVALS_FILE = "mcp-project-approvals.json";
+// Same registry key as config.ts; Symbol.for avoids a runtime import of config.ts.
 const MCP_CONFIG_SOURCE_METADATA = Symbol.for("pi-mcp-adapter/config-source-metadata");
 
 interface ApprovalRecord {
@@ -38,7 +39,6 @@ export function describeProjectServerBlock(reason: ProjectServerBlockReason): st
   }
 }
 
-/** Why a disabled server is unavailable: its project-trust block, or the manual disable. */
 export function disabledServerReason(blocked: ReadonlyMap<string, ProjectServerBlock> | undefined, name: string): string {
   const block = blocked?.get(name);
   return block ? describeProjectServerBlock(block.reason) : `disabled. Run /mcp-adapter enable ${name} and /reload to enable it.`;
@@ -135,11 +135,6 @@ function describeServer(definition: ServerDefinition): string {
   return "(no command or endpoint)";
 }
 
-function block(config: McpConfig, name: string): void {
-  const definition = config.mcpServers[name];
-  if (definition) config.mcpServers[name] = { ...definition, disabled: true };
-}
-
 export async function applyProjectServerTrust(
   loaded: LoadedMcpConfig,
   ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "mode" | "ui" | "isProjectTrusted">,
@@ -165,31 +160,22 @@ export async function applyProjectServerTrust(
       entry.projectRoot === projectRoot && entry.serverName === name && entry.definitionHash === definitionHash);
     if (projectTrusted && (approved || (!ctx.hasUI && loaded.projectServerPolicy === "allow"))) continue;
 
+    let reason: ProjectServerBlockReason;
     if (!projectTrusted) {
-      const reason = "untrusted" as const;
-      block(config, name);
-      blockedServers.set(name, { reason, source });
-      continue;
-    }
-
-    if (!ctx.hasUI) {
-      const reason = "approval-required" as const;
-      block(config, name);
-      blockedServers.set(name, { reason, source });
-      continue;
-    }
-
-    const allowed = await ctx.ui.confirm(
+      reason = "untrusted";
+    } else if (!ctx.hasUI) {
+      reason = "approval-required";
+    } else if (await ctx.ui.confirm(
       `Allow project MCP server “${name}”?`,
       `Source: ${source.path}\nEndpoint: ${describeServer(definition)}\n\nThis server can run local commands or make network requests with your user permissions.`,
-    );
-    if (!allowed) {
-      const reason = "denied" as const;
-      block(config, name);
-      blockedServers.set(name, { reason, source });
+    )) {
+      approveProjectServer(projectRoot, name, definition);
       continue;
+    } else {
+      reason = "denied";
     }
-    approveProjectServer(projectRoot, name, definition);
+    config.mcpServers[name] = { ...definition, disabled: true };
+    blockedServers.set(name, { reason, source });
   }
 
   return { config, blockedServers };

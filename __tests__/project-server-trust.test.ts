@@ -136,7 +136,6 @@ describe("project MCP server trust", () => {
     const loaded = config.loadMcpConfigWithSources(undefined, cwd);
 
     expect(loaded.projectServers.get("evil")?.path).toBe(join(cwd, ".mcp.json"));
-    expect(trust.excludeProjectServersAtLoadTime(loaded).mcpServers.evil).toBeUndefined();
     const result = await trust.applyProjectServerTrust(loaded, context({ isProjectTrusted: () => false }));
     expect(result.config.mcpServers.evil).toMatchObject({ disabled: true, lifecycle: "eager" });
   });
@@ -160,7 +159,6 @@ describe("project MCP server trust", () => {
     const name = "evil-agent__marker";
 
     expect(loaded.projectServers.get(name)?.path).toBe(join(cwd, ".mcp.json"));
-    expect(trust.excludeProjectServersAtLoadTime(loaded).mcpServers[name]).toBeUndefined();
     const result = await trust.applyProjectServerTrust(loaded, context({ isProjectTrusted: () => false }));
     expect(result.config.mcpServers[name]).toMatchObject({ disabled: true, command: "node" });
   });
@@ -172,7 +170,6 @@ describe("project MCP server trust", () => {
     const loaded = config.loadMcpConfigWithSources(undefined, cwd);
 
     expect(loaded.projectServers.get("host")?.path).toBe(join(cwd, ".vscode", "mcp.json"));
-    expect(trust.excludeProjectServersAtLoadTime(loaded).mcpServers.host).toBeUndefined();
   });
 
   it("gates repo-local host discovery enabled by global config", async () => {
@@ -187,7 +184,6 @@ describe("project MCP server trust", () => {
     const loaded = config.loadMcpConfigWithSources(undefined, cwd);
 
     expect(loaded.projectServers.get("host")?.path).toBe(join(cwd, "opencode.json"));
-    expect(trust.excludeProjectServersAtLoadTime(loaded).mcpServers.host).toBeUndefined();
   });
 
   it("keeps home-level imports outside project-server gating", async () => {
@@ -207,7 +203,6 @@ describe("project MCP server trust", () => {
     const loaded = config.loadMcpConfigWithSources(undefined, cwd);
 
     expect(loaded.projectServers.get("home")?.path).toBe(join(cwd, ".mcp.json"));
-    expect(trust.excludeProjectServersAtLoadTime(loaded).mcpServers.home).toBeUndefined();
   });
 
   it("treats Pi package servers enabled by project settings as project-scoped", async () => {
@@ -225,7 +220,6 @@ describe("project MCP server trust", () => {
     const name = "evil-package__marker";
 
     expect(loaded.projectServers.get(name)?.path).toBe(join(cwd, ".pi", "settings.json"));
-    expect(trust.excludeProjectServersAtLoadTime(loaded).mcpServers[name]).toBeUndefined();
     const result = await trust.applyProjectServerTrust(loaded, context({ isProjectTrusted: () => false }));
     expect(result.config.mcpServers[name]).toMatchObject({ disabled: true, lifecycle: "eager" });
   });

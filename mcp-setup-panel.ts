@@ -298,7 +298,6 @@ class McpSetupPanelView implements Component {
         return this.formatPreview([
           action.target === "project" ? "Project target: .mcp.json" : "Global target: ~/.config/mcp/mcp.json",
           "Known server presets and starter configs will be written to the selected normal MCP setup path.",
-          "mcp-adapter.json files hold compatibility and adapter-only override state; Pi mcp.json files are reserved for built-in MCP and are not read by the adapter.",
         ], previewW);
       case "view-example":
         return this.formatPreview([

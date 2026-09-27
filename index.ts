@@ -1688,7 +1688,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const allowed = trusted && (ctx.hasUI
         ? await ctx.ui.confirm(
             `Install project MCP server “${serverName}”?`,
-            `Endpoint: ${normalized.url}\n\nThis project server will be able to make network requests with your user permissions.`,
+            `Endpoint: ${normalized.url}\n\nThis project server can make network requests with your user permissions.`,
           )
         : targetState.config.settings?.projectServers === "allow");
       if (!allowed) {

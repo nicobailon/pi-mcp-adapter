@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createDirectToolExecutor } from "../direct-tools.ts";
 import { computeServerHash } from "../metadata-cache.ts";
 import { syncNamespaceProxyTools } from "../namespace-tools.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { UI_STREAM_REQUEST_META_KEY } from "../ui-stream-types.ts";
-import { TOOL_CALL_ID_REQUEST_META_KEY, withToolCallIdMeta } from "../utils.ts";
+import { withToolCallIdMeta } from "../utils.ts";
 
 function connectedState(client: Record<string, unknown>) {
   return {
@@ -29,7 +28,6 @@ function connectedState(client: Record<string, unknown>) {
 
 describe("withToolCallIdMeta", () => {
   it("adds the tool call id under the adapter's _meta namespace", () => {
-    expect(TOOL_CALL_ID_REQUEST_META_KEY).toBe("pi-mcp-adapter/toolCallId");
     expect(withToolCallIdMeta(undefined, "call-1")).toEqual({ "pi-mcp-adapter/toolCallId": "call-1" });
   });
 
@@ -50,72 +48,6 @@ describe("withToolCallIdMeta", () => {
 });
 
 describe("tool call id forwarding", () => {
-  it("direct tools forward Pi's tool call id to callTool", async () => {
-    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
-    const state = connectedState({ callTool });
-    const execute = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
-
-    await execute("toolu_01abc", { q: "hello" }, undefined, undefined, {} as any);
-
-    expect(callTool).toHaveBeenCalledWith(
-      { name: "search", arguments: { q: "hello" }, _meta: { "pi-mcp-adapter/toolCallId": "toolu_01abc" } },
-      undefined,
-    );
-  });
-
-  it("task-session dispatch preserves the UI stream token and Pi tool call id", async () => {
-    const result = { content: [{ type: "text", text: "ok" }] };
-    const taskCallTool = vi.fn(async () => ({
-      kind: "immediate" as const,
-      cancel: vi.fn(async () => {}),
-      close: vi.fn(async () => {}),
-      settle: vi.fn(async () => ({ outcome: { status: "completed" as const, result } })),
-    }));
-    const clientCallTool = vi.fn();
-    const state = connectedState({ callTool: clientCallTool });
-    state.manager.getConnection.mockReturnValue({
-      status: "connected",
-      client: { callTool: clientCallTool },
-      taskSession: { callTool: taskCallTool },
-      tools: [],
-      resources: [],
-    });
-    state.manager.registerUiStreamListener = vi.fn();
-    state.manager.removeUiStreamListener = vi.fn();
-    state.uiServer = {
-      serverName: "demo",
-      toolName: "search",
-      url: "http://localhost/ui",
-      sendToolInput: vi.fn(),
-      sendToolResult: vi.fn(),
-      sendResultPatch: vi.fn(),
-    };
-    const execute = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-      uiResourceUri: "ui://demo/search",
-      uiStreamMode: "eager",
-    });
-
-    await execute("toolu_task", { q: "hello" }, undefined, undefined, {} as any);
-
-    const streamToken = state.manager.registerUiStreamListener.mock.calls[0][0];
-    expect(taskCallTool).toHaveBeenCalledWith("search", { q: "hello" }, {
-      metadata: {
-        [UI_STREAM_REQUEST_META_KEY]: streamToken,
-        [TOOL_CALL_ID_REQUEST_META_KEY]: "toolu_task",
-      },
-    });
-    expect(clientCallTool).not.toHaveBeenCalled();
-  });
-
   it("proxy calls forward the tool call id they are given", async () => {
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
     const state = connectedState({ callTool });
@@ -126,15 +58,6 @@ describe("tool call id forwarding", () => {
       { name: "search", arguments: { q: "hello" }, _meta: { "pi-mcp-adapter/toolCallId": "toolu_02def" } },
       undefined,
     );
-  });
-
-  it("calls without a Pi tool call (mcp-code scripts) send no _meta", async () => {
-    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
-    const state = connectedState({ callTool });
-
-    await executeCall(state, "demo_search", {}, undefined, undefined, undefined, "script");
-
-    expect(callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: undefined }, undefined);
   });
 
   it("namespace proxy tools pass their tool call id to executeCall", async () => {

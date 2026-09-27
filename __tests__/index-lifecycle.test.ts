@@ -2487,7 +2487,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.loadMcpConfig).toHaveBeenCalledWith("/argv.json");
   });
 
-  it("warns once at session start and surfaces the legacy-config notice in both status paths", async () => {
+  it("warns once at session start and surfaces the legacy-config notice in status", async () => {
     const notice = "pi-mcp-adapter no longer reads /project/.pi/mcp.json. Move it with: mv old new";
     mocks.getLegacyMcpMigrationNotices.mockReturnValue([notice]);
     const state = createState();
@@ -2501,12 +2501,8 @@ describe("mcpAdapter session lifecycle", () => {
     expect(ui.notify).toHaveBeenCalledTimes(1);
     expect(ui.notify).toHaveBeenCalledWith(notice, "warning");
 
-    const proxy = api.registerTool.mock.calls.find(([tool]: any[]) => tool.name === "mcp")?.[0];
-    await proxy.execute("status", {});
+    await registeredTool(api, "mcp").execute("status", {});
     expect(mocks.executeStatus).toHaveBeenCalledWith(expect.objectContaining({ migrationNotices: [notice] }));
-    const command = api.registerCommand.mock.calls.find(([name]: any[]) => name === "mcp")?.[1];
-    await command.handler("status", { hasUI: true, ui });
-    expect(mocks.showStatus).toHaveBeenCalledWith(expect.objectContaining({ migrationNotices: [notice] }), expect.anything());
   });
 
   it("limits legacy config checks to adapter-only keys when Pi's built-in MCP command is detected", async () => {

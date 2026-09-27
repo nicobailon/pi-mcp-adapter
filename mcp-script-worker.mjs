@@ -30,10 +30,6 @@ function postError(error) {
   post({ type: "error", message: truncateErrorMessage(error) });
 }
 
-function contentBlockBytes(block) {
-  return Buffer.byteLength(JSON.stringify(block), "utf8");
-}
-
 /** Silence QuickJS's WASI stdout/stderr so diagnostics cannot corrupt the host TUI. */
 function discardOutput(memory) {
   return {
@@ -181,7 +177,7 @@ async function main() {
   let outputExceeded = false;
   const postOutput = (message, block) => {
     if (outputExceeded) return;
-    const bytes = contentBlockBytes(block);
+    const bytes = Buffer.byteLength(JSON.stringify(block), "utf8");
     if (bytes > workerData.outputMaxBytes - outputBytes) {
       outputExceeded = true;
       postError("mcpScript output exceeds the 16 MiB per-script budget");
