@@ -86,6 +86,26 @@ describe("mcp-panel server disable toggle", () => {
     panel.dispose();
   });
 
+  it("name search finds a disabled server without cached tools so it can be enabled", () => {
+    const config: McpConfig = {
+      mcpServers: {
+        alpha: { command: "npx", args: ["-y", "alpha-mcp"] },
+        playwright: { command: "npx", args: ["-y", "pw-mcp"], disabled: true },
+      },
+    };
+    const { panel, results } = openPanel(config);
+
+    for (const ch of "play") panel.handleInput(ch);
+    const output = stripAnsi(panel.render(120).join("\n"));
+    expect(output).toContain("playwright");
+    expect(output).not.toContain("alpha");
+
+    panel.handleInput(CTRL_D);
+    panel.handleInput(CTRL_S);
+    expect(results[0]?.disabledChanges.get("playwright")).toBe(false);
+    panel.dispose();
+  });
+
   it("ctrl+d on a tool row does not toggle the server", () => {
     const config: McpConfig = {
       mcpServers: {

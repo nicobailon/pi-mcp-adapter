@@ -612,12 +612,13 @@ class McpPanel {
 
     if (query && !this.authOnly) {
       this.visibleItems = this.visibleItems.filter((item) => {
-        if (item.type === "server") {
-          return this.visibleItems.some(
-            (other) => other.type === "tool" && other.serverIndex === item.serverIndex,
-          );
-        }
-        return true;
+        if (item.type !== "server") return true;
+        const server = this.servers[item.serverIndex];
+        // Servers without cached tools (disabled, never connected) can only match by name.
+        if (mode === "name" && server && fuzzyScore(query, server.name) > 0) return true;
+        return this.visibleItems.some(
+          (other) => other.type === "tool" && other.serverIndex === item.serverIndex,
+        );
       });
     }
   }
