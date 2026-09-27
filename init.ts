@@ -3,6 +3,7 @@ import type { McpExtensionState } from "./state.ts";
 import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata, type ToolSelectorCandidateIndex } from "./types.ts";
 import { existsSync } from "node:fs";
 import { cloneMcpConfig, loadMcpConfig, resolveConfiguredClaudePluginMcp } from "./config.ts";
+import { applyProjectServerTrustToConfig, describeProjectServerBlock } from "./project-server-trust.ts";
 import { ConsentManager } from "./consent-manager.ts";
 import { McpLifecycleManager } from "./lifecycle.ts";
 import {
@@ -138,9 +139,10 @@ export async function initializeMcp(
   }
   const ui = rawUi ? createOwnedUi(rawUi, owner) : undefined;
   const runtimeSignal = combineAbortSignals(owner.signal, initialSignal);
-  const config = options.config !== undefined
-    ? resolveConfiguredClaudePluginMcp(cloneMcpConfig(options.config), cwd)
-    : loadMcpConfig(configPath, cwd);
+  const trustResult = options.config !== undefined
+    ? { config: resolveConfiguredClaudePluginMcp(cloneMcpConfig(options.config), cwd), blockedServers: new Map() }
+    : await applyProjectServerTrustToConfig(loadMcpConfig(configPath, cwd), ctx);
+  const config = trustResult.config;
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd, config.settings?.oauthCredentialStore);
 
   const ownsOAuthRuntime = options.oauthRuntime === undefined;
@@ -209,6 +211,7 @@ export async function initializeMcp(
     failureTracker,
     failureMessages,
     approvedToolCalls,
+    blockedProjectServers: trustResult.blockedServers,
     approvedServers: new Map(),
     ...(persistSessionApproval !== undefined ? { persistSessionApproval } : {}),
     ...(sessionManager !== undefined ? { sessionManager } : {}),
@@ -269,6 +272,11 @@ export async function initializeMcp(
   const serverEntries = allServerEntries.filter(([, definition]) => !isServerDisabled(definition));
   if (serverEntries.length === 0 && allServerEntries.length > 0 && hasUI) {
     ui?.notify(`MCP: All ${allServerEntries.length} server(s) are disabled`, "info");
+  }
+  if (trustResult.blockedServers.size > 0) {
+    const summary = [...trustResult.blockedServers].map(([name, entry]) => `${name} (${describeProjectServerBlock(entry.reason)})`).join(", ");
+    if (hasUI) ui?.notify(`MCP: Project servers blocked: ${summary}`, "warning");
+    else console.warn(`MCP: Project servers blocked: ${summary}`);
   }
 
   const idleSetting = typeof config.settings?.idleTimeout === "number" ? config.settings.idleTimeout : 10;
@@ -649,7 +657,9 @@ export function updateStatusBar(state: McpExtensionState): void {
     const definition = state.config.mcpServers[name];
     return connection.status === "connected" && definition !== undefined && !isServerDisabled(definition);
   }).length;
-  const formattedStatus = formatMcpFooterStatus(state.config, enabledCount, disabledCount, connectedCount);
+  const formattedStatus = state.blockedProjectServers?.size
+    ? formatMcpStatus(state.config, `${enabledCount} ${enabledCount === 1 ? "server" : "servers"} enabled (${state.blockedProjectServers.size} blocked by project trust)`)
+    : formatMcpFooterStatus(state.config, enabledCount, disabledCount, connectedCount);
   if (formattedStatus === undefined) {
     ui.setStatus("mcp", undefined);
     return;

@@ -43,6 +43,27 @@ function createState() {
 }
 
 describe("MCP status snapshots", () => {
+  it("labels trust-blocked project servers without exposing their definitions", () => {
+    const state = createState();
+    state.blockedProjectServers = new Map([["disabled", {
+      reason: "untrusted",
+      source: { path: "/project/.mcp.json" },
+    }]]);
+
+    const blocked = createMcpStatusSnapshot(state).servers.find(server => server.name === "disabled");
+    expect(blocked).toMatchObject({
+      status: "blocked",
+      blockedReason: expect.stringContaining("blocked by project trust"),
+      disabled: true,
+      toolCount: 0,
+    });
+    expect(blocked).not.toHaveProperty("source");
+
+    const proxyText = executeStatus(state).content[0]?.text ?? "";
+    expect(proxyText).toContain("disabled (blocked by project trust");
+    expect(proxyText).not.toContain("disabled)\n");
+  });
+
   it("projects every status without connecting or exposing configuration", () => {
     const state = createState();
     state.manager.getConnection.mockImplementation((name: string) => {

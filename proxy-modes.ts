@@ -23,6 +23,7 @@ import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { semanticSearch, type SemanticSearchBackend, type SemanticSearchEvaluator } from "./semantic-search.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
+import { describeProjectServerBlock } from "./project-server-trust.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -501,15 +502,16 @@ export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
 }
 
 export function executeStatus(state: McpExtensionState): ProxyToolResult {
-  const servers: Array<{ name: string; status: string; listenState: string; catalogStale?: boolean; toolCount: number; failedAgo: number | null; disabled?: boolean }> = [];
+  const servers: Array<{ name: string; status: string; listenState: string; catalogStale?: boolean; toolCount: number; failedAgo: number | null; disabled?: boolean; blockedReason?: string }> = [];
 
   for (const name of Object.keys(state.config.mcpServers)) {
     const definition = state.config.mcpServers[name];
     const disabled = isServerDisabled(definition);
+    const block = state.blockedProjectServers?.get(name);
     const connection = disabled ? undefined : state.manager.getConnection(name);
     const metadata = disabled ? undefined : state.toolMetadata.get(name);
     const failedAgo = disabled ? null : getFailureAgeSeconds(state, name);
-    let status = disabled ? "disabled" : "not connected";
+    let status = block ? "blocked" : disabled ? "disabled" : "not connected";
     if (!disabled && connection?.status === "connected") {
       status = "connected";
     } else if (!disabled && connection?.status === "needs-auth") {
@@ -531,18 +533,25 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       toolCount,
       failedAgo,
       ...(disabled ? { disabled: true } : {}),
+      ...(block ? { blockedReason: describeProjectServerBlock(block.reason) } : {}),
     });
   }
 
-  const disabledCount = servers.filter(s => s.disabled).length;
+  const blockedCount = servers.filter(s => s.status === "blocked").length;
+  const disabledCount = servers.filter(s => s.disabled && s.status !== "blocked").length;
   const enabledServers = servers.filter(s => !s.disabled);
   const totalTools = enabledServers.reduce((sum, s) => sum + s.toolCount, 0);
   const connectedCount = enabledServers.filter(s => s.status === "connected").length;
 
   let text = `MCP: ${connectedCount}/${enabledServers.length} servers, ${totalTools} tools`;
+  if (blockedCount > 0) text += ` (${blockedCount} blocked)`;
   if (disabledCount > 0) text += ` (${disabledCount} disabled)`;
   text += "\n\n";
   for (const server of servers) {
+    if (server.status === "blocked") {
+      text += `⊘ ${server.name} (${server.blockedReason})\n`;
+      continue;
+    }
     if (server.disabled) {
       text += `⊘ ${server.name} (disabled)\n`;
       continue;

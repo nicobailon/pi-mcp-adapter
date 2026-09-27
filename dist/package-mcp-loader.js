@@ -4,8 +4,10 @@ import { getAgentDir, getConfigDirName } from "./agent-dir.js";
 import { parseJsonWithComments, resolveContainedPath, resolveRealContainedPath } from "./utils.js";
 export function loadPackageMcpConfigs(cwd = process.cwd()) {
     const mcpServers = {};
+    const serverSources = new Map();
     const seen = new Set();
-    for (const packageRoot of getConfiguredPackageRoots(cwd)) {
+    for (const packageSource of getConfiguredPackageRoots(cwd)) {
+        const { packageRoot } = packageSource;
         const manifest = readPackageManifest(packageRoot);
         if (!manifest || typeof manifest.name !== "string" || !manifest.name)
             continue;
@@ -32,10 +34,11 @@ export function loadPackageMcpConfigs(cwd = process.cwd()) {
                 packageServers.add(normalizedName);
                 seen.add(normalizedName);
                 mcpServers[normalizedName] = server;
+                serverSources.set(normalizedName, packageSource);
             }
         }
     }
-    return { mcpServers };
+    return { mcpServers, serverSources };
 }
 function getConfiguredPackageRoots(cwd) {
     const roots = [];
@@ -63,8 +66,9 @@ function getConfiguredPackageRoots(cwd) {
             if (!source)
                 throw new Error(`${scope} Pi settings ${settingsPath} package entries must be strings or objects with a string source`);
             const root = resolvePackageRoot(source, scope, cwd);
-            if (root && !roots.includes(root))
-                roots.push(root);
+            if (root && !roots.some(entry => entry.packageRoot === root)) {
+                roots.push({ packageRoot: root, scope, settingsPath });
+            }
         }
     }
     return roots;

@@ -98,7 +98,17 @@ export declare function getMcpDiscoverySummary(overridePath?: string, cwd?: stri
     includeHostConfigs?: boolean;
 }): McpDiscoverySummary;
 export declare function cloneMcpConfig(config: McpConfig): McpConfig;
+export interface ProjectServerSource {
+    path: string;
+}
+export interface LoadedMcpConfig {
+    config: McpConfig;
+    projectServers: Map<string, ProjectServerSource>;
+    projectServerPolicy: "ask" | "allow";
+}
+export declare const MCP_CONFIG_SOURCE_METADATA: unique symbol;
 export declare function loadMcpConfig(overridePath?: string, cwd?: string): McpConfig;
+export declare function loadMcpConfigWithSources(overridePath?: string, cwd?: string): LoadedMcpConfig;
 export declare function resolveConfiguredClaudePluginMcp(config: McpConfig, cwd?: string): McpConfig;
 export declare function discoverConfiguredClaudePluginSkills(config: McpConfig, cwd?: string): string[];
 export declare function writeSharedConfigText(filePath: string, text: string): void;

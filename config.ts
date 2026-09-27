@@ -323,34 +323,116 @@ export function cloneMcpConfig(config: McpConfig): McpConfig {
   return cloned;
 }
 
+export interface ProjectServerSource {
+  path: string;
+}
+
+export interface LoadedMcpConfig {
+  config: McpConfig;
+  projectServers: Map<string, ProjectServerSource>;
+  projectServerPolicy: "ask" | "allow";
+}
+
+interface ImportedServerSource {
+  path: string;
+  scope: "user" | "project";
+}
+
+interface LoadedHostConfig {
+  config: McpConfig;
+  serverSources: Map<string, ImportedServerSource>;
+}
+
+export const MCP_CONFIG_SOURCE_METADATA = Symbol.for("pi-mcp-adapter/config-source-metadata");
+
 export function loadMcpConfig(overridePath?: string, cwd = process.cwd()): McpConfig {
+  const loaded = loadMcpConfigWithSources(overridePath, cwd);
+  Object.defineProperty(loaded.config, MCP_CONFIG_SOURCE_METADATA, {
+    value: { projectServers: loaded.projectServers, projectServerPolicy: loaded.projectServerPolicy },
+    enumerable: false,
+  });
+  return loaded.config;
+}
+
+export function loadMcpConfigWithSources(overridePath?: string, cwd = process.cwd()): LoadedMcpConfig {
   const sourceSpecs = getConfigSources(overridePath, cwd);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
+  const projectServers = new Map<string, ProjectServerSource>();
+  let projectServerPolicy: "ask" | "allow" = "ask";
+  let projectAgentPluginSource: ProjectServerSource | undefined;
+  let projectClaudePluginSource: ProjectServerSource | undefined;
   // Host files are a lower-precedence fallback. This ordering means an opt-in
   // discovery cannot override a shared or Pi-owned definition, and all normal
   // URL-bound credential stripping remains in mergeServerMaps.
-  let config: McpConfig = !isExclusiveConfigMode() && hostConfigDiscovery === "on"
+  const discoveredHost = !isExclusiveConfigMode() && hostConfigDiscovery === "on"
     ? loadDiscoveredHostConfigs(cwd)
-    : { mcpServers: {} };
+    : { config: { mcpServers: {} }, serverSources: new Map<string, ImportedServerSource>() };
+  const discoveredHostConfig = discoveredHost.config;
+  let config: McpConfig = discoveredHostConfig;
+
+  for (const [name, source] of discoveredHost.serverSources) {
+    if (source.scope === "project") projectServers.set(name, { path: source.path });
+  }
 
   for (const source of sourceSpecs) {
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
     if (!loaded) continue;
-    config = mergeConfigs(config, expandImports(loaded, cwd));
+    const expandedImport = expandImports(loaded, cwd);
+    const expanded = expandedImport.config;
+    const sourceRef = { path: source.readPath };
+    if (Object.hasOwn(expanded.settings ?? {}, "agentPluginPaths")) {
+      projectAgentPluginSource = source.scope === "project" ? sourceRef : undefined;
+    }
+    if (expanded.claudePlugins !== undefined) {
+      projectClaudePluginSource = source.scope === "project" ? sourceRef : undefined;
+    }
+    if (source.scope === "project") {
+      // Imports expanded by a project file are project-scoped even when they read home-level files.
+      for (const name of Object.keys(expanded.mcpServers)) projectServers.set(name, sourceRef);
+      if (expanded.settings?.projectServers !== undefined) {
+        console.warn(`Ignoring settings.projectServers in project config ${source.readPath}; set it in the user-global MCP config instead`);
+        const { projectServers: _ignored, ...settings } = expanded.settings;
+        expanded.settings = settings;
+      }
+    } else if (expanded.settings?.projectServers === "allow" || expanded.settings?.projectServers === "ask") {
+      projectServerPolicy = expanded.settings.projectServers;
+    }
+    for (const [name, importedSource] of expandedImport.serverSources) {
+      if (importedSource.scope === "project") projectServers.set(name, { path: importedSource.path });
+    }
+    config = mergeConfigs(config, expanded);
   }
 
-  if (isExclusiveConfigMode()) return resolveConfiguredClaudePluginMcp(config, cwd);
+  if (isExclusiveConfigMode()) {
+    return { config: resolveConfiguredClaudePluginMcp(config, cwd), projectServers, projectServerPolicy };
+  }
 
   const packageConfig = loadPackageMcpConfigs(cwd);
   const pluginConfig = loadAgentPluginConfigs(config.settings?.agentPluginPaths, cwd);
+  if (projectAgentPluginSource) {
+    for (const name of Object.keys(pluginConfig.mcpServers)) projectServers.set(name, projectAgentPluginSource);
+  }
   const packageServers = Object.fromEntries(
     Object.entries(packageConfig.mcpServers).filter(([name]) => !Object.hasOwn(pluginConfig.mcpServers, name)),
   );
+  for (const name of Object.keys(packageServers)) {
+    const source = packageConfig.serverSources.get(name);
+    if (source?.scope === "project") projectServers.set(name, { path: source.settingsPath });
+  }
   const higherPrecedenceConfig = mergeConfigs(
     { mcpServers: packageServers },
     mergeConfigs(pluginConfig, config),
   );
-  return mergeClaudePluginMcpDefaults(config.claudePlugins, higherPrecedenceConfig, cwd);
+  const claudePluginServers = new Set<string>();
+  const mergedConfig = mergeClaudePluginMcpDefaults(config.claudePlugins, higherPrecedenceConfig, cwd, claudePluginServers);
+  if (projectClaudePluginSource) {
+    for (const name of claudePluginServers) projectServers.set(name, projectClaudePluginSource);
+  }
+  return {
+    config: mergedConfig,
+    projectServers,
+    projectServerPolicy,
+  };
 }
 
 export function resolveConfiguredClaudePluginMcp(config: McpConfig, cwd = process.cwd()): McpConfig {
@@ -365,6 +447,7 @@ function mergeClaudePluginMcpDefaults(
   plugins: ClaudePluginConfig[] | undefined,
   higherPrecedenceConfig: McpConfig,
   cwd: string,
+  loadedServerNames?: Set<string>,
 ): McpConfig {
   const pluginServers = loadClaudePluginBundles(plugins, cwd, validateConfig, { mcp: true, skills: false }).mcpServers;
   const higherNamesByNamespace = new Map(
@@ -376,6 +459,7 @@ function mergeClaudePluginMcpDefaults(
     console.warn(`Claude plugin MCP server "${name}" is shadowed by higher-precedence server "${higherName}" because both normalize to the same namespace`);
     return false;
   }));
+  for (const name of Object.keys(defaults)) loadedServerNames?.add(name);
   return applySettingDefaults(mergeConfigs({ mcpServers: defaults }, higherPrecedenceConfig));
 }
 
@@ -404,16 +488,22 @@ function getConfiguredHostConfigDiscovery(overridePath?: string, cwd = process.c
   return configured;
 }
 
-function loadDiscoveredHostConfigs(cwd: string): McpConfig {
+function loadDiscoveredHostConfigs(cwd: string): LoadedHostConfig {
   let config: McpConfig = { mcpServers: {} };
+  const serverSources = new Map<string, ImportedServerSource>();
   for (const importKind of Object.keys(IMPORT_PATHS) as ImportKind[]) {
     const imported = loadImportedConfig(importKind, cwd, `Failed to discover imported MCP config from ${importKind}:`);
     if (!imported) continue;
+    const servers = extractServers(imported.value, importKind);
     config = mergeConfigs(config, {
-      mcpServers: extractServers(imported.value, importKind),
+      mcpServers: servers,
     });
+    for (const name of Object.keys(servers)) {
+      const source = imported.serverSources.get(name);
+      if (source?.scope === "project" || !serverSources.has(name)) serverSources.set(name, source ?? imported.source);
+    }
   }
-  return config;
+  return { config, serverSources };
 }
 
 function getConfigConflicts(
@@ -734,10 +824,11 @@ function mergeImports(left: ImportKind[] | undefined, right: ImportKind[] | unde
   return [...new Set(merged)];
 }
 
-function expandImports(config: McpConfig, cwd = process.cwd()): McpConfig {
-  if (!config.imports?.length) return config;
+function expandImports(config: McpConfig, cwd = process.cwd()): LoadedHostConfig {
+  if (!config.imports?.length) return { config, serverSources: new Map() };
 
   const importedServers: Record<string, ServerEntry> = {};
+  const serverSources = new Map<string, ImportedServerSource>();
   for (const importKind of config.imports) {
     const imported = loadImportedConfig(importKind, cwd, `Failed to import MCP config from ${importKind}:`);
     if (!imported) continue;
@@ -746,20 +837,25 @@ function expandImports(config: McpConfig, cwd = process.cwd()): McpConfig {
     for (const [name, definition] of Object.entries(servers)) {
       if (!importedServers[name]) {
         importedServers[name] = definition;
+        serverSources.set(name, imported.serverSources.get(name) ?? imported.source);
       }
     }
   }
 
   return {
-    imports: config.imports,
-    ...(config.settings !== undefined ? { settings: config.settings } : {}),
-    ...(config.claudePlugins !== undefined ? { claudePlugins: config.claudePlugins } : {}),
-    mcpServers: mergeServerMaps(importedServers, config.mcpServers),
+    config: {
+      imports: config.imports,
+      ...(config.settings !== undefined ? { settings: config.settings } : {}),
+      ...(config.claudePlugins !== undefined ? { claudePlugins: config.claudePlugins } : {}),
+      mcpServers: mergeServerMaps(importedServers, config.mcpServers),
+    },
+    serverSources,
   };
 }
 
-function resolveImportCandidates(importKind: ImportKind, cwd: string): string[] {
+function resolveImportCandidates(importKind: ImportKind, cwd: string): ImportedServerSource[] {
   return (IMPORT_PATHS[importKind] ?? []).map((candidate) => {
+    const scope = candidate.startsWith(".") ? "project" : "user";
     if (importKind === "opencode" && candidate === "./opencode.json") {
       const start = resolve(cwd);
       let gitRoot: string | undefined;
@@ -774,15 +870,15 @@ function resolveImportCandidates(importKind: ImportKind, cwd: string): string[] 
         current = parent;
       }
 
-      if (!gitRoot) return join(start, "opencode.json");
+      if (!gitRoot) return { path: join(start, "opencode.json"), scope };
       current = start;
       while (true) {
         const projectConfig = join(current, "opencode.json");
-        if (existsSync(projectConfig) || current === gitRoot) return projectConfig;
+        if (existsSync(projectConfig) || current === gitRoot) return { path: projectConfig, scope };
         current = dirname(current);
       }
     }
-    return candidate.startsWith(".") ? resolve(cwd, candidate) : candidate;
+    return { path: candidate.startsWith(".") ? resolve(cwd, candidate) : candidate, scope };
   });
 }
 
@@ -795,12 +891,14 @@ function loadImportedConfig(
   importKind: ImportKind,
   cwd: string,
   warningPrefix: string,
-): { path: string; value: unknown } | null {
+): { path: string; value: unknown; source: ImportedServerSource; serverSources: Map<string, ImportedServerSource> } | null {
   if (importKind === "opencode") {
     let merged: Record<string, unknown> = {};
-    let highestPrecedencePath: string | undefined;
+    let highestPrecedenceSource: ImportedServerSource | undefined;
+    const serverSources = new Map<string, ImportedServerSource>();
 
-    for (const path of resolveImportCandidates(importKind, cwd)) {
+    for (const source of resolveImportCandidates(importKind, cwd)) {
+      const { path } = source;
       if (!existsSync(path)) continue;
 
       try {
@@ -827,21 +925,39 @@ function loadImportedConfig(
             }];
           }));
           merged = mergeOpenCodeConfigs(merged, { ...imported, mcp: normalized });
-          highestPrecedencePath = path;
+          for (const name of Object.keys(normalized)) serverSources.set(name, source);
+          highestPrecedenceSource = source;
         }
       } catch (error) {
         console.warn(warningPrefix, error);
       }
     }
 
-    return highestPrecedencePath ? { path: highestPrecedencePath, value: merged } : null;
+    if (!highestPrecedenceSource) return null;
+    const finalNames = new Set(Object.keys(extractServers(merged, importKind)));
+    for (const name of serverSources.keys()) {
+      if (!finalNames.has(name)) serverSources.delete(name);
+    }
+    return {
+      path: highestPrecedenceSource.path,
+      value: merged,
+      source: highestPrecedenceSource,
+      serverSources,
+    };
   }
 
-  for (const path of resolveImportCandidates(importKind, cwd)) {
+  for (const source of resolveImportCandidates(importKind, cwd)) {
+    const { path } = source;
     if (!existsSync(path)) continue;
 
     try {
-      return { path, value: readImportedConfig(path) };
+      const value = readImportedConfig(path);
+      return {
+        path,
+        value,
+        source,
+        serverSources: new Map(Object.keys(extractServers(value, importKind)).map(name => [name, source])),
+      };
     } catch (error) {
       console.warn(warningPrefix, error);
     }
@@ -1308,13 +1424,13 @@ export function writeProjectServerDisabledOverride(
     for (const source of getConfigSources(overridePath, cwd)) {
       if (source.readPath === filePath) continue;
       const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-      if (loaded) lowerConfig = mergeConfigs(lowerConfig, expandImports(loaded, cwd));
+      if (loaded) lowerConfig = mergeConfigs(lowerConfig, expandImports(loaded, cwd).config);
     }
     if (raw.imports !== undefined) {
       if (!Array.isArray(raw.imports) || raw.imports.some((kind) => typeof kind !== "string" || !Object.hasOwn(IMPORT_PATHS, kind))) {
         throw new Error(`Failed to update project MCP override at ${filePath}: imports contains an unsupported config kind`);
       }
-      lowerConfig = mergeConfigs(lowerConfig, expandImports({ mcpServers: {}, imports: raw.imports as ImportKind[] }, cwd));
+      lowerConfig = mergeConfigs(lowerConfig, expandImports({ mcpServers: {}, imports: raw.imports as ImportKind[] }, cwd).config);
     }
     if (isServerDisabled(lowerConfig.mcpServers[serverName])) next.disabled = false;
   }

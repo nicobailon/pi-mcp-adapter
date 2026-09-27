@@ -6,7 +6,7 @@ export type Transport = McpTransport;
 /** Versioned shared-event-bus channel for read-only MCP runtime snapshots. */
 export declare const MCP_STATUS_EVENT = "pi-mcp-adapter/status/v1";
 export declare const MCP_STATUS_SNAPSHOT_VERSION: 1;
-export type McpServerRuntimeStatus = "connected" | "cached" | "failed" | "needs-auth" | "not-connected" | "disabled";
+export type McpServerRuntimeStatus = "connected" | "cached" | "failed" | "needs-auth" | "not-connected" | "blocked" | "disabled";
 export type McpListenState = "active" | "dropped" | "re-establishing" | "legacy" | "not-listening" | "disconnected";
 export interface McpServerStatusSnapshot {
     readonly name: string;
@@ -18,6 +18,7 @@ export interface McpServerStatusSnapshot {
     readonly disabled: boolean;
     readonly listenState: McpListenState;
     readonly catalogStale?: boolean;
+    readonly blockedReason?: string;
 }
 export interface McpStatusSnapshot {
     readonly version: typeof MCP_STATUS_SNAPSHOT_VERSION;
@@ -26,6 +27,13 @@ export interface McpStatusSnapshot {
     readonly totalResources: number;
     readonly connectedCount: number;
     readonly disabledCount: number;
+}
+export type ProjectServerBlockReason = "untrusted" | "approval-required" | "denied";
+export interface ProjectServerBlock {
+    reason: ProjectServerBlockReason;
+    source: {
+        path: string;
+    };
 }
 /**
  * Minimal event-bus surface the status publisher needs. Lives here (leaf
@@ -381,6 +389,8 @@ export interface McpToolApprovalRequest {
 }
 export type { JevAnswer, JevErrorCode, JevEvaluateInput, JevEvaluationData, JevEvaluationEnvelope, JevJson, JevQuestion } from "./jev-contracts.ts";
 export interface McpSettings {
+    /** Admission policy for unapproved project-local MCP servers. Only user-global config may set this. */
+    projectServers?: "ask" | "allow";
     toolPrefix?: ToolPrefix;
     /** Allow agents to persist remote MCP endpoints with the install action. Defaults to true. */
     allowInstall?: boolean;
@@ -587,7 +597,7 @@ export interface McpPanelCallbacks {
     reconnect: (serverName: string) => Promise<boolean>;
     canAuthenticate: (serverName: string) => boolean;
     authenticate: (serverName: string) => Promise<McpAuthResult>;
-    getConnectionStatus: (serverName: string) => "connected" | "idle" | "failed" | "needs-auth" | "disabled";
+    getConnectionStatus: (serverName: string) => "connected" | "idle" | "failed" | "needs-auth" | "blocked" | "disabled";
     getFailureMessage?: (serverName: string) => string | null;
     refreshCacheAfterReconnect: (serverName: string) => ServerCacheEntry | null;
 }

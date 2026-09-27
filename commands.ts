@@ -32,6 +32,7 @@ import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markS
 import { formatTerminalError, openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
 import { resolveJevCredential } from "./jev-key-store.ts";
+import { describeProjectServerBlock } from "./project-server-trust.ts";
 
 function terminalHyperlink(label: string, url: string): string {
   return `\u001B]8;;${sanitizeTerminalText(url)}\u001B\\${sanitizeTerminalText(label)}\u001B]8;;\u001B\\`;
@@ -151,6 +152,11 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
 
   for (const name of Object.keys(state.config.mcpServers)) {
     const definition = state.config.mcpServers[name];
+    const block = state.blockedProjectServers?.get(name);
+    if (block) {
+      lines.push(`⊘ ${name}: ${describeProjectServerBlock(block.reason)}`);
+      continue;
+    }
     if (isServerDisabled(definition)) {
       lines.push(`⊘ ${name}: disabled (run /mcp enable ${name}, then /reload)`);
       continue;
@@ -685,6 +691,7 @@ function buildMcpPanelCallbacks(
     getConnectionStatus: (serverName: string) => {
       authStatusFailures.delete(serverName);
       const definition = config.mcpServers[serverName];
+      if (state.blockedProjectServers?.has(serverName)) return "blocked";
       if (isServerDisabled(definition)) return "disabled";
       const connection = state.manager.getConnection(serverName);
       let serverUrl: string | undefined;
@@ -713,7 +720,8 @@ function buildMcpPanelCallbacks(
       if (getFailureAgeSeconds(state, serverName) !== null) return "failed";
       return "idle";
     },
-    getFailureMessage: (serverName: string) => authStatusFailures.get(serverName) ?? getFailureMessage(state, serverName),
+    getFailureMessage: (serverName: string) => state.blockedProjectServers?.get(serverName)?.reason
+      ?? authStatusFailures.get(serverName) ?? getFailureMessage(state, serverName),
     refreshCacheAfterReconnect: (serverName: string) => {
       const freshCache = loadMetadataCache();
       return freshCache?.servers?.[serverName] ?? null;

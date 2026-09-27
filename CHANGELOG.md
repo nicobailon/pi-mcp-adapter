@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Replace the `mcpScript` `node:vm` sandbox with a memory-limited QuickJS/WASM VM, preventing injected API functions from exposing the host `Function`, `process`, filesystem, or child-process APIs ([#676](https://github.com/nicobailon/pi-mcp-adapter/issues/676)). Serialized output blocks are limited to 16 MiB per script and error messages to 64 KiB. Script values now cross the host boundary as JSON; non-JSON emitted and returned values remain readable, but their formatting can differ from Node's `util.inspect` output.
+- Project-scoped MCP server definitions no longer connect before project trust and explicit server approval are established, including servers introduced by project plugin paths, imports, repo-local host config files even when enabled globally, and Pi packages in project settings. Untrusted projects are blocked; trusted interactive sessions persist definition-bound approvals, while headless sessions skip unapproved servers unless user-global `settings.projectServers` is `"allow"`. Project servers are excluded from load-time eager initialization, and status output now distinguishes trust/approval blocks from manually disabled servers. Fixes [#675](https://github.com/nicobailon/pi-mcp-adapter/issues/675).
 
 ### Added
 

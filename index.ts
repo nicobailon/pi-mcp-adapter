@@ -8,6 +8,7 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
+import { approveProjectServer, excludeProjectServersAtLoadTime, hasProjectServerDefinitions } from "./project-server-trust.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { computeServerHash, isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
@@ -327,7 +328,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     : options.configPath ?? getConfigPathFromArgv();
   const earlyConfig = programmaticConfig
     ? resolveConfiguredClaudePluginMcp(cloneMcpConfig(sessionConfig), process.cwd())
-    : loadMcpConfig(earlyConfigPath);
+    : excludeProjectServersAtLoadTime(loadMcpConfig(earlyConfigPath));
   const earlyCache = loadMetadataCache();
   const envRaw = process.env.MCP_DIRECT_TOOLS;
   const envDirectToolOverride = parseEnvDirectToolOverride(envRaw);
@@ -658,9 +659,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     cache: MetadataCache | null;
     enabledServerCount: number;
   } | undefined {
-    const config = programmaticConfig
-      ? resolveConfiguredClaudePluginMcp(cloneMcpConfig(sessionConfig), cwd ?? process.cwd())
-      : loadMcpConfig(earlyConfigPath, cwd);
+    let config: McpConfig;
+    if (programmaticConfig) {
+      config = resolveConfiguredClaudePluginMcp(cloneMcpConfig(sessionConfig), cwd ?? process.cwd());
+    } else {
+      const loadedConfig = loadMcpConfig(earlyConfigPath, cwd);
+      // Project servers require the authoritative session trust context.
+      if (hasProjectServerDefinitions(loadedConfig)) return undefined;
+      config = loadedConfig;
+    }
     const cache = loadMetadataCache();
     const enabledServers = Object.values(config.mcpServers).filter((definition) => !isServerDisabled(definition));
     if (enabledServers.some((definition) => definition.lifecycle === "eager" || definition.lifecycle === "keep-alive")) return undefined;
@@ -1580,6 +1587,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     requestedName: string | undefined,
     target: string | undefined,
     cwd: string,
+    ctx: ExtensionContext,
     signal?: AbortSignal,
   ) {
     const installOwner = currentOwner;
@@ -1654,6 +1662,24 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       };
     }
 
+    if (target === "project") {
+      const trusted = ctx.isProjectTrusted();
+      const allowed = trusted && (ctx.hasUI
+        ? await ctx.ui.confirm(
+            `Install project MCP server “${serverName}”?`,
+            `Endpoint: ${normalized.url}\n\nThis project server will be able to make network requests with your user permissions.`,
+          )
+        : targetState.config.settings?.projectServers === "allow");
+      if (!allowed) {
+        return {
+          content: [{ type: "text" as const, text: trusted
+            ? `Project MCP server "${serverName}" requires interactive approval or user-global settings.projectServers: "allow".`
+            : `Project MCP server "${serverName}" is blocked because the project is not trusted.` }],
+          details: { mode: "install", error: "project_trust_required", server: serverName },
+        };
+      }
+    }
+
     const persistedEntry: ServerEntry = { url: normalized.url };
     const runtimeEntry: ServerEntry = existing ?? { ...persistedEntry, directTools: false };
     const provisional = existing === undefined;
@@ -1726,6 +1752,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         };
       }
       targetState.provisionalInstalls?.delete(serverName);
+      if (target === "project" && targetState.blockedProjectServers !== undefined) {
+        const effective = loadMcpConfig(earlyConfigPath, cwd).mcpServers[serverName] ?? persistedEntry;
+        approveProjectServer(cwd, serverName, effective);
+      }
       try {
         (await loadForRuntime(loadCoreRuntime, installGuard)).updateMetadataCache(targetState, serverName);
         assertRuntimeGuard(installGuard);
@@ -1901,7 +1931,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         const proxyModes = await loadForRuntime(loadProxyModes, proxyGuard);
 
         if (params.action === "install") {
-          return executeInstall(proxyState, params.url, params.server, params.target, _ctx.cwd, signal);
+          return executeInstall(proxyState, params.url, params.server, params.target, _ctx.cwd, _ctx, signal);
         }
         if (params.action === "ui-messages") {
           return proxyModes.executeUiMessages(proxyState);

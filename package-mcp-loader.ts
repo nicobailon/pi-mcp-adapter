@@ -13,11 +13,23 @@ interface PackageManifest {
   pi?: { mcp?: unknown };
 }
 
-export function loadPackageMcpConfigs(cwd = process.cwd()): McpConfig {
+export interface PackageServerSource {
+  scope: "project" | "user";
+  settingsPath: string;
+  packageRoot: string;
+}
+
+export interface LoadedPackageMcpConfig extends McpConfig {
+  serverSources: Map<string, PackageServerSource>;
+}
+
+export function loadPackageMcpConfigs(cwd = process.cwd()): LoadedPackageMcpConfig {
   const mcpServers: Record<string, ServerEntry> = {};
+  const serverSources = new Map<string, PackageServerSource>();
   const seen = new Set<string>();
 
-  for (const packageRoot of getConfiguredPackageRoots(cwd)) {
+  for (const packageSource of getConfiguredPackageRoots(cwd)) {
+    const { packageRoot } = packageSource;
     const manifest = readPackageManifest(packageRoot);
     if (!manifest || typeof manifest.name !== "string" || !manifest.name) continue;
     const paths = getManifestMcpPaths(manifest.pi?.mcp, manifest.name);
@@ -43,15 +55,16 @@ export function loadPackageMcpConfigs(cwd = process.cwd()): McpConfig {
         packageServers.add(normalizedName);
         seen.add(normalizedName);
         mcpServers[normalizedName] = server;
+        serverSources.set(normalizedName, packageSource);
       }
     }
   }
 
-  return { mcpServers };
+  return { mcpServers, serverSources };
 }
 
-function getConfiguredPackageRoots(cwd: string): string[] {
-  const roots: string[] = [];
+function getConfiguredPackageRoots(cwd: string): PackageServerSource[] {
+  const roots: PackageServerSource[] = [];
   for (const [settingsPath, scope] of [
     [join(cwd, getConfigDirName(), "settings.json"), "project"],
     [join(getAgentDir(), "settings.json"), "user"],
@@ -72,7 +85,9 @@ function getConfiguredPackageRoots(cwd: string): string[] {
           : undefined;
       if (!source) throw new Error(`${scope} Pi settings ${settingsPath} package entries must be strings or objects with a string source`);
       const root = resolvePackageRoot(source, scope, cwd);
-      if (root && !roots.includes(root)) roots.push(root);
+      if (root && !roots.some(entry => entry.packageRoot === root)) {
+        roots.push({ packageRoot: root, scope, settingsPath });
+      }
     }
   }
   return roots;

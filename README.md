@@ -461,6 +461,12 @@ mcp({
 
 You can also pass only the `code` query parameter with `args: { code: "..." }`. Treat authorization URLs and codes as sensitive; they can grant access to the MCP server until the flow expires or completes.
 
+### Project server trust
+
+Servers defined or changed by project-scoped MCP files (`.mcp.json`, `.pi/mcp.json`, and opted-in ancestor project files) do not run merely because a repository was opened. This includes servers brought in through project `imports`, `claudePlugins`, `settings.agentPluginPaths`, repo-local host config files (even when imports or discovery are enabled globally), or Pi packages listed in project `.pi/settings.json`. If Pi reports the project as untrusted, the adapter blocks them. In a trusted interactive session, the adapter shows the source file and command or URL and asks once before the first connection. The approval is stored under the Pi agent directory and is tied to the canonical project path, server name, and complete effective definition; changing the definition requires a new approval. Blocked servers are identified in the panel, while MCP status includes the required trust or approval action.
+
+In print, JSON, and RPC sessions, an unapproved project server is skipped. To intentionally allow project servers in trusted headless sessions, set `"projectServers": "allow"` in the **user-global** `settings` object. The default is `"ask"`; project files cannot change this policy. Explicit config files, programmatic configuration, global/import/plugin servers, and runtime registrations retain their existing behavior. Project servers are always excluded from extension-load initialization and are admitted only after `session_start` supplies Pi's trust context.
+
 ### Lifecycle Modes
 
 - **`lazy`** (default) — Don't connect at startup. Connect on first tool call. Disconnect after idle timeout. Cached metadata keeps search/list working without connections.
@@ -489,6 +495,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
     "notifyOnStartupConnect": true,
     "warnOnLargeDirectTools": true,
     "hostConfigDiscovery": "off",
+    "projectServers": "ask",
     "approveTools": ["github_delete_*", "notion_update_*"],
     "oauthDir": ".pi/mcp-oauth",
     "trace": {
@@ -515,6 +522,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `collapsedResultLines` | Number of result text lines to show before expansion: `1`, `2`, or `3`. Defaults to `1` in compact mode and `3` in boxed mode. |
 | `notifyOnStartupConnect` | Show successful startup connection notices (default: `true`). Set to `false` to suppress routine `MCP: N servers connected (M tools)` notices. Connection errors and authentication warnings remain visible. |
 | `hostConfigDiscovery` | Host-specific config policy: `"off"` (default), `"prompt"` (detect/report only), or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
+| `projectServers` | Project-server admission policy for trusted headless sessions: `"ask"` (default, skip unapproved servers) or `"allow"`. Only user-global or explicitly selected config may set it; project files are ignored. |
 | `ancestorConfigRoots` | Trusted absolute or `~/...` roots for opt-in ancestor config discovery. Only user-global or explicitly selected config may set it; roots outside cwd are ignored and the deepest matching root is used. |
 | `agentPluginPaths` | Agent Plugins package directories to load MCP servers from. Relative paths resolve from the active project cwd. |
 | `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |

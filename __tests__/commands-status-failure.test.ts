@@ -13,6 +13,23 @@ vi.mock("../init.ts", () => ({
 }));
 
 describe("MCP status failure reasons", () => {
+  it("shows trust-blocked servers with the approval action instead of /mcp enable", async () => {
+    const { showStatus } = await import("../commands.ts");
+    const ui = { notify: vi.fn() };
+    await showStatus({
+      config: { mcpServers: { demo: { command: "node", disabled: true } } },
+      blockedProjectServers: new Map([["demo", { reason: "approval-required", source: { path: "/project/.mcp.json" } }]]),
+      manager: { getConnection: () => undefined },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+    } as any, { hasUI: true, ui } as any);
+
+    const output = ui.notify.mock.calls[0][0];
+    expect(output).toContain("demo: blocked: project server approval required");
+    expect(output).toContain("approve it in a trusted interactive session");
+    expect(output).not.toContain("/mcp enable demo");
+  });
+
   it("includes the bounded failure reason as a safe single-line status", async () => {
     const { showStatus } = await import("../commands.ts");
     const ui = { notify: vi.fn() };

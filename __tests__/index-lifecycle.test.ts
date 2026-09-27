@@ -1121,7 +1121,7 @@ describe("mcpAdapter session lifecycle", () => {
       { action: "install", url: "https://forex-dev.1above.io/mcp", server: "forex", target: "project" },
       undefined,
       undefined,
-      { cwd: "/tmp/project" },
+      { cwd: "/tmp/project", hasUI: true, isProjectTrusted: () => true, ui: { confirm: vi.fn().mockResolvedValue(true) } },
     );
 
     expect(mocks.writeSharedServerEntry).toHaveBeenCalledWith(
@@ -1132,6 +1132,26 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.executeAuthStart).toHaveBeenCalledWith(state, "forex", undefined);
     expect(result.details).toMatchObject({ mode: "install", status: "awaiting_auth", server: "forex" });
     expect(result.details.path).toBe("/tmp/project/.mcp.json");
+  });
+
+  it("blocks project installation before connecting when the project is untrusted", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { api, handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, {});
+    const proxyTool = registeredTool(api, "mcp");
+
+    const result = await proxyTool.execute(
+      "call-install",
+      { action: "install", url: "https://example.test/mcp", server: "blocked", target: "project" },
+      undefined,
+      undefined,
+      { cwd: "/tmp/project", hasUI: false, isProjectTrusted: () => false },
+    );
+
+    expect(result.details).toMatchObject({ error: "project_trust_required", server: "blocked" });
+    expect(mocks.executeConnect).not.toHaveBeenCalled();
+    expect(mocks.writeSharedServerEntry).not.toHaveBeenCalled();
   });
 
   it("reuses the configured name for an already installed URL", async () => {

@@ -7,6 +7,7 @@ import {
   type McpStatusSnapshot,
 } from "./types.ts";
 import { getFailureAgeSeconds, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+import { describeProjectServerBlock } from "./project-server-trust.ts";
 
 /** Build a sanitized snapshot without connecting or querying any MCP server. */
 export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnapshot {
@@ -33,7 +34,12 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
       : state.resourceCounts?.get(name) ?? (connection?.status === "connected" ? connection.resources.length : undefined);
 
     let status: McpServerStatusSnapshot["status"] = "not-connected";
-    if (disabled) {
+    const block = state.blockedProjectServers?.get(name);
+    const blockedReason = block ? describeProjectServerBlock(block.reason) : undefined;
+    if (block) {
+      status = "blocked";
+      disabledCount++;
+    } else if (disabled) {
       status = "disabled";
       disabledCount++;
     } else if (connection?.status === "connected") {
@@ -59,6 +65,7 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
       ...(resourceCount !== undefined ? { resourceCount } : {}),
       ...(status === "failed" && failedAgoSeconds !== null ? { failedAgoSeconds } : {}),
       disabled,
+      ...(blockedReason ? { blockedReason } : {}),
     });
   }
 
