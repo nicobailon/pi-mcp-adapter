@@ -236,7 +236,7 @@ export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath?:
     // An explicitly selected config is loaded verbatim, whatever its name.
     if (resolve(source) === explicitPath || !legacyMcpConfigHasContent(source, piOwnsServers)) return [];
     if (piOwnsServers) {
-      return [`${source} contains pi-mcp-adapter settings that neither Pi nor the adapter reads. Move settings, imports, claudePlugins, and "mcp-servers" entries into ${target}.`];
+      return [`${source} contains pi-mcp-adapter settings that neither Pi nor the adapter reads. Move settings, imports, and claudePlugins into ${target}, and put any "mcp-servers" entries under its "mcpServers" key.`];
     }
     const fix = existsSync(target)
       ? `Merge ${source} into ${target}, then remove ${source}.`

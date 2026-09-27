@@ -2050,7 +2050,7 @@ describe("config discovery", () => {
     // With Pi's built-in MCP, mcpServers belong to Pi; only adapter-only keys are reported.
     writeJson(globalOld, { mcpServers: { piOwned: { command: "pi" } } });
     expect(getLegacyMcpMigrationNotices(project, undefined, true)).toEqual([
-      `${projectOld} contains pi-mcp-adapter settings that neither Pi nor the adapter reads. Move settings, imports, claudePlugins, and "mcp-servers" entries into ${projectTarget}.`,
+      `${projectOld} contains pi-mcp-adapter settings that neither Pi nor the adapter reads. Move settings, imports, and claudePlugins into ${projectTarget}, and put any "mcp-servers" entries under its "mcpServers" key.`,
     ]);
   });
 
