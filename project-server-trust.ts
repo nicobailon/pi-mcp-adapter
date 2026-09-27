@@ -167,7 +167,7 @@ export async function applyProjectServerTrust(
       reason = "approval-required";
     } else if (await ctx.ui.confirm(
       `Allow project MCP server “${name}”?`,
-      `Source: ${source.path}\nEndpoint: ${describeServer(definition)}\n\nThis server can run local commands or make network requests with your user permissions.`,
+      `Project config: ${source.path}\nEndpoint: ${describeServer(definition)}\n\nThis server can run local commands or make network requests with your user permissions.`,
     )) {
       approveProjectServer(projectRoot, name, definition);
       continue;

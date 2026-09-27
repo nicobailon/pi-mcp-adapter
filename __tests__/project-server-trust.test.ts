@@ -103,6 +103,7 @@ describe("project MCP server trust", () => {
     let result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { confirm } }));
     expect(result.blockedServers.size).toBe(0);
     expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(`Project config: ${path}\n`));
 
     result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { confirm } }));
     expect(result.blockedServers.size).toBe(0);
