@@ -22,7 +22,16 @@ describe("search ranking", () => {
   });
 
   it("does not penalize repeated query tokens", () => {
-    expect(scoreToolMatch(tool("search_records", "Find records"), "demo", "search search")).not.toBeNull();
+    const matchingTool = tool("search_records", "Find records");
+    const state = {
+      toolMetadata: new Map([["demo", [matchingTool]]]),
+      config: { mcpServers: { demo: { command: "demo" } } },
+      manager: { getConnection: () => undefined },
+      failureTracker: new Map(),
+    } as unknown as McpExtensionState;
+
+    expect(scoreToolMatch(matchingTool, "demo", "search search")).not.toBeNull();
+    expect(rankToolMatches(state, "search search").map(({ tool }) => tool.name)).toEqual(["search_records"]);
   });
 
   it("keeps single-character Unicode query terms", () => {
