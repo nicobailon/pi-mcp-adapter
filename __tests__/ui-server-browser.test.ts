@@ -33,7 +33,8 @@ async function stopChrome(chrome: ChildProcess): Promise<void> {
 }
 
 async function waitForRequests(requests: Set<string>, expected: string[], chrome: ChildProcess): Promise<void> {
-  const deadline = Date.now() + 12_000;
+  // Covers headless Chrome cold start, which takes 6-12s on shared CI runners (#702).
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (expected.every((path) => requests.has(path))) return;
     if (chrome.exitCode !== null) throw new Error(`Chrome exited before navigation completed (${chrome.exitCode})`);
@@ -158,5 +159,5 @@ describe("UiServer browser CSP", () => {
       if (observer.listening) await closeServer(observer);
       if (profileDir) await rm(profileDir, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 45_000);
 });
