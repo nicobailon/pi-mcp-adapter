@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - MCP `tools/call` requests made for a Pi tool call now carry that call's id in `_meta` as `pi-mcp-adapter/toolCallId`, merged with any UI stream token, so servers can correlate a request with the host's tool call in logs and traces. Direct tools, the `mcp` proxy tool and `mcp__<server>` namespace tools forward it; `mcpScript` calls, which have no single Pi tool call, do not. Thanks to [@sebavalaris](https://github.com/sebavalaris) for [PR #673](https://github.com/nicobailon/pi-mcp-adapter/pull/673).
 
+### Fixed
+
+- Cached tool metadata is invalidated when a stdio server's `inheritEnv` or `literalEnv` setting changes, preventing stale tools from appearing in search or direct registration.
+
 ## [2.38.0] - 2026-09-26
 
 ### Highlights
