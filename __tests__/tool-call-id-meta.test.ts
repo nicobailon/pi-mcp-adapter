@@ -68,6 +68,54 @@ describe("tool call id forwarding", () => {
     );
   });
 
+  it("task-session dispatch preserves the UI stream token and Pi tool call id", async () => {
+    const result = { content: [{ type: "text", text: "ok" }] };
+    const taskCallTool = vi.fn(async () => ({
+      kind: "immediate" as const,
+      cancel: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      settle: vi.fn(async () => ({ outcome: { status: "completed" as const, result } })),
+    }));
+    const clientCallTool = vi.fn();
+    const state = connectedState({ callTool: clientCallTool });
+    state.manager.getConnection.mockReturnValue({
+      status: "connected",
+      client: { callTool: clientCallTool },
+      taskSession: { callTool: taskCallTool },
+      tools: [],
+      resources: [],
+    });
+    state.manager.registerUiStreamListener = vi.fn();
+    state.manager.removeUiStreamListener = vi.fn();
+    state.uiServer = {
+      serverName: "demo",
+      toolName: "search",
+      url: "http://localhost/ui",
+      sendToolInput: vi.fn(),
+      sendToolResult: vi.fn(),
+      sendResultPatch: vi.fn(),
+    };
+    const execute = createDirectToolExecutor(() => state, () => null, {
+      serverName: "demo",
+      originalName: "search",
+      prefixedName: "demo_search",
+      description: "Search",
+      uiResourceUri: "ui://demo/search",
+      uiStreamMode: "eager",
+    });
+
+    await execute("toolu_task", { q: "hello" }, undefined, undefined, {} as any);
+
+    const streamToken = state.manager.registerUiStreamListener.mock.calls[0][0];
+    expect(taskCallTool).toHaveBeenCalledWith("search", { q: "hello" }, {
+      metadata: {
+        [UI_STREAM_REQUEST_META_KEY]: streamToken,
+        [TOOL_CALL_ID_REQUEST_META_KEY]: "toolu_task",
+      },
+    });
+    expect(clientCallTool).not.toHaveBeenCalled();
+  });
+
   it("proxy calls forward the tool call id they are given", async () => {
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
     const state = connectedState({ callTool });
