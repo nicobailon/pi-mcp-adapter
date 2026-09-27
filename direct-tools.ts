@@ -3,7 +3,8 @@ import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/
 import type { McpExtensionState } from "./state.ts";
 import { disabledServerReason } from "./project-server-trust.ts";
 import type { DirectToolSpec, McpContent } from "./types.ts";
-import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
+import { lazyConnect, clearFailure } from "./init.ts";
+import { describeFailure } from "./failure-backoff.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
@@ -190,9 +191,9 @@ export function createDirectToolExecutor(
           details: { error: "auth_required", server: spec.serverName, message, autoAuthAttempted },
         };
       }
-      const failedAgo = getFailureAgeSeconds(state, spec.serverName);
+      const failure = describeFailure(state, spec.serverName);
       return {
-        content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not available${failedAgo !== null ? ` (failed ${failedAgo}s ago)` : ""}` }],
+        content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not available${failure !== null ? ` (${failure})` : ""}` }],
         details: { error: "server_unavailable", server: spec.serverName },
       };
     }

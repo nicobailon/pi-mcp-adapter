@@ -19,7 +19,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
-import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { semanticSearch, type SemanticSearchBackend, type SemanticSearchEvaluator } from "./semantic-search.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
@@ -114,8 +114,7 @@ function getEnabledOriginalToolMatches(state: McpExtensionState, toolName: strin
 }
 
 function serverBackoffResult(state: McpExtensionState, mode: string, serverName: string): ProxyToolResult {
-  const failedAgo = getFailureAgeSeconds(state, serverName) ?? 0;
-  const message = `Server "${serverName}" not available (last failed ${failedAgo}s ago)`;
+  const message = `Server "${serverName}" not available (last ${describeFailure(state, serverName) ?? "failed 0s ago"})`;
   return {
     content: [{ type: "text" as const, text: message }],
     details: { mode, error: "server_backoff", server: serverName },
@@ -583,7 +582,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       continue;
     }
     if (server.status === "failed") {
-      text += `✗ ${server.name} (failed ${server.failedAgo ?? 0}s ago)\n`;
+      text += `✗ ${server.name} (${describeFailure(state, server.name) ?? `failed ${server.failedAgo ?? 0}s ago`})\n`;
       continue;
     }
     text += `○ ${server.name} (not listening; disconnected)\n`;
@@ -1286,10 +1285,10 @@ export async function executeCall(
       }
 
       if (!toolMeta) {
-        const failedAgo = getFailureAgeSeconds(state, serverName);
-        if (failedAgo !== null) {
+        const failure = describeFailure(state, serverName);
+        if (failure !== null) {
           return {
-            content: [{ type: "text" as const, text: `Server "${serverName}" not available (last failed ${failedAgo}s ago)` }],
+            content: [{ type: "text" as const, text: `Server "${serverName}" not available (last ${failure})` }],
             details: { mode: "call", error: "server_backoff", server: serverName, requestedTool: toolName },
           };
         }
@@ -1409,10 +1408,10 @@ export async function executeCall(
     }
   }
   if (!connection || connection.status !== "connected") {
-    const failedAgo = getFailureAgeSeconds(state, serverName);
-    if (failedAgo !== null) {
+    const failure = describeFailure(state, serverName);
+    if (failure !== null) {
       return {
-        content: [{ type: "text" as const, text: `Server "${serverName}" not available (last failed ${failedAgo}s ago)` }],
+        content: [{ type: "text" as const, text: `Server "${serverName}" not available (last ${failure})` }],
         details: { mode: "call", error: "server_backoff", ...callIdentity },
       };
     }
