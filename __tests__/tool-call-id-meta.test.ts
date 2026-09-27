@@ -49,7 +49,7 @@ describe("withToolCallIdMeta", () => {
 });
 
 describe("tool call id forwarding", () => {
-  it("direct tools forward the tool call id through task sessions", async () => {
+  it("direct tools forward the UI stream token and tool call id through task sessions", async () => {
     const taskCallTool = vi.fn(async () => ({
       kind: "immediate" as const,
       cancel: vi.fn(async () => {}),
@@ -58,11 +58,20 @@ describe("tool call id forwarding", () => {
     }));
     const state = connectedState({ callTool: vi.fn() });
     state.manager.getConnection.mockReturnValue({ status: "connected", client: {}, taskSession: { callTool: taskCallTool }, tools: [], resources: [] });
-    const execute = createDirectToolExecutor(() => state, () => null, { serverName: "demo", originalName: "search", prefixedName: "demo_search", description: "Search" });
+    state.manager.registerUiStreamListener = vi.fn();
+    state.manager.removeUiStreamListener = vi.fn();
+    state.uiServer = { serverName: "demo", toolName: "search", url: "http://localhost/ui", sendToolInput: vi.fn(), sendToolResult: vi.fn(), sendResultPatch: vi.fn() };
+    const execute = createDirectToolExecutor(() => state, () => null, {
+      serverName: "demo", originalName: "search", prefixedName: "demo_search", description: "Search",
+      uiResourceUri: "ui://demo/search", uiStreamMode: "eager",
+    });
 
     await execute("toolu_task", { q: "hello" }, undefined, undefined, {} as any);
 
-    expect(taskCallTool).toHaveBeenCalledWith("search", { q: "hello" }, { metadata: { "pi-mcp-adapter/toolCallId": "toolu_task" } });
+    const streamToken = state.manager.registerUiStreamListener.mock.calls[0][0];
+    expect(taskCallTool).toHaveBeenCalledWith("search", { q: "hello" }, {
+      metadata: { [UI_STREAM_REQUEST_META_KEY]: streamToken, "pi-mcp-adapter/toolCallId": "toolu_task" },
+    });
   });
 
   it("proxy calls forward the tool call id they are given", async () => {
