@@ -40,7 +40,7 @@ function stableHash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function eligibleMatches(state: McpExtensionState, server: string | undefined, allowed: Set<string>): RankedToolMatch[] {
+function eligibleMatches(state: McpExtensionState, server: string | undefined, allowed: ReadonlySet<string>): RankedToolMatch[] {
   const matches: RankedToolMatch[] = [];
   for (const [serverName, metadata] of state.toolMetadata) {
     if ((server && serverName !== server) || !allowed.has(serverName)
@@ -83,10 +83,10 @@ function selectSemanticCandidates(
   state: McpExtensionState,
   query: string,
   server: string | undefined,
-  allowedServers: string[],
+  allowedServers: ReadonlySet<string>,
   limit: number,
 ): Candidate[] {
-  const eligible = eligibleMatches(state, server, new Set(allowedServers));
+  const eligible = eligibleMatches(state, server, allowedServers);
   let selected = eligible;
   if (eligible.length > limit) {
     const eligiblePaths = new Set(eligible.map(match => `${match.server}\0${match.tool.name}`));
@@ -131,7 +131,8 @@ export async function semanticSearch(
   if (query.trim().length === 0) {
     return { ok: false, error: { code: "empty_query", message: "Semantic search query cannot be empty." } };
   }
-  const candidates = selectSemanticCandidates(state, query, server, settings.allowedServers, settings.semanticCandidateLimit);
+  const allowedServers = new Set(settings.allowedServers);
+  const candidates = selectSemanticCandidates(state, query, server, allowedServers, settings.semanticCandidateLimit);
   if (candidates.length === 0) {
     return { ok: false, error: { code: "no_eligible_tools", message: "Semantic search has no eligible cached tools from the allowed servers. Connect an allowed server or update settings.jev.allowedServers." } };
   }
@@ -158,7 +159,7 @@ export async function semanticSearch(
     if (envelope.error.code === "timeout" || envelope.error.code === "rate_limited" || envelope.error.code === "service_unavailable") {
       return {
         ok: true,
-        matches: rankToolMatches(state, query, server),
+        matches: rankToolMatches(state, query, server).filter(match => allowedServers.has(match.server)),
         backend: { requested: "semantic", used: "lexical", degraded: true, reason: envelope.error.code },
       };
     }

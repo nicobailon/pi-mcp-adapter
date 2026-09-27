@@ -196,6 +196,26 @@ describe("semantic search", () => {
     }
   });
 
+  it("keeps the semantic server allowlist when falling back to lexical search", async () => {
+    const state = stateWithTools();
+    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo"] };
+    state.toolMetadata.get("demo")![0]!.description = "Weather forecast";
+    const evaluator: SemanticSearchEvaluator = vi.fn(async (_state, input) => {
+      expect(input.sources).toEqual(["demo"]);
+      return { ok: false, error: { code: "timeout", message: "down" } };
+    });
+
+    const gateway = await gatewaySemantic(state, "weather", evaluator);
+    expect(gateway.details.backend).toMatchObject({ used: "lexical", degraded: true });
+    expect(gateway.details.matches.map((match: { server: string }) => match.server)).toEqual(["demo"]);
+
+    const script = await runMcpScript(state, 'emit(await tools.search({ query: "weather", searchMode: "semantic" }))',
+      2_000, undefined, undefined, undefined, evaluator);
+    const payload = JSON.parse(script.content[0]!.text);
+    expect(payload.backend).toMatchObject({ used: "lexical", degraded: true });
+    expect(payload.items.map((item: { server: string }) => item.server)).toEqual(["demo"]);
+  });
+
   it("preserves pagination, schemas, and approval markers without executing", async () => {
     const state = stateWithTools();
     state.config.settings!.approveTools = true;
