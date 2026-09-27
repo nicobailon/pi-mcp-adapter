@@ -103,15 +103,21 @@ export function getProjectPiConfigPath(cwd = process.cwd()) {
 export function getLegacyProjectPiMcpConfigPath(cwd = process.cwd()) {
     return resolve(cwd, getConfigDirName(), PI_MCP_CONFIG_NAME);
 }
-function legacyMcpConfigHasContent(filePath) {
+/**
+ * Adapter-only content in a legacy Pi `mcp.json`. Once Pi's built-in MCP owns the file, its
+ * `mcpServers` belong to Pi; `settings`, `imports`, `claudePlugins`, and the legacy
+ * `mcp-servers` key are read by neither, so they still need moving.
+ */
+function legacyMcpConfigHasContent(filePath, piOwnsServers) {
     if (!existsSync(filePath))
         return false;
     try {
         const raw = parseJsonWithComments(readFileSync(filePath, "utf-8"));
         if (!isRecord(raw))
             return false;
-        const servers = raw.mcpServers ?? raw["mcp-servers"];
-        return (isRecord(servers) && Object.keys(servers).length > 0)
+        const hasServers = (value) => isRecord(value) && Object.keys(value).length > 0;
+        return (!piOwnsServers && hasServers(raw.mcpServers))
+            || hasServers(raw["mcp-servers"])
             || raw.settings !== undefined
             || raw.imports !== undefined
             || raw.claudePlugins !== undefined;
@@ -120,7 +126,7 @@ function legacyMcpConfigHasContent(filePath) {
         return false;
     }
 }
-export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath) {
+export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath, piOwnsServers = false) {
     const explicitPath = overridePath ? resolve(overridePath) : undefined;
     const candidates = [
         [getLegacyPiMcpGlobalConfigPath(), getPiGlobalConfigPath()],
@@ -128,8 +134,11 @@ export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath) 
     ];
     return candidates.flatMap(([source, target]) => {
         // An explicitly selected config is loaded verbatim, whatever its name.
-        if (resolve(source) === explicitPath || !legacyMcpConfigHasContent(source))
+        if (resolve(source) === explicitPath || !legacyMcpConfigHasContent(source, piOwnsServers))
             return [];
+        if (piOwnsServers) {
+            return [`${source} contains pi-mcp-adapter settings that neither Pi nor the adapter reads. Move settings, imports, claudePlugins, and "mcp-servers" entries into ${target}.`];
+        }
         const fix = existsSync(target)
             ? `Merge ${source} into ${target}, then remove ${source}.`
             : `Move it with: mv ${JSON.stringify(source)} ${JSON.stringify(target)}`;

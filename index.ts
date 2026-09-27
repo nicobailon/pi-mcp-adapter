@@ -1089,9 +1089,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       registerMcpCommand("mcp");
       mcpAliasRegistered = true;
     }
-    sessionMigrationNotices = !programmaticConfig && !builtInMcpDetected
-      ? getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath)
-      : [];
+    sessionMigrationNotices = programmaticConfig
+      ? []
+      : getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath, builtInMcpDetected);
     if (ctx.hasUI) {
       for (const notice of sessionMigrationNotices) ctx.ui.notify(notice, "warning");
     }
