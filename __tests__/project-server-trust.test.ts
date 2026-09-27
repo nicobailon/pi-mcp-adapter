@@ -94,6 +94,26 @@ describe("project MCP server trust", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
+  it("names the project override file for an inherited server re-enabled by project config", async () => {
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), {
+      mcpServers: { inherited: { command: "global", args: ["server.js"], disabled: true } },
+    });
+    const overridePath = join(cwd, ".pi", "mcp-adapter.json");
+    writeJson(overridePath, { mcpServers: { inherited: { disabled: false } } });
+    const { config, trust } = await load();
+    const confirm = vi.fn().mockResolvedValue(false);
+
+    await trust.applyProjectServerTrust(
+      config.loadMcpConfigWithSources(undefined, cwd),
+      context({ hasUI: true, mode: "tui", ui: { confirm } }),
+    );
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining(`Project config: ${overridePath}\nEndpoint: "global" "server.js"`),
+    );
+  });
+
   it("persists an interactive approval and re-prompts after the definition changes", async () => {
     const path = join(cwd, ".mcp.json");
     writeJson(path, { mcpServers: { local: { command: "node", args: ["one.js"] } } });
