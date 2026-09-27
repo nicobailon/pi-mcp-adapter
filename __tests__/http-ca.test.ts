@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Agent } from "undici";
 import { createCaFetch } from "../http-ca.ts";
+import { resetTestAuthSecretStore } from "../mcp-auth.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { ServerEntry } from "../types.ts";
 
@@ -21,6 +22,8 @@ afterEach(async () => {
   })));
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  // Stored tokens are keyed by server name and URL; a reused port would otherwise hand the next case a valid token.
+  resetTestAuthSecretStore();
 });
 
 async function listen(handler: Parameters<typeof https.createServer>[1], cert = "server") {
