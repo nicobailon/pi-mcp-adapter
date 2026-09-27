@@ -7,7 +7,7 @@ import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type Mcp
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
+import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectServer, excludeProjectServersAtLoadTime, hasProjectServerDefinitions } from "./project-server-trust.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -56,6 +56,12 @@ const loadInstallParsing = createRetryableLoader(() => import("./mcp-install.ts"
 const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_FAILURE_MESSAGE_MAX_CHARS = 1_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
+
+function hasBuiltInMcpCommand(pi: ExtensionAPI): boolean {
+  if (typeof pi.getCommands !== "function") return false;
+  return pi.getCommands().some((command) => /^mcp(?::\d+)?$/.test(command.name)
+    && command.sourceInfo.path === "<inline:mcp>");
+}
 
 function hasEnabledServerWithoutValidMetadata(
   config: McpConfig,
@@ -353,6 +359,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let proxyToolDescription: string | null = null;
   let directToolsFrozen = false;
   let largeDirectToolsAdvisoryDelivered = false;
+  let sessionMigrationNotices: string[] = [];
+  let mcpAliasRegistered = false;
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
@@ -919,6 +927,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const registeredDuringFinalization = new Set<string>();
       let statusPublicationAttempted = false;
       state = nextState;
+      nextState.migrationNotices = [...sessionMigrationNotices];
       finalizationGuard = guard;
       finalizationRegistrations = registeredDuringFinalization;
       try {
@@ -1075,6 +1084,17 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    const builtInMcpDetected = hasBuiltInMcpCommand(pi);
+    if (!builtInMcpDetected && !mcpAliasRegistered) {
+      registerMcpCommand("mcp");
+      mcpAliasRegistered = true;
+    }
+    sessionMigrationNotices = !programmaticConfig && !builtInMcpDetected
+      ? getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath)
+      : [];
+    if (ctx.hasUI) {
+      for (const notice of sessionMigrationNotices) ctx.ui.notify(notice, "warning");
+    }
     // Reset before any await so replacement sessions cannot inherit activation.
     searchActivatedTools.clear();
     holdLazyToolsInactive();
@@ -1343,7 +1363,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         case "jev": {
           if (parts[1] !== "setup" || parts.length !== 2) {
-            commandCtx.ui?.notify("Usage: /mcp jev setup", "error");
+            commandCtx.ui?.notify("Usage: /mcp-adapter jev setup", "error");
             break;
           }
           if (programmaticConfig) {
@@ -1365,7 +1385,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
           const target = parts[1] ?? "project";
           if (target !== "project" && target !== "global") {
-            commandCtx.ui?.notify("Usage: /mcp edit [project|global]", "error");
+            commandCtx.ui?.notify("Usage: /mcp-adapter edit [project|global]", "error");
             return;
           }
           commandOwner?.throwIfInactive();
@@ -1379,7 +1399,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         case "logout": {
           const serverName = rest;
           if (!serverName) {
-            if (commandCtx.hasUI) commandCtx.ui?.notify("Usage: /mcp logout <server>", "error");
+            if (commandCtx.hasUI) commandCtx.ui?.notify("Usage: /mcp-adapter logout <server>", "error");
             return;
           }
           commandOwner?.throwIfInactive();
@@ -1390,11 +1410,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           const action = parts[1];
           const serverName = parts.slice(2).join(" ");
           if (action !== "set" && action !== "remove" && action !== "status") {
-            if (commandCtx.hasUI) commandCtx.ui?.notify("Usage: /mcp token set|remove|status <server>", "error");
+            if (commandCtx.hasUI) commandCtx.ui?.notify("Usage: /mcp-adapter token set|remove|status <server>", "error");
             return;
           }
           if (!serverName) {
-            if (commandCtx.hasUI) commandCtx.ui?.notify("Usage: /mcp token set|remove|status <server>", "error");
+            if (commandCtx.hasUI) commandCtx.ui?.notify("Usage: /mcp-adapter token set|remove|status <server>", "error");
             return;
           }
           commandOwner?.throwIfInactive();
@@ -1405,11 +1425,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         case "enable": {
           const serverName = rest;
           if (programmaticConfig) {
-            commandCtx.ui?.notify(`/mcp ${subcommand} is unavailable when config is supplied by createMcpAdapter().`, "info");
+            commandCtx.ui?.notify(`/mcp-adapter ${subcommand} is unavailable when config is supplied by createMcpAdapter().`, "info");
             break;
           }
           if (!serverName) {
-            commandCtx.ui?.notify(`Usage: /mcp ${subcommand} <server>`, "error");
+            commandCtx.ui?.notify(`Usage: /mcp-adapter ${subcommand} <server>`, "error");
             break;
           }
           if (!state.config.mcpServers[serverName]) {
@@ -1426,6 +1446,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           break;
         }
         case "status":
+          await commands.showStatus(state, commandCtx);
+          break;
         case "":
         default:
           if (commandCtx.hasUI) {
@@ -1451,8 +1473,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
     },
   });
-  registerMcpCommand("mcp");
-  registerMcpCommand("pi-mcp");
+  registerMcpCommand("mcp-adapter");
 
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",

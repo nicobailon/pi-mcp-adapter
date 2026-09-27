@@ -223,7 +223,7 @@ export function buildProxyDescription(config: McpConfig): string {
     .filter(([, definition]) => isServerDisabled(definition))
     .map(([serverName]) => serverName);
   if (disabledServers.length > 0) {
-    desc += `\nDisabled servers (enable with /mcp enable <server> and /reload): ${disabledServers.join(", ")}\n`;
+    desc += `\nDisabled servers (enable with /mcp-adapter enable <server> and /reload): ${disabledServers.join(", ")}\n`;
   }
 
   desc += `\nUsage:\n`;

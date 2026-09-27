@@ -238,7 +238,7 @@ class McpSetupPanelView implements Component {
 
     const shared = state.discovery.sources.filter((source) => source.kind === "shared" && source.serverCount > 0).length;
     const piOwned = state.discovery.sources.filter((source) => source.kind === "pi" && source.serverCount > 0).length;
-    return `Detected ${state.discovery.totalServerCount} configured servers across ${shared} shared and ${piOwned} Pi-owned source${shared + piOwned === 1 ? "" : "s"}.`;
+    return `Detected ${state.discovery.totalServerCount} configured servers across ${shared} shared and ${piOwned} adapter-owned source${shared + piOwned === 1 ? "" : "s"}.`;
   }
 
   private secondarySummaryLine(state: McpSetupPanelViewState): string {
@@ -252,9 +252,9 @@ class McpSetupPanelView implements Component {
       return `Add shared servers to .mcp.json for this project/team or ~/.config/mcp/mcp.json for all projects. Adopt host imports or quick-add RepoPrompt from this screen.${hostNote}${conflictNote}`;
     }
     if (state.discovery.totalServerCount === 0 && state.discovery.imports.length > 0) {
-      return `Detected ${state.discovery.imports.length} compatibility import source${state.discovery.imports.length === 1 ? "" : "s"}. Adopt them into Pi or inspect the underlying files.${hostNote}${conflictNote}`;
+      return `Detected ${state.discovery.imports.length} compatibility import source${state.discovery.imports.length === 1 ? "" : "s"}. Adopt them into the adapter or inspect the underlying files.${hostNote}${conflictNote}`;
     }
-    return `Use .mcp.json for project/team servers or ~/.config/mcp/mcp.json for all projects. Pi-owned files are for compatibility imports and adapter-specific overrides, not another normal setup path.${hostNote}${conflictNote}`;
+    return `Use .mcp.json for project/team servers or ~/.config/mcp/mcp.json for all projects. mcp-adapter.json files are for compatibility imports and adapter-specific overrides; Pi mcp.json files are not read by the adapter.${hostNote}${conflictNote}`;
   }
 
   private visibleActionRange(total: number, cursor: number): { start: number; end: number } {
@@ -290,7 +290,7 @@ class McpSetupPanelView implements Component {
             .map((entry) => entry.kind)),
           [
             `Detected imports: ${state.discovery.imports.map((entry) => `${entry.kind} (${entry.serverCount} servers)`).join(", ")}`,
-            "Selected imports are written into the Pi agent dir config as Pi-owned compatibility state.",
+            "Selected imports are written into the Pi agent dir mcp-adapter.json as adapter-owned compatibility state.",
           ],
           previewW,
         );
@@ -298,7 +298,7 @@ class McpSetupPanelView implements Component {
         return this.formatPreview([
           action.target === "project" ? "Project target: .mcp.json" : "Global target: ~/.config/mcp/mcp.json",
           "Known server presets and starter configs will be written to the selected normal MCP setup path.",
-          "Pi-owned mcp.json files remain compatibility and adapter-only override state.",
+          "mcp-adapter.json files hold compatibility and adapter-only override state; Pi mcp.json files are reserved for built-in MCP and are not read by the adapter.",
         ], previewW);
       case "view-example":
         return this.formatPreview([
@@ -320,7 +320,7 @@ class McpSetupPanelView implements Component {
           "  project/team: .mcp.json",
           "  all projects: ~/.config/mcp/mcp.json",
           "",
-          "Advanced compatibility and Pi-owned layers:",
+          "Advanced compatibility and adapter-owned layers:",
           "  host imports, .agents files, package MCP manifests, and Pi overrides",
           "",
           "Read order (later entries win):",
@@ -328,16 +328,16 @@ class McpSetupPanelView implements Component {
           "1. ~/.config/mcp/mcp.json",
           "2. ~/.agents/mcp.json",
           "3. ~/.agents/mcp/mcp.json",
-          "4. <Pi agent dir>/mcp.json",
+          "4. <Pi agent dir>/mcp-adapter.json",
           "5. configured ancestor root to parent(cwd), farthest first (opt-in)",
-          `   per directory: .mcp.json, then ${getConfigDirName()}/mcp.json`,
+          `   per directory: .mcp.json, then ${getConfigDirName()}/mcp-adapter.json`,
           "6. cwd/.mcp.json",
-          `7. cwd/${getConfigDirName()}/mcp.json`,
+          `7. cwd/${getConfigDirName()}/mcp-adapter.json`,
           `Host discovery: ${state.discovery.hostConfigDiscovery}. Conflicts reported: ${state.discovery.conflicts.length}.`,
           ...state.discovery.conflicts.slice(0, 8).map((conflict) =>
             `${conflict.serverName}: ${conflict.sources.map((source) => source.path).join(" -> ")} (winner: ${conflict.winner.path})`,
           ),
-          "Pi writes compatibility imports and adapter-only overrides to Pi-owned files.",
+          "The adapter writes compatibility imports and adapter-only overrides to mcp-adapter.json files.",
         ], previewW);
       case "open-paths":
         return this.formatPreview(state.detectedPaths.length > 0

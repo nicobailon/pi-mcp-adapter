@@ -49,7 +49,7 @@ describe("project MCP server trust", () => {
   }
 
   it("tracks every project-scoped definition and excludes it before session trust is known", async () => {
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { mcpServers: { inherited: { command: "global" } } });
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { mcpServers: { inherited: { command: "global" } } });
     writeJson(join(cwd, ".mcp.json"), { mcpServers: {
       inherited: { args: ["project"] },
       local: { command: "node", lifecycle: "eager" },
@@ -104,7 +104,7 @@ describe("project MCP server trust", () => {
     expect((await modules.trust.applyProjectServerTrust(loaded, context())).blockedServers.has("local")).toBe(true);
     expect(warning).toHaveBeenCalledWith(expect.stringContaining("Ignoring settings.projectServers"));
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { settings: { projectServers: "allow" }, mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { settings: { projectServers: "allow" }, mcpServers: {} });
     vi.resetModules();
     modules = await load();
     loaded = modules.config.loadMcpConfigWithSources(undefined, cwd);
@@ -166,7 +166,7 @@ describe("project MCP server trust", () => {
   });
 
   it("gates repo-local imports enabled by global config", async () => {
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["vscode"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { imports: ["vscode"], mcpServers: {} });
     writeJson(join(cwd, ".vscode", "mcp.json"), { mcpServers: { host: { command: "node" } } });
     const { config, trust } = await load();
     const loaded = config.loadMcpConfigWithSources(undefined, cwd);
@@ -176,7 +176,7 @@ describe("project MCP server trust", () => {
   });
 
   it("gates repo-local host discovery enabled by global config", async () => {
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), {
       settings: { hostConfigDiscovery: "on" },
       mcpServers: {},
     });
@@ -191,7 +191,7 @@ describe("project MCP server trust", () => {
   });
 
   it("keeps home-level imports outside project-server gating", async () => {
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["cursor"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { imports: ["cursor"], mcpServers: {} });
     writeJson(join(home, ".cursor", "mcp.json"), { mcpServers: { home: { command: "node" } } });
     const { config, trust } = await load();
     const loaded = config.loadMcpConfigWithSources(undefined, cwd);

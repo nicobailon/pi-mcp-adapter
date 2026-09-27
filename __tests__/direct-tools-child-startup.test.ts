@@ -19,7 +19,7 @@ describe("direct tools in child Pi processes", () => {
     const agentDir = join(root, "agent");
     const projectDir = join(root, "project");
     await Promise.all([mkdir(agentDir), mkdir(projectDir)]);
-    const configPath = join(agentDir, "mcp.json");
+    const configPath = join(agentDir, "mcp-adapter.json");
     await writeFile(configPath, JSON.stringify({
       mcpServers: {
         demo: {

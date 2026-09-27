@@ -120,7 +120,7 @@ export async function semanticSearch(
     return { ok: false, error: { code: "disabled", message: "Jev semantic search is disabled." } };
   }
   if (settings.allowedServers.length === 0) {
-    return { ok: false, error: { code: "data_policy_denied", message: "Semantic search is enabled, but settings.jev.allowedServers is empty. Run /mcp jev setup or allow specific MCP servers." } };
+    return { ok: false, error: { code: "data_policy_denied", message: "Semantic search is enabled, but settings.jev.allowedServers is empty. Run /mcp-adapter jev setup or allow specific MCP servers." } };
   }
   if (server && !settings.allowedServers.includes(server)) {
     return { ok: false, error: { code: "data_policy_denied", message: `Server "${server}" is not allowed by settings.jev.allowedServers.` } };

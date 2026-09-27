@@ -62,6 +62,7 @@ vi.mock("../config.ts", () => ({
   cloneMcpConfig: mocks.cloneMcpConfig,
   discoverConfiguredClaudePluginSkills: mocks.discoverConfiguredClaudePluginSkills,
   resolveConfiguredClaudePluginMcp: mocks.resolveConfiguredClaudePluginMcp,
+  getLegacyMcpMigrationNotices: vi.fn(() => []),
   writeProjectServerDisabledOverride: mocks.writeProjectServerDisabledOverride,
 }));
 

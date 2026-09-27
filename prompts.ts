@@ -269,7 +269,7 @@ export function createPromptCommand(
       if (state.promptMetadataLive?.has(metadata.serverName) && !liveMetadata) {
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp reconnect to refresh.`,
+            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp-adapter reconnect to refresh.`,
             "error",
           );
         }
@@ -287,7 +287,7 @@ export function createPromptCommand(
       if (!state.config.mcpServers[metadata.serverName]) {
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `MCP prompt "${live.originalName}" is no longer configured. Run /mcp reconnect to refresh.`,
+            `MCP prompt "${live.originalName}" is no longer configured. Run /mcp-adapter reconnect to refresh.`,
             "error",
           );
         }
@@ -307,7 +307,7 @@ export function createPromptCommand(
           const conn = state.manager.getConnection(metadata.serverName);
           const message = conn?.status === "needs-auth"
             ? `MCP server "${metadata.serverName}" needs authentication. Run /mcp-auth ${metadata.serverName}.`
-            : `MCP server "${metadata.serverName}" is not available. Run /mcp reconnect ${metadata.serverName}.`;
+            : `MCP server "${metadata.serverName}" is not available. Run /mcp-adapter reconnect ${metadata.serverName}.`;
           ctx.ui.notify(message, "error");
         }
         return;
@@ -317,7 +317,7 @@ export function createPromptCommand(
       if (state.promptMetadataLive?.has(metadata.serverName) && !refreshed) {
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp reconnect to refresh.`,
+            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp-adapter reconnect to refresh.`,
             "error",
           );
         }
@@ -370,7 +370,7 @@ function buildCommandDescription(metadata: PromptMetadata): string {
 }
 
 /**
- * Public helper used by `/mcp prompts` to render the list of prompts known
+ * Public helper used by `/mcp-adapter prompts` to render the list of prompts known
  * to the adapter, whether from a live connection or the metadata cache.
  */
 export function listAllPromptMetadata(state: McpExtensionState): PromptMetadata[] {

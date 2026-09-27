@@ -32,11 +32,11 @@ The adapter reads standard MCP files automatically. No extra setup needed if you
 
 | You already have... | What happens |
 |---------------------|--------------|
-| `.mcp.json` or `~/.config/mcp/mcp.json` | Pi uses it immediately. Use `.mcp.json` for project/team sharing and `~/.config/mcp/mcp.json` for all projects. The first time you open `/mcp`, you'll see a short heads-up explaining which file Pi detected and that Pi only writes adapter-specific overrides to its own files. |
-| Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
-| Nothing configured yet | Run `/mcp setup`, choose project `.mcp.json` or global `~/.config/mcp/mcp.json`, then scaffold a minimal config, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
+| `.mcp.json` or `~/.config/mcp/mcp.json` | Pi uses it immediately. Use `.mcp.json` for project/team sharing and `~/.config/mcp/mcp.json` for all projects. |
+| Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp-adapter setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
+| Nothing configured yet | Run `/mcp-adapter setup`, choose project `.mcp.json` or global `~/.config/mcp/mcp.json`, then scaffold a minimal config, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
 
-If you prefer the terminal, you can also run `pi-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to the Pi agent dir (`~/.pi/agent/mcp.json` by default, or `$PI_CODING_AGENT_DIR/mcp.json` when set).
+If you prefer the terminal, you can also run `pi-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to the adapter config (`~/.pi/agent/mcp-adapter.json` by default, or `$PI_CODING_AGENT_DIR/mcp-adapter.json` when set).
 
 ## Quick Start
 
@@ -55,27 +55,30 @@ Preferred project config: `.mcp.json`
 
 Preferred user-global shared config: `~/.config/mcp/mcp.json` (for all projects). Pi also reads the tool-agnostic global paths `~/.agents/mcp.json` and `~/.agents/mcp/mcp.json` as compatibility inputs.
 
-Pi-owned files are not additional normal setup choices. They hold Pi-specific settings, compatibility imports, and adapter-only overrides:
+Adapter-owned files are not additional normal setup choices. They hold adapter settings, compatibility imports, and partial server overrides:
 
-- `<Pi agent dir>/mcp.json` — Pi global override (`~/.pi/agent/mcp.json` by default)
-- `.pi/mcp.json` — Pi project override
+- `<Pi agent dir>/mcp-adapter.json` — global adapter config (`~/.pi/agent/mcp-adapter.json` by default)
+- `.pi/mcp-adapter.json` — project adapter override
 
-Host-specific configs are detected and shown by `/mcp setup` and `pi-mcp-adapter init`, but they are compatibility inputs rather than normal setup paths and are not loaded automatically. The normal `/mcp` panel does not scan host-specific files when `settings.hostConfigDiscovery` is `"off"`. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `pi-mcp-adapter init --discover-host-configs`. The default is `"off"`; `"prompt"` is available for integrations that want detection without activation. Host configs are lower precedence than every shared and Pi-owned source, and `/mcp setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
+The adapter does not read Pi's `<Pi agent dir>/mcp.json` or `.pi/mcp.json` at all. If you previously used either file with this adapter, rename it to `mcp-adapter.json`; the format is unchanged, so a plain `mv` works (merge the files if the target already exists). This leaves `mcp.json` exclusively to Pi's built-in MCP support, so Pi and the adapter never start the same servers.
+
+Host-specific configs are detected and shown by `/mcp-adapter setup` and `pi-mcp-adapter init`, but they are compatibility inputs rather than normal setup paths and are not loaded automatically. The normal `/mcp-adapter` panel does not scan host-specific files when `settings.hostConfigDiscovery` is `"off"`. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `pi-mcp-adapter init --discover-host-configs`. The default is `"off"`; `"prompt"` is available for integrations that want detection without activation. Host configs are lower precedence than every normal config source, and `/mcp-adapter setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
 
 Precedence is (later entries win):
 
 1. `~/.config/mcp/mcp.json`
 2. `~/.agents/mcp.json`
 3. `~/.agents/mcp/mcp.json`
-4. `<Pi agent dir>/mcp.json`
-5. `.mcp.json`
-6. `.pi/mcp.json`
+4. `<Pi agent dir>/mcp-adapter.json`
+5. opted-in ancestors, farthest first: `.mcp.json`, `.pi/mcp-adapter.json`
+6. `.mcp.json`
+7. `.pi/mcp-adapter.json`
 
-Ancestor discovery is off by default. To opt in, set `settings.ancestorConfigRoots` in a user-global config above, or in the explicitly selected `--mcp-config`/`configPath` file, for example `"ancestorConfigRoots": ["~/work/team"]`. Each root must be an explicit absolute path or `~/...` and resolve to an existing directory under `$HOME`. Roots that do not contain the canonical cwd are ignored. If several roots match, only the nearest (deepest) is used. Project `.mcp.json` and `.pi/mcp.json` files cannot enable discovery or extend the boundary.
+Ancestor discovery is off by default. To opt in, set `settings.ancestorConfigRoots` in a user-global source (`~/.config/mcp/mcp.json`, either `~/.agents` MCP file, or the global `mcp-adapter.json`) or in the explicitly selected `--mcp-config`/`configPath` file, for example `"ancestorConfigRoots": ["~/work/team"]`. Each root must be an explicit absolute path or `~/...` and resolve to an existing directory under `$HOME`. Roots that do not contain the canonical cwd are ignored. If several roots match, only the nearest (deepest) is used. Project files cannot enable discovery or extend the boundary.
 
-Within the selected root, existing `.mcp.json` and `<configDir>/mcp.json` (normally `.pi/mcp.json`) files load between steps 4 and 5, from the root through parent(cwd), farthest first. Nearer directories override farther ones, Pi overrides shared config within each directory, and cwd files win over ancestors. Search never goes above the configured root or `$HOME`; the boundary limits discovery but is not a file-ownership or symlink-target sandbox. Only configure roots whose project files you trust. `/mcp setup` write targets and project-local `/mcp disable` and `/mcp enable` overrides are unchanged.
+Within the selected root, `.mcp.json` and `<configDir>/mcp-adapter.json` load from the root through parent(cwd), farthest first. Nearer directories override farther ones, adapter config overrides shared config within each directory, and cwd files win over ancestors. Search never goes above the configured root or `$HOME`; the boundary limits discovery but is not a file-ownership or symlink-target sandbox. Only configure roots whose project files you trust.
 
-`/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
+`/mcp-adapter disable <server>` and `/mcp-adapter enable <server>` persist only the `disabled` field in the project-local `.pi/mcp-adapter.json`, the highest-precedence adapter layer. The source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
 
 Servers are **lazy by default** — they won't connect until you actually call one of their tools. The adapter caches tool metadata so search and describe work without live connections.
 
@@ -102,7 +105,7 @@ Two calls instead of 26 tools cluttering the context.
 
 ### File Layout
 
-Use the shared MCP files when you want one setup to work across hosts, and Pi-owned files when you need Pi-specific overrides or settings.
+Use shared MCP files when you want one setup to work across hosts, and adapter-owned files for adapter-specific overrides or settings.
 
 | File | Purpose |
 |------|---------|
@@ -110,8 +113,10 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 | `~/.agents/mcp.json` | User-global tool-agnostic MCP config |
 | `~/.agents/mcp/mcp.json` | User-global tool-agnostic MCP config |
 | `.mcp.json` | Project-local shared MCP config |
-| `<Pi agent dir>/mcp.json` | Pi global override and compatibility imports (`~/.pi/agent/mcp.json` by default) |
-| `.pi/mcp.json` | Pi project override |
+| `<Pi agent dir>/mcp.json` | Pi built-in MCP config; never read by this adapter |
+| `<Pi agent dir>/mcp-adapter.json` | Global adapter settings, imports, and overrides (`~/.pi/agent/mcp-adapter.json` by default) |
+| `.pi/mcp.json` | Project Pi built-in MCP config; never read by this adapter |
+| `.pi/mcp-adapter.json` | Project adapter settings and overrides |
 
 For local stdio servers, a leading `~/` is expanded to the current user's home
 directory in `command`, `args`, and `cwd`. On Windows, the equivalent `~\\`
@@ -137,7 +142,7 @@ The adapter can load MCP servers from [Agent Plugins](https://agent-plugins.org/
 
 Each directory must contain a valid Agent Plugins 1.0 `plugin.json`. If it also has a root `mcp.json`, the adapter loads its `mcpServers` entries and prefixes them as `<plugin>__<server>`. The loader uses the Agent Plugins transport declared by each server `type` and skips invalid entries without blocking other servers. For stdio plugin servers, `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded only in `args`, `env`, and `cwd`; the adapter sets both variables for the child process and stores plugin data under the Pi agent directory.
 
-`inheritEnv` is an adapter-specific Pi field, not an Agent Plugins or OpenCode schema field. Do not add it to a plugin's strict `mcp.json`; to opt a plugin stdio server out of host-environment inheritance, set `inheritEnv: false` in a normal Pi override using the translated `<plugin>__<server>` name:
+`inheritEnv` is an adapter-specific field, not an Agent Plugins or OpenCode schema field. Do not add it to a plugin's strict `mcp.json`; to opt a plugin stdio server out of host-environment inheritance, set `inheritEnv: false` in an `mcp-adapter.json` override using the translated `<plugin>__<server>` name:
 
 ```json
 {
@@ -147,7 +152,7 @@ Each directory must contain a valid Agent Plugins 1.0 `plugin.json`. If it also 
 }
 ```
 
-Agent Plugins is a portable package format. Native Pi MCP config remains `.mcp.json`, `~/.config/mcp/mcp.json`, and Pi-owned overrides.
+Agent Plugins is a portable package format. Native adapter config remains `.mcp.json`, `~/.config/mcp/mcp.json`, and `mcp-adapter.json` overrides.
 
 ### Local Claude plugin bundles
 
@@ -265,7 +270,7 @@ The public subpath exposes only token read/update helpers plus a status helper. 
 
 ### Runtime status snapshots
 
-Extensions can subscribe to the adapter's versioned shared event-bus channel instead of parsing `/mcp` or `mcp({})` output:
+Extensions can subscribe to the adapter's versioned shared event-bus channel instead of parsing `/mcp-adapter` or `mcp({})` output:
 
 ```ts
 import { MCP_STATUS_EVENT, type McpStatusSnapshot } from "pi-mcp-adapter";
@@ -322,7 +327,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `oauth.authServerMetadataUrl` | HTTPS URL of an OAuth/OIDC authorization-server metadata document. When set, this document is authoritative instead of MCP protected-resource discovery; its issuer remains validated by default |
 | `oauth.skipIssuerMetadataValidation` | `true` disables the OAuth authorization-server metadata issuer check for this server. This weakens OAuth mix-up protection and should only be used for known-misconfigured internal servers while their metadata is being fixed. |
 | `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation. A leading `!` in `bearerToken` runs a command when the HTTP server connects; use `!!` for a literal leading `!`. |
-| `bearerTokenStore` | Set to `true` to read a static bearer token from the adapter-owned OS credential store when `auth` is `"bearer"` and no `bearerToken` or `bearerTokenEnv` is configured. Stored records are keyed only by the server name, bind to the resolved server URL, and are never named by config. Store a token with `pi-mcp-adapter token set <server>`, which reads it from a masked prompt or stdin pipe and never from an argument. `/mcp token status <server>` and `/mcp token remove <server>` manage non-secret state inside Pi; `/mcp token set` stays disabled until Pi exposes masked secret input. |
+| `bearerTokenStore` | Set to `true` to read a static bearer token from the adapter-owned OS credential store when `auth` is `"bearer"` and no `bearerToken` or `bearerTokenEnv` is configured. Stored records are keyed only by the server name, bind to the resolved server URL, and are never named by config. Store a token with `pi-mcp-adapter token set <server>`, which reads it from a masked prompt or stdin pipe and never from an argument. `/mcp-adapter token status <server>` and `/mcp-adapter token remove <server>` manage non-secret state inside Pi; `/mcp-adapter token set` stays disabled until Pi exposes masked secret input. |
 | `lifecycle` | `"lazy"` (default), `"eager"`, `"keep-alive"`, or `"lazy-keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
 | `requestTimeoutMs` | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used) |
@@ -427,9 +432,9 @@ Install an MCP endpoint without editing configuration:
 mcp({ action: "install", url: "https://example.com/mcp" })
 ```
 
-Install validates and connects the endpoint. New entries use a name derived from the hostname and are saved to Pi's global MCP config; existing URL entries are reused without rewriting. Pass `server` to choose a name or `target: "project"` to save to the project's `.mcp.json`. Unsafe URLs, name collisions, and failed connections are not persisted.
+Install validates and connects the endpoint. New entries use a name derived from the hostname and are saved to the global `mcp-adapter.json`; existing URL entries are reused without rewriting. Pass `server` to choose a name or `target: "project"` to save to the project's `.mcp.json`. Unsafe URLs, name collisions, and failed connections are not persisted.
 
-Set `settings.allowInstall` to `false` in an MCP config file (`mcp.json` or `.mcp.json`, not Pi's `settings.json`) to block `mcp({ action: "install" })` for constrained or headless agents. Connect, search, tool calls, authentication, runtime registration, and interactive setup are unaffected.
+Set `settings.allowInstall` to `false` in `mcp-adapter.json` or another adapter config source (not Pi's `mcp.json` or `settings.json`) to block `mcp({ action: "install" })` for constrained or headless agents. Connect, search, tool calls, authentication, runtime registration, and interactive setup are unaffected.
 
 In exclusive config mode, a project target must be the active config path; otherwise use the global target. URL install cannot promote runtime-registered servers: save their complete definitions manually so required headers and transport/auth settings are retained.
 
@@ -463,7 +468,7 @@ You can also pass only the `code` query parameter with `args: { code: "..." }`. 
 
 ### Project server trust
 
-Servers defined or changed by project-scoped MCP files (`.mcp.json`, `.pi/mcp.json`, and opted-in ancestor project files) do not run merely because a repository was opened. This includes servers brought in through project `imports`, `claudePlugins`, `settings.agentPluginPaths`, repo-local host config files (even when imports or discovery are enabled globally), or Pi packages listed in project `.pi/settings.json`. If Pi reports the project as untrusted, the adapter blocks them. In a trusted interactive session, the adapter shows the source file and command or URL and asks once before the first connection. The approval is stored under the Pi agent directory and is tied to the canonical project path, server name, and complete effective definition; changing the definition requires a new approval. Blocked servers are identified in the panel, while MCP status includes the required trust or approval action.
+Servers defined or changed by project-scoped MCP files (`.mcp.json`, `.pi/mcp-adapter.json`, and opted-in ancestor project files) do not run merely because a repository was opened. This includes servers brought in through project `imports`, `claudePlugins`, `settings.agentPluginPaths`, repo-local host config files (even when imports or discovery are enabled globally), or Pi packages listed in project `.pi/settings.json`. If Pi reports the project as untrusted, the adapter blocks them. In a trusted interactive session, the adapter shows the source file and command or URL and asks once before the first connection. The approval is stored under the Pi agent directory and is tied to the canonical project path, server name, and complete effective definition; changing the definition requires a new approval. Blocked servers are identified in the panel, while MCP status includes the required trust or approval action.
 
 In print, JSON, and RPC sessions, an unapproved project server is skipped. To intentionally allow project servers in trusted headless sessions, set `"projectServers": "allow"` in the **user-global** `settings` object. The default is `"ask"`; project files cannot change this policy. Explicit config files, programmatic configuration, global/import/plugin servers, and runtime registrations retain their existing behavior. Project servers are always excluded from extension-load initialization and are admitted only after `session_start` supplies Pi's trust context.
 
@@ -517,7 +522,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
 | `deferWithMissingMetadata` | Allow lazy startup to defer when persisted metadata is missing or invalid (default: `false`). See [Direct Tools](#direct-tools) for the startup tradeoff. |
 | `showStatusIcon` | Show the plug icon in MCP status and connection text (default: `true`). Set to `false` for plain `MCP: ...` text. |
-| `mcpFooterStatus` | MCP footer verbosity: `"full"` (default), `"compact"` for `MCP connected/enabled`, or `"off"` to clear the persistent footer status. `/mcp status` remains available. |
+| `mcpFooterStatus` | MCP footer verbosity: `"full"` (default), `"compact"` for `MCP connected/enabled`, or `"off"` to clear the persistent footer status. `/mcp-adapter status` remains available. |
 | `toolResultRendering` | MCP tool result row style: `"compact"` (default) uses self-rendered rows, or `"boxed"` restores the legacy Pi boxed tool row. |
 | `collapsedResultLines` | Number of result text lines to show before expansion: `1`, `2`, or `3`. Defaults to `1` in compact mode and `3` in boxed mode. |
 | `notifyOnStartupConnect` | Show successful startup connection notices (default: `true`). Set to `false` to suppress routine `MCP: N servers connected (M tools)` notices. Connection errors and authentication warnings remain visible. |
@@ -537,7 +542,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so metadata updates and explicit reconnects do not rebuild the system prompt. Proxy/search/cache metadata still refreshes. Default: false. |
 | `scriptMode` | Register the MCP-only `mcpScript` plain-JavaScript tool (default: true). Set to `false` to hide it. |
 | `exposeResources` | Expose MCP resources as tools (default: `true`). Set to `false` to disable globally across all servers. Per-server `exposeResources` overrides this. |
-| `jev` | Optional System One Jev settings. A valid System One key enables semantic search across every enabled MCP server by default; `semanticSearch: false` disables it. `scriptEvaluation` remains disabled by default and requires an `allowedServers` source allowlist when enabled. `jev: false` disables both. Run `/mcp jev setup` for guided configuration. |
+| `jev` | Optional System One Jev settings. A valid System One key enables semantic search across every enabled MCP server by default; `semanticSearch: false` disables it. `scriptEvaluation` remains disabled by default and requires an `allowedServers` source allowlist when enabled. `jev: false` disables both. Run `/mcp-adapter jev setup` for guided configuration. |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. Ignored while any server uses `directTools: "search"`, whose tools are registered inactive and can only be activated through the gateway (`mcp({ search })` or a successful `mcp({ tool })` call). |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
@@ -636,7 +641,7 @@ The quickest desktop setup is:
 pi-mcp-adapter key set systemone
 ```
 
-That is enough to use semantic search across all enabled MCP tools. Run `/mcp jev setup` in Pi when you want to restrict which enabled servers may share semantic-search data. The command saves a project-scoped allowlist and reloads Pi automatically. Verify the stored credential at any time with `pi-mcp-adapter key status systemone`.
+That is enough to use semantic search across all enabled MCP tools. Run `/mcp-adapter jev setup` in Pi when you want to restrict which enabled servers may share semantic-search data. The command saves a project-scoped allowlist and reloads Pi automatically. Verify the stored credential at any time with `pi-mcp-adapter key status systemone`.
 
 `SYSTEMONE_API_KEY` is for CI/headless use and overrides the keyring. Stdio MCP subprocesses inherit the host environment by default, so set `inheritEnv: false` where they must not receive it. The script worker receives no key, SDK, endpoint, headers, or environment.
 
@@ -722,7 +727,7 @@ MCP servers can advertise prompt templates alongside tools and resources. The ad
 ```text
 /mcp__agent_board__create_plan "harden retry policy"
 /mcp__agent_board__review_pipeline status=paused
-/mcp prompts
+/mcp-adapter prompts
 ```
 
 Prompt results are flattened into one user message, preserving `[user]` and `[assistant]` role markers for multi-message results. Servers without the `prompts` capability are not probed.
@@ -829,11 +834,11 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
 }
 ```
 
-`includeTools` and `excludeTools` filter direct tools, proxy search/list/describe, and the `/mcp` panel view.
+`includeTools` and `excludeTools` filter direct tools, proxy search/list/describe, and the `/mcp-adapter` panel view.
 
 Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`. If 75+ direct tools resolve, the adapter prints an advisory but still registers the tools you configured. Set `settings.warnOnLargeDirectTools` to `false` to suppress this advisory.
 
-Direct tools register from the metadata cache in the Pi agent dir (`~/.pi/agent/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only while the cache populates, then the extension hot-loads the refreshed direct tools into the current session. When `mcp({ connect: "<server>" })` is what discovers them, the connect result lists the new tools in `addedToolNames`, so Pi can load their definitions from that point in the transcript instead of rewriting the active tool list. Servers that advertise MCP list-change notifications refresh the current session when their tool or resource list changes. On Pi versions that expose `pi.unregisterTool()`, stale direct tools are removed from the registry during refresh; older Pi versions still deactivate them from the active tool set. To force a refresh: `/mcp reconnect <server>`.
+Direct tools register from the metadata cache in the Pi agent dir (`~/.pi/agent/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only while the cache populates, then the extension hot-loads the refreshed direct tools into the current session. When `mcp({ connect: "<server>" })` is what discovers them, the connect result lists the new tools in `addedToolNames`, so Pi can load their definitions from that point in the transcript instead of rewriting the active tool list. Servers that advertise MCP list-change notifications refresh the current session when their tool or resource list changes. On Pi versions that expose `pi.unregisterTool()`, stale direct tools are removed from the registry during refresh; older Pi versions still deactivate them from the active tool set. To force a refresh: `/mcp-adapter reconnect <server>`.
 
 For faster startup, set `settings.deferWithMissingMetadata` to `true`. Servers with missing or invalid metadata (expired, mismatched, or non-cacheable) then contribute no tools, prompts, resources, or search entries until the first MCP operation starts the runtime and loads live metadata; the `mcp` gateway stays available. Because Pi cannot unregister slash commands, cached prompt commands also wait for live metadata under this setting. `eager`/`keep-alive` servers and cold `MCP_DIRECT_TOOLS` selections still start immediately.
 
@@ -843,11 +848,11 @@ Set `settings.directToolResultDetails` to `"bounded"` when an extension needs st
 
 If prompt-cache stability matters more than direct-tool hot-loading, set `settings.freezeDirectTools` to `true`. The initial direct-tool sync still runs, but later metadata updates and explicit reconnects keep the registered tool surface unchanged while proxy/search/cache metadata refreshes normally.
 
-When you change direct-tool toggles in `/mcp`, the extension updates direct tool registration in the current session. Broader setup writes from `/mcp setup` still use Pi's normal reload flow because they can add or restructure MCP config files.
+When you change direct-tool toggles in `/mcp-adapter`, the extension updates direct tool registration in the current session. Broader setup writes from `/mcp-adapter setup` still use Pi's normal reload flow because they can add or restructure MCP config files.
 
-**Interactive configuration:** Run `/mcp` to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. You can reconnect servers, toggle tools between direct and proxy, and enable or disable servers (`ctrl+d`) from the same overlay. For OAuth, press Enter on a server that needs auth or `ctrl+a` on any OAuth server. The Save action defaults to `ctrl+s` and can be remapped with the `mcp.panel.save` keybinding.
+**Interactive configuration:** Run `/mcp-adapter` to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. `/mcp` is also available as an alias when Pi's built-in MCP extension is not installed. You can reconnect servers, toggle tools between direct and proxy, and enable or disable servers (`ctrl+d`) from the same overlay. For OAuth, press Enter on a server that needs auth or `ctrl+a` on any OAuth server. The Save action defaults to `ctrl+s` and can be remapped with the `mcp.panel.save` keybinding.
 
-**Guided first-run setup:** Run `/mcp setup` to choose the normal write target for new shared servers — project `.mcp.json` or global `~/.config/mcp/mcp.json` — inspect detected shared MCP files, adopt compatibility imports from other hosts, open discovered config paths, preview exact before/after file diffs for writes, scaffold a minimal selected config, add a curated known server (DeepWiki, Context7, Notion, GitHub, or Chrome DevTools), or quick-add RepoPrompt into a standard/shared MCP file.
+**Guided first-run setup:** Run `/mcp-adapter setup` to choose the normal write target for new shared servers — project `.mcp.json` or global `~/.config/mcp/mcp.json` — inspect detected shared MCP files, adopt compatibility imports from other hosts, open discovered config paths, preview exact before/after file diffs for writes, scaffold a minimal selected config, add a curated known server (DeepWiki, Context7, Notion, GitHub, or Chrome DevTools), or quick-add RepoPrompt into a standard/shared MCP file.
 
 **Subagent integration:** If you use the subagent extension, agents can request direct MCP tools in their frontmatter with `mcp:server-name` syntax. See the subagent README for details.
 
@@ -929,7 +934,7 @@ Supported compatibility imports: `cursor`, `claude-code`, `claude-desktop`, `ope
 
 ### Project Config
 
-Prefer `.mcp.json` for project-local shared MCP config and `~/.config/mcp/mcp.json` for user-global shared MCP config. Use `.pi/mcp.json` only when you need a Pi-specific project override. Project files override both user-global shared MCP config and Pi global overrides.
+Prefer `.mcp.json` for project-local shared MCP config and `~/.config/mcp/mcp.json` for user-global shared MCP config. Use `.pi/mcp-adapter.json` for adapter-specific project overrides. Pi `mcp.json` files are not adapter inputs; project files override user-global sources.
 
 ## Usage
 
@@ -987,24 +992,24 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 
 | Command | What it does |
 |---------|--------------|
-| `/mcp` | Interactive panel and first-run onboarding surface |
-| `/pi-mcp` | Alias for `/mcp` when the host reserves `/mcp` |
-| `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
-| `/mcp jev setup` | Restrict which servers may share semantic-search data, save the project policy, and reload Pi |
-| `/mcp edit [project\|global]` | Open `.mcp.json` (default) or `~/.config/mcp/mcp.json` in an editor; Ctrl+G opens `$EDITOR`; saves a valid JSONC object and reloads |
-| `/mcp tools` | List all tools |
-| `/mcp prompts` | List all MCP prompts registered as slash commands |
-| `/mcp reconnect` | Reconnect all servers |
-| `/mcp reconnect <server>` | Connect or reconnect a single server |
-| `/mcp disable <server>` | Disable a server in the project-local `.pi/mcp.json` (requires `/reload` to apply) |
-| `/mcp enable <server>` | Enable through the project-local override layer (requires `/reload` to apply) |
-| `/mcp logout <server>` | Clear stored OAuth credentials for a server and disconnect it |
+| `/mcp-adapter` | Interactive panel and first-run onboarding surface |
+| `/mcp` | Alias for `/mcp-adapter` only when Pi's built-in MCP extension is not installed |
+| `/mcp-adapter setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
+| `/mcp-adapter jev setup` | Restrict which servers may share semantic-search data, save the project policy, and reload Pi |
+| `/mcp-adapter edit [project\|global]` | Open `.mcp.json` (default) or `~/.config/mcp/mcp.json` in an editor; Ctrl+G opens `$EDITOR`; saves a valid JSONC object and reloads |
+| `/mcp-adapter tools` | List all tools |
+| `/mcp-adapter prompts` | List all MCP prompts registered as slash commands |
+| `/mcp-adapter reconnect` | Reconnect all servers |
+| `/mcp-adapter reconnect <server>` | Connect or reconnect a single server |
+| `/mcp-adapter disable <server>` | Disable a server in the project-local `.pi/mcp-adapter.json` (requires `/reload` to apply) |
+| `/mcp-adapter enable <server>` | Enable through the project-local override layer (requires `/reload` to apply) |
+| `/mcp-adapter logout <server>` | Clear stored OAuth credentials for a server and disconnect it |
 | `/mcp-auth` | Open an OAuth server picker in interactive UI sessions |
 | `/mcp-auth <server>` | OAuth setup for a specific server |
 
 If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`, and direct tool calls automatically run OAuth when needed and retry once.
 
-In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or Enter on a server that needs auth. `/mcp-auth` without a server only opens a picker in the interactive UI. For gateway authorization and manual callback completion, see [Remote/headless OAuth](#remoteheadless-oauth).
+In interactive sessions, you can also authenticate from `/mcp-adapter` with `ctrl+a` or Enter on a server that needs auth. `/mcp-auth` without a server only opens a picker in the interactive UI. For gateway authorization and manual callback completion, see [Remote/headless OAuth](#remoteheadless-oauth).
 
 ### MCP output schemas
 

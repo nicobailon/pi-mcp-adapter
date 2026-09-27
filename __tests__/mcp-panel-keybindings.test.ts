@@ -344,13 +344,13 @@ describe("mcp-setup-panel custom keybindings", () => {
     expect(output).toContain("Recommended shared config:");
     expect(output).toContain("project/team: .mcp.json");
     expect(output).toContain("all projects: ~/.config/mcp/mcp.json");
-    expect(output).toContain("Advanced compatibility and Pi-owned layers:");
+    expect(output).toContain("Advanced compatibility and adapter-owned layers:");
     expect(output).toContain("Read order (later entries win):");
     expect(output).toContain("0. detected host configs (opt-in lowest-precedence fallback)");
     expect(output).toContain("2. ~/.agents/mcp.json");
     expect(output).toContain("3. ~/.agents/mcp/mcp.json");
     expect(output).toContain("5. configured ancestor root to parent(cwd), farthest first (opt-in)");
-    expect(output).toContain("7. cwd/.pi/mcp.json");
+    expect(output).toContain("7. cwd/.pi/mcp-adapter.json");
     panel.dispose();
   });
 
@@ -378,7 +378,7 @@ describe("mcp-setup-panel custom keybindings", () => {
       panel.handleInput(DOWN);
       const output = panel.render(100).join("\n");
 
-      expect(output).toContain("7. cwd/.arc/mcp.json");
+      expect(output).toContain("7. cwd/.arc/mcp-adapter.json");
       panel.dispose();
     } finally {
       if (originalPackageDir === undefined) {

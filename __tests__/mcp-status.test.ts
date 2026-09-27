@@ -150,6 +150,12 @@ describe("MCP status snapshots", () => {
     );
   });
 
+  it("includes legacy-config migration notices in proxy status", () => {
+    const state = createState();
+    (state as typeof state & { migrationNotices: string[] }).migrationNotices = ["move old mcp.json to mcp-adapter.json"];
+    expect(executeStatus(state).content[0]?.text).toContain("⚠ move old mcp.json to mcp-adapter.json");
+  });
+
   it("reports an active listen with unconfirmed catalog freshness", () => {
     const state = createState();
     state.manager.getConnection.mockImplementation((name: string) => name === "connected"

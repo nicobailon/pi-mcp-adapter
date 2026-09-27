@@ -171,7 +171,7 @@ The SDK automatically:
 To clear stored OAuth credentials and force a fresh authorization:
 
 ```
-/mcp logout my-oauth-server
+/mcp-adapter logout my-oauth-server
 ```
 
 Within one Pi process, logout is a linearizable boundary: OAuth work that began

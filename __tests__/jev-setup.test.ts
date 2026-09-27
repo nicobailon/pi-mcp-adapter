@@ -75,7 +75,7 @@ describe("Jev setup", () => {
   it("writes project-scoped policy by default and validates server names", () => {
     const cwd = mkdtempSync(join(tmpdir(), "mcp-jev-setup-project-"));
     const result = writeJevSemanticSearchConfig(undefined, cwd, ["demo"]);
-    expect(result.path).toBe(join(cwd, ".pi", "mcp.json"));
+    expect(result.path).toBe(join(cwd, ".pi", "mcp-adapter.json"));
     expect(JSON.parse(readFileSync(result.path, "utf8"))).toMatchObject({
       settings: { jev: { semanticSearch: true, allowedServers: ["demo"] } },
     });

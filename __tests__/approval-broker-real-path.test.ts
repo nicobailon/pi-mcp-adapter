@@ -27,7 +27,7 @@ describe("approval broker through Pi registered script calls", () => {
         process.env.PI_CODING_AGENT_DIR = agentDir;
         const receipts = join(root, "receipts.jsonl");
         await writeFile(receipts, "");
-        const configPath = join(agentDir, "mcp.json");
+        const configPath = join(agentDir, "mcp-adapter.json");
         await writeFile(configPath, JSON.stringify({
           mcpServers: {
             fixture: {

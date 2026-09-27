@@ -547,6 +547,9 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
   if (blockedCount > 0) text += ` (${blockedCount} blocked)`;
   if (disabledCount > 0) text += ` (${disabledCount} disabled)`;
   text += "\n\n";
+  if (state.migrationNotices?.length) {
+    text += `${state.migrationNotices.map((notice) => `⚠ ${notice}`).join("\n")}\n\n`;
+  }
   for (const server of servers) {
     if (server.status === "blocked") {
       text += `⊘ ${server.name} (${server.blockedReason})\n`;
@@ -1004,7 +1007,7 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
       };
     }
     return {
-      content: [{ type: "text" as const, text: `Server "${server}" is configured but not connected. Use mcp({ connect: "${server}" }) or /mcp reconnect ${server} to retry.${instructionsText}` }],
+      content: [{ type: "text" as const, text: `Server "${server}" is configured but not connected. Use mcp({ connect: "${server}" }) or /mcp-adapter reconnect ${server} to retry.${instructionsText}` }],
       details: { mode: "list", server, tools: [], count: 0, error: "not_connected", hasInstructions: Boolean(instructions) },
     };
   }

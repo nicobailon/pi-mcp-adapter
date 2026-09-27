@@ -38,6 +38,7 @@ describe("MCP status failure reasons", () => {
       manager: { getConnection: () => undefined },
       toolMetadata: new Map(),
       failureTracker: new Map([["demo", Date.now()]]),
+      migrationNotices: ["move old mcp.json to mcp-adapter.json"],
     } as any, { hasUI: true, ui } as any);
 
     expect(ui.notify).toHaveBeenCalledWith(
@@ -47,7 +48,8 @@ describe("MCP status failure reasons", () => {
     const output = ui.notify.mock.calls[0][0];
     expect(output).toContain(".mcp.json for this project/team");
     expect(output).toContain("~/.config/mcp/mcp.json for all projects");
-    expect(output).toContain("Pi-owned files hold compatibility imports and adapter-specific overrides");
+    expect(output).toContain("mcp-adapter.json files hold compatibility imports and adapter-specific overrides");
+    expect(output).toContain("⚠ move old mcp.json to mcp-adapter.json");
     expect(output).not.toContain("https://secret.invalid/status");
   });
 

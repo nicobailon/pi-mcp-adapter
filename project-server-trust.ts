@@ -41,7 +41,7 @@ export function describeProjectServerBlock(reason: ProjectServerBlockReason): st
 /** Why a disabled server is unavailable: its project-trust block, or the manual disable. */
 export function disabledServerReason(blocked: ReadonlyMap<string, ProjectServerBlock> | undefined, name: string): string {
   const block = blocked?.get(name);
-  return block ? describeProjectServerBlock(block.reason) : `disabled. Run /mcp enable ${name} and /reload to enable it.`;
+  return block ? describeProjectServerBlock(block.reason) : `disabled. Run /mcp-adapter enable ${name} and /reload to enable it.`;
 }
 
 type ConfigWithSourceMetadata = McpConfig & {

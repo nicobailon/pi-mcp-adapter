@@ -43,6 +43,8 @@ export interface McpExtensionState {
   serverInstructions: Map<string, string>;
   config: McpConfig;
   programmaticConfig?: boolean;
+  /** Session-scoped notices for legacy mcp.json files the adapter ignores. */
+  migrationNotices?: string[];
   /** Install validations must not publish durable cache entries before config persistence. */
   provisionalInstalls?: Set<string>;
   oauthRuntime: McpOAuthRuntime;

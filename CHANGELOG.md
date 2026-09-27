@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- The adapter no longer reads `<Pi agent dir>/mcp.json` or `.pi/mcp.json` at all. Rename either file to `mcp-adapter.json`; the format is unchanged, so a plain `mv` works (merge it if the target already exists). This frees `mcp.json` for Pi's built-in MCP support so Pi and the adapter never start the same servers. The adapter's interactive command is now `/mcp-adapter`; `/mcp` remains an alias only when Pi's built-in MCP extension is not installed.
+
 ### Security
 
 - Replace the `mcpScript` `node:vm` sandbox with a memory-limited QuickJS/WASM VM, preventing injected API functions from exposing the host `Function`, `process`, filesystem, or child-process APIs ([#676](https://github.com/nicobailon/pi-mcp-adapter/issues/676)). Serialized output blocks are limited to 16 MiB per script and error messages to 64 KiB. Script values now cross the host boundary as JSON; non-JSON emitted and returned values remain readable, but their formatting can differ from Node's `util.inspect` output.
@@ -760,7 +764,7 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - Added a dedicated Pi-owned onboarding state file so shared-config hints behave as one-time guidance instead of repeating every session.
 
 ### Changed
-- Updated config precedence to prefer shared MCP files first, then Pi overrides, with `.pi/mcp.json` acting as the final Pi-specific project override.
+- At the time, updated config precedence to prefer shared MCP files first, with `.pi/mcp.json` as the final project override. This legacy layout is superseded by the `mcp-adapter.json` hard cutover documented above.
 - Updated Claude Code compatibility probing to prefer modern Claude MCP config locations before legacy paths.
 - Updated project scaffolding so generated `.mcp.json` files are safe minimal shells instead of fake placeholder servers that fail on first reload.
 - Updated the setup panel and README for clearer first-run guidance, improved spacing, and a more digestible shared-MCP-first setup story.

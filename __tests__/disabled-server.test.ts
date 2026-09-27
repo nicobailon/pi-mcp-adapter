@@ -144,7 +144,7 @@ describe("disabled MCP servers", () => {
 
   it("writes only a project-local disabled override and removes it cleanly", () => {
     const cwd = mkdtempSync(join(tmpdir(), "pi-mcp-disabled-override-"));
-    const filePath = join(cwd, ".pi", "mcp.json");
+    const filePath = join(cwd, ".pi", "mcp-adapter.json");
     mkdirSync(join(cwd, ".pi"));
     writeFileSync(filePath, JSON.stringify({ unrelated: { keep: true }, mcpServers: {
       disabled: { disabled: false, directTools: true },
@@ -168,7 +168,7 @@ describe("disabled MCP servers", () => {
     writeFileSync(overridePath, JSON.stringify({ mcpServers: { lower: { command: "node", disabled: true } } }));
 
     expect(writeProjectServerDisabledOverride(overridePath, cwd, "lower", false)).toMatchObject({ changed: true });
-    expect(JSON.parse(readFileSync(join(cwd, ".pi", "mcp.json"), "utf8")).mcpServers.lower).toEqual({ disabled: false });
+    expect(JSON.parse(readFileSync(join(cwd, ".pi", "mcp-adapter.json"), "utf8")).mcpServers.lower).toEqual({ disabled: false });
     expect(loadMcpConfig(overridePath, cwd).mcpServers.lower.disabled).toBe(false);
   });
 
@@ -179,19 +179,19 @@ describe("disabled MCP servers", () => {
     writeFileSync(join(cwd, ".vscode", "mcp.json"), JSON.stringify({
       mcpServers: { imported: { command: "node", disabled: true } },
     }));
-    writeFileSync(join(cwd, ".pi", "mcp.json"), JSON.stringify({
+    writeFileSync(join(cwd, ".pi", "mcp-adapter.json"), JSON.stringify({
       imports: ["vscode"],
       mcpServers: { imported: { disabled: true } },
     }));
 
     expect(writeProjectServerDisabledOverride(undefined, cwd, "imported", false)).toMatchObject({ changed: true });
-    expect(JSON.parse(readFileSync(join(cwd, ".pi", "mcp.json"), "utf8")).mcpServers.imported).toEqual({ disabled: false });
+    expect(JSON.parse(readFileSync(join(cwd, ".pi", "mcp-adapter.json"), "utf8")).mcpServers.imported).toEqual({ disabled: false });
     expect(loadMcpConfig(undefined, cwd).mcpServers.imported).toMatchObject({ command: "node", disabled: false });
   });
 
   it("preserves the supported raw server-map key while updating an override", () => {
     const cwd = mkdtempSync(join(tmpdir(), "pi-mcp-disabled-alias-"));
-    const filePath = join(cwd, ".pi", "mcp.json");
+    const filePath = join(cwd, ".pi", "mcp-adapter.json");
     mkdirSync(join(cwd, ".pi"));
     writeFileSync(filePath, JSON.stringify({ "mcp-servers": { alias: { command: "node", args: ["server"] } } }));
 
@@ -204,7 +204,7 @@ describe("disabled MCP servers", () => {
 
   it("preserves malformed project overrides instead of replacing them", () => {
     const cwd = mkdtempSync(join(tmpdir(), "pi-mcp-disabled-malformed-"));
-    const filePath = join(cwd, ".pi", "mcp.json");
+    const filePath = join(cwd, ".pi", "mcp-adapter.json");
     mkdirSync(join(cwd, ".pi"));
     writeFileSync(filePath, "{ malformed");
 

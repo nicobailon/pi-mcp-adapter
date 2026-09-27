@@ -87,9 +87,12 @@ export interface ConfigWritePreview {
 }
 export type SharedConfigTarget = "project" | "global";
 export declare function getPiGlobalConfigPath(overridePath?: string): string;
+export declare function getLegacyPiMcpGlobalConfigPath(): string;
 export declare function getGenericGlobalConfigPath(): string;
 export declare function getProjectConfigPath(cwd?: string): string;
 export declare function getProjectPiConfigPath(cwd?: string): string;
+export declare function getLegacyProjectPiMcpConfigPath(cwd?: string): string;
+export declare function getLegacyMcpMigrationNotices(cwd?: string, overridePath?: string): string[];
 export declare function getSharedConfigPath(target: SharedConfigTarget, cwd?: string): string;
 export declare function getConfigDiscoveryPaths(overridePath?: string, cwd?: string): ConfigDiscoveryPath[];
 export declare function findAvailableImportConfigs(cwd?: string): DiscoveredImportConfig[];

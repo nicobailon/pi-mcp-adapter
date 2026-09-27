@@ -19,7 +19,8 @@ const AGENTS_GLOBAL_CONFIG_PATHS = [
   join(homedir(), ".agents", "mcp", "mcp.json"),
 ] as const;
 const PROJECT_CONFIG_NAME = ".mcp.json";
-const PROJECT_PI_CONFIG_NAME = "mcp.json";
+const PI_MCP_CONFIG_NAME = "mcp.json";
+const ADAPTER_CONFIG_NAME = "mcp-adapter.json";
 const REPOPROMPT_BINARY_CANDIDATES = [
   join(homedir(), "RepoPrompt", "repoprompt_cli"),
   "/Applications/Repo Prompt.app/Contents/MacOS/repoprompt-mcp",
@@ -181,7 +182,11 @@ export interface ConfigWritePreview {
 export type SharedConfigTarget = "project" | "global";
 
 export function getPiGlobalConfigPath(overridePath?: string): string {
-  return overridePath ? resolve(overridePath) : getAgentPath("mcp.json");
+  return overridePath ? resolve(overridePath) : getAgentPath(ADAPTER_CONFIG_NAME);
+}
+
+export function getLegacyPiMcpGlobalConfigPath(): string {
+  return getAgentPath(PI_MCP_CONFIG_NAME);
 }
 
 export function getGenericGlobalConfigPath(): string {
@@ -193,7 +198,42 @@ export function getProjectConfigPath(cwd = process.cwd()): string {
 }
 
 export function getProjectPiConfigPath(cwd = process.cwd()): string {
-  return resolve(cwd, getConfigDirName(), PROJECT_PI_CONFIG_NAME);
+  return resolve(cwd, getConfigDirName(), ADAPTER_CONFIG_NAME);
+}
+
+export function getLegacyProjectPiMcpConfigPath(cwd = process.cwd()): string {
+  return resolve(cwd, getConfigDirName(), PI_MCP_CONFIG_NAME);
+}
+
+function legacyMcpConfigHasContent(filePath: string): boolean {
+  if (!existsSync(filePath)) return false;
+  try {
+    const raw = parseJsonWithComments(readFileSync(filePath, "utf-8"));
+    if (!isRecord(raw)) return false;
+    const servers = raw.mcpServers ?? raw["mcp-servers"];
+    return (isRecord(servers) && Object.keys(servers).length > 0)
+      || raw.settings !== undefined
+      || raw.imports !== undefined
+      || raw.claudePlugins !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath?: string): string[] {
+  const explicitPath = overridePath ? resolve(overridePath) : undefined;
+  const candidates = [
+    [getLegacyPiMcpGlobalConfigPath(), getPiGlobalConfigPath()],
+    [getLegacyProjectPiMcpConfigPath(cwd), getProjectPiConfigPath(cwd)],
+  ] as const;
+  return candidates.flatMap(([source, target]) => {
+    // An explicitly selected config is loaded verbatim, whatever its name.
+    if (resolve(source) === explicitPath || !legacyMcpConfigHasContent(source)) return [];
+    const fix = existsSync(target)
+      ? `Merge ${source} into ${target}, then remove ${source}.`
+      : `Move it with: mv ${JSON.stringify(source)} ${JSON.stringify(target)}`;
+    return [`pi-mcp-adapter no longer reads ${source}. ${fix}`];
+  });
 }
 
 export function getSharedConfigPath(target: SharedConfigTarget, cwd = process.cwd()): string {
@@ -362,7 +402,7 @@ export function loadMcpConfigWithSources(overridePath?: string, cwd = process.cw
   let projectAgentPluginSource: ProjectServerSource | undefined;
   let projectClaudePluginSource: ProjectServerSource | undefined;
   // Host files are a lower-precedence fallback. This ordering means an opt-in
-  // discovery cannot override a shared or Pi-owned definition, and all normal
+  // discovery cannot override a shared or adapter-owned definition, and all normal
   // URL-bound credential stripping remains in mergeServerMaps.
   const discoveredHost = !isExclusiveConfigMode() && hostConfigDiscovery === "on"
     ? loadDiscoveredHostConfigs(cwd)
@@ -600,7 +640,7 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
 
   sources.push({
     id: "pi-global",
-    label: "Pi global override",
+    label: "MCP adapter global override",
     readPath: userPath,
     writePath: userPath,
     kind: "user",
@@ -620,7 +660,7 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
   const ancestorSources = new Map<string, ConfigSourceSpec>();
   const descriptors = [
     { id: "shared-project-ancestor", label: "ancestor standard MCP", path: getProjectConfigPath, shared: true },
-    { id: "pi-project-ancestor", label: "ancestor Pi override", path: getProjectPiConfigPath, shared: false },
+    { id: "pi-project-ancestor", label: "ancestor MCP adapter override", path: getProjectPiConfigPath, shared: false },
   ] as const;
   const ancestorRoot = getConfiguredAncestorRoot(sources, cwd);
   if (ancestorRoot) {
@@ -660,7 +700,7 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
   if (projectPiPath !== userPath && projectPiPath !== projectPath) {
     sources.push({
       id: "pi-project",
-      label: "project Pi override",
+      label: "project MCP adapter override",
       readPath: projectPiPath,
       writePath: projectPiPath,
       kind: "project",
@@ -1595,7 +1635,7 @@ export function getServerProvenance(overridePath?: string, cwd = process.cwd()):
       const imported = loadImportedConfig(importKind, cwd, `Failed to inspect imported MCP config from ${importKind}:`);
       if (!imported) continue;
       for (const name of Object.keys(extractServers(imported.value, importKind))) {
-        // Keep writes inside Pi-owned storage even though the source is external.
+        // Keep writes inside adapter-owned storage even though the source is external.
         // Later import kinds win in the same deterministic order as loadDiscoveredHostConfigs.
         provenance.set(name, { path: userPath, kind: "import", importKind });
       }

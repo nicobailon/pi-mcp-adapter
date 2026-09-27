@@ -61,7 +61,7 @@ describe("cli init helper", () => {
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
 
-    const piConfigPath = join(home, ".pi", "agent", "mcp.json");
+    const piConfigPath = join(home, ".pi", "agent", "mcp-adapter.json");
     expect(existsSync(piConfigPath)).toBe(true);
     const config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
     expect(config.imports).toContain("claude-code");
@@ -86,7 +86,7 @@ describe("cli init helper", () => {
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
     expect(logs.join("\n")).toContain(`codex: ${codexConfigPath}`);
-    expect(logs.join("\n")).toContain("Detected host configs to import into Pi: codex");
+    expect(logs.join("\n")).toContain("Detected host configs to import into the MCP adapter: codex");
     expect(existsSync(join(home, ".pi", "agent", "mcp.json"))).toBe(false);
   });
 
@@ -97,7 +97,7 @@ describe("cli init helper", () => {
     process.chdir(project);
 
     mkdirSync(join(home, ".pi", "agent"), { recursive: true });
-    writeFileSync(join(home, ".pi", "agent", "mcp.json"), `{
+    writeFileSync(join(home, ".pi", "agent", "mcp-adapter.json"), `{
       // Existing config stays editable by humans.
       "imports": ["vscode",],
       "mcpServers": {
@@ -115,7 +115,7 @@ describe("cli init helper", () => {
     const output = logs.join("\n");
     expect(output).toContain(`User-global .agents MCP: ${join(home, ".agents", "mcp.json")}`);
     expect(output).toContain(`User-global .agents nested MCP: ${join(home, ".agents", "mcp", "mcp.json")}`);
-    expect(output).toContain("No Pi config changes needed.");
+    expect(output).toContain("No MCP adapter config changes needed.");
   });
 
   it("explicitly enables host fallback discovery without changing external files", async () => {
@@ -134,7 +134,7 @@ describe("cli init helper", () => {
 
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
-    const piConfigPath = join(home, ".pi", "agent", "mcp.json");
+    const piConfigPath = join(home, ".pi", "agent", "mcp-adapter.json");
     expect(JSON.parse(readFileSync(piConfigPath, "utf-8")).settings).toEqual({ hostConfigDiscovery: "on" });
     expect(readFileSync(hostPath, "utf-8")).toContain("cursorServer");
     expect(logs.join("\n")).toContain("Opting in to host-specific fallback discovery");
@@ -162,7 +162,7 @@ describe("cli init helper", () => {
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
 
-    const piConfigPath = join(agentDir, "mcp.json");
+    const piConfigPath = join(agentDir, "mcp-adapter.json");
     expect(existsSync(piConfigPath)).toBe(true);
     expect(existsSync(join(home, ".pi", "agent", "mcp.json"))).toBe(false);
     const config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
@@ -190,9 +190,9 @@ describe("cli init helper", () => {
 
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
-    expect(logs.join("\n")).toContain(`Pi global override: ${join(agentDir, "mcp.json")}`);
-    expect(logs.join("\n")).toContain(`Project Pi override: ${join(process.cwd(), ".arc", "mcp.json")}`);
-    expect(logs.join("\n")).toContain(`Dry run: would update ${join(agentDir, "mcp.json")}`);
+    expect(logs.join("\n")).toContain(`MCP adapter global override: ${join(agentDir, "mcp-adapter.json")}`);
+    expect(logs.join("\n")).toContain(`Project MCP adapter override: ${join(process.cwd(), ".arc", "mcp-adapter.json")}`);
+    expect(logs.join("\n")).toContain(`Dry run: would update ${join(agentDir, "mcp-adapter.json")}`);
     expect(existsSync(join(home, ".pi", "agent", "mcp.json"))).toBe(false);
   });
 
@@ -215,7 +215,7 @@ describe("cli init helper", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("Config discovery:");
-    expect(result.stdout).toContain("No Pi config changes needed.");
+    expect(result.stdout).toContain("No MCP adapter config changes needed.");
   });
 
   it("explains that install now goes through `pi install`", async () => {

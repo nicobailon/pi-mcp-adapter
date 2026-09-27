@@ -53,7 +53,7 @@ describe("Pi agent dir paths", () => {
     const { getAuthEntryFilePath, saveAuthEntry } = await import("../mcp-auth.ts");
 
     expect(getAgentDir()).toBe(agentDir);
-    expect(getPiGlobalConfigPath()).toBe(join(agentDir, "mcp.json"));
+    expect(getPiGlobalConfigPath()).toBe(join(agentDir, "mcp-adapter.json"));
     expect(getMetadataCachePath()).toBe(join(agentDir, "mcp-cache.json"));
     expect(getOnboardingStatePath()).toBe(join(agentDir, "mcp-onboarding.json"));
 

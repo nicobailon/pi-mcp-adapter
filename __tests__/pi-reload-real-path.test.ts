@@ -68,7 +68,7 @@ async function createReloadHarness() {
   ]);
   const pidDir = join(root, "pids");
   await mkdir(pidDir, { recursive: true });
-  const configPath = join(agentDir, "mcp.json");
+  const configPath = join(agentDir, "mcp-adapter.json");
   await writeFile(configPath, JSON.stringify({
     mcpServers: {
       delayed: {

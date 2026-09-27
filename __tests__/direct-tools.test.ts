@@ -134,7 +134,7 @@ describe("buildProxyDescription", () => {
     const description = buildProxyDescription(config);
 
     expect(description).toContain("Servers: demo\n");
-    expect(description).toContain("Disabled servers (enable with /mcp enable <server> and /reload): parked");
+    expect(description).toContain("Disabled servers (enable with /mcp-adapter enable <server> and /reload): parked");
   });
 
   it("omits the Servers line entirely when no servers are configured", () => {

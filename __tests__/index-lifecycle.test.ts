@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   cloneMcpConfig: vi.fn((config: unknown) => structuredClone(config)),
   discoverConfiguredClaudePluginSkills: vi.fn(() => []),
   resolveConfiguredClaudePluginMcp: vi.fn((config: unknown) => structuredClone(config)),
+  getLegacyMcpMigrationNotices: vi.fn(() => []),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
   createDirectToolExecutor: vi.fn(() => vi.fn()),
@@ -38,7 +39,7 @@ const mocks = vi.hoisted(() => ({
   openMcpPanel: vi.fn(),
   openMcpSetup: vi.fn(),
   setupJevSemanticSearch: vi.fn(),
-  getPiGlobalConfigPath: vi.fn(() => "/tmp/agent/mcp.json"),
+  getPiGlobalConfigPath: vi.fn(() => "/tmp/agent/mcp-adapter.json"),
   getProjectConfigPath: vi.fn(() => "/tmp/project/.mcp.json"),
   writeSharedServerEntry: vi.fn((path: string) => path),
   writeProjectServerDisabledOverride: vi.fn(() => ({ path: "/tmp/project/.pi/mcp.json", changed: true })),
@@ -98,6 +99,7 @@ vi.mock("../config.ts", () => ({
   cloneMcpConfig: mocks.cloneMcpConfig,
   discoverConfiguredClaudePluginSkills: mocks.discoverConfiguredClaudePluginSkills,
   resolveConfiguredClaudePluginMcp: mocks.resolveConfiguredClaudePluginMcp,
+  getLegacyMcpMigrationNotices: mocks.getLegacyMcpMigrationNotices,
   getPiGlobalConfigPath: mocks.getPiGlobalConfigPath,
   getProjectConfigPath: mocks.getProjectConfigPath,
   writeSharedServerEntry: mocks.writeSharedServerEntry,
@@ -217,7 +219,7 @@ function createState() {
   } as any;
 }
 
-function createPi(options: { unregisterTool?: false | ((name: string) => boolean) } = {}) {
+function createPi(options: { unregisterTool?: false | ((name: string) => boolean); commands?: Array<Record<string, unknown>> } = {}) {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let activeTools = ["bash", "mcp", "demo_search"];
   const unregisterTool =
@@ -236,6 +238,7 @@ function createPi(options: { unregisterTool?: false | ((name: string) => boolean
       }),
       events: { on: vi.fn(), emit: vi.fn() },
       getAllTools: vi.fn(() => []),
+      getCommands: vi.fn(() => options.commands ?? []),
       getActiveTools: vi.fn(() => activeTools),
       setActiveTools: vi.fn((nextActiveTools: string[]) => {
         activeTools = nextActiveTools;
@@ -392,6 +395,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.cloneMcpConfig.mockImplementation((config: unknown) => structuredClone(config));
     mocks.discoverConfiguredClaudePluginSkills.mockReturnValue([]);
     mocks.resolveConfiguredClaudePluginMcp.mockImplementation((config: unknown) => structuredClone(config));
+    mocks.getLegacyMcpMigrationNotices.mockReturnValue([]);
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway");
     mocks.createDirectToolExecutor.mockReturnValue(vi.fn());
@@ -403,7 +407,7 @@ describe("mcpAdapter session lifecycle", () => {
     });
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue([]);
     mocks.resolveDirectTools.mockReturnValue([]);
-    mocks.getPiGlobalConfigPath.mockReturnValue("/tmp/agent/mcp.json");
+    mocks.getPiGlobalConfigPath.mockReturnValue("/tmp/agent/mcp-adapter.json");
     mocks.getProjectConfigPath.mockReturnValue("/tmp/project/.mcp.json");
     mocks.writeSharedServerEntry.mockImplementation((path: string) => path);
     mocks.getConfigPathFromArgv.mockReturnValue(undefined);
@@ -422,13 +426,20 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
-  it("registers mcp and pi-mcp commands while keeping mcp-auth separate", async () => {
-    const { api } = await loadAdapter();
+  it("always registers mcp-adapter and adds the mcp alias at session start without built-in MCP", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { api, handlers } = await loadAdapter();
 
-    const commandNames = api.registerCommand.mock.calls.map((call: any[]) => call[0]);
-    expect(commandNames.filter((name: string) => name === "mcp")).toHaveLength(1);
-    expect(commandNames.filter((name: string) => name === "pi-mcp")).toHaveLength(1);
+    let commandNames = api.registerCommand.mock.calls.map((call: any[]) => call[0]);
+    expect(commandNames.filter((name: string) => name === "mcp-adapter")).toHaveLength(1);
+    expect(commandNames.filter((name: string) => name === "mcp")).toHaveLength(0);
     expect(commandNames.filter((name: string) => name === "mcp-auth")).toHaveLength(1);
+
+    await handlers.get("session_start")?.({}, { hasUI: false, cwd: "/project" });
+    await handlers.get("session_start")?.({}, { hasUI: false, cwd: "/project" });
+    commandNames = api.registerCommand.mock.calls.map((call: any[]) => call[0]);
+    expect(commandNames.filter((name: string) => name === "mcp")).toHaveLength(1);
   });
 
   it("discovers configured Claude plugin skills on startup and reload", async () => {
@@ -1064,12 +1075,12 @@ describe("mcpAdapter session lifecycle", () => {
     expect(state.config.mcpServers.demo).toEqual({ url: "https://demo.example.com/mcp", directTools: false });
     expect(state.lifecycle.registerServer).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, undefined);
     expect(mocks.writeSharedServerEntry).toHaveBeenCalledWith(
-      "/tmp/agent/mcp.json",
+      "/tmp/agent/mcp-adapter.json",
       "demo",
       { url: "https://demo.example.com/mcp" },
     );
     expect(result.details).toMatchObject({ mode: "install", status: "connected", server: "demo" });
-    expect(result.details.path).toBe("/tmp/agent/mcp.json");
+    expect(result.details.path).toBe("/tmp/agent/mcp-adapter.json");
   });
 
   it("denies agent install before parsing or side effects", async () => {
@@ -2476,6 +2487,46 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.loadMcpConfig).toHaveBeenCalledWith("/argv.json");
   });
 
+  it("warns once at session start and surfaces the legacy-config notice in both status paths", async () => {
+    const notice = "pi-mcp-adapter no longer reads /project/.pi/mcp.json. Move it with: mv old new";
+    mocks.getLegacyMcpMigrationNotices.mockReturnValue([notice]);
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { api, handlers } = await loadAdapter({ commands: [{ name: "mcp", sourceInfo: { path: "/adapter.ts" } }] });
+    const ui = { notify: vi.fn() };
+
+    await handlers.get("session_start")?.({}, { hasUI: true, ui, cwd: "/project" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ui.notify).toHaveBeenCalledTimes(1);
+    expect(ui.notify).toHaveBeenCalledWith(notice, "warning");
+
+    const proxy = api.registerTool.mock.calls.find(([tool]: any[]) => tool.name === "mcp")?.[0];
+    await proxy.execute("status", {});
+    expect(mocks.executeStatus).toHaveBeenCalledWith(expect.objectContaining({ migrationNotices: [notice] }));
+    const command = api.registerCommand.mock.calls.find(([name]: any[]) => name === "mcp")?.[1];
+    await command.handler("status", { hasUI: true, ui });
+    expect(mocks.showStatus).toHaveBeenCalledWith(expect.objectContaining({ migrationNotices: [notice] }), expect.anything());
+  });
+
+  it("does not warn about legacy config when Pi's built-in MCP command is detected", async () => {
+    mocks.getLegacyMcpMigrationNotices.mockReturnValue(["legacy notice"]);
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { api, handlers } = await loadAdapter({ commands: [
+      { name: "mcp", sourceInfo: { path: "/adapter.ts" } },
+      { name: "mcp:1", sourceInfo: { path: "<inline:mcp>" } },
+    ] });
+    const ui = { notify: vi.fn() };
+
+    await handlers.get("session_start")?.({}, { hasUI: true, ui, cwd: "/project" });
+    expect(mocks.getLegacyMcpMigrationNotices).not.toHaveBeenCalled();
+    expect(ui.notify).not.toHaveBeenCalledWith("legacy notice", "warning");
+    const registeredNames = api.registerCommand.mock.calls.map(([name]: any[]) => name);
+    expect(registeredNames).toContain("mcp-adapter");
+    expect(registeredNames).not.toContain("mcp");
+  });
+
   it("uses status notifications instead of ambient panels in memory-config mode", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
@@ -3427,7 +3478,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);
   });
 
-  it("completes current `/mcp` subcommands and server arguments", async () => {
+  it("completes current `/mcp-adapter` subcommands and server arguments", async () => {
     const state = createState();
     state.config.mcpServers = {
       github: { command: "github-mcp" },
@@ -3438,7 +3489,7 @@ describe("mcpAdapter session lifecycle", () => {
 
     const { api, handlers } = await loadAdapter();
 
-    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
+    const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp-adapter")?.[1];
     expect(commandDef.getArgumentCompletions("reconnect ")).toBeNull();
 
     await handlers.get("session_start")?.({}, { hasUI: false });
@@ -3580,7 +3631,7 @@ describe("mcpAdapter session lifecycle", () => {
     await commandDef.handler("logout", { hasUI: true, ui });
 
     expect(mocks.logoutServer).not.toHaveBeenCalled();
-    expect(ui.notify).toHaveBeenCalledWith("Usage: /mcp logout <server>", "error");
+    expect(ui.notify).toHaveBeenCalledWith("Usage: /mcp-adapter logout <server>", "error");
   });
 
   it("triggers core reload after setup changes config", async () => {
@@ -3870,6 +3921,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
     }
     mocks.cloneMcpConfig.mockImplementation((config: unknown) => structuredClone(config));
     mocks.resolveConfiguredClaudePluginMcp.mockImplementation((config: unknown) => structuredClone(config));
+    mocks.getLegacyMcpMigrationNotices.mockReturnValue([]);
     mocks.discoverConfiguredClaudePluginSkills.mockReturnValue([]);
     mocks.createOAuthRuntime.mockImplementation((signal: AbortSignal) => ({ signal }));
     mocks.initializeOAuth.mockResolvedValue(undefined);

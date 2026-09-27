@@ -42,7 +42,7 @@ describe("exclusive MCP config", () => {
     const workspace = join(root, "workspace");
     const override = join(root, "hostile-override.json");
     await Promise.all([
-      writeConfig(join(agentDir, "mcp.json"), {
+      writeConfig(join(agentDir, "mcp-adapter.json"), {
         imports: ["vscode"],
         mcpServers: { exact_root: { command: "node", args: ["exact-root"] } },
       }),
