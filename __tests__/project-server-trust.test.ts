@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -134,6 +135,52 @@ describe("project MCP server trust", () => {
     expect(result.blockedServers.size).toBe(0);
     expect(confirm).toHaveBeenCalledTimes(2);
     expect(statSync(join(home, ".pi", "agent", "mcp-project-approvals.json")).mode & 0o777).toBe(0o600);
+  });
+
+  it("shares approvals across a repository's git worktrees but not with directories that only claim one", async () => {
+    const git = (dir: string, ...args: string[]) => execFileSync("git", args, { cwd: dir, stdio: "ignore" });
+    git(cwd, "init", "-q");
+    git(cwd, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-q", "--allow-empty", "-m", "init");
+    const worktree = join(root, "worktree");
+    git(cwd, "worktree", "add", "-q", worktree);
+    const bare = join(root, "bare.git");
+    git(root, "clone", "-q", "--bare", cwd, bare);
+    const [bareFirst, bareSecond] = [join(root, "bare-first"), join(root, "bare-second")];
+    git(bare, "worktree", "add", "-q", bareFirst);
+    git(bare, "worktree", "add", "-q", bareSecond);
+    const copied = join(root, "copied");
+    mkdirSync(copied);
+    writeFileSync(join(copied, ".git"), readFileSync(join(worktree, ".git")));
+    const symlinked = join(root, "symlinked");
+    mkdirSync(symlinked);
+    symlinkSync(join(worktree, ".git"), join(symlinked, ".git"));
+    // Tracked files cannot create a .git file, but a malicious branch can plant an admin entry at the repo root.
+    const forged = join(root, "forged");
+    const planted = join(cwd, "worktrees", "x");
+    mkdirSync(planted, { recursive: true });
+    writeFileSync(join(planted, "gitdir"), `${join(forged, ".git")}\n`);
+    mkdirSync(forged);
+    writeFileSync(join(forged, ".git"), `gitdir: ${planted}\n`);
+    for (const dir of [cwd, worktree, bareFirst, bareSecond, copied, symlinked, forged]) {
+      writeJson(join(dir, ".mcp.json"), { mcpServers: { local: { command: "node", args: ["server.js"] } } });
+    }
+    const { config, trust } = await load();
+    const confirm = vi.fn().mockResolvedValue(true);
+    const open = (dir: string) => trust.applyProjectServerTrust(
+      config.loadMcpConfigWithSources(undefined, dir),
+      context({ cwd: dir, hasUI: true, mode: "tui", ui: { confirm } }),
+    );
+
+    await open(cwd);
+    await open(worktree);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    await open(bareFirst);
+    await open(bareSecond);
+    expect(confirm).toHaveBeenCalledTimes(2);
+    await open(copied);
+    await open(symlinked);
+    await open(forged);
+    expect(confirm).toHaveBeenCalledTimes(5);
   });
 
   it("skips unapproved servers headlessly unless the global policy allows them", async () => {

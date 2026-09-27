@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Project MCP server approvals are now shared across a repository's git worktrees. Approving a server in one checkout covers the same folder in the others, so a new worktree no longer asks again unless the server definition differs. This works for regular, bare, and `--separate-git-dir` repositories; only the main checkout of a `--separate-git-dir` repository asks once on its own. Thanks to [@MauricioRobayo](https://github.com/MauricioRobayo) for [issue #708](https://github.com/nicobailon/pi-mcp-adapter/issues/708).
+
 ### Fixed
 
 - Repeating a word in an MCP tool search no longer hides tools that match it. Thanks to [@kojizada490-wq](https://github.com/kojizada490-wq) for [PR #678](https://github.com/nicobailon/pi-mcp-adapter/pull/678).

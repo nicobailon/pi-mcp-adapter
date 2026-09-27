@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentPath } from "./agent-dir.ts";
 import type { LoadedMcpConfig } from "./config.ts";
@@ -82,6 +82,43 @@ export function canonicalProjectRoot(cwd: string): string {
   }
 }
 
+/**
+ * Git worktrees share approvals per repository, keyed by the same relative path. A `.git`
+ * file counts only when it is a regular file (not a symlink to a real worktree's) and git's
+ * admin entry for it links back to it; otherwise a directory could claim another checkout's
+ * approvals. Worktrees of a regular checkout use that checkout's path, so its existing
+ * approvals still apply. Other git directories (bare,
+ * `--separate-git-dir`) get a `git-dir:` key, which no canonical path equals, so an admin
+ * entry planted in a checkout's tracked files cannot borrow that checkout's approvals.
+ * A `--separate-git-dir` main checkout keeps its own path: git records no link back to it.
+ */
+function projectApprovalScope(cwd: string): string {
+  const root = canonicalProjectRoot(cwd);
+  for (let dir = root; ; dir = dirname(dir)) {
+    const dotGit = join(dir, ".git");
+    if (existsSync(dotGit)) {
+      const repoScope = linkedWorktreeRepoScope(dotGit);
+      return repoScope ? join(repoScope, relative(dir, root)) : root;
+    }
+    if (dirname(dir) === dir) return root;
+  }
+}
+
+function linkedWorktreeRepoScope(dotGit: string): string | undefined {
+  try {
+    if (!lstatSync(dotGit).isFile()) return undefined;
+    const pointer = /^gitdir: (.+)$/m.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
+    if (!pointer) return undefined;
+    const adminDir = realpathSync(resolve(dirname(dotGit), pointer));
+    const backLink = readFileSync(join(adminDir, "gitdir"), "utf8").trim();
+    if (realpathSync(resolve(adminDir, backLink)) !== realpathSync(dotGit)) return undefined;
+    const commonDir = dirname(dirname(adminDir));
+    return basename(commonDir) === ".git" ? dirname(commonDir) : `git-dir:${commonDir}`;
+  } catch {
+    return undefined;
+  }
+}
+
 function approvalPath(): string {
   return getAgentPath(APPROVALS_FILE);
 }
@@ -119,7 +156,7 @@ function saveApproval(record: ApprovalRecord): void {
 
 export function approveProjectServer(cwd: string, serverName: string, definition: ServerDefinition): void {
   saveApproval({
-    projectRoot: canonicalProjectRoot(cwd),
+    projectRoot: projectApprovalScope(cwd),
     serverName,
     definitionHash: hashProjectServerDefinition(definition),
     approvedAt: new Date().toISOString(),
@@ -149,7 +186,7 @@ export async function applyProjectServerTrust(
   } catch {
     projectTrusted = false;
   }
-  const projectRoot = canonicalProjectRoot(ctx.cwd);
+  const projectRoot = projectApprovalScope(ctx.cwd);
   const approvals = loadApprovals();
 
   for (const [name, source] of loaded.projectServers) {
@@ -169,7 +206,7 @@ export async function applyProjectServerTrust(
       `Allow project MCP server “${name}”?`,
       `Project config: ${source.path}\nEndpoint: ${describeServer(definition)}\n\nThis server can run local commands or make network requests with your user permissions.`,
     )) {
-      approveProjectServer(projectRoot, name, definition);
+      approveProjectServer(ctx.cwd, name, definition);
       continue;
     } else {
       reason = "denied";
