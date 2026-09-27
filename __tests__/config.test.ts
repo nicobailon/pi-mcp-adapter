@@ -968,6 +968,53 @@ describe("config discovery", () => {
     });
   });
 
+  it("does not replace a config symlink whose target is missing", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-broken-config-link-"));
+    const path = join(project, ".mcp.json");
+    const target = join(project, "missing.json");
+    symlinkSync(target, path);
+    const { previewSharedServerEntry, writeSharedServerEntry, previewStarterProjectConfig, writeStarterProjectConfig } = await import("../config.ts");
+
+    expect(() => previewSharedServerEntry(path, "demo", { command: "demo" })).toThrow(`Failed to read MCP config at ${path}`);
+    expect(() => writeSharedServerEntry(path, "demo", { command: "demo" })).toThrow(`Failed to read MCP config at ${path}`);
+    expect(() => previewStarterProjectConfig(project)).toThrow(`Cannot scaffold MCP config at ${path}: file already exists`);
+    expect(() => writeStarterProjectConfig(project)).toThrow(`Cannot scaffold MCP config at ${path}: file already exists`);
+    expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it.each(["Jev settings", "project server override"])("preserves a broken config symlink when writing %s", async (kind) => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-broken-pi-link-"));
+    const path = join(project, ".pi", "mcp-adapter.json");
+    const target = join(project, "missing.json");
+    mkdirSync(dirname(path), { recursive: true });
+    symlinkSync(target, path);
+    const { writeJevSemanticSearchConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
+
+    if (kind === "Jev settings") {
+      expect(() => writeJevSemanticSearchConfig(undefined, project, ["demo"])).toThrow();
+    } else {
+      expect(() => writeProjectServerDisabledOverride(undefined, project, "demo", true)).toThrow();
+    }
+    expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it.each(["Jev settings", "project server override"])("updates an existing blank config when writing %s", async (kind) => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-blank-pi-config-"));
+    const path = join(project, ".pi", "mcp-adapter.json");
+    writeText(path, "  \n");
+    const { writeJevSemanticSearchConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
+
+    if (kind === "Jev settings") {
+      expect(writeJevSemanticSearchConfig(undefined, project, ["demo"]).changed).toBe(true);
+      expect(JSON.parse(readFileSync(path, "utf-8")).settings.jev.allowedServers).toEqual(["demo"]);
+    } else {
+      expect(writeProjectServerDisabledOverride(undefined, project, "demo", true).changed).toBe(true);
+      expect(JSON.parse(readFileSync(path, "utf-8")).mcpServers.demo.disabled).toBe(true);
+    }
+  });
+
   it("removes the temporary file when the final rename fails", async () => {
     const path = mkdtempSync(join(tmpdir(), "pi-mcp-rename-failure-"));
     const tmpPath = `${realpathSync(path)}.${process.pid}.tmp`;
@@ -1753,6 +1800,125 @@ describe("config discovery", () => {
     expect(sharedPreview.existed).toBe(false);
     expect(sharedPreview.diffText).toContain('+   "mcpServers": {');
     expect(sharedPreview.diffText).toContain('+     "repoprompt": {');
+  });
+
+  it.each([
+    ["empty", ""],
+    ["whitespace-only", "  \n\t"],
+  ])("adds a server to an existing %s config", async (_kind, contents) => {
+    const path = join(mkdtempSync(join(tmpdir(), "pi-mcp-blank-write-")), "mcp.json");
+    writeText(path, contents);
+    const { previewSharedServerEntry, writeSharedServerEntry } = await import("../config.ts");
+
+    expect(previewSharedServerEntry(path, "demo", { command: "demo" }).existed).toBe(true);
+    writeSharedServerEntry(path, "demo", { command: "demo" });
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({ mcpServers: { demo: { command: "demo" } } });
+  });
+
+  it("preserves an existing comment-only config", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pi-mcp-comment-only-write-")), "mcp.json");
+    const contents = "// Keep this note.\n";
+    writeText(path, contents);
+    const { previewSharedServerEntry, writeSharedServerEntry } = await import("../config.ts");
+
+    expect(() => previewSharedServerEntry(path, "demo", { command: "demo" })).toThrow(`Failed to read MCP config at ${path}`);
+    expect(() => writeSharedServerEntry(path, "demo", { command: "demo" })).toThrow(`Failed to read MCP config at ${path}`);
+    expect(readFileSync(path, "utf-8")).toBe(contents);
+  });
+
+  it.each([
+    ["malformed JSON", "{ malformed"],
+    ["a non-object root", "[]"],
+  ])("preserves %s during config previews and incremental writes", async (_kind, contents) => {
+    const path = join(mkdtempSync(join(tmpdir(), "pi-mcp-invalid-write-")), "mcp.json");
+    writeText(path, contents);
+    const {
+      ensureCompatibilityImports,
+      previewCompatibilityImports,
+      previewSharedServerEntry,
+      writeDirectToolsConfig,
+      writeSharedServerEntry,
+    } = await import("../config.ts");
+
+    expect(() => previewCompatibilityImports(["cursor"], path)).toThrow(`Failed to read MCP config at ${path}`);
+    expect(() => ensureCompatibilityImports(["cursor"], path)).toThrow(`Failed to read MCP config at ${path}`);
+    expect(() => previewSharedServerEntry(path, "demo", { command: "demo" })).toThrow(`Failed to read MCP config at ${path}`);
+    expect(() => writeSharedServerEntry(path, "demo", { command: "demo" })).toThrow(`Failed to read MCP config at ${path}`);
+    expect(() => writeDirectToolsConfig(
+      new Map([["demo", true]]),
+      new Map([["demo", { path, kind: "project" as const }]]),
+      { mcpServers: { demo: { command: "demo" } } },
+    )).toThrow(`Failed to read MCP config at ${path}`);
+    expect(readFileSync(path, "utf-8")).toBe(contents);
+  });
+
+  it("preserves a config with a malformed server map", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pi-mcp-invalid-servers-")), "mcp.json");
+    const contents = '{"mcpServers":["unexpected"]}\n';
+    writeText(path, contents);
+    const { previewSharedServerEntry, writeSharedServerEntry, ensureCompatibilityImports } = await import("../config.ts");
+
+    expect(() => previewSharedServerEntry(path, "demo", { command: "demo" })).toThrow("mcpServers must be an object");
+    expect(() => writeSharedServerEntry(path, "demo", { command: "demo" })).toThrow("mcpServers must be an object");
+    expect(() => ensureCompatibilityImports(["cursor"], path)).toThrow("mcpServers must be an object");
+    expect(readFileSync(path, "utf-8")).toBe(contents);
+  });
+
+  it("preserves a malformed imports list when adding compatibility imports", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pi-mcp-invalid-imports-")), "mcp.json");
+    const contents = '{"imports":["cursor",42]}\n';
+    writeText(path, contents);
+    const { previewCompatibilityImports, ensureCompatibilityImports } = await import("../config.ts");
+
+    expect(() => previewCompatibilityImports(["codex"], path)).toThrow("imports must be an array of strings");
+    expect(() => ensureCompatibilityImports(["codex"], path)).toThrow("imports must be an array of strings");
+    expect(readFileSync(path, "utf-8")).toBe(contents);
+  });
+
+  it("checks every direct-tools target before writing any of them", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-mcp-multi-direct-tools-"));
+    const validPath = join(root, "valid.json");
+    const invalidPath = join(root, "invalid.json");
+    const validContents = '{"mcpServers":{"first":{"command":"first"}}}\n';
+    writeText(validPath, validContents);
+    writeText(invalidPath, "{ malformed");
+    const { writeDirectToolsConfig } = await import("../config.ts");
+
+    expect(() => writeDirectToolsConfig(
+      new Map([["first", true], ["second", true]]),
+      new Map([
+        ["first", { path: validPath, kind: "project" as const }],
+        ["second", { path: invalidPath, kind: "project" as const }],
+      ]),
+      { mcpServers: { first: { command: "first" }, second: { command: "second" } } },
+    )).toThrow(`Failed to read MCP config at ${invalidPath}`);
+    expect(readFileSync(validPath, "utf-8")).toBe(validContents);
+    expect(readFileSync(invalidPath, "utf-8")).toBe("{ malformed");
+  });
+
+  it.each([
+    ["malformed JSON", "{ malformed"],
+    ["a malformed server map", '{"mcpServers":[]}'],
+    ["a valid config", '{"mcpServers":{}}'],
+  ])("does not scaffold over %s that appeared after discovery", async (_kind, contents) => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-stale-scaffold-"));
+    const path = join(project, ".mcp.json");
+    writeText(path, contents);
+    const { previewStarterProjectConfig, writeStarterProjectConfig } = await import("../config.ts");
+
+    expect(() => previewStarterProjectConfig(project)).toThrow(`Cannot scaffold MCP config at ${path}: file already exists`);
+    expect(() => writeStarterProjectConfig(project)).toThrow(`Cannot scaffold MCP config at ${path}: file already exists`);
+    expect(readFileSync(path, "utf-8")).toBe(contents);
+  });
+
+  it("allows explicit text replacement to repair a malformed config", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pi-mcp-repair-config-")), "mcp.json");
+    writeText(path, "{ malformed");
+    const { writeSharedConfigText, writeSharedServerEntry } = await import("../config.ts");
+
+    writeSharedConfigText(path, '{"mcpServers":{}}\n');
+    writeSharedServerEntry(path, "demo", { command: "demo" });
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({ mcpServers: { demo: { command: "demo" } } });
   });
 
   it("preserves the mcp toolPrefix setting from config files", async () => {

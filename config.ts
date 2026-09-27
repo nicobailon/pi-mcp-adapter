@@ -1,5 +1,5 @@
 // config.ts - Config loading with import support
-import { chmodSync, existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -1334,23 +1334,34 @@ function buildConfigWritePreview(filePath: string, nextRaw: Record<string, unkno
   };
 }
 
+function parseWritableConfigObject(text: string): Record<string, unknown> {
+  if (text.trim() === "") return {};
+  const raw = parseJsonWithComments(text);
+  if (!isRecord(raw)) throw new Error("top-level value must be an object");
+  return raw;
+}
+
 function readRawConfigObject(filePath: string): Record<string, unknown> {
-  if (!existsSync(filePath)) return {};
+  if (!lstatSync(filePath, { throwIfNoEntry: false })) return {};
 
   try {
-    const raw = parseJsonWithComments(readFileSync(filePath, "utf-8"));
-    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
-  } catch {
-    return {};
+    return parseWritableConfigObject(readFileSync(filePath, "utf-8"));
+  } catch (error) {
+    throw new Error(`Failed to read MCP config at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
 }
 
 function writeConfigText(writePath: string, text: string): void {
+  const originalPath = writePath;
   let mode: number | undefined;
   try {
     writePath = realpathSync(writePath);
     mode = statSync(writePath).mode & 0o777;
-  } catch {}
+  } catch (error) {
+    if (lstatSync(originalPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error(`Cannot write MCP config at ${originalPath}: symbolic link target is unavailable`, { cause: error });
+    }
+  }
   mkdirSync(dirname(writePath), { recursive: true });
   const tmpPath = `${writePath}.${process.pid}.tmp`;
   rmSync(tmpPath, { force: true });
@@ -1383,9 +1394,7 @@ export function writeJevSemanticSearchConfig(
   let raw: Record<string, unknown> = {};
   if (existsSync(filePath)) {
     try {
-      const parsed = parseJsonWithComments(readFileSync(filePath, "utf8"));
-      if (!isRecord(parsed)) throw new Error("top-level value must be an object");
-      raw = parsed;
+      raw = parseWritableConfigObject(readFileSync(filePath, "utf8"));
     } catch (error) {
       throw new Error(`Failed to update Jev settings at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
@@ -1408,12 +1417,22 @@ export function writeJevSemanticSearchConfig(
   return { path: filePath, changed: true };
 }
 
-function getServersObject(raw: Record<string, unknown>): Record<string, ServerEntry> {
-  const existing = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-  if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
-    return {};
+function getServersObject(raw: Record<string, unknown>, filePath: string): Record<string, ServerEntry> {
+  for (const key of ["mcpServers", "mcp-servers"]) {
+    if (Object.hasOwn(raw, key) && !isRecord(raw[key])) {
+      throw new Error(`Failed to update MCP config at ${filePath}: ${key} must be an object`);
+    }
   }
+  const existing = raw.mcpServers ?? raw["mcp-servers"] ?? {};
   return existing as Record<string, ServerEntry>;
+}
+
+function getConfigImports(raw: Record<string, unknown>, filePath: string): ImportKind[] {
+  if (raw.imports === undefined) return [];
+  if (!Array.isArray(raw.imports) || raw.imports.some((value) => typeof value !== "string")) {
+    throw new Error(`Failed to update MCP config at ${filePath}: imports must be an array of strings`);
+  }
+  return raw.imports as ImportKind[];
 }
 
 function setServersObject(raw: Record<string, unknown>, servers: Record<string, ServerEntry>): void {
@@ -1441,11 +1460,7 @@ export function writeProjectServerDisabledOverride(
   let raw: Record<string, unknown> = {};
   if (existsSync(filePath)) {
     try {
-      const parsed = parseJsonWithComments(readFileSync(filePath, "utf-8"));
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("root value must be an object");
-      }
-      raw = parsed as Record<string, unknown>;
+      raw = parseWritableConfigObject(readFileSync(filePath, "utf-8"));
     } catch (error) {
       throw new Error(`Failed to read project MCP override at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
@@ -1565,17 +1580,17 @@ function detectRepoPrompt(summary: Omit<McpDiscoverySummary, "fingerprint" | "re
 export function previewCompatibilityImports(importKinds: ImportKind[], overridePath?: string): ConfigWritePreview {
   const targetPath = getPiGlobalConfigPath(overridePath);
   const raw = readRawConfigObject(targetPath);
-  const currentImports = Array.isArray(raw.imports) ? raw.imports.filter((value): value is ImportKind => typeof value === "string") : [];
+  const currentImports = getConfigImports(raw, targetPath);
   const merged = [...new Set([...currentImports, ...importKinds])];
   const nextRaw = { ...raw, imports: merged };
-  setServersObject(nextRaw, getServersObject(nextRaw));
+  setServersObject(nextRaw, getServersObject(nextRaw, targetPath));
   return buildConfigWritePreview(targetPath, nextRaw);
 }
 
 export function ensureCompatibilityImports(importKinds: ImportKind[], overridePath?: string): { path: string; added: ImportKind[] } {
   const targetPath = getPiGlobalConfigPath(overridePath);
   const raw = readRawConfigObject(targetPath);
-  const currentImports = Array.isArray(raw.imports) ? raw.imports.filter((value): value is ImportKind => typeof value === "string") : [];
+  const currentImports = getConfigImports(raw, targetPath);
   const merged = [...new Set([...currentImports, ...importKinds])];
   const added = merged.filter((kind) => !currentImports.includes(kind));
   if (added.length === 0) {
@@ -1583,7 +1598,7 @@ export function ensureCompatibilityImports(importKinds: ImportKind[], overridePa
   }
 
   raw.imports = merged;
-  const servers = getServersObject(raw);
+  const servers = getServersObject(raw, targetPath);
   setServersObject(raw, servers);
   writeRawConfigObject(targetPath, raw);
   return { path: targetPath, added };
@@ -1595,14 +1610,20 @@ export function buildStarterProjectConfig(): McpConfig {
   };
 }
 
+function assertScaffoldTargetAbsent(filePath: string): void {
+  if (lstatSync(filePath, { throwIfNoEntry: false })) throw new Error(`Cannot scaffold MCP config at ${filePath}: file already exists`);
+}
+
 export function previewStarterSharedConfig(target: SharedConfigTarget, cwd = process.cwd()): ConfigWritePreview {
   const targetPath = getSharedConfigPath(target, cwd);
+  assertScaffoldTargetAbsent(targetPath);
   const nextRaw = { mcpServers: buildStarterProjectConfig().mcpServers };
   return buildConfigWritePreview(targetPath, nextRaw);
 }
 
 export function writeStarterSharedConfig(target: SharedConfigTarget, cwd = process.cwd()): string {
   const targetPath = getSharedConfigPath(target, cwd);
+  assertScaffoldTargetAbsent(targetPath);
   const raw = { mcpServers: buildStarterProjectConfig().mcpServers };
   writeRawConfigObject(targetPath, raw);
   return targetPath;
@@ -1619,7 +1640,7 @@ export function writeStarterProjectConfig(cwd = process.cwd()): string {
 export function previewSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): ConfigWritePreview {
   const raw = readRawConfigObject(filePath);
   const nextRaw = { ...raw };
-  const servers = getServersObject(nextRaw);
+  const servers = getServersObject(nextRaw, filePath);
   servers[serverName] = entry;
   setServersObject(nextRaw, servers);
   return buildConfigWritePreview(filePath, nextRaw);
@@ -1627,7 +1648,7 @@ export function previewSharedServerEntry(filePath: string, serverName: string, e
 
 export function writeSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): string {
   const raw = readRawConfigObject(filePath);
-  const servers = getServersObject(raw);
+  const servers = getServersObject(raw, filePath);
   servers[serverName] = entry;
   setServersObject(raw, servers);
   writeRawConfigObject(filePath, raw);
@@ -1697,10 +1718,13 @@ export function writeDirectToolsConfig(
     byPath.get(targetPath)!.push({ name: serverName, value, prov });
   }
 
-  for (const [filePath, entries] of byPath) {
+  const pending = [...byPath].map(([filePath, entries]) => {
     const raw = readRawConfigObject(filePath);
-    const servers = getServersObject(raw);
+    const servers = getServersObject(raw, filePath);
+    return { filePath, entries, raw, servers };
+  });
 
+  for (const { filePath, entries, raw, servers } of pending) {
     for (const { name, value, prov } of entries) {
       if (prov.kind === "import") {
         const fullDef = fullConfig.mcpServers[name];

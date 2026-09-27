@@ -87,24 +87,34 @@ function printHelp(log = console.log) {
 
 function readJsonFile(filePath) {
   const raw = fs.readFileSync(filePath, "utf-8");
-  return JSON.parse(stripJsonComments(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw, { trailingCommas: true }));
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  return text.trim() === "" ? {} : JSON.parse(stripJsonComments(text, { trailingCommas: true }));
 }
 
 function loadPiConfig() {
-  if (!fs.existsSync(PI_CONFIG_PATH)) {
+  if (!fs.lstatSync(PI_CONFIG_PATH, { throwIfNoEntry: false })) {
     return { mcpServers: {} };
   }
 
   const raw = readJsonFile(PI_CONFIG_PATH);
-  const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-  if (!mcpServers || typeof mcpServers !== "object" || Array.isArray(mcpServers)) {
-    throw new Error(`Invalid MCP config at ${PI_CONFIG_PATH}: expected \"mcpServers\" to be an object`);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`Invalid MCP config at ${PI_CONFIG_PATH}: top-level value must be an object`);
   }
+  for (const key of ["mcpServers", "mcp-servers", "settings"]) {
+    const value = raw[key];
+    if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
+      throw new Error(`Invalid MCP config at ${PI_CONFIG_PATH}: ${key} must be an object`);
+    }
+  }
+  if (raw.imports !== undefined && (!Array.isArray(raw.imports) || raw.imports.some((value) => typeof value !== "string"))) {
+    throw new Error(`Invalid MCP config at ${PI_CONFIG_PATH}: imports must be an array of strings`);
+  }
+  const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
 
   const normalized = { ...raw };
   delete normalized["mcp-servers"];
 
-  const imports = Array.isArray(raw.imports) ? raw.imports.filter((value) => typeof value === "string") : undefined;
+  const imports = raw.imports;
   return {
     ...normalized,
     mcpServers,

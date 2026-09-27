@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { Readable } from "node:stream";
@@ -134,6 +134,69 @@ describe("cli init helper", () => {
     const saved = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(saved.mcpServers.existing).toEqual({ command: "existing-server" });
     expect(saved.imports).toContain("cursor");
+  });
+
+  it("initializes an existing whitespace-only config", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-blank-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-blank-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    const path = join(home, ".pi", "agent", "mcp-adapter.json");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "  \n");
+
+    const { main } = await import("../cli.js");
+    expect(await main(["init", "--discover-host-configs"], () => {}, () => {})).toBe(0);
+    expect(JSON.parse(readFileSync(path, "utf-8")).settings.hostConfigDiscovery).toBe("on");
+  });
+
+  it("preserves a comment-only config during init", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-comment-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-comment-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    const path = join(home, ".pi", "agent", "mcp-adapter.json");
+    const contents = "// Keep this note.\n";
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, contents);
+
+    const { main } = await import("../cli.js");
+    await expect(main(["init", "--discover-host-configs"], () => {}, () => {})).rejects.toThrow();
+    expect(readFileSync(path, "utf-8")).toBe(contents);
+  });
+
+  it.each([
+    ["an array root", "[]"],
+    ["non-string imports", '{"imports":["cursor",42]}'],
+    ["non-object settings", '{"settings":42}'],
+  ])("preserves %s when init would update the config", async (_kind, contents) => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-invalid-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-invalid-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    const path = join(home, ".pi", "agent", "mcp-adapter.json");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, contents);
+
+    const { main } = await import("../cli.js");
+    await expect(main(["init", "--discover-host-configs"])).rejects.toThrow(`Invalid MCP config at ${path}`);
+    expect(readFileSync(path, "utf-8")).toBe(contents);
+  });
+
+  it("does not write through a config symlink whose target is missing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-broken-link-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-broken-link-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    const path = join(home, ".pi", "agent", "mcp-adapter.json");
+    const target = join(home, ".pi", "agent", "missing.json");
+    mkdirSync(dirname(path), { recursive: true });
+    symlinkSync(target, path);
+
+    const { main } = await import("../cli.js");
+    await expect(main(["init", "--discover-host-configs"])).rejects.toThrow();
+    expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(false);
   });
 
   it("explicitly enables host fallback discovery without changing external files", async () => {

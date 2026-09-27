@@ -106,6 +106,35 @@ describe("commands onboarding", () => {
     expect(loadOnboardingState().sharedConfigHintShown).toBe(true);
   });
 
+  it("reports a direct-tools save failure without claiming a live update", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-panel-write-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-panel-write-project-"));
+    const path = join(project, ".mcp.json");
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(path, { mcpServers: { demo: { command: "demo" } } });
+    mocks.createMcpPanel.mockImplementationOnce((_config, _cache, _provenance, _callbacks, _tui, done) => {
+      writeFileSync(path, "{ malformed");
+      done({ cancelled: false, changes: new Map([["demo", true]]), disabledChanges: new Map() });
+      return { dispose() {} };
+    });
+
+    const ui = createUi();
+    const refresh = vi.fn();
+    const { openMcpPanel } = await import("../commands.ts");
+    const result = await openMcpPanel({
+      config: { mcpServers: { demo: { command: "demo" } } },
+      manager: { getConnection: () => null },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+    } as any, { getFlag: () => undefined } as any, { hasUI: true, mode: "tui", ui, cwd: project } as any, undefined, refresh);
+
+    expect(result.configChanged).toBe(false);
+    expect(readFileSync(path, "utf-8")).toBe("{ malformed");
+    expect(refresh).not.toHaveBeenCalled();
+    expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("Failed to save direct tools"), "error");
+  });
+
   it("passes the active theme into the setup MCP panel", async () => {
     process.env.HOME = mkdtempSync(join(tmpdir(), "pi-mcp-commands-setup-theme-home-"));
     const ui = createUi();

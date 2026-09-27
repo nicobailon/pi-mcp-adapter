@@ -185,8 +185,11 @@ class McpSetupPanelView implements Component {
     }
     lines.push("");
 
-    const preview = this.getActionPreview(state, actions[state.actionCursor], this.previewWidth(innerWidth));
-    lines.push(...preview);
+    const previewWidth = this.previewWidth(innerWidth);
+    lines.push(...this.previewOrError(
+      () => this.getActionPreview(state, actions[state.actionCursor], previewWidth),
+      previewWidth,
+    ));
     lines.push("");
     const hint = compact ? "Enter select · Esc back" : "Enter selects, Esc goes back, Ctrl+C closes.";
     lines.push(this.theme.description(hint));
@@ -208,8 +211,11 @@ class McpSetupPanelView implements Component {
     const selected = state.discovery.imports
       .filter((entry) => state.selectedImports.has(entry.kind))
       .map((entry) => entry.kind);
-    const preview = this.callbacks.previewImports(selected);
-    lines.push(...this.formatWritePreview("Compatibility import write preview", preview, [], this.previewWidth(innerWidth)));
+    const previewWidth = this.previewWidth(innerWidth);
+    lines.push(...this.previewOrError(
+      () => this.formatWritePreview("Compatibility import write preview", this.callbacks.previewImports(selected), [], previewWidth),
+      previewWidth,
+    ));
     return lines;
   }
 
@@ -389,6 +395,14 @@ class McpSetupPanelView implements Component {
     const preview: string[] = [];
     for (const line of lines) preview.push(...wrapText(line, width));
     return preview;
+  }
+
+  private previewOrError(renderPreview: () => string[], width: number): string[] {
+    try {
+      return renderPreview();
+    } catch (error) {
+      return this.formatPreview([`Preview unavailable: ${error instanceof Error ? error.message : String(error)}`], width);
+    }
   }
 
   private formatWritePreview(title: string, preview: ConfigWritePreview, intro: string[] = [], width = DESKTOP_PREVIEW_WIDTH): string[] {

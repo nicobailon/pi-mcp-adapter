@@ -46,6 +46,25 @@ function createCallbacks(): SetupPanelCallbacks {
 }
 
 describe("mcp setup panel theme and component rendering", () => {
+  it("shows preview errors without breaking setup or import rendering", () => {
+    const discovery = createDiscovery();
+    discovery.imports = [{ kind: "cursor", path: "/tmp/cursor-mcp.json", serverCount: 1 }];
+    const callbacks = createCallbacks();
+    callbacks.previewImports = () => { throw new Error("Failed to read MCP config at /tmp/mcp.json"); };
+    const panel = createMcpSetupPanel(
+      discovery,
+      callbacks,
+      { mode: "setup", onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false } },
+      { requestRender: () => {} },
+      () => {},
+    );
+
+    expect(panel.render(100).join("\n")).toContain("Failed to read MCP config at /tmp/mcp.json");
+    panel.handleInput("\r");
+    expect(panel.render(100).join("\n")).toContain("Failed to read MCP config at /tmp/mcp.json");
+    panel.dispose();
+  });
+
   it("renders setup content through the active Pi theme", () => {
     const { fg, theme } = createTheme();
     const panel = createMcpSetupPanel(
