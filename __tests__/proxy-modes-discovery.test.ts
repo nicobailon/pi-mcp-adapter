@@ -218,15 +218,20 @@ describe("proxy discovery", () => {
   });
 
   it("tells the agent why a server is in failure backoff", async () => {
-    const state = createState();
-    state.failureTracker.set("demo", Date.now());
-    state.failureMessages = new Map([["demo", "spawn demo ENOENT\n\x1b[31mcommand not found\x1b[0m"]]);
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      const state = createState();
+      state.failureTracker.set("demo", 1_000_000 - 12_000);
+      state.failureMessages = new Map([["demo", "spawn demo ENOENT\n\x1b[31mcommand not found\x1b[0m"]]);
 
-    expect(executeStatus(state).content[0].text).toContain("✗ demo (failed 0s ago: spawn demo ENOENT command not found)");
-    expect(executeList(state, "demo").content[0].text)
-      .toBe('Server "demo" not available (last failed 0s ago: spawn demo ENOENT command not found)');
-    expect((await executeCall(state, "demo_search", {})).content[0].text)
-      .toBe('Server "demo" not available (last failed 0s ago: spawn demo ENOENT command not found)');
+      expect(executeStatus(state).content[0].text).toContain("✗ demo (failed 12s ago: spawn demo ENOENT command not found)");
+      expect(executeList(state, "demo").content[0].text)
+        .toBe('Server "demo" not available (last failed 12s ago: spawn demo ENOENT command not found)');
+      expect((await executeCall(state, "demo_search", {})).content[0].text)
+        .toBe('Server "demo" not available (last failed 12s ago: spawn demo ENOENT command not found)');
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("does not filter needs-auth servers with stale failure entries", () => {
