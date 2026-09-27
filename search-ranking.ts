@@ -107,7 +107,7 @@ export function tokenize(value: string): string[] {
       previous = character;
     }
   }
-  return tokens;
+  return [...new Set(tokens)];
 }
 
 function matchesAsciiStem(fieldToken: string, queryToken: string): boolean {
@@ -220,7 +220,7 @@ function scorePreparedToolMatch(
 
 export function scoreToolMatch(tool: ToolMetadata, server: string, query: string, keywords?: string[]): number | null {
   const normalizedQuery = normalizeSearchText(query).trim();
-  const queryTokens = [...new Set(tokenize(query))];
+  const queryTokens = tokenize(query);
   if (queryTokens.length === 0) return null;
   return scorePreparedToolMatch(prepareToolSearch(tool, server, keywords), normalizedQuery, queryTokens);
 }
@@ -267,7 +267,7 @@ export function rankToolMatches(
 ): RankedToolMatch[] {
   const matches: RankedToolMatch[] = [];
   const normalizedQuery = normalizeSearchText(query).trim();
-  const queryTokens = [...new Set(tokenize(query))];
+  const queryTokens = tokenize(query);
   if (queryTokens.length === 0) return matches;
   const globalPrefix = state.config.settings?.toolPrefix ?? "server";
   for (const [serverName, metadata] of state.toolMetadata.entries()) {

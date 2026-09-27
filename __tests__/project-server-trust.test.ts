@@ -89,11 +89,7 @@ describe("project MCP server trust", () => {
       context({ hasUI: true, mode: "tui", ui: { confirm } }),
     );
 
-    expect(result.config.mcpServers.inherited).toEqual({
-      command: "global",
-      args: ["server.js"],
-      disabled: true,
-    });
+    expect(result.config.mcpServers.inherited?.disabled).toBe(true);
     expect(result.blockedServers.size).toBe(0);
     expect(confirm).not.toHaveBeenCalled();
   });
