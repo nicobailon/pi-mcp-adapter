@@ -1423,8 +1423,7 @@ function getServersObject(raw: Record<string, unknown>, filePath: string): Recor
       throw new Error(`Failed to update MCP config at ${filePath}: ${key} must be an object`);
     }
   }
-  const existing = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-  return existing as Record<string, ServerEntry>;
+  return (raw.mcpServers ?? raw["mcp-servers"] ?? {}) as Record<string, ServerEntry>;
 }
 
 function getConfigImports(raw: Record<string, unknown>, filePath: string): ImportKind[] {

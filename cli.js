@@ -113,13 +113,7 @@ function loadPiConfig() {
 
   const normalized = { ...raw };
   delete normalized["mcp-servers"];
-
-  const imports = raw.imports;
-  return {
-    ...normalized,
-    mcpServers,
-    imports,
-  };
+  return { ...normalized, mcpServers };
 }
 
 function findAvailableImports() {
