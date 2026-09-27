@@ -1705,6 +1705,7 @@ export function writeDirectToolsConfig(
   changes: Map<string, true | string[] | false>,
   provenance: Map<string, ServerProvenance>,
   fullConfig: McpConfig,
+  onFileWritten?: () => void,
 ): void {
   const byPath = new Map<string, { name: string; value: true | string[] | false; prov: ServerProvenance }[]>();
 
@@ -1738,6 +1739,7 @@ export function writeDirectToolsConfig(
 
     setServersObject(raw, servers);
     writeRawConfigObject(filePath, raw);
+    onFileWritten?.();
   }
 }
 

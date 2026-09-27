@@ -772,6 +772,7 @@ export async function openMcpPanel(
       (tui, theme, keybindings, done) => {
         return createMcpPanel(config, cache, provenanceMap, callbacks, tui, (result: McpPanelResult) => {
           let directToolsSaved = false;
+          let directToolsFileWritten = false;
           void (async () => {
             if (!result.cancelled && result.disabledChanges.size > 0) {
               for (const [serverName, disabled] of result.disabledChanges) {
@@ -786,7 +787,9 @@ export async function openMcpPanel(
               }
             }
             if (!result.cancelled && result.changes.size > 0) {
-              writeDirectToolsConfig(result.changes, provenanceMap, config);
+              writeDirectToolsConfig(result.changes, provenanceMap, config, () => {
+                directToolsFileWritten = true;
+              });
               directToolsSaved = true;
               await onDirectToolsConfigChanged?.(result.changes);
               ctx.ui.notify("Direct tools updated for this session.", "info");
@@ -797,6 +800,9 @@ export async function openMcpPanel(
             const message = error instanceof Error ? error.message : String(error);
             if (directToolsSaved) {
               ctx.ui.notify(`Direct tools updated, but live refresh failed: ${message}`, "error");
+              configChanged = true;
+            } else if (directToolsFileWritten) {
+              ctx.ui.notify(`Direct tools were partially saved before another write failed: ${message}`, "error");
               configChanged = true;
             } else {
               ctx.ui.notify(`Failed to save direct tools: ${message}`, "error");

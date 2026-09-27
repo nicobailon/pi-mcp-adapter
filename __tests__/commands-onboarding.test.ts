@@ -135,6 +135,38 @@ describe("commands onboarding", () => {
     expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("Failed to save direct tools"), "error");
   });
 
+  it.skipIf(process.platform === "win32")("requests reload after a partial direct-tools save", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-panel-partial-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-panel-partial-project-"));
+    const projectPath = join(project, ".mcp.json");
+    // The existing file is readable, but the writer's temporary suffix exceeds the filename limit.
+    const globalPath = join(home, `${"x".repeat(245)}.json`);
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(projectPath, { mcpServers: { first: { command: "first" } } });
+    writeJson(globalPath, { mcpServers: { second: { command: "second" } } });
+    mocks.createMcpPanel.mockImplementationOnce((_config, _cache, _provenance, _callbacks, _tui, done) => {
+      done({ cancelled: false, changes: new Map([["first", true], ["second", true]]), disabledChanges: new Map() });
+      return { dispose() {} };
+    });
+
+    const ui = createUi();
+    const refresh = vi.fn();
+    const { openMcpPanel } = await import("../commands.ts");
+    const result = await openMcpPanel({
+      config: { mcpServers: { first: { command: "first" }, second: { command: "second" } } },
+      manager: { getConnection: () => null },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+    } as any, { getFlag: () => undefined } as any, { hasUI: true, mode: "tui", ui, cwd: project } as any, globalPath, refresh);
+
+    expect(result.configChanged).toBe(true);
+    expect(JSON.parse(readFileSync(projectPath, "utf-8")).mcpServers.first.directTools).toBe(true);
+    expect(JSON.parse(readFileSync(globalPath, "utf-8")).mcpServers.second.directTools).toBeUndefined();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("partially saved"), "error");
+  });
+
   it("passes the active theme into the setup MCP panel", async () => {
     process.env.HOME = mkdtempSync(join(tmpdir(), "pi-mcp-commands-setup-theme-home-"));
     const ui = createUi();
