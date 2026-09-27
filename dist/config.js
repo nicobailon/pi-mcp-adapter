@@ -1482,12 +1482,12 @@ export function writeDirectToolsConfig(changes, provenance, fullConfig, onFileWr
             byPath.set(targetPath, []);
         byPath.get(targetPath).push({ name: serverName, value, prov });
     }
-    const pending = [...byPath].map(([filePath, entries]) => {
+    // Validate every target before writing any, then re-read each one: two paths can alias one file.
+    for (const filePath of byPath.keys())
+        getServersObject(readRawConfigObject(filePath), filePath);
+    for (const [filePath, entries] of byPath) {
         const raw = readRawConfigObject(filePath);
         const servers = getServersObject(raw, filePath);
-        return { filePath, entries, raw, servers };
-    });
-    for (const { filePath, entries, raw, servers } of pending) {
         for (const { name, value, prov } of entries) {
             if (prov.kind === "import") {
                 const fullDef = fullConfig.mcpServers[name];

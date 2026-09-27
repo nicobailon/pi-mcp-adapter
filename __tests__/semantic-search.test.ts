@@ -210,6 +210,12 @@ describe("semantic search", () => {
     const gateway = await gatewaySemantic(state, "weather", evaluator);
     expect(gateway.details.backend).toMatchObject({ used: "lexical", degraded: true });
     expect(gateway.details.matches.map((match: { server: string }) => match.server).sort()).toEqual(["demo", "other"]);
+
+    const script = await runMcpScript(state, 'emit(await tools.search({ query: "weather", searchMode: "semantic" }))',
+      2_000, undefined, undefined, undefined, evaluator);
+    const payload = JSON.parse(script.content[0]!.text);
+    expect(payload.backend).toMatchObject({ used: "lexical", degraded: true });
+    expect(payload.items.map((item: { server: string }) => item.server).sort()).toEqual(["demo", "other"]);
   });
 
   it("preserves pagination, schemas, and approval markers without executing", async () => {

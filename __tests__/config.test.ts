@@ -1882,6 +1882,26 @@ describe("config discovery", () => {
     expect(readFileSync(invalidPath, "utf-8")).toBe("{ malformed");
   });
 
+  it.skipIf(process.platform === "win32")("keeps direct-tools changes when two targets are the same file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-mcp-aliased-direct-tools-"));
+    const path = join(root, "real.json");
+    const alias = join(root, "alias.json");
+    writeText(path, '{"mcpServers":{"first":{"command":"first"},"second":{"command":"second"}}}\n');
+    symlinkSync(path, alias);
+    const { writeDirectToolsConfig } = await import("../config.ts");
+
+    writeDirectToolsConfig(
+      new Map([["first", true], ["second", true]]),
+      new Map([
+        ["first", { path, kind: "project" as const }],
+        ["second", { path: alias, kind: "project" as const }],
+      ]),
+      { mcpServers: { first: { command: "first" }, second: { command: "second" } } },
+    );
+    const { mcpServers } = JSON.parse(readFileSync(path, "utf-8"));
+    expect([mcpServers.first.directTools, mcpServers.second.directTools]).toEqual([true, true]);
+  });
+
   it.each([
     ["malformed JSON", "{ malformed"],
     ["a malformed server map", '{"mcpServers":[]}'],
