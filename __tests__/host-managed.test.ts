@@ -29,8 +29,7 @@ type RegisteredTool = {
 type CallHandler = (args: Record<string, unknown>) => Promise<CallToolResult>;
 
 // A real MCP server on an in-memory link. `calls` and `reads` record the
-// tools/call and resources/read requests that reached the server; `tools` is
-// the live listing; `serverTransport` lets a test drop the connection.
+// requests that reached the server; `tools` is the live, mutable listing.
 function createFixture(handler: CallHandler, wrap?: (transport: Transport) => Transport) {
   const calls: Array<Record<string, unknown>> = [];
   const reads: string[] = [];
@@ -258,30 +257,15 @@ describe("host-managed MCP adapter", () => {
     expect(fixture.calls).toHaveLength(1);
   });
 
-  it("keeps a server isError result distinct from a JSON-RPC error", async () => {
-    const fixture = createFixture(async (args) => {
-      if (args.text === "fail") return { isError: true, content: [{ type: "text", text: "boom" }] };
-      throw new McpError(ErrorCode.InvalidParams, `rejected ${SECRET}`);
-    });
-    const adapter = createAdapter(fixture);
-    await adapter.ready();
-    const pi = installPi(adapter);
-
-    const toolError = await pi.call({ text: "fail" });
-    expect(text(toolError)).toBe("Error: boom");
-    expect(toolError.details.error).toBe("tool_error");
-
-    const rpcError = await pi.call({ text: "throw" });
-    expect(rpcError.details).toMatchObject({ error: "server_error", protocolCode: ErrorCode.InvalidParams });
-    expect(text(rpcError)).toBe('MCP server "fixture" returned an error for tool "echo" (JSON-RPC code -32602).');
-  });
-
-  it("keeps secrets from transport and server errors out of results and logs", async () => {
+  it("separates isError results, JSON-RPC errors, and transport failures without leaking error text", async () => {
     const logged: LogEntry[] = [];
     logger.addHandler((entry) => logged.push(entry));
     const consoleCalls = ["log", "warn", "error", "debug"].map((method) => vi.spyOn(console, method as "log"));
     let failSend = false;
-    const fixture = createFixture(async () => { throw new McpError(ErrorCode.InternalError, `db password ${SECRET}`); }, (transport) => {
+    const fixture = createFixture(async (args) => {
+      if (args.text === "fail") return { isError: true, content: [{ type: "text", text: "boom" }] };
+      throw new McpError(ErrorCode.InvalidParams, `rejected ${SECRET}`);
+    }, (transport) => {
       const send = transport.send.bind(transport);
       transport.send = async (message, options) => {
         if (failSend && "method" in message && message.method === "tools/call") throw new Error(`upstream said Bearer ${SECRET}`);
@@ -293,13 +277,17 @@ describe("host-managed MCP adapter", () => {
     await adapter.ready();
     const pi = installPi(adapter);
 
-    const serverError = await pi.call();
+    const toolError = await pi.call({ text: "fail" });
+    const rpcError = await pi.call({ text: "throw" }, "call-2");
     failSend = true;
-    const transportError = await pi.call({ text: "again" }, "call-2");
+    const transportError = await pi.call({ text: "again" }, "call-3");
 
-    expect(serverError.details.error).toBe("server_error");
+    expect(text(toolError)).toBe("Error: boom");
+    expect(toolError.details.error).toBe("tool_error");
+    expect(rpcError.details).toMatchObject({ error: "server_error", protocolCode: ErrorCode.InvalidParams });
+    expect(text(rpcError)).toBe('MCP server "fixture" returned an error for tool "echo" (JSON-RPC code -32602).');
     expect(transportError.details.error).toBe("may_have_run");
-    const observable = JSON.stringify([serverError, transportError, logged, consoleCalls.map((spy) => spy.mock.calls)]);
+    const observable = JSON.stringify([rpcError, transportError, logged, consoleCalls.map((spy) => spy.mock.calls)]);
     expect(observable).not.toContain(SECRET);
     logger.clearHandlers();
   });

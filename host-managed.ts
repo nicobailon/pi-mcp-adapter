@@ -96,7 +96,7 @@ export interface HostManagedMcpAdapterOptions {
 export interface HostManagedMcpAdapter {
   /** Connect every server and freeze the tool catalog. Memoized; rejects and closes the adapter on any failure. */
   ready(): Promise<void>;
-  /** Stop new calls, abort and drain in-flight calls, then close every connection. Idempotent. */
+  /** Refuse new calls, abort in-flight calls, and close every transport, all within 5 s. Idempotent. */
   close(): Promise<void>;
   /** Pi extension factory. Throws before ready() resolves or after close(). */
   extensionFactory(pi: ExtensionAPI): void;
@@ -137,11 +137,9 @@ interface Connection {
   readonly client: Client;
   readonly transport: Transport;
   open: boolean;
-  /** Selected tools; set once ready() has listed them. */
   selected: readonly CatalogTool[] | undefined;
-  /** Tool names whose definition changed after loading. Never cleared. */
+  /** Never cleared: a retired tool stays retired for the adapter's lifetime. */
   readonly retired: Set<string>;
-  /** In-flight catalog re-list, if any. */
   refresh: Promise<void> | undefined;
   refreshRequested: boolean;
 }
@@ -150,9 +148,7 @@ interface CatalogTool {
   readonly server: string;
   readonly toolName: string;
   readonly definition: Tool;
-  /** stableStringify(definition), compared against each re-list. */
   readonly fingerprint: string;
-  /** Definition passed to the SDK: output validation happens here, not in the SDK. */
   readonly sdkDefinition: Tool;
   readonly validateOutput: JsonSchemaValidator<unknown> | undefined;
 }
@@ -185,6 +181,10 @@ function textResult(text: string, details: Record<string, unknown>): ToolResult 
   return { content: [{ type: "text", text }], details };
 }
 
+function isAllowed(decision: string): boolean {
+  return decision === "allow_once" || decision === "allow_for_session";
+}
+
 function dispatchFailureResult(tool: CatalogTool, error: HostManagedMcpError, catalogChanged = false): ToolResult {
   const name = tool.definition.name;
   if (catalogChanged && error.delivery === "not_sent") {
@@ -212,8 +212,8 @@ function dispatchFailureResult(tool: CatalogTool, error: HostManagedMcpError, ca
 
 export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOptions): HostManagedMcpAdapter {
   const servers = Object.entries(options.servers);
-  const onToolCall = options.onToolCall;
   const timeout = options.requestTimeoutMs !== undefined && options.requestTimeoutMs > 0 ? options.requestTimeoutMs : undefined;
+  const guardOptions = resolveMcpOutputGuardOptions(undefined);
   const lifetime = new AbortController();
   const connections = new Map<string, Connection>();
   const inFlight = new Set<Promise<ToolResult>>();
@@ -373,7 +373,7 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
     if (decision === "deny") {
       return textResult(`The user declined approval to run MCP tool "${name}" on server "${tool.server}".`, { error: "approval_denied", server: tool.server, tool: name });
     }
-    if (decision !== "allow_once" && decision !== "allow_for_session") {
+    if (!isAllowed(decision)) {
       return textResult(`MCP tool "${name}" on server "${tool.server}" was not run: no approval handler allowed it.`, { error: "approval_required", server: tool.server, tool: name });
     }
     if (closed || !connection.open || signal.aborted) return dispatchFailureResult(tool, new HostManagedMcpError("not_sent", tool.server));
@@ -418,9 +418,7 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
       } catch {
         decision = "abstain";
       }
-      if ((decision !== "allow_once" && decision !== "allow_for_session") || unavailable()) {
-        throw new HostManagedMcpError("not_sent", tool.server);
-      }
+      if (!isAllowed(decision) || unavailable()) throw new HostManagedMcpError("not_sent", tool.server);
       let readDispatched = false;
       const sendRead = async (): Promise<ReadResourceResult> => {
         if (unavailable()) throw new HostManagedMcpError("not_sent", tool.server);
@@ -465,7 +463,7 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
 
     let result: CallToolResult;
     try {
-      result = await onToolCall(call);
+      result = await options.onToolCall(call);
     } catch (error) {
       if (error instanceof HostManagedMcpError) return dispatchFailureResult(tool, error, connection.retired.has(name));
       const details = { error: "host_error", server: tool.server, tool: name, sent };
@@ -478,7 +476,6 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
 
     const content = resolveMcpResultContent(result as unknown as Record<string, unknown>, lifetime.signal);
     const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-    const guardOptions = resolveMcpOutputGuardOptions(undefined);
     if (result.isError) {
       const guarded = await guardMcpOutput(outputContent, { ...guardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed" });
       return { content: guarded.content, details: { error: "tool_error", server: tool.server, ...guardedMcpDetails(guarded) } };

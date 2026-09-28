@@ -90,9 +90,8 @@ function isMcpToolApprovalDecision(value: unknown): value is McpToolApprovalDeci
 }
 
 /**
- * Ask the approval broker on `events` for a decision. Returns "abstain" when
- * no handler claims the request; a handler that throws or returns an unknown
- * value counts as "deny". Rethrows only when `signal` aborted.
+ * Returns "abstain" when no handler claims the request. A handler that throws
+ * or returns an unknown value counts as "deny". Rethrows only when `signal` aborted.
  */
 export async function requestBrokerApproval(
   events: ExtensionAPI["events"] | undefined,
