@@ -88,7 +88,7 @@ You can optionally provide a pre-registered client:
 - `oauth.authServerMetadataUrl` - HTTPS OAuth/OIDC authorization-server metadata document to use authoritatively when MCP protected-resource discovery is unavailable (optional; issuer validation remains enabled)
 - `oauth.skipIssuerMetadataValidation` - Set `true` only for a known-misconfigured authorization server whose metadata issuer cannot be fixed immediately. This weakens OAuth issuer validation.
 
-Dynamic fallback clients normally omit `oauth.redirectUri`; the adapter starts the callback server lazily on the default loopback host (`localhost`) and asks the OS for an available local port when auth begins. Use `oauth.redirectUri` when the provider requires a pre-registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`. A loopback URI must use `http://` with `localhost`, `127.0.0.1`, or `[::1]`. It may contain an explicit port, which is bound exactly, or `{port}`, which is replaced with the OS-assigned port in the authorization and token requests.
+Dynamic fallback clients normally omit `oauth.redirectUri`; the adapter starts the callback server lazily on the default loopback host (`127.0.0.1`, as RFC 8252 recommends) and asks the OS for an available local port when auth begins. Use `oauth.redirectUri` when the provider requires a pre-registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`, or when a server only accepts a `localhost` redirect (for example `http://localhost:{port}/callback`). A loopback URI must use `http://` with `localhost`, `127.0.0.1`, or `[::1]`. It may contain an explicit port, which is bound exactly, or `{port}`, which is replaced with the OS-assigned port in the authorization and token requests.
 
 ### Non-Interactive `client_credentials`
 
@@ -142,13 +142,13 @@ When Pi runs over SSH or in a headless environment, use the proxy tool to retrie
 mcp({ action: "auth-start", server: "my-oauth-server" })
 ```
 
-Open the returned URL in your local browser. After approval, copy the full redirected localhost URL from the browser address bar (the page may fail to load locally) and complete the same pending auth flow:
+Open the returned URL in your local browser. After approval, copy the full redirected callback URL from the browser address bar (the page may fail to load locally) and complete the same pending auth flow:
 
 ```
 mcp({
   action: "auth-complete",
   server: "my-oauth-server",
-  args: { redirectUrl: "http://localhost:19876/callback?code=...&state=..." }
+  args: { redirectUrl: "http://127.0.0.1:19876/callback?code=...&state=..." }
 })
 ```
 
@@ -220,7 +220,7 @@ The adapter does not provide a default URL or host the public document: operator
 2. Registers a new client with:
    - `client_name`: configured `oauth.clientName` or "Pi Coding Agent"
    - `client_uri`: configured `oauth.clientUri` or the adapter repository URL
-   - `redirect_uris`: `["http://localhost:<active-callback-port>/callback"]`, or the configured `oauth.redirectUri`
+   - `redirect_uris`: `["http://127.0.0.1:<active-callback-port>/callback"]`, or the configured `oauth.redirectUri`
    - `grant_types`: `["authorization_code", "refresh_token"]`
 3. Stores the registered client credentials and the redirect URIs returned by the authorization server
 
@@ -230,8 +230,8 @@ When a fresh browser auth starts, cached dynamic fallback client info with token
 
 A Node.js HTTP server runs on a loopback callback endpoint and handles the active callback path:
 
-- Dynamic registration starts the callback server only when auth begins, binds the default host `localhost`, and asks the OS for an available local port
-- Pre-registered clients (`oauth.clientId`) without `oauth.redirectUri` require the exact configured callback port from `MCP_OAUTH_CALLBACK_PORT` or the default `19876` on `localhost`
+- Dynamic registration starts the callback server only when auth begins, binds the default host `127.0.0.1`, and asks the OS for an available local port
+- Pre-registered clients (`oauth.clientId`) without `oauth.redirectUri` require the exact configured callback port from `MCP_OAUTH_CALLBACK_PORT` or the default `19876` on `127.0.0.1`
 - `oauth.redirectUri` binds the exact loopback host and path. An explicit port is bound exactly; `{port}` asks the OS for a port and is replaced with that assigned value before the URI is advertised to the provider
 
 - Handles `code`, `state`, and `error` parameters
@@ -320,7 +320,7 @@ Some servers require pre-registered clients. Obtain a client ID from your OAuth 
 
 ### Callback server already in use
 
-Dynamic fallback browser OAuth uses a lazy OS-assigned port on the default loopback host (`localhost`), so the configured default port being busy should not block fallback registration.
+Dynamic fallback browser OAuth uses a lazy OS-assigned port on the default loopback host (`127.0.0.1`), so the configured default port being busy should not block fallback registration.
 
 For pre-registered OAuth clients (`oauth.clientId`), the callback redirect URI must match the provider registration policy. Set `oauth.redirectUri` to the full fixed callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`, use a loopback `{port}` URI when the provider explicitly permits dynamic RFC 8252 ports, or free/set `MCP_OAUTH_CALLBACK_PORT` when you rely on the default `/callback` path without an explicit redirect URI.
 

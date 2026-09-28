@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added an opt-in Serply preset to `/mcp setup` for Google, News, and Scholar search and page fetching. It reads the API key from `SERPLY_API_KEY`. Thanks to [@googio](https://github.com/googio) for [PR #710](https://github.com/nicobailon/pi-mcp-adapter/pull/710).
 
+### Changed
+
+- The default OAuth callback now uses `http://127.0.0.1:<port>/callback` instead of `localhost`, as RFC 8252 recommends. Authorization servers that reject `localhost`, such as Lovable, now work without a `redirectUri` override. If a server only accepts the `localhost` URI, set `oauth.redirectUri` to it. Thanks to [@ebysofyan](https://github.com/ebysofyan) for [issue #711](https://github.com/nicobailon/pi-mcp-adapter/issues/711) and [PR #712](https://github.com/nicobailon/pi-mcp-adapter/pull/712).
+
 ### Fixed
 
 - Pi no longer warns "MCP: Project servers blocked: … (blocked by project trust)" at startup for a project you already trust, including one trusted through a parent folder. The warning came from the adapter starting `eager` or `keep-alive` servers before Pi had checked project trust. That early start now skips project servers, and the trust check and approval prompt still run at session start. Thanks to [@pnym-ai](https://github.com/pnym-ai) for reporting [issue #713](https://github.com/nicobailon/pi-mcp-adapter/issues/713).

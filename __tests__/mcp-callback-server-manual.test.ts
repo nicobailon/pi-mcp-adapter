@@ -20,7 +20,7 @@ describe("manual OAuth callback reservations", () => {
     await ensureCallbackServer({ oauthState: "manual-state", reserveState: true });
 
     const response = await fetch(
-      `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?code=manual-code&state=manual-state`,
+      `http://127.0.0.1:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?code=manual-code&state=manual-state`,
     );
 
     expect(response.status).toBe(200);
@@ -37,13 +37,13 @@ describe("manual OAuth callback reservations", () => {
     await ensureCallbackServer({ oauthState: "manual-error-retry", reserveState: true });
 
     const errorResponse = await fetch(
-      `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?error=access_denied&state=manual-error-retry`,
+      `http://127.0.0.1:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?error=access_denied&state=manual-error-retry`,
     );
     expect(errorResponse.status).toBe(200);
     expect(await errorResponse.text()).toContain("Authorization Failed");
 
     const successResponse = await fetch(
-      `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?code=manual-code&state=manual-error-retry`,
+      `http://127.0.0.1:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?code=manual-code&state=manual-error-retry`,
     );
     expect(successResponse.status).toBe(200);
     expect(await successResponse.text()).toContain("Authorization Received");

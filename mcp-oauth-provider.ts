@@ -89,6 +89,9 @@ function toOAuthTokens(tokens: StoredTokens): IssuerBoundTokens {
 }
 
 // Callback server configuration
+// RFC 8252 section 7.3: use the loopback IP literal, not "localhost". The
+// callback listener binds this same host so the advertised redirect reaches it.
+const DEFAULT_OAUTH_CALLBACK_HOST = "127.0.0.1"
 const DEFAULT_OAUTH_CALLBACK_PORT = 19876
 const DEFAULT_OAUTH_CALLBACK_PATH = "/callback"
 
@@ -287,7 +290,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.flowState = initialState
     this.redirectUrlSnapshot = config.grantType === "client_credentials"
       ? undefined
-      : config.redirectUri ?? `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}`
+      : config.redirectUri ?? `http://${DEFAULT_OAUTH_CALLBACK_HOST}:${getOAuthCallbackPort()}${getOAuthCallbackPath()}`
   }
 
   setAuthFetch(fetchFn: OAuthFetch): void {
@@ -816,4 +819,4 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 }
 
-export { DEFAULT_OAUTH_CALLBACK_PORT, DEFAULT_OAUTH_CALLBACK_PATH }
+export { DEFAULT_OAUTH_CALLBACK_HOST, DEFAULT_OAUTH_CALLBACK_PORT, DEFAULT_OAUTH_CALLBACK_PATH }

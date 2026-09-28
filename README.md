@@ -315,7 +315,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `oauth.clientSecret` | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!`. Combining it with `oauth.clientMetadataUrl` requires an explicit `oauth.clientId`. |
 | `oauth.clientMetadataUrl` | Advanced opt-in for an operator-supplied public HTTPS Client ID Metadata Document (CIMD) URL with a non-root path. Used as the `client_id` when the authorization server advertises CIMD support; otherwise the adapter falls back to Dynamic Client Registration. The adapter does not provide or host a default document. |
 | `oauth.scope` | Requested OAuth scopes |
-| `oauth.redirectUri` | Redirect URI for browser OAuth. Dynamic clients normally omit it and use an OS-assigned localhost callback port. Local `http://` loopback URIs accept an explicit port or `{port}` for an OS-assigned port (for example, `http://127.0.0.1:{port}/callback`). Pre-registered `https://` callbacks use manual completion by pasting the full callback URL. |
+| `oauth.redirectUri` | Redirect URI for browser OAuth. Dynamic clients normally omit it and use an OS-assigned port on the default `http://127.0.0.1:<port>/callback`. Local `http://` loopback URIs accept an explicit port or `{port}` for an OS-assigned port (for example, `http://localhost:{port}/callback` for a server registered only for `localhost`). Pre-registered `https://` callbacks use manual completion by pasting the full callback URL. |
 | `oauth.clientName` | Client display name advertised during Dynamic Client Registration fallback |
 | `oauth.clientUri` | Client homepage URI advertised during Dynamic Client Registration fallback. Defaults to `piConfig.clientUri` from the host's manifest when set, and is omitted rather than guessed under a rebranded host |
 | `oauth.logoUri` | Client logo URL advertised during Dynamic Client Registration fallback (RFC 7591 `logo_uri`). Must be an absolute `http(s)` URL — consent screens fetch it server-side, so local paths render nothing. Omitted from the registration request when unset |
@@ -437,7 +437,7 @@ Public servers are ready immediately. For OAuth servers, the same action opens t
 
 ### Remote/headless OAuth
 
-If Pi is running on a remote server, `/mcp-auth <server>` shows a clickable authorization URL first. Open it in your local browser and approve access, then select **Yes** in Pi to open the callback input. The browser may fail to load the localhost callback page because localhost refers to your workstation; copy the full URL from its address bar and paste it into Pi. The authorization screen closes automatically instead when the browser can reach Pi's callback directly.
+If Pi is running on a remote server, `/mcp-auth <server>` shows a clickable authorization URL first. Open it in your local browser and approve access, then select **Yes** in Pi to open the callback input. The browser may fail to load the loopback callback page because `127.0.0.1` refers to your workstation; copy the full URL from its address bar and paste it into Pi. The authorization screen closes automatically instead when the browser can reach Pi's callback directly.
 
 The same flow is available through the proxy tool for non-interactive clients. By default, persistent OAuth requires an available OS credential store; on headless Linux that usually means an unlocked Secret Service/libsecret keyring. The adapter fails closed instead of falling back to plaintext credentials when the secure store is unavailable.
 
@@ -449,13 +449,13 @@ On Linux, if credential access fails because Pi inherited a revoked session keyr
 mcp({ action: "auth-start", server: "linear-server" })
 ```
 
-For a loopback redirect, the adapter attempts to open the returned authorization URL, watches the callback, completes token exchange, and sends an `mcp-oauth-status` event when authentication finishes. If Pi is remote or cannot open a browser, open the returned URL locally. If the browser cannot reach Pi's callback, copy the full localhost URL from the address bar and complete the flow in the same Pi session:
+For a loopback redirect, the adapter attempts to open the returned authorization URL, watches the callback, completes token exchange, and sends an `mcp-oauth-status` event when authentication finishes. If Pi is remote or cannot open a browser, open the returned URL locally. If the browser cannot reach Pi's callback, copy the full callback URL from the address bar and complete the flow in the same Pi session:
 
 ```js
 mcp({
   action: "auth-complete",
   server: "linear-server",
-  args: { redirectUrl: "http://localhost:19876/callback?code=...&state=..." }
+  args: { redirectUrl: "http://127.0.0.1:19876/callback?code=...&state=..." }
 })
 ```
 

@@ -67,7 +67,7 @@ describe("McpOAuthProvider", () => {
       const provider = createProvider()
       assert.strictEqual(
         provider.redirectUrl,
-        "http://localhost:19876/callback"
+        "http://127.0.0.1:19876/callback"
       )
     })
 
@@ -87,8 +87,8 @@ describe("McpOAuthProvider", () => {
         setOAuthCallbackPort(52345)
         setOAuthCallbackPath("/changed/callback")
 
-        assert.strictEqual(provider.redirectUrl, "http://localhost:41234/snapshot/callback")
-        assert.deepStrictEqual(provider.clientMetadata.redirect_uris, ["http://localhost:41234/snapshot/callback"])
+        assert.strictEqual(provider.redirectUrl, "http://127.0.0.1:41234/snapshot/callback")
+        assert.deepStrictEqual(provider.clientMetadata.redirect_uris, ["http://127.0.0.1:41234/snapshot/callback"])
       } finally {
         setOAuthCallbackPort(originalPort)
         setOAuthCallbackPath(originalPath)
@@ -113,7 +113,7 @@ describe("McpOAuthProvider", () => {
       const provider = createProvider()
       const metadata = provider.clientMetadata
 
-      assert.deepStrictEqual(metadata.redirect_uris, ["http://localhost:19876/callback"])
+      assert.deepStrictEqual(metadata.redirect_uris, ["http://127.0.0.1:19876/callback"])
       assert.strictEqual(metadata.client_name, "Pi Coding Agent")
       assert.strictEqual(metadata.client_uri, "https://github.com/nicobailon/pi-mcp-adapter")
       assert.deepStrictEqual(metadata.grant_types, ["authorization_code", "refresh_token"])

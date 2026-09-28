@@ -8,6 +8,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http"
 import { getAppName } from "./agent-dir.ts"
 import {
+  DEFAULT_OAUTH_CALLBACK_HOST,
   DEFAULT_OAUTH_CALLBACK_PATH,
   getConfiguredOAuthCallbackPort,
   getOAuthCallbackPath,
@@ -197,7 +198,6 @@ interface EnsureCallbackServerOptions {
   reserveState?: boolean
 }
 
-const DEFAULT_OAUTH_CALLBACK_HOST = "localhost"
 let callbackServerHost = DEFAULT_OAUTH_CALLBACK_HOST
 
 /**

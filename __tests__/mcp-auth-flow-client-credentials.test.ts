@@ -1093,7 +1093,7 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
     const stored = getAuthForUrl("missing-redirect-metadata", "https://api.example.com/mcp");
     expect(stored?.clientInfo?.clientId).toBe("fresh-client");
-    expect(stored?.clientInfo?.redirectUris).toEqual(["http://localhost:19876/callback"]);
+    expect(stored?.clientInfo?.redirectUris).toEqual(["http://127.0.0.1:19876/callback"]);
     expect(stored?.tokens?.refreshToken).toBe("old-refresh");
   });
 
@@ -1129,7 +1129,7 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
     const stored = getAuthForUrl("malformed-redirect-metadata", "https://api.example.com/mcp");
     expect(stored?.clientInfo?.clientId).toBe("fresh-client");
-    expect(stored?.clientInfo?.redirectUris).toEqual(["http://localhost:19876/callback"]);
+    expect(stored?.clientInfo?.redirectUris).toEqual(["http://127.0.0.1:19876/callback"]);
     expect(stored?.tokens?.refreshToken).toBe("old-refresh");
   });
 

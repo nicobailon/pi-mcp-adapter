@@ -17,13 +17,13 @@ import {
   getPendingAuthCount,
   releaseCallbackServer,
 } from "./mcp-callback-server.ts"
-import { getConfiguredOAuthCallbackPort, getOAuthCallbackPath, getOAuthCallbackPort } from "./mcp-oauth-provider.ts"
+import { getConfiguredOAuthCallbackPort, getOAuthCallbackPath, getOAuthCallbackPort, McpOAuthProvider } from "./mcp-oauth-provider.ts"
 
 async function getFreePort(): Promise<number> {
   const probe = createServer()
   await new Promise<void>((resolve, reject) => {
     probe.once("error", reject)
-    probe.listen(0, "localhost", resolve)
+    probe.listen(0, "127.0.0.1", resolve)
   })
   const address = probe.address()
   await new Promise<void>((resolve) => probe.close(() => resolve()))
@@ -61,7 +61,7 @@ describe("mcp-callback-server", () => {
       await ensureCallbackServer({ oauthState: "reserved-initial-state", reserveState: true })
 
       await assert.rejects(
-        async () => await ensureCallbackServer({ callbackHost: "127.0.0.1" }),
+        async () => await ensureCallbackServer({ callbackHost: "localhost" }),
         /cannot be switched while authorizations are pending/
       )
 
@@ -72,7 +72,7 @@ describe("mcp-callback-server", () => {
       await ensureCallbackServer({ oauthState: "reserved-host-state", reserveState: true })
 
       await assert.rejects(
-        async () => await ensureCallbackServer({ callbackHost: "127.0.0.1" }),
+        async () => await ensureCallbackServer({ callbackHost: "localhost" }),
         /cannot be switched while authorizations are pending/
       )
 
@@ -100,7 +100,7 @@ describe("mcp-callback-server", () => {
 
       await new Promise<void>((resolve, reject) => {
         blocker.once("error", reject)
-        blocker.listen(port, "localhost", resolve)
+        blocker.listen(port, "127.0.0.1", resolve)
       })
 
       try {
@@ -115,6 +115,18 @@ describe("mcp-callback-server", () => {
       await ensureCallbackServer({ callbackPath: "/after-failure" })
       await ensureCallbackServer({ callbackPath: "/after-failure-switch" })
       assert.strictEqual(getOAuthCallbackPath(), "/after-failure-switch")
+    })
+
+    it("should advertise a default redirect URI of 127.0.0.1 that reaches the listener", async () => {
+      await ensureCallbackServer()
+      const provider = new McpOAuthProvider("default-redirect", "https://mcp.example.com/mcp", {}, { onRedirect: async () => {} })
+      const redirectUrl = String(provider.redirectUrl)
+      assert.strictEqual(redirectUrl, `http://127.0.0.1:${getOAuthCallbackPort()}/callback`)
+
+      const callbackPromise = waitForCallback("default-redirect-state")
+      const response = await fetch(`${redirectUrl}?code=default-code&state=default-redirect-state`)
+      assert.strictEqual(response.status, 200)
+      assert.strictEqual((await callbackPromise).code, "default-code")
     })
 
     it("should bind an explicit strict host, port, and custom callback path", async () => {
@@ -141,7 +153,7 @@ describe("mcp-callback-server", () => {
 
       await new Promise<void>((resolve, reject) => {
         blocker.once("error", reject)
-        blocker.listen(port, "localhost", resolve)
+        blocker.listen(port, "127.0.0.1", resolve)
       })
 
       try {
@@ -164,7 +176,7 @@ describe("mcp-callback-server", () => {
       try {
         await new Promise<void>((resolve, reject) => {
           blocker.once("error", reject)
-          blocker.listen(configuredPort, "localhost", resolve)
+          blocker.listen(configuredPort, "127.0.0.1", resolve)
         })
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") return
@@ -178,7 +190,7 @@ describe("mcp-callback-server", () => {
 
         const state = "occupied-port-state"
         const callbackPromise = waitForCallback(state)
-        const response = await fetch(`http://localhost:${callbackPort}/callback?code=ok&state=${state}`)
+        const response = await fetch(`http://127.0.0.1:${callbackPort}/callback?code=ok&state=${state}`)
         assert.strictEqual(response.status, 200)
         assert.strictEqual((await callbackPromise).code, "ok")
 
@@ -205,7 +217,7 @@ describe("mcp-callback-server", () => {
       // Simulate callback by making HTTP request
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?code=${expectedCode}&state=${state}`
+        `http://127.0.0.1:${callbackPort}/callback?code=${expectedCode}&state=${state}`
       )
 
       // Should get HTML success response
@@ -230,7 +242,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?code=${expectedCode}&state=${state}&iss=${encodeURIComponent(expectedIss)}`
+        `http://127.0.0.1:${callbackPort}/callback?code=${expectedCode}&state=${state}&iss=${encodeURIComponent(expectedIss)}`
       )
       assert.strictEqual(response.status, 200)
       await response.text()
@@ -252,7 +264,7 @@ describe("mcp-callback-server", () => {
       // Simulate error callback
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?error=${errorMsg}&state=${state}`
+        `http://127.0.0.1:${callbackPort}/callback?error=${errorMsg}&state=${state}`
       )
 
       assert.strictEqual(response.status, 200)
@@ -272,7 +284,7 @@ describe("mcp-callback-server", () => {
       const callbackPort = getOAuthCallbackPort()
       const description = `<script>alert("x")</script>&reason=bad`
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?error=access_denied&error_description=${encodeURIComponent(description)}&state=${state}`
+        `http://127.0.0.1:${callbackPort}/callback?error=access_denied&error_description=${encodeURIComponent(description)}&state=${state}`
       )
 
       assert.strictEqual(response.status, 200)
@@ -287,7 +299,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?error=access_denied&error_description=${encodeURIComponent("<script>bad()</script>")}&state=invalid-state`
+        `http://127.0.0.1:${callbackPort}/callback?error=access_denied&error_description=${encodeURIComponent("<script>bad()</script>")}&state=invalid-state`
       )
 
       assert.strictEqual(response.status, 400)
@@ -302,7 +314,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?code=abc123`
+        `http://127.0.0.1:${callbackPort}/callback?code=abc123`
       )
 
       assert.strictEqual(response.status, 400)
@@ -318,7 +330,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?code=abc123&state=invalid-state`
+        `http://127.0.0.1:${callbackPort}/callback?code=abc123&state=invalid-state`
       )
 
       assert.strictEqual(response.status, 400)
@@ -337,7 +349,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/callback?state=${state}`
+        `http://127.0.0.1:${callbackPort}/callback?state=${state}`
       )
 
       assert.strictEqual(response.status, 400)
@@ -369,7 +381,7 @@ describe("mcp-callback-server", () => {
 
       const callbackPort = getOAuthCallbackPort()
       const response = await fetch(
-        `http://localhost:${callbackPort}/wrong/path`
+        `http://127.0.0.1:${callbackPort}/wrong/path`
       )
 
       assert.strictEqual(response.status, 404)
@@ -461,7 +473,7 @@ describe("callback page branding", () => {
     await ensureCallbackServer()
     const state = "brandingteststate"
     const pending = waitForCallback(state)
-    const url = `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?state=${state}&code=abc123`
+    const url = `http://127.0.0.1:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?state=${state}&code=abc123`
     const response = await fetch(url)
     const html = await response.text()
     await pending
