@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added an opt-in Serply preset to `/mcp setup` for Google, News, and Scholar search and page fetching. It reads the API key from `SERPLY_API_KEY`. Thanks to [@googio](https://github.com/googio) for PR #710.
+
 ## [3.1.0] - 2026-09-27
 
 ### Highlights

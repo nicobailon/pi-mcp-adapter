@@ -2212,6 +2212,12 @@ describe("config discovery", () => {
       protocolVersion: "auto",
       directTools: true,
     });
+    expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "serply")?.entry).toEqual({
+      url: "https://api.serply.io/mcp",
+      headers: { "X-Api-Key": "${SERPLY_API_KEY}" },
+      protocolVersion: "auto",
+      directTools: ["google_search", "google_news_search", "google_scholar_search", "scrape_url"],
+    });
     expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "chrome-devtools")?.entry.protocolVersion).toBeUndefined();
   });
 

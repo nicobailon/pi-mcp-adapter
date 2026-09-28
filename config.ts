@@ -57,6 +57,17 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
     },
   },
   {
+    id: "serply",
+    name: "Serply",
+    summary: "Search Google, News, and Scholar and fetch pages with SERPLY_API_KEY.",
+    entry: {
+      url: "https://api.serply.io/mcp",
+      headers: { "X-Api-Key": "${SERPLY_API_KEY}" },
+      protocolVersion: "auto",
+      directTools: ["google_search", "google_news_search", "google_scholar_search", "scrape_url"],
+    },
+  },
+  {
     id: "notion",
     name: "Notion",
     summary: "Search and work with your Notion workspace.",
