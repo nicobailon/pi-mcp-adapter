@@ -27,7 +27,7 @@ import { cleanupMaterializedBinaryResources, resolveMcpResultContent } from "./t
 import { formatToolName } from "./types.ts";
 import { normalizeDirectToolInputSchema, normalizeToolArguments, stableStringify, truncateAtWord, withToolCallIdMeta } from "./utils.ts";
 
-const CLOSE_DRAIN_TIMEOUT_MS = 5_000;
+const CLOSE_TIMEOUT_MS = 5_000;
 
 export interface HostManagedMcpServer {
   /**
@@ -496,18 +496,17 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
   async function shutdown(): Promise<void> {
     closed = true;
     lifetime.abort();
-    if (inFlight.size > 0) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        Promise.allSettled([...inFlight]),
-        new Promise<void>((resolve) => { timer = setTimeout(resolve, CLOSE_DRAIN_TIMEOUT_MS); }),
-      ]);
-      clearTimeout(timer);
-    }
-    await Promise.allSettled([...connections.values()].map(async (connection) => {
+    // One deadline bounds both the drain and the host's transport.close() calls.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => { timer = setTimeout(resolve, CLOSE_TIMEOUT_MS); });
+    await Promise.race([Promise.allSettled([...inFlight]), deadline]);
+    const closing = Promise.allSettled([...connections.values()].map(async (connection) => {
       connection.open = false;
       await connection.transport.close();
     }));
+    await Promise.race([closing, deadline]);
+    clearTimeout(timer);
+    connections.clear();
     cleanupMaterializedBinaryResources(lifetime.signal);
   }
 

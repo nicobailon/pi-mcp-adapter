@@ -190,6 +190,36 @@ describe("host-managed MCP adapter", () => {
     expect(fixture.calls).toEqual([]);
   });
 
+  it("finishes close() within its deadline when host work and transport close never settle", async () => {
+    const fixture = createFixture(async () => ({ content: [] }), (transport) => {
+      transport.close = () => new Promise<void>(() => {});
+      return transport;
+    });
+    let entered!: () => void;
+    const inHost = new Promise<void>((resolve) => { entered = resolve; });
+    const adapter = createAdapter(fixture, () => {
+      entered();
+      return new Promise<never>(() => {});
+    });
+    await adapter.ready();
+    const pi = installPi(adapter);
+    void pi.call();
+    await inHost;
+
+    vi.useFakeTimers();
+    try {
+      let closed = false;
+      const closing = adapter.close().then(() => { closed = true; });
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(closed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await closing;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect((await pi.call({ text: "late" }, "call-2")).details.error).toBe("not_sent");
+  });
+
   it("sends a call once when the response is lost and tells the agent it may have run", async () => {
     let arrived!: () => void;
     const arrival = new Promise<void>((resolve) => { arrived = resolve; });
