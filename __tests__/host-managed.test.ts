@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import * as nodeModule from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventBus, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { InMemoryTransport, type CallToolResult, type Transport } from "@modelcontextprotocol/client";
@@ -372,8 +372,9 @@ describe("host-managed MCP adapter", () => {
     expect(fixture.reads).toEqual([uri]);
   });
 
-  it("loads without auth, keyring, config, or session-recovery modules", () => {
-    const entry = fileURLToPath(new URL("../host-managed.ts", import.meta.url));
+  // module.registerHooks needs Node 22.15+/23.5+; the package supports Node 20.
+  it.skipIf(!("registerHooks" in nodeModule))("loads without auth, keyring, config, or session-recovery modules", () => {
+    const entry = new URL("../host-managed.ts", import.meta.url).href;
     const probe = [
       'import { registerHooks } from "node:module";',
       "const seen = new Set();",
