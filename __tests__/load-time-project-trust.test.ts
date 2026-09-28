@@ -69,7 +69,7 @@ describe("load-time initialization with project server overrides", () => {
     vi.stubEnv("MCP_DIRECT_TOOLS", undefined);
     // Issue #713: global servers, one of them starting at load, and a project file that only enables one.
     writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { mcpServers: {
-      equibles: { command: "equibles-server", disabled: true },
+      equibles: { command: "equibles-server", lifecycle: "keep-alive", disabled: true },
       always: { command: "always-server", lifecycle: "keep-alive" },
     } });
     writeJson(join(cwd, ".pi", "mcp-adapter.json"), { mcpServers: { equibles: { disabled: false } } });
@@ -96,8 +96,8 @@ describe("load-time initialization with project server overrides", () => {
     expect(warnings().filter(message => message.includes("Project servers blocked"))).toEqual([]);
     expect(connected()).not.toContain("equibles");
 
-    // session_start still gates the project-enabled server with the real trust state.
-    const confirm = vi.fn(async () => false);
+    // session_start still gates the project-enabled server, and connects it once approved.
+    const confirm = vi.fn(async () => true);
     await pi.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, {
       cwd,
       hasUI: true,
@@ -110,7 +110,7 @@ describe("load-time initialization with project server overrides", () => {
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(confirm.mock.calls[0][0]).toContain("equibles");
     expect(warnings().filter(message => message.includes("blocked by project trust"))).toEqual([]);
-    expect(connected()).not.toContain("equibles");
+    await vi.waitFor(() => expect(connected()).toContain("equibles"));
 
     await pi.handlers.get("session_shutdown")?.({ type: "session_shutdown" });
   });
