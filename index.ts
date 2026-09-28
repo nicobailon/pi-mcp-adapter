@@ -858,7 +858,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     type: "string",
   });
 
-  function startInitialization(ctx: ExtensionContext, owner: McpRuntimeOwner, generation: number, staleReason: string): Promise<void> {
+  function startInitialization(
+    ctx: ExtensionContext,
+    owner: McpRuntimeOwner,
+    generation: number,
+    staleReason: string,
+    excludeProjectServers = false,
+  ): Promise<void> {
     let oauthRuntime: McpOAuthRuntime | null = null;
     let markStarted!: () => void;
     initStartedPromise = new Promise<void>((resolve) => {
@@ -899,6 +905,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             }
           : {}),
         oauthRuntime,
+        excludeProjectServers,
         // Pi awaits session_start handlers in order. Returning before the approval
         // dialog settles lets /reload or a later extension replace the editor and
         // orphan the dialog, leaving initialization pending forever.
@@ -1065,7 +1072,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         model: undefined,
         modelRegistry: undefined,
         signal: undefined,
-      } as unknown as ExtensionContext, owner, generation, "stale_load_time_initialization");
+      } as unknown as ExtensionContext, owner, generation, "stale_load_time_initialization", true);
     });
   }
 

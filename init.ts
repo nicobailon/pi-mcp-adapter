@@ -3,7 +3,7 @@ import type { McpExtensionState } from "./state.ts";
 import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata, type ToolSelectorCandidateIndex } from "./types.ts";
 import { existsSync } from "node:fs";
 import { cloneMcpConfig, loadMcpConfig, resolveConfiguredClaudePluginMcp } from "./config.ts";
-import { applyProjectServerTrustToConfig, describeProjectServerBlock } from "./project-server-trust.ts";
+import { applyProjectServerTrustToConfig, describeProjectServerBlock, excludeProjectServersAtLoadTime } from "./project-server-trust.ts";
 import { ConsentManager } from "./consent-manager.ts";
 import { McpLifecycleManager } from "./lifecycle.ts";
 import {
@@ -104,6 +104,8 @@ type McpInitializationOptions = McpAdapterOptions & {
   oauthRuntime?: McpOAuthRuntime;
   statusEvents?: McpExtensionState["statusEvents"];
   onProjectTrustResolved?: () => void;
+  /** Load-time runs have no Pi context, so project trust is unknown; session_start decides later. */
+  excludeProjectServers?: boolean;
 };
 
 export async function initializeMcp(
@@ -142,7 +144,9 @@ export async function initializeMcp(
   const runtimeSignal = combineAbortSignals(owner.signal, initialSignal);
   const trustResult = options.config !== undefined
     ? { config: resolveConfiguredClaudePluginMcp(cloneMcpConfig(options.config), cwd), blockedServers: new Map() }
-    : await applyProjectServerTrustToConfig(loadMcpConfig(configPath, cwd), ctx);
+    : options.excludeProjectServers
+      ? { config: excludeProjectServersAtLoadTime(loadMcpConfig(configPath, cwd)), blockedServers: new Map() }
+      : await applyProjectServerTrustToConfig(loadMcpConfig(configPath, cwd), ctx);
   options.onProjectTrustResolved?.();
   const config = trustResult.config;
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd, config.settings?.oauthCredentialStore);

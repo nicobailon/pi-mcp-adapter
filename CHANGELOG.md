@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Added an opt-in Serply preset to `/mcp setup` for Google, News, and Scholar search and page fetching. It reads the API key from `SERPLY_API_KEY`. Thanks to [@googio](https://github.com/googio) for PR #710.
+
+- Added an opt-in Serply preset to `/mcp setup` for Google, News, and Scholar search and page fetching. It reads the API key from `SERPLY_API_KEY`. Thanks to [@googio](https://github.com/googio) for [PR #710](https://github.com/nicobailon/pi-mcp-adapter/pull/710).
+
+### Fixed
+
+- Pi no longer warns "MCP: Project servers blocked: … (blocked by project trust)" at startup for a project you already trust, including one trusted through a parent folder. The warning came from the adapter starting `eager` or `keep-alive` servers before Pi had checked project trust. That early start now skips project servers, and the trust check and approval prompt still run at session start. Thanks to [@pnym-ai](https://github.com/pnym-ai) for reporting [issue #713](https://github.com/nicobailon/pi-mcp-adapter/issues/713).
 
 ## [3.1.0] - 2026-09-27
 
