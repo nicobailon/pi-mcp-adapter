@@ -289,15 +289,12 @@ await adapter.ready(); // connects, lists tools, and freezes the catalog
 const loader = new DefaultResourceLoader({ extensionFactories: [adapter.extensionFactory] });
 await loader.reload();
 const { session } = await createAgentSession({ resourceLoader: loader });
-// ... run the session ...
-await adapter.close();
+await adapter.close(); // after the session settles
 ```
 
-Nothing connects until `ready()`. It calls each `createTransport` once and rejects, closing the adapter, if a server fails to start, a requested tool is missing, or two tools map to the same Pi name (`<server>_<tool>`). `extensionFactory` throws before `ready()` resolves and after `close()`. It registers only the selected tools. `close()` refuses new calls, aborts in-flight calls, waits up to five seconds for them to settle, and closes every transport. A connection that drops is never reopened.
+Nothing connects until `ready()`, which calls each `createTransport` once. It rejects and closes the adapter if a server fails to start, a requested tool is missing, or two tools map to the same Pi name (`<server>_<tool>`). `extensionFactory` registers only the selected tools and throws before `ready()` resolves or after `close()`. `close()` refuses new calls, aborts in-flight ones, and closes every transport within five seconds. A dropped connection is never reopened.
 
-Every call goes through the approval broker (`pi-mcp-adapter:tool-approval-request` on `pi.events`, origin `direct`). Only `allow_once` or `allow_for_session` lets it run; a denial, an `abstain`, or no handler at all refuses the call before `onToolCall` sees it. After approval, `onToolCall` receives the frozen arguments and input schema, the Pi tool-call id, an opaque `connectionId`, and a `dispatch()` that sends the `tools/call` request at most once. Return the result to show the model. You can return the raw result, or one you changed, for example after importing its images. It then goes through the normal output guard.
-
-`dispatch()` rejects with `HostManagedMcpError`, whose `delivery` tells you whether the tool could have run. The raw error is only available as `cause`. The model sees fixed text and never the raw error.
+Every call goes through the approval broker (`pi-mcp-adapter:tool-approval-request` on `pi.events`, origin `direct`). Only `allow_once` or `allow_for_session` lets it run. A denial, an `abstain`, or no handler at all refuses the call before `onToolCall` sees it. `onToolCall` receives the frozen arguments and input schema, the Pi tool-call id, an opaque `connectionId`, and a `dispatch()` that sends `tools/call` at most once. The result it returns goes through the normal output guard, whether raw or changed (for example after importing images). An `isError: true` result reaches the model as a tool error. `dispatch()` rejects with `HostManagedMcpError`. The raw error is kept only as its `cause`, and the model sees fixed text.
 
 | `delivery` | Meaning |
 |---|---|
@@ -306,15 +303,11 @@ Every call goes through the approval broker (`pi-mcp-adapter:tool-approval-reque
 | `server_error` | The server answered with a JSON-RPC error (`protocolCode`). |
 | `invalid_result` | The server answered, but the result failed validation, including the tool's `outputSchema`. The tool may have run. |
 
-A server result with `isError: true` is a result, not an exception. It reaches `onToolCall` and the model as a tool error.
+On `notifications/tools/list_changed` the adapter lists the server's tools again. A selected tool that changed or disappeared is retired for the life of the adapter; if the re-list fails, every selected tool on that server is retired. Calls wait for a running re-list and are refused as `not_sent` both before `onToolCall` and inside `dispatch()`. The model is told to start a new session.
 
-When a server sends `notifications/tools/list_changed`, the adapter lists its tools again. A selected tool whose definition changed or disappeared is retired for the life of the adapter, and so is every selected tool on that server if listing fails. A call waits for any re-list still in progress and is refused as `not_sent` both before `onToolCall` and inside `dispatch()`. The model is told to start a new session to use the new definition.
+After `dispatch()` resolves, `call.linkedResource(uri)` prepares a read of a `resource_link` from that result. The read needs its own broker approval (origin `resource`, args `{ uri }`) and uses the same connection. It returns a `readId` and a single-use `dispatch()`, so you can record the read before it happens. A URI that is not linked throws, and a read is refused as `not_sent` once the parent call has settled.
 
-Inside `onToolCall`, after `dispatch()` resolves, `call.linkedResource(uri)` prepares a read of a `resource_link` from that result. The read needs its own broker approval (origin `resource`, args `{ uri }`) and returns an object with a `readId` and a single-use `dispatch()`, so you can record the read before it happens. It uses the same connection, throws for a URI that is not linked in the result, and is refused as `not_sent` once the parent call has settled.
-
-Supplied transports must not carry an OAuth `authProvider` or any retry or replay behavior. The adapter sends each `tools/call` at most once at its own layer: it turns off the SDK's multi-round-trip auto-fulfilment, passes the tool definition so the SDK does not resend on a header mismatch, and never recovers a session or reconnects. It advertises no client capabilities.
-
-This mode deliberately does not read config files, use OAuth or the credential store, register commands, UI, or the `mcp` proxy tool, recover expired sessions, expose resource tools or prompts, or answer sampling or elicitation requests.
+Supplied transports must not carry an OAuth `authProvider` or any retry or replay behavior. The adapter sends each `tools/call` at most once at its own layer. It turns off the SDK's multi-round-trip auto-fulfilment, passes the tool definition so the SDK cannot resend on a header mismatch, and never recovers a session or reconnects. This mode does not read config files, use OAuth or the credential store, register commands, UI, or the `mcp` proxy tool, expose resource tools or prompts, or answer sampling or elicitation requests.
 
 ### Runtime status snapshots
 

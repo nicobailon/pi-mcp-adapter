@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added an opt-in Serply preset to `/mcp setup` for Google, News, and Scholar search and page fetching. It reads the API key from `SERPLY_API_KEY`. Thanks to [@googio](https://github.com/googio) for [PR #710](https://github.com/nicobailon/pi-mcp-adapter/pull/710).
-- Added `pi-mcp-adapter/host-managed` for applications that embed Pi and own their MCP connections. The host supplies each transport, records every approved call before a single-use `dispatch()` sends it, sees the raw result before the model does, and controls when the adapter starts and closes. It never resends a call, reconnects, or reads config, OAuth, or keyring state. Changed tools are refused, and linked resources can be read inside the same call. See [Host-managed embedding](README.md#host-managed-embedding). Thanks to [@LeonEthan](https://github.com/LeonEthan) for the design in [issue #716](https://github.com/nicobailon/pi-mcp-adapter/issues/716).
+- Added `pi-mcp-adapter/host-managed` for applications that embed Pi and own their MCP connections. The host supplies the transports, records each approved call before a single-use `dispatch()` sends it, sees the raw result first, and decides when the adapter starts and closes. The adapter never resends a call or reconnects, and never reads config, OAuth, or keyring state. See [Host-managed embedding](README.md#host-managed-embedding). Thanks to [@LeonEthan](https://github.com/LeonEthan) for the design in [issue #716](https://github.com/nicobailon/pi-mcp-adapter/issues/716).
 
 ### Changed
 
