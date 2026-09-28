@@ -20,6 +20,11 @@
       "import": "./oauth.ts",
       "default": "./oauth.ts"
     },
+    "./host-managed": {
+      "types": "./host-managed.ts",
+      "import": "./host-managed.ts",
+      "default": "./host-managed.ts"
+    },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js",
@@ -86,6 +91,8 @@
     "ts-shape.ts",
     "search-ranking.ts",
     "tool-approval.ts",
+    "tool-parameters.ts",
+    "host-managed.ts",
     "session-approvals.ts",
     "project-server-trust.ts",
     "init.ts",
