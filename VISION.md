@@ -33,7 +33,9 @@ A new config key is justified only when the standard format and existing setting
 The adapter is a bridge, not a directory of MCP servers.
 It does not favor one vendor's server over another, and it does not grow features for one server.
 The `/mcp-adapter setup` presets are a short list of general servers that work without signing up for anything new: no account, or OAuth to an account most developers already have.
-A server that needs its own paid API key, or a preset proposed by the vendor that sells the server, does not get a preset.
+A server that needs its own paid API key does not get a preset.
+Anything specific to one vendor or server, including a new preset, needs the maintainer's approval before it is accepted.
+It can be rejected without asking.
 Any server can still be added as an ordinary config entry, and the README can show how.
 
 ## Follow the protocol and the SDK
@@ -71,7 +73,7 @@ A change that makes those paths slower needs proof or explicit owner approval.
 
 ## What this project refuses
 
-It does not add presets, docs sections, or code paths that promote one vendor's MCP server.
+It does not add docs sections or code paths that promote one vendor's MCP server.
 It does not add a preset for a server that needs a new account or paid API key.
 It does not add special handling for a single server when a config entry or a server-side fix would do.
 It does not become an MCP server registry, marketplace, or installer.
