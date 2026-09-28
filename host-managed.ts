@@ -21,6 +21,7 @@ import {
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
+import { abortable } from "./abort.ts";
 import { requestBrokerApproval } from "./tool-approval.ts";
 import { toToolParameters } from "./tool-parameters.ts";
 import { cleanupMaterializedBinaryResources, resolveMcpResultContent } from "./tool-registrar.ts";
@@ -261,7 +262,11 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
     let connection: Connection;
     let listed: Tool[];
     try {
-      const transport = await definition.createTransport({ server, signal: lifetime.signal });
+      const pending = Promise.resolve().then(() => definition.createTransport({ server, signal: lifetime.signal }));
+      // A factory that ignores the abort must not hold ready() open after
+      // close(); a transport it delivers late is closed, never adopted.
+      void pending.then((late) => { if (closed) void late.close().catch(() => {}); }, () => {});
+      const transport = await abortable(pending, lifetime.signal);
       const client = new Client(
         { name: `pi-mcp-${server}`, version: "1.0.0" },
         // No client capabilities, and no multi-round-trip auto-fulfilment: that
@@ -465,7 +470,11 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
     try {
       result = await options.onToolCall(call);
     } catch (error) {
-      if (error instanceof HostManagedMcpError) return dispatchFailureResult(tool, error, connection.retired.has(name));
+      // After a successful dispatch, a HostManagedMcpError comes from other
+      // host work (such as a linked read), and the tool itself may have run.
+      if (error instanceof HostManagedMcpError && dispatchedResult === undefined) {
+        return dispatchFailureResult(tool, error, connection.retired.has(name));
+      }
       const details = { error: "host_error", server: tool.server, tool: name, sent };
       return sent
         ? textResult(`The host failed while handling MCP tool "${name}" on server "${tool.server}" after the request was sent, so it may have run. Do not retry automatically; check its effects first.`, details)

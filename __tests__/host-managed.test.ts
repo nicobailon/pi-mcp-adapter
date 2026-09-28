@@ -146,6 +146,19 @@ describe("host-managed MCP adapter", () => {
     expect(() => installPi(adapter)).toThrow(/closed/);
   });
 
+  it("rejects a pending ready() when close() runs while a transport is still being created", async () => {
+    const adapter = createHostManagedMcpAdapter({
+      servers: { fixture: { createTransport: () => new Promise<Transport>(() => {}) } },
+      onToolCall: (call) => call.dispatch(),
+    });
+    adapters.push(adapter);
+
+    const ready = adapter.ready();
+    await adapter.close();
+
+    await expect(ready).rejects.toThrow(/failed to start/);
+  });
+
   it("never dispatches denied, unclaimed, or closed calls", async () => {
     const fixture = createFixture(async () => ({ content: [{ type: "text", text: "ran" }] }));
     const onToolCall = vi.fn((call: HostManagedMcpToolCall) => call.dispatch());
@@ -373,6 +386,25 @@ describe("host-managed MCP adapter", () => {
   });
 
   // module.registerHooks needs Node 22.15+/23.5+; the package supports Node 20.
+  it("does not report a dispatched tool as not run when a later linked read is refused", async () => {
+    const uri = "file:///chart.png";
+    const fixture = createFixture(async () => ({ content: [{ type: "resource_link", uri, name: "chart" }] }));
+    const adapter = createAdapter(fixture, async (call) => {
+      await call.dispatch();
+      await call.linkedResource(uri);
+      throw new Error("unreachable: the read is denied");
+    });
+    await adapter.ready();
+    const pi = installPi(adapter, async (request) => request.origin === "resource" ? "deny" : "allow_once");
+
+    const result = await pi.call();
+
+    expect(result.details).toMatchObject({ error: "host_error", sent: true });
+    expect(text(result)).toContain("may have run");
+    expect(fixture.calls).toHaveLength(1);
+    expect(fixture.reads).toEqual([]);
+  });
+
   it.skipIf(!("registerHooks" in nodeModule))("loads without auth, keyring, config, or session-recovery modules", () => {
     const entry = new URL("../host-managed.ts", import.meta.url).href;
     const probe = [
