@@ -263,6 +263,59 @@ await updateMcpOAuthTokensForUrl("jira", "https://jira.example.com/mcp", { acces
 
 The public subpath exposes only token read/update helpers plus a status helper. The async read path uses the adapter's refresh logic before it returns tokens. For a service-protected endpoint or a pre-registered OAuth client, pass the explicit refresh configuration as `getMcpOAuthTokensForUrl(name, url, { definition: { headers, oauth } })`. This optional configuration is never loaded from ambient config or stored with the tokens; headers are bound to the supplied MCP URL's origin. The helpers keep secure-store storage, URL binding, refresh persistence, chunk handling, legacy import, and fail-closed credential-store errors. They do not expose client registration secrets, PKCE verifiers, or OAuth state.
 
+### Host-managed embedding
+
+Use `pi-mcp-adapter/host-managed` when an application embeds Pi and owns the MCP connection itself: it builds the transports, holds the credentials, records each call before it runs, and decides when the adapter starts and stops. For an ordinary integration that only supplies MCP configuration, use `createMcpAdapter` instead.
+
+```ts
+import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { createHostManagedMcpAdapter } from "pi-mcp-adapter/host-managed";
+
+const adapter = createHostManagedMcpAdapter({
+  servers: {
+    github: {
+      createTransport: () => new StreamableHTTPClientTransport(new URL(url), { fetch: guardedFetch }),
+      tools: ["search_issues", "get_issue"], // omit to expose every listed tool
+    },
+  },
+  async onToolCall(call) {
+    await journal.record(call.toolCallId, call.server, call.tool, call.arguments);
+    return await call.dispatch();
+  },
+});
+
+await adapter.ready(); // connects, lists tools, and freezes the catalog
+const loader = new DefaultResourceLoader({ extensionFactories: [adapter.extensionFactory] });
+await loader.reload();
+const { session } = await createAgentSession({ resourceLoader: loader });
+// ... run the session ...
+await adapter.close();
+```
+
+Nothing connects until `ready()`. It calls each `createTransport` once and rejects, closing the adapter, if a server fails to start, a requested tool is missing, or two tools map to the same Pi name (`<server>_<tool>`). `extensionFactory` throws before `ready()` resolves and after `close()`. It registers only the selected tools. `close()` refuses new calls, aborts in-flight calls, waits up to five seconds for them to settle, and closes every transport. A connection that drops is never reopened.
+
+Every call goes through the approval broker (`pi-mcp-adapter:tool-approval-request` on `pi.events`, origin `direct`). Only `allow_once` or `allow_for_session` lets it run; a denial, an `abstain`, or no handler at all refuses the call before `onToolCall` sees it. After approval, `onToolCall` receives the frozen arguments and input schema, the Pi tool-call id, an opaque `connectionId`, and a `dispatch()` that sends the `tools/call` request at most once. Return the result to show the model. You can return the raw result, or one you changed, for example after importing its images. It then goes through the normal output guard.
+
+`dispatch()` rejects with `HostManagedMcpError`, whose `delivery` tells you whether the tool could have run. The raw error is only available as `cause`. The model sees fixed text and never the raw error.
+
+| `delivery` | Meaning |
+|---|---|
+| `not_sent` | The request never left the adapter; the tool did not run. |
+| `may_have_run` | The request was sent and the outcome is unknown (timeout, cancellation, lost connection, HTTP error). The agent is told not to retry automatically. |
+| `server_error` | The server answered with a JSON-RPC error (`protocolCode`). |
+| `invalid_result` | The server answered, but the result failed validation, including the tool's `outputSchema`. The tool may have run. |
+
+A server result with `isError: true` is a result, not an exception. It reaches `onToolCall` and the model as a tool error.
+
+When a server sends `notifications/tools/list_changed`, the adapter lists its tools again. A selected tool whose definition changed or disappeared is retired for the life of the adapter, and so is every selected tool on that server if listing fails. A call waits for any re-list still in progress and is refused as `not_sent` both before `onToolCall` and inside `dispatch()`. The model is told to start a new session to use the new definition.
+
+Inside `onToolCall`, after `dispatch()` resolves, `call.linkedResource(uri)` prepares a read of a `resource_link` from that result. The read needs its own broker approval (origin `resource`, args `{ uri }`) and returns an object with a `readId` and a single-use `dispatch()`, so you can record the read before it happens. It uses the same connection, throws for a URI that is not linked in the result, and is refused as `not_sent` once the parent call has settled.
+
+Supplied transports must not carry an OAuth `authProvider` or any retry or replay behavior. The adapter sends each `tools/call` at most once at its own layer: it turns off the SDK's multi-round-trip auto-fulfilment, passes the tool definition so the SDK does not resend on a header mismatch, and never recovers a session or reconnects. It advertises no client capabilities.
+
+This mode deliberately does not read config files, use OAuth or the credential store, register commands, UI, or the `mcp` proxy tool, recover expired sessions, expose resource tools or prompts, or answer sampling or elicitation requests.
+
 ### Runtime status snapshots
 
 Extensions can subscribe to the adapter's versioned shared event-bus channel instead of parsing `/mcp-adapter` or `mcp({})` output:
