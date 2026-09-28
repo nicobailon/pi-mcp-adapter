@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Dropped the unused `@modelcontextprotocol/ext-apps` dependency. The MCP Apps host already runs from a bundled app bridge, and the package's peer requirement made plain `npm install` pull in the legacy MCP SDK v1 and its HTTP server dependencies.
+
 ## [3.2.0] - 2026-09-28
 
 ### Highlights

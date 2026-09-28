@@ -137,7 +137,13 @@ describe("package.json dependency policy", () => {
   });
 
   it("uses the stable modular SDK v2 client/core packages without the legacy monolithic SDK", () => {
-    expect(packageJson.dependencies?.["@modelcontextprotocol/ext-apps"]).toBeDefined();
+    const packageLock = JSON.parse(readFileSync(join(repoRoot, "package-lock.json"), "utf-8")) as {
+      packages: Record<string, { dev?: boolean }>;
+    };
+    const productionLegacySdk = Object.keys(packageLock.packages).filter(
+      (path) => path.endsWith("node_modules/@modelcontextprotocol/sdk") && !packageLock.packages[path]?.dev
+    );
+    expect(productionLegacySdk).toEqual([]);
     expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBeUndefined();
     expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBe("2.0.0");
     expect(packageJson.dependencies?.["@modelcontextprotocol/core"]).toBe("2.0.0");
