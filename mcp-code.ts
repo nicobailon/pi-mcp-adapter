@@ -3,7 +3,7 @@ import { formatWithOptions } from "node:util";
 import { Worker } from "node:worker_threads";
 import { throwIfAborted } from "./abort.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
-import { loadMcpScriptWasm } from "./mcp-script-wasm.ts";
+import { loadMcpScriptWasm, resolveMcpScriptQuickJsUrl } from "./mcp-script-wasm.ts";
 import { evaluateJev, validateJevSettings } from "./jev-client.ts";
 import type { JevErrorCode, JevEvaluateInput, JevEvaluationEnvelope } from "./jev-contracts.ts";
 import { executeCall } from "./proxy-modes.ts";
@@ -408,7 +408,7 @@ export async function runMcpScript(
   try {
     const wasm = await Promise.race([loadMcpScriptWasm(), timeout, aborted]);
     worker = new Worker(new URL("./mcp-script-worker.mjs", import.meta.url), {
-      workerData: { code, wasm, interrupt, outputMaxBytes: MCP_SCRIPT_OUTPUT_MAX_BYTES },
+      workerData: { code, wasm, quickjsUrl: resolveMcpScriptQuickJsUrl(), interrupt, outputMaxBytes: MCP_SCRIPT_OUTPUT_MAX_BYTES },
       env: {},
       // The sandbox cannot open files, and the host always terminates this worker.
       // Disable Node's unmanaged FD bookkeeping, which emits false warnings when

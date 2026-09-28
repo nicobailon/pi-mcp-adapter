@@ -4,11 +4,12 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMcpAdapter } from "../index.ts";
 import { runMcpScript } from "../mcp-code.ts";
-import { loadMcpScriptWasm } from "../mcp-script-wasm.ts";
+import { loadMcpScriptWasm, resolveMcpScriptQuickJsUrl } from "../mcp-script-wasm.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { McpServerManager } from "../server-manager.ts";
@@ -76,6 +77,35 @@ describe("runMcpScript", () => {
       await copyFile(source, target);
       await expect(loadMcpScriptWasm(target)).resolves.toBeDefined();
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the sandbox worker where the quickjs-wasi package name cannot resolve", async () => {
+    // Bun-compiled executables cannot resolve bare packages from the worker file (#720).
+    const quickjsUrl = resolveMcpScriptQuickJsUrl();
+    expect(quickjsUrl).toBe(pathToFileURL(createRequire(import.meta.url).resolve("quickjs-wasi")).href);
+    const directory = await mkdtemp(join(tmpdir(), "mcp-script-worker-"));
+    const workerPath = join(directory, "mcp-script-worker.mjs");
+    await copyFile(fileURLToPath(new URL("../mcp-script-worker.mjs", import.meta.url)), workerPath);
+    const worker = new Worker(pathToFileURL(workerPath), {
+      workerData: {
+        code: "return 6 * 7;",
+        wasm: await loadMcpScriptWasm(),
+        quickjsUrl,
+        interrupt: new SharedArrayBuffer(4),
+        outputMaxBytes: 1024 * 1024,
+      },
+      env: {},
+    });
+    try {
+      const message = await new Promise<unknown>((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+      });
+      expect(message).toEqual({ type: "done", returnBlock: expect.objectContaining({ text: "42" }) });
+    } finally {
+      await worker.terminate();
       await rm(directory, { recursive: true, force: true });
     }
   });

@@ -1,16 +1,18 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { JSException, MAX_STACK_SIZE, QuickJS } from "quickjs-wasi";
 
 const MEMORY_LIMIT_BYTES = 64 * 1024 * 1024;
 const ERROR_MAX_BYTES = 64 * 1024;
 const ERROR_TRUNCATION_MARKER = "\n...[mcpScript error truncated]";
+
+// Set once main() imports quickjs-wasi from the host-resolved file URL.
+let JSException;
 
 function post(message) {
   parentPort?.postMessage(message);
 }
 
 function errorText(error) {
-  if (error instanceof JSException) {
+  if (JSException && error instanceof JSException) {
     const head = error.message ? `${error.name}: ${error.message}` : error.name;
     return error.stack ? `${head}\n${error.stack}` : head;
   }
@@ -172,6 +174,11 @@ const PRELUDE_SOURCE = `(function (bridge) {
 })`;
 
 async function main() {
+  // Bun-compiled executables cannot resolve bare package names from this
+  // worker file, so import quickjs-wasi from the URL the host resolved.
+  const quickjs = await import(workerData.quickjsUrl);
+  JSException = quickjs.JSException;
+  const { MAX_STACK_SIZE, QuickJS } = quickjs;
   const interrupt = new Int32Array(workerData.interrupt);
   let outputBytes = 0;
   let outputExceeded = false;
