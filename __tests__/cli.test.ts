@@ -424,6 +424,7 @@ describe("cli System One key helper", () => {
     process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
     delete process.env.SYSTEMONE_API_KEY;
     delete process.env.TYPESAFE_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     delete process.env.SYSTEMONE_ENDPOINT;
   });
 
@@ -474,6 +475,16 @@ describe("cli System One key helper", () => {
     expect(await main(["key", "remove", "systemone"], line => logs.push(line), () => {}, keyStdin(""))).toBe(0);
     expect(logs.join("\n")).toContain("ignored for https://opencode.ai/zen/v1/systemone");
     expect(logs.join("\n")).not.toContain("legacy-secret");
+  });
+
+  it("explains that OPENROUTER_API_KEY overrides a stored key on OpenRouter", async () => {
+    const { main } = await import("../cli.js");
+    process.env.SYSTEMONE_ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
+    process.env.OPENROUTER_API_KEY = "openrouter-secret";
+    const logs: string[] = [];
+    expect(await main(["key", "remove", "systemone"], line => logs.push(line), () => {}, keyStdin(""))).toBe(0);
+    expect(logs.join("\n")).toContain("OPENROUTER_API_KEY is present and overrides");
+    expect(logs.join("\n")).not.toContain("openrouter-secret");
   });
 
   it("rejects argv secrets and explains an environment override after removal", async () => {

@@ -697,7 +697,9 @@ System One decisions are the same API at different origins, so pointing at anoth
 | Command Code | `https://api.commandcode.ai/provider/v1/systemone` | `typesafe/jev` |
 | OpenRouter | `https://openrouter.ai/api/alpha/decisions` | `typesafe/jev-1.13` |
 
-These are example configurations, subject to each provider's current documentation ([OpenCode Zen](https://opencode.ai/docs/zen/), [Command Code](https://commandcode.ai/docs/provider), [TypeSafe](https://docs.typesafe.ai/)).
+These are example configurations, subject to each provider's current documentation ([OpenCode Zen](https://opencode.ai/docs/zen/), [Command Code](https://commandcode.ai/docs/provider), [OpenRouter](https://openrouter.ai/docs/guides/community/jev), [TypeSafe](https://docs.typesafe.ai/)).
+
+With `SYSTEMONE_ENDPOINT` pointed at OpenRouter, an existing `OPENROUTER_API_KEY` works as the key and the model defaults to `typesafe/jev-1.13`. `OPENROUTER_API_KEY` is never sent to any other endpoint, and `SYSTEMONE_API_KEY` takes precedence over it.
 
 The endpoint must be an absolute `https` URL with a path. A set-but-invalid `SYSTEMONE_ENDPOINT` disables Jev instead of falling back to the default. Treat the endpoint as trusted configuration: it receives the API key and the judgment payload. Credentials are stored per endpoint, so switching endpoints does not overwrite a saved key. Set the model with:
 

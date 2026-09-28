@@ -1,7 +1,7 @@
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { isServerDisabled } from "./types.js";
 import { combineAbortSignals } from "./runtime-owner.js";
-import { JEV_SDK_PATH, resolveJevCredential, resolveJevEndpoint } from "./jev-key-store.js";
+import { JEV_SDK_PATH, OPENROUTER_ORIGIN, resolveJevCredential, resolveJevEndpoint } from "./jev-key-store.js";
 const DEFAULTS = {
     semanticSearch: false, scriptEvaluation: false, allowedServers: [], model: "jev-1.13.0",
     requestTimeoutMs: 5_000, maxRetries: 0, maxStateBytes: 262_144,
@@ -10,6 +10,8 @@ const DEFAULTS = {
     semanticMinProbability: 0.2,
 };
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+/** OpenRouter's name for Jev, used there when `settings.jev.model` is not configured. */
+const OPENROUTER_DEFAULT_MODEL = "typesafe/jev-1.13";
 const hosts = new WeakMap();
 const credentials = new WeakMap();
 /**
@@ -218,8 +220,8 @@ function sameKeys(actual, expected) {
     return keys.length === expected.length && expected.every(key => Object.hasOwn(actual, key));
 }
 function validateResponse(value, input) {
+    // Providers may add metadata such as `id`, `provider`, or `usage.cost`; only the fields validated here are kept.
     const response = record(value, "response");
-    exactKeys(response, ["model", "answers", "usage"], "response");
     const answers = record(response.answers, "response answers");
     const questionNames = Object.keys(input.questions);
     if (!sameKeys(answers, questionNames))
@@ -259,8 +261,6 @@ function validateResponse(value, input) {
     if (typeof response.model !== "string" || response.model.length === 0 || response.model.length > 128)
         throw new Error("Invalid response model");
     const usage = record(response.usage, "response usage");
-    if (!sameKeys(usage, ["input_tokens", "output_tokens"]))
-        throw new Error("Invalid response usage");
     return { answers: validated, model: response.model, usage: { inputTokens: safeNumber(usage.input_tokens, "input tokens", true), outputTokens: safeNumber(usage.output_tokens, "output tokens", true) } };
 }
 /**
@@ -348,7 +348,9 @@ export async function evaluateJev(state, value, options) {
     const timer = setTimeout(() => { timedOut = true; deadline.abort(new Error("Jev evaluation deadline exceeded")); }, settings.requestTimeoutMs);
     const signal = combineAbortSignals(options.signal, state.owner.signal, deadline.signal);
     try {
-        const request = { state: input.state, questions: input.questions, model: settings.model };
+        const configured = state.config.settings?.jev;
+        const model = resolved.endpoint.origin === OPENROUTER_ORIGIN && (!configured || configured.model === undefined) ? OPENROUTER_DEFAULT_MODEL : settings.model;
+        const request = { state: input.state, questions: input.questions, model };
         const raw = await resolved.client.systemOne(request, { ...(signal ? { signal } : {}), timeout: settings.requestTimeoutMs, retry: { maxRetries: settings.maxRetries } });
         try {
             return { ok: true, data: validateResponse(raw, input) };

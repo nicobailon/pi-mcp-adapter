@@ -5,6 +5,9 @@ const SYSTEMONE_ENDPOINT_ENV = "SYSTEMONE_ENDPOINT";
 const SYSTEMONE_API_KEY_ENV = "SYSTEMONE_API_KEY";
 /** TypeSafe-issued key: honored only for the default endpoint and never sent anywhere else. */
 const LEGACY_TYPESAFE_API_KEY_ENV = "TYPESAFE_API_KEY";
+/** OpenRouter's general-purpose key: honored only for an OpenRouter endpoint and never sent anywhere else. */
+const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
+export const OPENROUTER_ORIGIN = "https://openrouter.ai";
 /** Origin recorded in version 1 credential records. */
 export const TYPESAFE_API_ORIGIN = "https://api.typesafe.ai";
 /** Version 1 credential account, still read for the default endpoint. */
@@ -158,6 +161,14 @@ export function resolveJevCredential(env = process.env, endpoint, secretStore = 
         }
         catch {
             return { status: "unavailable", message: `${LEGACY_TYPESAFE_API_KEY_ENV} is present but invalid.` };
+        }
+    }
+    if (target.origin === OPENROUTER_ORIGIN && Object.hasOwn(env, OPENROUTER_API_KEY_ENV)) {
+        try {
+            return { status: "present", source: "environment", apiKey: validateApiKey(env[OPENROUTER_API_KEY_ENV]) };
+        }
+        catch {
+            return { status: "unavailable", message: `${OPENROUTER_API_KEY_ENV} is present but invalid.` };
         }
     }
     let stored;

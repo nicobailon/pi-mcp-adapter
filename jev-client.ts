@@ -2,7 +2,7 @@ import { TypeSafeClient } from "@typesafe-ai/sdk";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled } from "./types.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
-import { JEV_SDK_PATH, resolveJevCredential, resolveJevEndpoint, type JevCredentialResolution, type ResolvedJevEndpoint } from "./jev-key-store.ts";
+import { JEV_SDK_PATH, OPENROUTER_ORIGIN, resolveJevCredential, resolveJevEndpoint, type JevCredentialResolution, type ResolvedJevEndpoint } from "./jev-key-store.ts";
 import type { JevAnswer, JevBudget, JevEvaluateInput, JevEvaluationData, JevEvaluationEnvelope, JevJson, JevQuestion, ResolvedJevSettings } from "./jev-contracts.ts";
 
 export type { ResolvedJevSettings } from "./jev-contracts.ts";
@@ -15,6 +15,8 @@ const DEFAULTS: ResolvedJevSettings = {
   semanticMinProbability: 0.2,
 };
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+/** OpenRouter's name for Jev, used there when `settings.jev.model` is not configured. */
+const OPENROUTER_DEFAULT_MODEL = "typesafe/jev-1.13";
 
 type JevSettingsInput = Partial<ResolvedJevSettings>;
 type Host = { endpoint: ResolvedJevEndpoint; client: TypeSafeClient };
@@ -192,8 +194,8 @@ function sameKeys(actual: Record<string, unknown>, expected: string[]): boolean 
   return keys.length === expected.length && expected.every(key => Object.hasOwn(actual, key));
 }
 function validateResponse(value: unknown, input: JevEvaluateInput): JevEvaluationData {
+  // Providers may add metadata such as `id`, `provider`, or `usage.cost`; only the fields validated here are kept.
   const response = record(value, "response");
-  exactKeys(response, ["model", "answers", "usage"], "response");
   const answers = record(response.answers, "response answers");
   const questionNames = Object.keys(input.questions);
   if (!sameKeys(answers, questionNames)) throw new Error("Response answer keys do not match questions");
@@ -224,7 +226,6 @@ function validateResponse(value: unknown, input: JevEvaluateInput): JevEvaluatio
   }
   if (typeof response.model !== "string" || response.model.length === 0 || response.model.length > 128) throw new Error("Invalid response model");
   const usage = record(response.usage, "response usage");
-  if (!sameKeys(usage, ["input_tokens", "output_tokens"])) throw new Error("Invalid response usage");
   return { answers: validated, model: response.model, usage: { inputTokens: safeNumber(usage.input_tokens, "input tokens", true), outputTokens: safeNumber(usage.output_tokens, "output tokens", true) } };
 }
 
@@ -291,7 +292,9 @@ export async function evaluateJev(state: McpExtensionState, value: JevEvaluateIn
   const timer = setTimeout(() => { timedOut = true; deadline.abort(new Error("Jev evaluation deadline exceeded")); }, settings.requestTimeoutMs);
   const signal = combineAbortSignals(options.signal, state.owner.signal, deadline.signal);
   try {
-    const request = { state: input.state, questions: input.questions, model: settings.model };
+    const configured = state.config.settings?.jev;
+    const model = resolved.endpoint.origin === OPENROUTER_ORIGIN && (!configured || configured.model === undefined) ? OPENROUTER_DEFAULT_MODEL : settings.model;
+    const request = { state: input.state, questions: input.questions, model };
     const raw = await resolved.client.systemOne(request as Parameters<TypeSafeClient["systemOne"]>[0], { ...(signal ? { signal } : {}), timeout: settings.requestTimeoutMs, retry: { maxRetries: settings.maxRetries } });
     try { return { ok: true, data: validateResponse(raw, input) }; }
     catch { return { ok: false, error: { code: "invalid_response", message: "Jev returned an invalid response." } }; }

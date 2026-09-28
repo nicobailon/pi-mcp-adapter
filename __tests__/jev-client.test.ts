@@ -33,6 +33,7 @@ describe("Jev host client", () => {
     process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
     process.env.SYSTEMONE_API_KEY = "fixture-key";
     delete process.env.TYPESAFE_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     delete process.env.SYSTEMONE_ENDPOINT;
     // The SDK itself reads these to relocate or re-log; the adapter must pin the endpoint regardless.
     delete process.env.TYPESAFE_BASE_URL;
@@ -129,6 +130,37 @@ describe("Jev host client", () => {
       expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" })).toMatchObject({ ok: true });
     }
     expect(seen).toEqual(paths.map(path => new URL(`https://provider.test${path}`).href));
+  });
+
+  it("defaults to OpenRouter's Jev model on OpenRouter unless a model is configured", async () => {
+    process.env.SYSTEMONE_ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
+    const models: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+      models.push(JSON.parse(String(init?.body)).model);
+      return new Response(JSON.stringify({
+        model: "typesafe/jev-1.13-20260917",
+        answers: { route: { type: "choice", choice: "yes", confidence: 1, probabilities: { yes: 1, no: 0 } } },
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" })).toMatchObject({ ok: true });
+    expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"], model: "jev-1.13.0" }), input, { purpose: "script" })).toMatchObject({ ok: true });
+    expect(models).toEqual(["typesafe/jev-1.13", "jev-1.13.0"]);
+  });
+
+  it("accepts provider metadata in a response and returns only the validated fields", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      answers: { route: { type: "choice", choice: "yes", confidence: 0.75, probabilities: { yes: 0.75, no: 0.25 } } },
+      id: "gen-dec-1789738314-X5e5eKGQdvR9rblyX250",
+      model: "typesafe/jev-1.13-20260917",
+      provider: "TypeSafe",
+      usage: { cost: 0.000019992, input_tokens: 476, output_tokens: 70 },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" })).toEqual({ ok: true, data: {
+      model: "typesafe/jev-1.13-20260917",
+      answers: { route: { type: "choice", choice: "yes", confidence: 0.75, probabilities: { yes: 0.75, no: 0.25 } } },
+      usage: { inputTokens: 476, outputTokens: 70 },
+    } });
   });
 
   it("rejects malformed responses without leaking their body", async () => {

@@ -1,6 +1,7 @@
 import { type SecureKeyringStore } from "./secure-keyring.ts";
 /** The Jev decisions endpoint used when `SYSTEMONE_ENDPOINT` is not set. */
 export declare const JEV_DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+export declare const OPENROUTER_ORIGIN = "https://openrouter.ai";
 /** Origin recorded in version 1 credential records. */
 export declare const TYPESAFE_API_ORIGIN = "https://api.typesafe.ai";
 /** Version 1 credential account, still read for the default endpoint. */

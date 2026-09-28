@@ -406,6 +406,7 @@ async function runKey(argv, log, error, stdin) {
     log("Jev API key removed from the OS secure credential store.");
   }
   if (Object.hasOwn(process.env, "SYSTEMONE_API_KEY")) log("Note: SYSTEMONE_API_KEY is present and overrides the stored key.");
+  else if (endpoint.origin === store.OPENROUTER_ORIGIN && Object.hasOwn(process.env, "OPENROUTER_API_KEY")) log("Note: OPENROUTER_API_KEY is present and overrides the stored key.");
   else if (Object.hasOwn(process.env, "TYPESAFE_API_KEY")) log(endpoint.href === store.JEV_DEFAULT_ENDPOINT
     ? "Note: TYPESAFE_API_KEY is present and overrides the stored key."
     : `Note: TYPESAFE_API_KEY is ignored for ${endpoint.href}; it is a TypeSafe credential and is never sent there.`);

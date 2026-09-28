@@ -13,6 +13,7 @@ import {
 } from "../jev-key-store.ts";
 
 const OPENCODE_ENDPOINT = "https://opencode.ai/zen/v1/systemone";
+const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
 
 function endpointOf(href: string): ResolvedJevEndpoint {
   const resolution = resolveJevEndpoint({ SYSTEMONE_ENDPOINT: href } as NodeJS.ProcessEnv);
@@ -26,6 +27,7 @@ describe("System One endpoint and credential storage", () => {
     process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
     delete process.env.SYSTEMONE_API_KEY;
     delete process.env.TYPESAFE_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     delete process.env.SYSTEMONE_ENDPOINT;
     resetTestSecureKeyring();
   });
@@ -70,6 +72,20 @@ describe("System One endpoint and credential storage", () => {
     expect(JSON.stringify(resolution)).not.toContain("legacy-typesafe-secret");
     process.env.SYSTEMONE_API_KEY = "opencode-secret";
     expect(resolveJevCredential(process.env, opencode)).toEqual({ status: "present", source: "environment", apiKey: "opencode-secret" });
+  });
+
+  it("uses OPENROUTER_API_KEY only for an OpenRouter endpoint", () => {
+    const openrouter = endpointOf(OPENROUTER_ENDPOINT);
+    saveJevApiKey("openrouter-keyring-key", openrouter);
+    process.env.OPENROUTER_API_KEY = "openrouter-secret";
+    expect(resolveJevCredential(process.env, openrouter)).toEqual({ status: "present", source: "environment", apiKey: "openrouter-secret" });
+    expect(resolveJevCredential()).toEqual({ status: "missing" });
+    expect(resolveJevCredential(process.env, endpointOf(OPENCODE_ENDPOINT))).toEqual({ status: "missing" });
+    process.env.SYSTEMONE_API_KEY = "systemone-secret";
+    expect(resolveJevCredential(process.env, openrouter)).toEqual({ status: "present", source: "environment", apiKey: "systemone-secret" });
+    delete process.env.SYSTEMONE_API_KEY;
+    process.env.OPENROUTER_API_KEY = " ";
+    expect(resolveJevCredential(process.env, openrouter)).toEqual({ status: "unavailable", message: "OPENROUTER_API_KEY is present but invalid." });
   });
 
   it("an inherited legacy credential does not mask a keyring credential for another endpoint", () => {

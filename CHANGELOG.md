@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Jev semantic search works with an existing OpenRouter key. Set `SYSTEMONE_ENDPOINT=https://openrouter.ai/api/alpha/decisions` and `OPENROUTER_API_KEY` is used as the key, with the model defaulting to `typesafe/jev-1.13`. The key is never sent to any other endpoint.
+
+### Fixed
+
+- Jev no longer rejects responses that carry extra provider metadata, such as OpenRouter's `id`, `provider`, and `usage.cost`. The documented OpenRouter setup previously failed with "Jev returned an invalid response."
+
 ### Changed
 
 - Dropped the unused `@modelcontextprotocol/ext-apps` dependency. The MCP Apps host already runs from a bundled app bridge, and the package's peer requirement made plain `npm install` pull in the legacy MCP SDK v1 and its HTTP server dependencies.
