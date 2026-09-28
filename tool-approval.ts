@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { abortable } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
@@ -88,15 +89,20 @@ function isMcpToolApprovalDecision(value: unknown): value is McpToolApprovalDeci
     || value === "abstain";
 }
 
-async function requestBrokerApproval(
-  state: McpExtensionState,
+/**
+ * Ask the approval broker on `events` for a decision. Returns "abstain" when
+ * no handler claims the request; a handler that throws or returns an unknown
+ * value counts as "deny". Rethrows only when `signal` aborted.
+ */
+export async function requestBrokerApproval(
+  events: ExtensionAPI["events"] | undefined,
   serverName: string,
-  toolMeta: ToolMetadata,
+  toolMeta: Pick<ToolMetadata, "name" | "originalName">,
   args: Record<string, unknown> | undefined,
   origin: McpToolApprovalOrigin,
   signal?: AbortSignal,
 ): Promise<McpToolApprovalDecision> {
-  if (!state.approvalEvents) return "abstain";
+  if (!events) return "abstain";
 
   let acceptingClaim = true;
   let handler: McpToolApprovalHandler | undefined;
@@ -115,7 +121,7 @@ async function requestBrokerApproval(
     },
   };
 
-  state.approvalEvents.emit(MCP_TOOL_APPROVAL_REQUEST_EVENT, request);
+  events.emit(MCP_TOOL_APPROVAL_REQUEST_EVENT, request);
   acceptingClaim = false;
   if (!handler) return "abstain";
 
@@ -140,7 +146,7 @@ export async function ensureToolCallApproved(
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   const approvedServers = state.approvedServers ??= new Map();
   const serverIdentity = getServerApprovalIdentity(state, serverName);
-  const brokerDecision = await requestBrokerApproval(state, serverName, toolMeta, args, origin, signal);
+  const brokerDecision = await requestBrokerApproval(state.approvalEvents, serverName, toolMeta, args, origin, signal);
   if (brokerDecision === "allow_once") return { ok: true };
   if (brokerDecision === "allow_for_session") {
     rememberToolApproval(state, serverName, toolMeta, args);

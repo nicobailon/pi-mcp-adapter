@@ -22,6 +22,7 @@ import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { syncNamespaceProxyTools } from "./namespace-tools.ts";
 import { restoreSessionApprovalState } from "./session-approvals.ts";
 import { createRetryableLoader } from "./lazy-loader.ts";
+import { toToolParameters } from "./tool-parameters.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
 export type { ServerEntry } from "./types.ts";
@@ -374,15 +375,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     targetState.lifecycle.registerServer(name, definition, idleOverride !== undefined ? { idleTimeout: idleOverride } : undefined);
     if (lifecycleMode === "keep-alive") targetState.lifecycle.markKeepAlive(name, definition);
   }
-
-  // OMP remaps `typebox` to a host shim that historically lacked Type.Unsafe.
-  // Prefer Unsafe when present (real TypeBox / fixed OMP shim); otherwise pass
-  // the normalized JSON Schema through as a plain object so toolWireSchema and
-  // validateToolArguments still treat it as JSON Schema.
-  const toToolParameters = (schema: Record<string, unknown>) =>
-    typeof (Type as { Unsafe?: (value: never) => unknown }).Unsafe === "function"
-      ? (Type as { Unsafe: (value: never) => unknown }).Unsafe(schema as never)
-      : schema;
 
   function directToolFingerprint(spec: DirectToolSpec): string {
     return JSON.stringify({
