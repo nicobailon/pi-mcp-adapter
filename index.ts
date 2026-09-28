@@ -689,6 +689,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       activeDirectNames,
       existingNamespaceNames: registeredNamespaceProxyTools,
       unavailableServers: activeFailureServers(),
+      fallbackDeactivatedNames: fallbackDeactivatedTools,
       pi,
       getState: () => state,
       getInitPromise: () => initPromise,

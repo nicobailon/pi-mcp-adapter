@@ -2055,6 +2055,46 @@ describe("mcpAdapter session lifecycle", () => {
     }));
   });
 
+  it("re-activates namespace proxies hidden during failure backoff without unregisterTool", async () => {
+    const demoDefinition = { command: "demo" };
+    // An eager server makes session_start initialize instead of deferring.
+    const otherDefinition = { command: "other", lifecycle: "eager" };
+    const config = { mcpServers: { demo: demoDefinition, other: otherDefinition } };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.loadMetadataCache.mockReturnValue({
+      version: 1,
+      servers: { demo: cacheEntry(demoDefinition), other: cacheEntry(otherDefinition) },
+    });
+    mocks.resolveDirectTools.mockReturnValue([]);
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi({ unregisterTool: false });
+    const activeTools = trackRuntimeToolActivation(api, ["bash", "mcp"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+    expect(activeTools()).toEqual(expect.arrayContaining(["mcp__demo", "mcp__other"]));
+
+    // The host deactivates mcp__other itself; the adapter must not undo that.
+    api.setActiveTools(activeTools().filter((name) => name !== "mcp__other"));
+
+    state.failureTracker.set("demo", Date.now());
+    state.failureTracker.set("other", Date.now());
+    state.onToolMetadataUpdated?.("demo", "failure-backoff-started");
+    expect(api.unregisterTool).toBeUndefined();
+    expect(activeTools()).not.toContain("mcp__demo");
+
+    state.failureTracker.delete("demo");
+    state.failureTracker.delete("other");
+    state.onToolMetadataUpdated?.("demo", "failure-backoff-expired");
+
+    expect(activeTools()).toContain("mcp__demo");
+    expect(activeTools()).not.toContain("mcp__other");
+  });
+
   it("publishes connected status only after replacing stale cached direct tools", async () => {
     const config = {
       settings: { disableProxyTool: true },

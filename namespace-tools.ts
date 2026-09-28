@@ -190,6 +190,10 @@ export interface SyncNamespaceProxyToolsInput {
   activeDirectNames?: ReadonlySet<string>;
   existingNamespaceNames: Set<string>;
   unavailableServers?: ReadonlySet<string>;
+  // Names the adapter removed from Pi's active tools because Pi could not
+  // unregister them. Pi does not re-activate a name it already knows, so a
+  // later re-registration must add the name back.
+  fallbackDeactivatedNames?: Set<string>;
   pi: ExtensionAPI;
   getState: GetState;
   getInitPromise: GetInitPromise;
@@ -265,16 +269,30 @@ function registerNamespaceProxyTool(
     ),
   });
   input.guardReentrant?.();
+  if (input.fallbackDeactivatedNames?.delete(spec.toolName)) {
+    // Only undo a fallback deactivation the adapter still owns.
+    input.guardReentrant?.();
+    const activeTools = getActiveToolsIfReady(input.pi);
+    input.guardReentrant?.();
+    if (activeTools && !activeTools.includes(spec.toolName)) {
+      input.pi.setActiveTools([...activeTools, spec.toolName]);
+      input.guardReentrant?.();
+    }
+  }
 }
 
-function getActiveToolsForStaleCleanup(pi: ExtensionAPI, staleNames: string[]): string[] | undefined {
-  if (staleNames.length === 0) return undefined;
+function getActiveToolsIfReady(pi: ExtensionAPI): string[] | undefined {
   try {
     return pi.getActiveTools?.();
   } catch (error) {
     if (error instanceof Error && error.message.includes("Action methods cannot be called during extension loading")) return undefined;
     throw error;
   }
+}
+
+function getActiveToolsForStaleCleanup(pi: ExtensionAPI, staleNames: string[]): string[] | undefined {
+  if (staleNames.length === 0) return undefined;
+  return getActiveToolsIfReady(pi);
 }
 
 function deactivateStaleNamespaceTools(input: SyncNamespaceProxyToolsInput, nextNames: Set<string>): string[] {
@@ -298,12 +316,14 @@ function deactivateStaleNamespaceTools(input: SyncNamespaceProxyToolsInput, next
   if (!activeTools) return deactivated;
 
   const stale = new Set(staleNames);
+  const fallbackRemoved = staleNames.filter((name) => !deactivated.includes(name) && activeTools.includes(name));
   const nextActiveTools = activeTools.filter((name) => !stale.has(name));
   if (nextActiveTools.length === activeTools.length) return deactivated;
 
   input.guardReentrant?.();
   input.pi.setActiveTools(nextActiveTools);
   input.guardReentrant?.();
+  for (const name of fallbackRemoved) input.fallbackDeactivatedNames?.add(name);
   for (const name of staleNames) {
     if (!deactivated.includes(name)) deactivated.push(name);
   }

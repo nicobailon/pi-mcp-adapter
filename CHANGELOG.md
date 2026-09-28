@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Pi no longer warns "MCP: Project servers blocked: … (blocked by project trust)" at startup for a project you already trust, including one trusted through a parent folder. The warning came from the adapter starting `eager` or `keep-alive` servers before Pi had checked project trust. That early start now skips project servers, and the trust check and approval prompt still run at session start. Thanks to [@pnym-ai](https://github.com/pnym-ai) for reporting [issue #713](https://github.com/nicobailon/pi-mcp-adapter/issues/713).
 - Direct tools no longer disappear from a session when another Pi session writes different metadata for the same server to the shared cache, or when the cache entry expires, is deleted, or the server disconnects while idle. Each session now keeps the tools and resources it discovered itself. A configuration change still drops them, and the shared cache is written the same way as before. Thanks to [@NoahWTeng](https://github.com/NoahWTeng) for [PR #718](https://github.com/nicobailon/pi-mcp-adapter/pull/718).
+- A server's `mcp__<server>` tool comes back after its connection-failure backoff ends. Before, on Pi versions without `unregisterTool`, it stayed hidden for the rest of the session. A tool you turned off yourself stays off. Thanks to [@fer-git](https://github.com/fer-git) for [issue #717](https://github.com/nicobailon/pi-mcp-adapter/issues/717).
 
 ## [3.1.0] - 2026-09-27
 
