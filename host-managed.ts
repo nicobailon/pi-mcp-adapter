@@ -14,6 +14,7 @@ import {
   type CallToolResult,
   type JsonSchemaType,
   type JsonSchemaValidator,
+  type ReadResourceResult,
   type Tool,
   type Transport,
 } from "@modelcontextprotocol/client";
@@ -24,7 +25,7 @@ import { requestBrokerApproval } from "./tool-approval.ts";
 import { toToolParameters } from "./tool-parameters.ts";
 import { cleanupMaterializedBinaryResources, resolveMcpResultContent } from "./tool-registrar.ts";
 import { formatToolName } from "./types.ts";
-import { normalizeDirectToolInputSchema, normalizeToolArguments, truncateAtWord, withToolCallIdMeta } from "./utils.ts";
+import { normalizeDirectToolInputSchema, normalizeToolArguments, stableStringify, truncateAtWord, withToolCallIdMeta } from "./utils.ts";
 
 const CLOSE_DRAIN_TIMEOUT_MS = 5_000;
 
@@ -59,6 +60,25 @@ export interface HostManagedMcpToolCall {
    * Rejects with HostManagedMcpError. Calling it twice throws.
    */
   dispatch(): Promise<CallToolResult>;
+  /**
+   * Approve and prepare a read of a `resource_link` URI from this call's
+   * dispatched result, on the same connection. Throws unless dispatch()
+   * resolved with that link. Rejects with HostManagedMcpError (`not_sent`)
+   * when the broker does not allow the read or the call has settled.
+   */
+  linkedResource(uri: string): Promise<HostManagedMcpResourceRead>;
+}
+
+export interface HostManagedMcpResourceRead {
+  readonly uri: string;
+  readonly readId: string;
+  readonly connectionId: string;
+  readonly parentToolCallId: string;
+  /**
+   * Send the resources/read request once. Rejects with HostManagedMcpError,
+   * including `not_sent` after the parent tool call settles. Calling it twice throws.
+   */
+  dispatch(): Promise<ReadResourceResult>;
 }
 
 export interface HostManagedMcpAdapterOptions {
@@ -117,12 +137,21 @@ interface Connection {
   readonly client: Client;
   readonly transport: Transport;
   open: boolean;
+  /** Selected tools; set once ready() has listed them. */
+  selected: readonly CatalogTool[] | undefined;
+  /** Tool names whose definition changed after loading. Never cleared. */
+  readonly retired: Set<string>;
+  /** In-flight catalog re-list, if any. */
+  refresh: Promise<void> | undefined;
+  refreshRequested: boolean;
 }
 
 interface CatalogTool {
   readonly server: string;
   readonly toolName: string;
   readonly definition: Tool;
+  /** stableStringify(definition), compared against each re-list. */
+  readonly fingerprint: string;
   /** Definition passed to the SDK: output validation happens here, not in the SDK. */
   readonly sdkDefinition: Tool;
   readonly validateOutput: JsonSchemaValidator<unknown> | undefined;
@@ -156,8 +185,14 @@ function textResult(text: string, details: Record<string, unknown>): ToolResult 
   return { content: [{ type: "text", text }], details };
 }
 
-function dispatchFailureResult(tool: CatalogTool, error: HostManagedMcpError): ToolResult {
+function dispatchFailureResult(tool: CatalogTool, error: HostManagedMcpError, catalogChanged = false): ToolResult {
   const name = tool.definition.name;
+  if (catalogChanged && error.delivery === "not_sent") {
+    return textResult(
+      `MCP tool "${name}" on server "${tool.server}" was not run: its definition changed after it was loaded, so the call was not sent. Start a new session to use the new definition.`,
+      { error: "catalog_changed", server: tool.server, tool: name },
+    );
+  }
   const details: Record<string, unknown> = { error: error.delivery, server: tool.server, tool: name };
   const unknownOutcome = "Do not retry automatically; check its effects first.";
   switch (error.delivery) {
@@ -189,11 +224,41 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
 
   const requestOptions = (signal: AbortSignal) => (timeout !== undefined ? { signal, timeout } : { signal });
 
+  // Re-list after tools/list_changed, one request at a time; a notification
+  // during a re-list schedules one more. A selected tool whose definition
+  // changed or disappeared, or any re-list failure, retires it for good.
+  function requestCatalogRefresh(connection: Connection): void {
+    connection.refreshRequested = true;
+    const selected = connection.selected;
+    if (!selected || connection.refresh) return;
+    connection.refresh = (async () => {
+      while (connection.refreshRequested) {
+        connection.refreshRequested = false;
+        try {
+          const { tools } = await connection.client.listTools(undefined, { ...requestOptions(lifetime.signal), cacheMode: "refresh" });
+          const current = new Map(tools.map((tool) => [tool.name, stableStringify(tool)]));
+          for (const tool of selected) {
+            if (current.get(tool.definition.name) !== tool.fingerprint) connection.retired.add(tool.definition.name);
+          }
+        } catch {
+          for (const tool of selected) connection.retired.add(tool.definition.name);
+        }
+      }
+      connection.refresh = undefined;
+    })();
+  }
+
+  async function isRetired(connection: Connection, name: string): Promise<boolean> {
+    while (connection.refresh) await connection.refresh;
+    return connection.retired.has(name);
+  }
+
   async function connectServer(
     server: string,
     definition: HostManagedMcpServer,
     validators: ReturnType<typeof createJsonSchemaValidator>,
   ): Promise<CatalogTool[]> {
+    let connection: Connection;
     let listed: Tool[];
     try {
       const transport = await definition.createTransport({ server, signal: lifetime.signal });
@@ -205,9 +270,17 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
       );
       // Raw transport errors can carry credentials; the adapter never logs them.
       client.onerror = () => {};
-      const connection: Connection = { id: randomUUID(), client, transport, open: true };
-      client.onclose = () => { connection.open = false; };
-      connections.set(server, connection);
+      const created: Connection = {
+        id: randomUUID(), client, transport, open: true,
+        selected: undefined, retired: new Set(), refresh: undefined, refreshRequested: false,
+      };
+      connection = created;
+      client.onclose = () => { created.open = false; };
+      // Registered directly rather than through ClientOptions.listChanged so
+      // the change is known synchronously (no debounce) even when the server
+      // does not advertise tools.listChanged.
+      client.setNotificationHandler("notifications/tools/list_changed", () => requestCatalogRefresh(created));
+      connections.set(server, created);
       if (closed) {
         // close() already swept the connections it could see.
         await transport.close().catch(() => {});
@@ -221,7 +294,7 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
 
     const byName = new Map(listed.map((tool) => [tool.name, tool]));
     const selected = definition.tools ? [...new Set(definition.tools)] : [...byName.keys()];
-    return selected.map((name) => {
+    const tools = selected.map((name): CatalogTool => {
       const tool = byName.get(name);
       if (!tool) throw new Error(`Host-managed MCP server "${server}" does not list tool "${name}"`);
       const frozen = deepFreeze(structuredClone(tool));
@@ -238,12 +311,17 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
         server,
         toolName: formatToolName(name, server, "server"),
         definition: frozen,
+        fingerprint: stableStringify(frozen),
         // The SDK reports its own output-schema failures as ProtocolError,
         // indistinguishable from a server error response; validate here instead.
         sdkDefinition: Object.freeze(withoutOutputSchema),
         validateOutput,
       };
     });
+    connection.selected = tools;
+    // A notification that arrived before selection still gets its re-list.
+    if (connection.refreshRequested) requestCatalogRefresh(connection);
+    return tools;
   }
 
   async function start(): Promise<void> {
@@ -299,11 +377,16 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
       return textResult(`MCP tool "${name}" on server "${tool.server}" was not run: no approval handler allowed it.`, { error: "approval_required", server: tool.server, tool: name });
     }
     if (closed || !connection.open || signal.aborted) return dispatchFailureResult(tool, new HostManagedMcpError("not_sent", tool.server));
+    if (await isRetired(connection, name)) return dispatchFailureResult(tool, new HostManagedMcpError("not_sent", tool.server), true);
 
     let dispatched = false;
     let sent = false;
+    let settled = false;
+    let dispatchedResult: CallToolResult | undefined;
+    const unavailable = () => settled || closed || !connection.open || signal.aborted;
     const send = async (): Promise<CallToolResult> => {
-      if (closed || !connection.open || signal.aborted) throw new HostManagedMcpError("not_sent", tool.server);
+      const retired = await isRetired(connection, name);
+      if (unavailable() || retired) throw new HostManagedMcpError("not_sent", tool.server);
       sent = true;
       let result: CallToolResult;
       try {
@@ -324,7 +407,40 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
         }
         if (!valid) throw new HostManagedMcpError("invalid_result", tool.server);
       }
+      dispatchedResult = result;
       return result;
+    };
+    const readLinkedResource = async (uri: string): Promise<HostManagedMcpResourceRead> => {
+      if (unavailable()) throw new HostManagedMcpError("not_sent", tool.server);
+      let decision: string;
+      try {
+        decision = await requestBrokerApproval(pi.events, tool.server, { name: tool.toolName, originalName: name }, Object.freeze({ uri }), "resource", signal);
+      } catch {
+        decision = "abstain";
+      }
+      if ((decision !== "allow_once" && decision !== "allow_for_session") || unavailable()) {
+        throw new HostManagedMcpError("not_sent", tool.server);
+      }
+      let readDispatched = false;
+      const sendRead = async (): Promise<ReadResourceResult> => {
+        if (unavailable()) throw new HostManagedMcpError("not_sent", tool.server);
+        try {
+          return await connection.client.readResource({ uri }, { ...requestOptions(signal), cacheMode: "bypass" });
+        } catch (cause) {
+          throw classifyDispatchError(tool.server, cause);
+        }
+      };
+      return Object.freeze({
+        uri,
+        readId: randomUUID(),
+        connectionId: connection.id,
+        parentToolCallId: toolCallId,
+        dispatch() {
+          if (readDispatched) throw new Error(`dispatch() was already called for MCP resource read "${uri}"`);
+          readDispatched = true;
+          return sendRead();
+        },
+      });
     };
     const call: HostManagedMcpToolCall = Object.freeze({
       server: tool.server,
@@ -340,17 +456,24 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
         dispatched = true;
         return send();
       },
+      linkedResource(uri: string) {
+        const linked = dispatchedResult?.content.some((block) => block.type === "resource_link" && block.uri === uri);
+        if (!linked) throw new Error(`"${uri}" is not a resource_link in the dispatched result of MCP tool call "${toolCallId}"`);
+        return readLinkedResource(uri);
+      },
     });
 
     let result: CallToolResult;
     try {
       result = await onToolCall(call);
     } catch (error) {
-      if (error instanceof HostManagedMcpError) return dispatchFailureResult(tool, error);
+      if (error instanceof HostManagedMcpError) return dispatchFailureResult(tool, error, connection.retired.has(name));
       const details = { error: "host_error", server: tool.server, tool: name, sent };
       return sent
         ? textResult(`The host failed while handling MCP tool "${name}" on server "${tool.server}" after the request was sent, so it may have run. Do not retry automatically; check its effects first.`, details)
         : textResult(`The host rejected MCP tool "${name}" on server "${tool.server}"; it was not run.`, details);
+    } finally {
+      settled = true;
     }
 
     const content = resolveMcpResultContent(result as unknown as Record<string, unknown>, lifetime.signal);
