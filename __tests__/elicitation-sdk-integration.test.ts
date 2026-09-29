@@ -28,14 +28,16 @@ function createUi(answers: string[] = [], delayMs = 0): ExtensionUIContext {
   } as unknown as ExtensionUIContext;
 }
 
-async function createConnectedManager(mode: ExtensionMode, answers: string[] = [], options: { requestTimeoutMs?: number; answerDelayMs?: number } = {}) {
+async function createConnectedManager(mode: ExtensionMode, answers: string[] = [], options: { callTimeoutMs?: number; answerDelayMs?: number } = {}) {
   const ui = createUi(answers, options.answerDelayMs);
   const manager = new McpServerManager();
   manager.setElicitationConfig({
     ui,
     allowUrl: isTuiMode({ hasUI: true, mode }),
   });
-  await manager.connect("real", { ...definition, requestTimeoutMs: options.requestTimeoutMs });
+  await manager.connect("real", definition);
+  // Set after connecting so a slow CI runner's spawn and handshake do not use up the call's timeout.
+  manager.setDefaultRequestTimeoutMs(options.callTimeoutMs);
   managers.push(manager);
   return { manager, ui };
 }
@@ -85,7 +87,7 @@ describe("elicitation with the real MCP SDK", () => {
 
   it.each(["proxy", "direct"] as const)("does not count time spent answering a form against the %s call timeout", async (adapter) => {
     const { manager } = await createConnectedManager("tui", ["Continue", "Enter value", "Submit"], {
-      requestTimeoutMs: 500,
+      callTimeoutMs: 500,
       answerDelayMs: 300,
     });
     const state = createState(manager, [{ name: "real_form", originalName: "form", description: "form" }]);
@@ -110,7 +112,7 @@ describe("elicitation with the real MCP SDK", () => {
   });
 
   it("still times out a call that is not waiting on the user", async () => {
-    const { manager } = await createConnectedManager("tui", [], { requestTimeoutMs: 300 });
+    const { manager } = await createConnectedManager("tui", [], { callTimeoutMs: 300 });
     const state = createState(manager, [{ name: "real_hang", originalName: "hang", description: "hang" }]);
 
     const result = await executeCall(state, "real_hang", {}, "real");
