@@ -43,11 +43,14 @@ export function recordObservedOutput(
   if (findTool(state, serverName, toolName)?.outputSchema !== undefined) return;
   const observed = readResultValue(result);
   if (!observed) return;
+  const definition = state.config.mcpServers[serverName];
+  if (!definition) return;
   const shape = inferShape(observed.value, 0, { nodes: MAX_NODES_PER_CALL });
-  const observedOutputs = state.observedOutputs ??= new Map();
-  const key = JSON.stringify([serverName, toolName]);
-  const previous = observedOutputs.get(key);
-  observedOutputs.set(key, previous?.source === observed.source
+  const observedOutputs = state.observedOutputs ??= new WeakMap();
+  let byTool = observedOutputs.get(definition);
+  if (!byTool) observedOutputs.set(definition, byTool = new Map());
+  const previous = byTool.get(toolName);
+  byTool.set(toolName, previous?.source === observed.source
     ? { source: observed.source, shape: fitShape(mergeShapes(previous.shape, shape)), calls: previous.calls + 1 }
     : { source: observed.source, shape: fitShape(shape), calls: 1 });
 }
@@ -58,7 +61,8 @@ export function getObservedOutput(
   tool: Pick<ToolMetadata, "originalName" | "outputSchema">,
 ): ObservedOutput | undefined {
   if (tool.outputSchema !== undefined) return undefined;
-  const observed = state.observedOutputs?.get(JSON.stringify([serverName, tool.originalName]));
+  const definition = state.config.mcpServers[serverName];
+  const observed = definition && state.observedOutputs?.get(definition)?.get(tool.originalName);
   return observed && !isUnknown(observed.shape) ? observed : undefined;
 }
 
@@ -120,7 +124,8 @@ function inferShape(value: unknown, depth: number, budget: { nodes: number }): O
   for (const key in record) {
     if (!Object.hasOwn(record, key)) continue;
     keys.push(key);
-    if (keys.length > MAX_OBJECT_KEYS || !FIELD_NAME.test(key) || /\d{4}/.test(key)) {
+    // An own "__proto__" key would set the prototype of the shape's properties object instead of adding a field.
+    if (keys.length > MAX_OBJECT_KEYS || !FIELD_NAME.test(key) || /\d{4}/.test(key) || key === "__proto__") {
       isMap = true;
       break;
     }

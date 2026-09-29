@@ -68,4 +68,20 @@ describe("observed output shapes", () => {
 
     expect(describeText(state)).not.toContain("Observed output");
   });
+
+  it("starts over when the server is replaced under the same name", async () => {
+    const state = stateWith([{ content: [], structuredContent: { id: "x" } }]);
+    await executeCall(state, "demo_list", {});
+    expect(describeText(state)).toContain("Observed output");
+
+    state.config.mcpServers.demo = { command: "node" };
+    expect(describeText(state)).not.toContain("Observed output");
+  });
+
+  it("renders an own __proto__ key as a map", async () => {
+    const state = stateWith([{ content: [], structuredContent: JSON.parse('{ "__proto__": { "id": "x" } }') }]);
+    await executeCall(state, "demo_list", {});
+
+    expect(describeText(state)).toContain("\nRecord<string, { id: string; }>");
+  });
 });

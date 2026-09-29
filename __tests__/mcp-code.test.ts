@@ -328,7 +328,7 @@ describe("runMcpScript", () => {
   });
 
   it("describes the observed output of a schemaless tool at its path in the call envelope", async () => {
-    const result = await runMcpScript({ ...state, observedOutputs: new Map() },
+    const result = await runMcpScript({ ...state, observedOutputs: new WeakMap() },
       'await tools.fixture_echo({ value: "hidden" }); return (await tools.describe({ path: "fixture_echo" })).observedOutput;');
     expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
       target: "data.structuredContent",
