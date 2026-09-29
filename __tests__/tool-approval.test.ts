@@ -18,7 +18,7 @@ const tool: ToolMetadata = {
 };
 
 function createState(options: {
-  approveTools?: boolean | string[];
+  approveTools?: boolean | "destructive" | string[];
   decision?: "Allow once" | "Allow for session" | "Deny";
   interactive?: boolean;
   broker?: (request: McpToolApprovalRequest) => void;
@@ -200,6 +200,37 @@ describe("tool approval", () => {
       details: { error: "approval_denied", server: "demo", tool: "search-records" },
     });
     expect(direct.callTool).not.toHaveBeenCalled();
+  });
+
+  it("with approveTools \"destructive\", prompts unless the server marks the tool read-only or non-destructive", async () => {
+    const readOnly: ToolMetadata = { name: "demo_list", originalName: "list", description: "", annotations: { readOnlyHint: true } };
+    const safeWrite: ToolMetadata = { name: "demo_tag", originalName: "tag", description: "", annotations: { destructiveHint: false } };
+    const destructive: ToolMetadata = { name: "demo_drop", originalName: "drop", description: "", annotations: { destructiveHint: true } };
+    const unmarked: ToolMetadata = { name: "demo_mystery", originalName: "mystery", description: "" };
+    const { state, callTool, select } = createState({ approveTools: "destructive", decision: "Deny" });
+    state.toolMetadata.set("demo", [readOnly, safeWrite, destructive, unmarked]);
+
+    for (const allowed of [readOnly, safeWrite]) {
+      expect((await executeCall(state, allowed.name, {})).details).not.toHaveProperty("error");
+    }
+    for (const gated of [destructive, unmarked]) {
+      await expect(executeCall(state, gated.name, {})).resolves.toMatchObject({ details: { error: "approval_denied" } });
+    }
+    expect(select).toHaveBeenCalledTimes(2);
+    expect(callTool).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets per-server approveTools override a global \"destructive\" and the reverse", () => {
+    const unmarked: ToolMetadata = { name: "demo_mystery", originalName: "mystery", description: "" };
+    const readOnly: ToolMetadata = { ...unmarked, annotations: { readOnlyHint: true } };
+    const globalDestructive: McpConfig = { settings: { approveTools: "destructive" }, mcpServers: { demo: { approveTools: false } } };
+    const serverDestructive: McpConfig = { settings: { approveTools: true }, mcpServers: { demo: { approveTools: "destructive" } } };
+
+    expect(isToolCallApprovalRequired(globalDestructive, "demo", unmarked)).toBe(false);
+    expect(isToolCallApprovalRequired(serverDestructive, "demo", readOnly)).toBe(false);
+    expect(isToolCallApprovalRequired(serverDestructive, "demo", unmarked)).toBe(true);
+    const mistyped = { mcpServers: { demo: { approveTools: "destrucive" } } } as unknown as McpConfig;
+    expect(isToolCallApprovalRequired(mistyped, "demo", readOnly)).toBe(true);
   });
 
   it("names the server's live destructive or read-only hint in the prompt on proxy and direct calls", async () => {

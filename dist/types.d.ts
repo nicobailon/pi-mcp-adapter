@@ -321,7 +321,7 @@ export interface ServerEntry {
      * describe output, or the metadata cache.
      */
     searchKeywords?: Record<string, string[]>;
-    approveTools?: boolean | string[];
+    approveTools?: boolean | "destructive" | string[];
     debug?: boolean;
     /** Enable metadata-only JSONL protocol tracing for this server. */
     trace?: boolean;
@@ -454,7 +454,7 @@ export interface McpSettings {
     /** Number of result text lines to show before expansion. Supports 1, 2, or 3. Defaults to 1 in compact mode and 3 in boxed mode. */
     collapsedResultLines?: 1 | 2 | 3;
     /** Default approval gate for matching tools/resources; per-server settings override it. */
-    approveTools?: boolean | string[];
+    approveTools?: boolean | "destructive" | string[];
     disableProxyTool?: boolean;
     /** Freeze direct-tool registration after the initial sync. Automatic metadata updates
      * and explicit reconnects won't rebuild the system prompt, preserving the

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Jev semantic search works with an existing OpenRouter key. Set `SYSTEMONE_ENDPOINT=https://openrouter.ai/api/alpha/decisions` and `OPENROUTER_API_KEY` is used as the key, with the model defaulting to `typesafe/jev-1.13`. The key is never sent to any other endpoint.
 - You can now tell a read-only MCP tool from one that deletes data. The hints a server declares on its tools (read-only, destructive, idempotent, open-world, title) are kept, including in the metadata cache, and shown in `mcp({ describe })`, in `tools.describe` inside `mcpScript`, and in the tool approval prompt. Search results and direct-tool descriptions stay unchanged, so nothing is added to every turn's context.
 - Tools that declare no output schema no longer leave the model guessing what a result looks like. After a successful call returns structured content or a JSON text result, `mcp({ describe })` and `tools.describe` in `mcpScript` show the output shape seen so far this session (field names and types only, never values). The shape is kept in memory only and is labeled as observed, not a contract.
+- `approveTools: "destructive"` asks before any tool that may change or delete data, without listing tool names. Only tools the server marks read-only or non-destructive run without a prompt; tools with no hints are gated. It works globally or per server.
 
 ### Fixed
 
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Dropped the unused `@modelcontextprotocol/ext-apps` dependency. The MCP Apps host already runs from a bundled app bridge, and the package's peer requirement made plain `npm install` pull in the legacy MCP SDK v1 and its HTTP server dependencies.
+- A mistyped `approveTools` value no longer turns approval off silently. A value other than `true`, `false`, `"destructive"`, or a list of tool name patterns now requires approval for every tool.
 
 ## [3.2.0] - 2026-09-28
 

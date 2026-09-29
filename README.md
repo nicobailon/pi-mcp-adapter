@@ -571,7 +571,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 | `projectServers` | Project-server admission policy for trusted headless sessions: `"ask"` (default, skip unapproved servers) or `"allow"`. Only user-global or explicitly selected config may set it; project files are ignored. |
 | `ancestorConfigRoots` | Trusted absolute or `~/...` roots for opt-in ancestor config discovery. Only user-global or explicitly selected config may set it; roots outside cwd are ignored and the deepest matching root is used. |
 | `agentPluginPaths` | Agent Plugins package directories to load MCP servers from. Relative paths resolve from the active project cwd. |
-| `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
+| `approveTools` | `true` to require approval before every MCP tool call, `"destructive"` to require it for tools the server does not mark read-only or non-destructive, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
 | `oauthDir` | Legacy OAuth `tokens.json` import directory for this MCP config. Relative paths resolve from the active project cwd. `MCP_OAUTH_DIR` still wins when set. Persistent OAuth credentials are stored in the OS credential store, not this directory. |
 | `oauthCredentialStore` | Set explicitly to `"encrypted-file"` for externally keyed AES-256-GCM storage (notably Windows OpenSSH network logons). Requires `PI_MCP_ADAPTER_OAUTH_FILE_KEY`; absent uses the OS credential store. |
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
@@ -609,6 +609,8 @@ Use `approveTools` when a tool should stay visible but not run without confirmat
   }
 }
 ```
+
+To be asked before any tool that may change or delete data, set `"approveTools": "destructive"` globally or per server. A tool then runs without a prompt only when its server marks it read-only (`readOnlyHint: true`) or non-destructive (`destructiveHint: false`); tools with no such hints, including those restored from an older metadata cache, are gated. Resource reads are never gated by this value. Any other string requires approval for every tool.
 
 When a matching tool is called from the proxy tool, a direct MCP tool, a resource call, or an MCP UI iframe, Pi asks: **Allow once**, **Allow for session**, **Allow server for this session**, or **Deny**. **Allow for session** tool grants and MCP UI iframe consent decisions (including denials) persist as non-LLM custom entries on the active Pi session branch and restore on resume or branch navigation. Entries store only server/tool names and deterministic definition/argument hashes; raw arguments, results, and secrets never persist. Tool grants and iframe consent remain separate gates. In headless sessions, matching calls fail closed with an `approval_required` result; denials, abstentions, **Allow once**, and approval-required paths do not create tool grant records. `excludeTools` still removes tools entirely; `approveTools` only gates visible tools at call time.
 

@@ -25,15 +25,23 @@ export type ToolCallApprovalResult =
 export function isToolCallApprovalRequired(
   config: McpConfig,
   serverName: string,
-  toolMeta: Pick<ToolMetadata, "originalName">,
+  toolMeta: Pick<ToolMetadata, "originalName" | "annotations" | "resourceUri">,
   toolMetadata?: ReadonlyMap<string, readonly ToolMetadata[]>,
 ): boolean {
   const definition = config.mcpServers[serverName];
   const serverApproval = definition?.approveTools;
   const approval = serverApproval !== undefined ? serverApproval : config.settings?.approveTools;
 
-  if (approval === true) return true;
-  if (!Array.isArray(approval) || approval.length === 0) return false;
+  if (approval === undefined || approval === false) return false;
+  // MCP treats a tool as possibly destructive unless it says otherwise; reading a resource never is.
+  if (approval === "destructive") {
+    return toolMeta.resourceUri === undefined
+      && toolMeta.annotations?.readOnlyHint !== true
+      && toolMeta.annotations?.destructiveHint !== false;
+  }
+  // Values from unvalidated sources (imports, runtime registration) fail closed.
+  if (!Array.isArray(approval)) return true;
+  if (approval.length === 0) return false;
 
   const prefix = resolveToolPrefix(definition, config.settings?.toolPrefix);
   const currentCandidates = getToolNameCandidates(toolMeta.originalName, serverName, prefix, false);
