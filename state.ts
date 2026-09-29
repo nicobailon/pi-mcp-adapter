@@ -8,6 +8,7 @@ import type { UiResourceHandler } from "./ui-resource-handler.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { SessionApprovalWriter } from "./session-approvals.ts";
+import type { ObservedOutput } from "./output-shape.ts";
 
 export interface CompletedUiSession {
   serverName: string;
@@ -54,6 +55,8 @@ export interface McpExtensionState {
   failureMessages: Map<string, string>;
   /** Session-only approvals keyed by server, tool definition, and arguments. */
   approvedToolCalls: Map<string, true>;
+  /** Session-only output shapes learned from successful calls to tools without an outputSchema. Never persisted. */
+  observedOutputs?: Map<string, ObservedOutput>;
   /** Configured project servers disabled by trust or approval policy for this session. */
   blockedProjectServers?: Map<string, ProjectServerBlock>;
   /** Runtime-only server grants. Never persisted or restored from session entries. */

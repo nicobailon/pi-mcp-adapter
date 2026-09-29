@@ -493,6 +493,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
 
     const state = {
       config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
+      toolMetadata: new Map(),
       manager,
       toolMetadata: new Map(),
       failureTracker: new Map(),
@@ -545,6 +546,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
 
     const state = {
       config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
+      toolMetadata: new Map(),
       manager,
       toolMetadata: new Map(),
       failureTracker: new Map(),

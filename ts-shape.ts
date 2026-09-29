@@ -140,7 +140,7 @@ function renderLiteral(value: unknown): string | null {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : null;
 }
 
-function formatPropertyName(name: string): string {
+export function formatPropertyName(name: string): string {
   return /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
 }
 

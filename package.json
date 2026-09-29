@@ -89,6 +89,7 @@
     "runtime-owner.ts",
     "tool-metadata.ts",
     "ts-shape.ts",
+    "output-shape.ts",
     "search-ranking.ts",
     "tool-approval.ts",
     "tool-parameters.ts",

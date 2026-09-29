@@ -58,6 +58,7 @@ describe("direct tools auto auth", () => {
           demo: { url: "https://api.example.com/mcp", auth: "oauth" },
         },
       },
+      toolMetadata: new Map(),
       manager: {
         close: vi.fn(async () => {
           connection = undefined;

@@ -105,6 +105,7 @@ describe("direct tool host contracts", () => {
         settings: { directToolResultDetails: "bounded" },
         mcpServers: { demo: { command: "demo" } },
       },
+      toolMetadata: new Map(),
       manager: {
         ensureListen: vi.fn().mockResolvedValue(undefined),
         getConnection: vi.fn(() => connection),

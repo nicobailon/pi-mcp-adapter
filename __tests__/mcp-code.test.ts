@@ -327,6 +327,16 @@ describe("runMcpScript", () => {
     expect(search.items).toEqual([{ path: "fixture_icon", name: "icon", server: "fixture", score: expect.any(Number) }]);
   });
 
+  it("describes the observed output of a schemaless tool at its path in the call envelope", async () => {
+    const result = await runMcpScript({ ...state, observedOutputs: new Map() },
+      'await tools.fixture_echo({ value: "hidden" }); return (await tools.describe({ path: "fixture_echo" })).observedOutput;');
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
+      target: "data.structuredContent",
+      typeScript: "{ echoed: string; }",
+      calls: 1,
+    });
+  });
+
   it("keeps active failed-backoff tools out of script describe results", async () => {
     const backoffState = {
       ...state,

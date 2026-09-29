@@ -9,6 +9,7 @@ import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { buildToolMetadata, getToolNames, formatSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
+import { getObservedOutput, recordObservedOutput, renderOutputShape } from "./output-shape.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
@@ -798,6 +799,12 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
     text += `\nNo parameters required (resource tool).`;
   } else {
     text += `\nNo parameters defined.`;
+  }
+
+  const observed = toolMeta.resourceUri ? undefined : getObservedOutput(state, serverName, toolMeta);
+  if (observed) {
+    const source = observed.source === "structuredContent" ? "structuredContent" : "JSON text result";
+    text += `\n\nObserved output (${source}, from ${observed.calls} call${observed.calls === 1 ? "" : "s"} this session, not a contract):\n${renderOutputShape(observed.shape)}`;
   }
 
   return {
@@ -1655,6 +1662,7 @@ export async function executeCall(
         }, requestOptions), ownedSignal);
       },
     );
+    if (!result.isError) recordObservedOutput(state, serverName, toolMeta.originalName, result as Record<string, unknown>);
 
     if (toolMeta.uiResourceUri) {
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);

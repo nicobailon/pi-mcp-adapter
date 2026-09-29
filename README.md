@@ -1033,6 +1033,8 @@ Keys match a tool's original name, prefixed name, or a glob (`*` applies to ever
 
 When `includeSchemas` is enabled, search and describe render common JSON Schema parameters as compact TypeScript shapes like `{ query: string; limit?: number; }`, with the older schema formatter retained as a fallback for unsupported schemas.
 
+Most tools declare no output schema. After such a tool returns structured content or a JSON text result, `describe` (and `tools.describe` in `mcpScript`) also shows the output shape seen so far this session: field names and types only, never values. It lives in memory only and is labeled as observed, not a contract.
+
 For HTTP servers, Pi reports HTTP 503 as temporary unavailability and does not add another immediate retry loop. Keep-alive servers keep cached metadata available and retry after 30 seconds, backing off to 5 minutes. Other failed connects run a one-request shape probe that can turn opaque transport errors into setup hints such as `endpoint returned HTML (200) — this URL does not appear to speak MCP`. Healthy connections are not probed.
 
 Servers that provide usage guidance via the MCP `instructions` field surface it through discovery paths: `mcp({ server: "name" })` includes a preview, and `mcp({ instructions: "name" })` returns the full text. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection.

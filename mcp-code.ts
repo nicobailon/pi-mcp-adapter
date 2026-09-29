@@ -14,6 +14,7 @@ import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import type { McpExtensionState } from "./state.ts";
 import { findToolByName, formatSchema, hasSchemaDescriptions } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
+import { getObservedOutput, renderOutputShape } from "./output-shape.ts";
 import type { ContentBlock } from "./types.ts";
 
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
@@ -338,6 +339,7 @@ export async function runMcpScript(
         if (!tool) continue;
         const inputShape = tool.inputSchema ? renderTsShape(tool.inputSchema) : null;
         const inputTypeScript = inputShape ?? (tool.inputSchema ? formatSchema(tool.inputSchema) : null);
+        const observed = tool.resourceUri ? undefined : getObservedOutput(state, server, tool);
         return {
           path: tool.name,
           name: tool.originalName,
@@ -351,6 +353,13 @@ export async function runMcpScript(
             outputSchema: tool.outputSchema,
           } : {}),
           ...(tool.annotations ? { annotations: tool.annotations } : {}),
+          ...(observed ? {
+            observedOutput: {
+              target: observed.source === "structuredContent" ? "data.structuredContent" : "JSON.parse(data.content[0].text)",
+              typeScript: renderOutputShape(observed.shape),
+              calls: observed.calls,
+            },
+          } : {}),
         };
       }
       const suggestions = path ? rankSuggestions(state, path, 5) : [];
