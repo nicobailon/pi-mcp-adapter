@@ -716,7 +716,7 @@ function formatToolHints(toolMeta: ToolMetadata): string {
   flag(annotations.idempotentHint, "idempotent", "not idempotent");
   flag(annotations.openWorldHint, "open-world", "closed-world");
   const title = annotations.title?.trim();
-  if (title && title !== toolMeta.originalName && title !== toolMeta.name) hints.push(`title "${title}"`);
+  if (title && title !== toolMeta.originalName && title !== toolMeta.name) hints.push(`title ${JSON.stringify(title)}`);
   return hints.join(", ");
 }
 

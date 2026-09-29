@@ -29,7 +29,7 @@ it("keeps declared tool hints through a cache reload and shows them only in desc
   const tools = [
     {
       name: "drop", inputSchema: { type: "object" },
-      annotations: { title: "Drop table", readOnlyHint: false, destructiveHint: true, idempotentHint: "yes" },
+      annotations: { title: "Drop\ntable", readOnlyHint: false, destructiveHint: true, idempotentHint: "yes" },
     },
     { name: "list", inputSchema: { type: "object" } },
   ] as McpTool[];
@@ -44,13 +44,13 @@ it("keeps declared tool hints through a cache reload and shows them only in desc
     toolMetadata: new Map([["demo", cached]]), failureTracker: new Map(),
   } as McpExtensionState;
   const describeText = (name: string) => (executeDescribe(state, name).content[0] as { text: string }).text;
-  expect(describeText("demo_drop")).toContain('Hints: not read-only, destructive, title "Drop table"\n');
+  expect(describeText("demo_drop")).toContain('Hints: not read-only, destructive, title "Drop\\ntable"\n');
   expect(describeText("demo_list")).not.toContain("Hints:");
 
   const scriptDescribe = async (path: string) => {
     const result = await runMcpScript(state, `return await tools.describe({ path: "${path}" });`);
     return JSON.parse(result.content.filter(block => block.type === "text").at(-1)!.text);
   };
-  expect((await scriptDescribe("demo_drop")).annotations).toEqual({ title: "Drop table", readOnlyHint: false, destructiveHint: true });
+  expect((await scriptDescribe("demo_drop")).annotations).toEqual({ title: "Drop\ntable", readOnlyHint: false, destructiveHint: true });
   expect(await scriptDescribe("demo_list")).not.toHaveProperty("annotations");
 });
