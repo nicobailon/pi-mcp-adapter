@@ -310,7 +310,8 @@ export function createPromptCommand(
     getArgumentCompletions: (prefix: string) => {
       const state = getState();
       if (!state) return completePromptArgs(metadata, prefix);
-      if (!state.config.mcpServers[metadata.serverName]) return null;
+      const definition = state.config.mcpServers[metadata.serverName];
+      if (!definition || isServerDisabled(definition)) return null;
 
       const liveMetadata = findLivePromptMetadata(state, metadata.serverName, metadata.originalName);
       if (state.promptMetadataLive?.has(metadata.serverName) && !liveMetadata) return null;

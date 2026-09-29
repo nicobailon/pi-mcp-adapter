@@ -273,6 +273,16 @@ describe("createPromptCommand completions", () => {
 
     expect(command.getArgumentCompletions("")).toBeNull();
   });
+
+  it("stops suggesting arguments after the server is disabled", () => {
+    const state = baseState(new Map());
+    state.config.mcpServers.demo = { command: "demo", disabled: true };
+    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+
+    const command = createPromptCommand(pi, () => state, meta());
+
+    expect(command.getArgumentCompletions("")).toBeNull();
+  });
 });
 
 describe("createPromptCommand handler", () => {
