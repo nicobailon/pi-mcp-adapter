@@ -81,16 +81,32 @@ describe("elicitation with the real MCP SDK", () => {
     });
   });
 
-  it("does not count time spent answering a form against the call timeout", async () => {
+  const formSpec = { serverName: "real", prefixedName: "real_form", originalName: "form", description: "form" } as DirectToolSpec;
+
+  it.each(["proxy", "direct"] as const)("does not count time spent answering a form against the %s call timeout", async (adapter) => {
     const { manager } = await createConnectedManager("tui", ["Continue", "Enter value", "Submit"], {
       requestTimeoutMs: 500,
       answerDelayMs: 300,
     });
     const state = createState(manager, [{ name: "real_form", originalName: "form", description: "form" }]);
 
-    const result = await executeCall(state, "real_form", {}, "real");
+    const result = adapter === "proxy"
+      ? await executeCall(state, "real_form", {}, "real")
+      : await createDirectToolExecutor(() => state, () => null, formSpec)("id", {});
 
     expect(JSON.parse(resultText(result))).toEqual({ action: "accept", content: { name: "stock-pi-user" } });
+  });
+
+  it("cancels a call at once while its form is still open", async () => {
+    const { manager, ui } = await createConnectedManager("tui", ["Continue"], { answerDelayMs: 30_000 });
+    const state = createState(manager, [{ name: "real_form", originalName: "form", description: "form" }]);
+    const controller = new AbortController();
+
+    const call = createDirectToolExecutor(() => state, () => null, formSpec)("id", {}, controller.signal);
+    await vi.waitFor(() => expect(ui.select).toHaveBeenCalled());
+    controller.abort();
+
+    await expect(call).resolves.toMatchObject({ details: { error: "aborted" } });
   });
 
   it("still times out a call that is not waiting on the user", async () => {
