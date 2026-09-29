@@ -17,6 +17,7 @@ import { formatAuthRequiredMessage, formatMcpStatus, normalizeToolArguments, res
 import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
+import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -1629,7 +1630,7 @@ export async function executeCall(
             requestTimeoutMs: requestOptions?.timeout,
           }) as unknown as ClientCallToolResult;
         }
-        return abortable(conn.client.callTool({
+        return abortable(callToolPausingForElicitation(conn.client, {
           name: toolMeta.originalName,
           arguments: normalizedArgs,
           _meta: requestMeta,

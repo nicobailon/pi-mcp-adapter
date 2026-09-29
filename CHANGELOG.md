@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A tool call no longer times out while you are answering the server's input prompt. The request timeout (60 seconds by default) kept running while the form was open, so a slow answer failed the call with "Request timed out" and the answer was lost. The timeout now pauses while the prompt is open and resumes afterwards.
 - Jev no longer rejects responses that carry extra provider metadata, such as OpenRouter's `id`, `provider`, and `usage.cost`. The documented OpenRouter setup previously failed with "Jev returned an invalid response."
 
 ### Changed

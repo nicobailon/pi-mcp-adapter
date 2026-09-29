@@ -1,17 +1,22 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { Client } from "@modelcontextprotocol/client";
 import {
+  DEFAULT_REQUEST_TIMEOUT_MSEC,
   ProtocolError,
   ProtocolErrorCode,
+  SdkError,
+  SdkErrorCode,
   type ElicitRequest,
   type ElicitRequestFormParams,
   type ElicitRequestURLParams,
   type ElicitResult,
+  type RequestOptions,
 } from "@modelcontextprotocol/client";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type { JsonSchemaType } from "@modelcontextprotocol/client";
 import open from "open";
 import { abortable, throwIfAborted } from "./abort.ts";
+import { combineAbortSignals } from "./runtime-owner.ts";
 
 export type ElicitationValue = string | number | boolean | string[] | undefined;
 type FormProperty = ElicitRequestFormParams["requestedSchema"]["properties"][string];
@@ -28,9 +33,81 @@ export interface ElicitationHandlerOptions {
 
 export type ServerElicitationConfig = Omit<ElicitationHandlerOptions, "serverName" | "onUrlAccepted">;
 
+// A server's elicitation/create arrives as its own request, and transports do
+// not reliably tie it to the tools/call that triggered it, so an open prompt
+// pauses the deadline of every tool call in flight on that client.
+interface PromptPause {
+  open: number;
+  deadlines: Set<{ pause(): void; resume(): void }>;
+}
+
+const promptPauses = new WeakMap<Client, PromptPause>();
+
 export function registerElicitationHandler(client: Client, options: ElicitationHandlerOptions): void {
+  const state: PromptPause = { open: 0, deadlines: new Set() };
+  promptPauses.set(client, state);
   client.setRequestHandler("elicitation/create", request =>
-    handleElicitationRequest(options, request));
+    whilePromptOpen(state, () => handleElicitationRequest(options, request)));
+}
+
+async function whilePromptOpen<T>(state: PromptPause, run: () => Promise<T>): Promise<T> {
+  if (state.open++ === 0) for (const deadline of state.deadlines) deadline.pause();
+  try {
+    return await run();
+  } finally {
+    if (--state.open === 0) for (const deadline of state.deadlines) deadline.resume();
+  }
+}
+
+// setTimeout fires immediately for delays above this.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * Calls a tool with the request timeout counting only time the user is not
+ * answering an elicitation prompt from the same server. The SDK's own timer
+ * cannot be paused, so it is pushed out of the way and the deadline aborts the
+ * request with the same timeout error the SDK would raise. A client without an
+ * elicitation handler cannot prompt, so it keeps the SDK's timer.
+ */
+export async function callToolPausingForElicitation(
+  client: Client,
+  params: Parameters<Client["callTool"]>[0],
+  options?: RequestOptions,
+): ReturnType<Client["callTool"]> {
+  const state = promptPauses.get(client);
+  if (!state) return client.callTool(params, options);
+  const timeout = Math.min(options?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC, MAX_TIMER_MS);
+  const expired = new AbortController();
+  let remaining = timeout;
+  let startedAt = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = {
+    pause() {
+      if (timer === undefined) return;
+      clearTimeout(timer);
+      timer = undefined;
+      remaining -= Date.now() - startedAt;
+    },
+    resume() {
+      startedAt = Date.now();
+      timer = setTimeout(
+        () => expired.abort(new SdkError(SdkErrorCode.RequestTimeout, "Request timed out", { timeout })),
+        Math.max(remaining, 0),
+      );
+    },
+  };
+  state.deadlines.add(deadline);
+  if (state.open === 0) deadline.resume();
+  try {
+    return await client.callTool(params, {
+      ...options,
+      timeout: MAX_TIMER_MS,
+      signal: combineAbortSignals(options?.signal, expired.signal) ?? expired.signal,
+    });
+  } finally {
+    state.deadlines.delete(deadline);
+    deadline.pause();
+  }
 }
 
 export async function handleElicitationRequest(

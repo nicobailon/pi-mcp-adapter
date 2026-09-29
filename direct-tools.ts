@@ -16,6 +16,7 @@ import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl, wi
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
+import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 
@@ -324,7 +325,7 @@ export function createDirectToolExecutor(
               requestTimeoutMs: requestOptions?.timeout,
             }) as unknown as ClientCallToolResult;
           }
-          return abortable(conn.client.callTool({
+          return abortable(callToolPausingForElicitation(conn.client, {
             name: spec.originalName,
             arguments: normalizedParams,
             _meta: requestMeta,

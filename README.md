@@ -781,6 +781,8 @@ When Pi exposes dialog-capable UI, the adapter advertises form elicitation suppo
 
 URL mode is advertised only in TUI mode. The adapter displays the requesting server, target host, and full URL, and always requires consent before opening the browser. It also handles URL-required tool errors (`-32042`) and completion notifications; after completing the browser interaction, retry the original tool call.
 
+Time spent answering a server's prompt does not count against its tool calls' `requestTimeoutMs` (or the SDK's 60-second default). The timeout pauses while a prompt from that server is open and resumes with the time that was left. Task-backed calls are unchanged: their timeout applies to each task request, not to the whole task.
+
 ### Direct Tools
 
 By default, all MCP tools are accessed through the single `mcp` proxy tool. This keeps context small but means the LLM has to discover MCP tools via proxy search. If you want specific tools to show up directly in the agent's tool list — alongside `read`, `bash`, `edit`, etc. — add `directTools` to your config.

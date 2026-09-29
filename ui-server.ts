@@ -24,6 +24,7 @@ import type { McpExtensionState } from "./state.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
+import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { extractUiToolVisibility, isUiToolCallableByApp, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
@@ -542,7 +543,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
                 signal: requestOptions?.signal,
               });
             }
-            return conn.client.callTool(callArgs, requestOptions);
+            return callToolPausingForElicitation(conn.client, callArgs, requestOptions);
           };
           const result = options.config
             ? await withSessionRecovery(

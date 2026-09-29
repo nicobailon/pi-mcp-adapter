@@ -29,6 +29,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     { name: "form", inputSchema: { type: "object", properties: {} } },
     { name: "url", inputSchema: { type: "object", properties: {} } },
     { name: "url-required", inputSchema: { type: "object", properties: {} } },
+    { name: "hang", inputSchema: { type: "object", properties: {} } },
   ],
 }));
 
@@ -54,6 +55,7 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
   }
 
   if (request.params.name === "url-required") throw urlRequiredError();
+  if (request.params.name === "hang") return new Promise(() => {});
 
   if (request.params.name === "form") {
     const result = await server.request({
