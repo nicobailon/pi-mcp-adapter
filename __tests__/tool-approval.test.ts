@@ -218,6 +218,21 @@ describe("tool approval", () => {
     }
     expect(select).toHaveBeenCalledTimes(2);
     expect(callTool).toHaveBeenCalledTimes(2);
+
+    // Direct tools rebuild metadata from the connection, so these hints come from what the server advertises.
+    state.manager.getConnection("demo")!.tools.push(
+      { name: "list", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+      { name: "drop", inputSchema: { type: "object" }, annotations: { destructiveHint: true } },
+    );
+    const direct = (meta: ToolMetadata) => createDirectToolExecutor(() => state, () => null, {
+      serverName: "demo", originalName: meta.originalName, prefixedName: meta.name, description: "",
+    })("call-1", {}, undefined, undefined, {} as never);
+    expect((await direct(readOnly)).details).not.toHaveProperty("error");
+    await expect(direct(destructive)).resolves.toMatchObject({ details: { error: "approval_denied" } });
+    expect(select).toHaveBeenCalledTimes(3);
+
+    const resource: ToolMetadata = { name: "demo_get_doc", originalName: "get_doc", description: "", resourceUri: "test://doc" };
+    expect(isToolCallApprovalRequired(state.config, "demo", resource)).toBe(false);
   });
 
   it("lets per-server approveTools override a global \"destructive\" and the reverse", () => {
