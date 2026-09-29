@@ -30,7 +30,7 @@ export class UnixSocketClientTransport implements Transport {
       });
       socket.on("data", chunk => {
         try {
-          this.readBuffer.append(chunk);
+          this.readBuffer.append(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
           while (true) {
             const message = this.readBuffer.readMessage();
             if (message === null) break;
