@@ -23,6 +23,7 @@ import type {
 import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership, type ToolPrefix, type ToolSelectorCandidateIndex } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
+  extractToolAnnotations,
   extractToolUiStreamMode,
   interpolateEnvRecord,
   interpolateEnvVars,
@@ -225,6 +226,7 @@ export function reconstructToolMetadata(
     }
 
     const name = formatToolName(tool.name, serverName, effectivePrefix);
+    const annotations = extractToolAnnotations(tool.annotations);
     metadata.push({
       name,
       originalName: tool.name,
@@ -234,6 +236,7 @@ export function reconstructToolMetadata(
       ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
       ...(tool.uiVisibility !== undefined ? { uiVisibility: tool.uiVisibility } : {}),
       ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
+      ...(annotations !== undefined ? { annotations } : {}),
     });
   }
 
@@ -289,6 +292,7 @@ export function serializeTools(tools: McpTool[]): CachedTool[] {
       const uiResourceUri = tryGetToolUiResourceUri(t);
       const uiVisibility = extractUiToolVisibility(t._meta);
       const uiStreamMode = extractToolUiStreamMode(t._meta);
+      const annotations = extractToolAnnotations(t.annotations);
       return {
         name: t.name,
         ...(t.description !== undefined ? { description: t.description } : {}),
@@ -297,6 +301,7 @@ export function serializeTools(tools: McpTool[]): CachedTool[] {
         ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
         ...(uiVisibility !== undefined ? { uiVisibility } : {}),
         ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
+        ...(annotations !== undefined ? { annotations } : {}),
       };
     });
 }

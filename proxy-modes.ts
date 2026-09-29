@@ -704,6 +704,22 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
   }
 }
 
+function formatToolHints(toolMeta: ToolMetadata): string {
+  const annotations = toolMeta.annotations;
+  if (!annotations) return "";
+  const hints: string[] = [];
+  const flag = (value: boolean | undefined, yes: string, no: string) => {
+    if (value !== undefined) hints.push(value ? yes : no);
+  };
+  flag(annotations.readOnlyHint, "read-only", "not read-only");
+  flag(annotations.destructiveHint, "destructive", "non-destructive");
+  flag(annotations.idempotentHint, "idempotent", "not idempotent");
+  flag(annotations.openWorldHint, "open-world", "closed-world");
+  const title = annotations.title?.trim();
+  if (title && title !== toolMeta.originalName && title !== toolMeta.name) hints.push(`title "${title}"`);
+  return hints.join(", ");
+}
+
 export function executeDescribe(state: McpExtensionState, toolName: string, serverOverride?: string): ProxyToolResult {
   let serverName: string | undefined;
   let toolMeta: ToolMetadata | undefined;
@@ -770,6 +786,8 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
   if (toolMeta.resourceUri) {
     text += `Type: Resource (reads from ${toolMeta.resourceUri})\n`;
   }
+  const hints = formatToolHints(toolMeta);
+  if (hints) text += `Hints: ${hints}\n`;
   text += `\n${toolMeta.description || "(no description)"}\n`;
 
   if (toolMeta.inputSchema && !toolMeta.resourceUri) {

@@ -7,7 +7,7 @@ import { isBuiltInAgentPlugin } from "./agent-plugin-provenance.js";
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.js";
 import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
-import { extractToolUiStreamMode, interpolateEnvRecord, interpolateEnvVars, resolveBearerToken, resolveConfigPath, resolveServerUrl, stableStringify, } from "./utils.js";
+import { extractToolAnnotations, extractToolUiStreamMode, interpolateEnvRecord, interpolateEnvVars, resolveBearerToken, resolveConfigPath, resolveServerUrl, stableStringify, } from "./utils.js";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.js";
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -175,6 +175,7 @@ export function reconstructToolMetadata(serverName, entry, prefix, definition, c
             continue;
         }
         const name = formatToolName(tool.name, serverName, effectivePrefix);
+        const annotations = extractToolAnnotations(tool.annotations);
         metadata.push({
             name,
             originalName: tool.name,
@@ -184,6 +185,7 @@ export function reconstructToolMetadata(serverName, entry, prefix, definition, c
             ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
             ...(tool.uiVisibility !== undefined ? { uiVisibility: tool.uiVisibility } : {}),
             ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
+            ...(annotations !== undefined ? { annotations } : {}),
         });
     }
     if (definition.exposeResources !== false) {
@@ -235,6 +237,7 @@ export function serializeTools(tools) {
         const uiResourceUri = tryGetToolUiResourceUri(t);
         const uiVisibility = extractUiToolVisibility(t._meta);
         const uiStreamMode = extractToolUiStreamMode(t._meta);
+        const annotations = extractToolAnnotations(t.annotations);
         return {
             name: t.name,
             ...(t.description !== undefined ? { description: t.description } : {}),
@@ -243,6 +246,7 @@ export function serializeTools(tools) {
             ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
             ...(uiVisibility !== undefined ? { uiVisibility } : {}),
             ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
+            ...(annotations !== undefined ? { annotations } : {}),
         };
     });
 }

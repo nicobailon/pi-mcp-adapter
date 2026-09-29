@@ -180,10 +180,15 @@ export async function ensureToolCallApproved(
   const sanitized = sanitizeTerminalText(json);
   const preview = sanitized.length > 500 ? `${sanitized.slice(0, 500)}...` : sanitized;
   const title = `MCP: ${sanitizeTerminalText(serverName)} wants to run ${sanitizeTerminalText(toolMeta.originalName)}`;
+  const hint = toolMeta.annotations?.destructiveHint === true
+    ? "\n\nThe server marks this tool as destructive: it may delete or overwrite data."
+    : toolMeta.annotations?.readOnlyHint === true
+      ? "\n\nThe server marks this tool as read-only."
+      : "";
   const serverScope = "Allow server for this session permits all tools and arguments on this server until reload or session/branch change. Other security and UI consent checks still apply.";
   const decision = await abortable(
     state.ui.select(
-      `${title}\n\nArguments:\n${preview}\n\n${serverScope}`,
+      `${title}${hint}\n\nArguments:\n${preview}\n\n${serverScope}`,
       ["Allow once", "Allow for session", "Allow server for this session", "Deny"],
     ),
     ownedSignal,

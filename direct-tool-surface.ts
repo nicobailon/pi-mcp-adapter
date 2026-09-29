@@ -153,6 +153,7 @@ export function resolveDirectTools(
         ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
         ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
         ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
+        ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
       });
     }
 

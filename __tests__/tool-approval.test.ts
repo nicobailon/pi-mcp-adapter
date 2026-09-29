@@ -202,6 +202,24 @@ describe("tool approval", () => {
     expect(direct.callTool).not.toHaveBeenCalled();
   });
 
+  it("names the server's destructive or read-only hint in the prompt on proxy and direct calls", async () => {
+    const proxy = createState({ approveTools: true });
+    proxy.state.toolMetadata.set("demo", [{ ...tool, annotations: { destructiveHint: true } }]);
+    await executeCall(proxy.state, tool.name, {});
+    expect(proxy.select.mock.calls[0]?.[0]).toContain("marks this tool as destructive");
+
+    const direct = createState({ approveTools: true });
+    const execute = createDirectToolExecutor(() => direct.state, () => null, {
+      serverName: "demo",
+      originalName: "search-records",
+      prefixedName: "demo_search-records",
+      description: "Search records",
+      annotations: { readOnlyHint: true },
+    });
+    await execute("call-1", {}, undefined, undefined, {} as never);
+    expect(direct.select.mock.calls[0]?.[0]).toContain("marks this tool as read-only");
+  });
+
   it("caches only Allow for session decisions", async () => {
     const persist = vi.fn();
     const session = createState({ approveTools: true, decision: "Allow for session", persist });

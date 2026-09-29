@@ -350,6 +350,7 @@ export async function runMcpScript(
             outputSchemaTarget: "data.structuredContent",
             outputSchema: tool.outputSchema,
           } : {}),
+          ...(tool.annotations ? { annotations: tool.annotations } : {}),
         };
       }
       const suggestions = path ? rankSuggestions(state, path, 5) : [];

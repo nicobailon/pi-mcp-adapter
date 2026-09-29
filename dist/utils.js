@@ -424,4 +424,21 @@ export function extractToolUiStreamMode(toolMeta) {
     }
     return undefined;
 }
+/**
+ * Keep only the spec tool annotations with the right types. Server and cache
+ * input is untrusted, so a malformed field is dropped instead of failing the tool list.
+ */
+export function extractToolAnnotations(annotations) {
+    if (!annotations || typeof annotations !== "object")
+        return undefined;
+    const source = annotations;
+    const kept = {};
+    if (typeof source.title === "string")
+        kept.title = source.title;
+    for (const key of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"]) {
+        if (typeof source[key] === "boolean")
+            kept[key] = source[key];
+    }
+    return Object.keys(kept).length > 0 ? kept : undefined;
+}
 //# sourceMappingURL=utils.js.map

@@ -3,7 +3,7 @@ import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
 import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
-import { extractToolUiStreamMode } from "./utils.ts";
+import { extractToolAnnotations, extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 
 export function buildToolMetadata(
@@ -96,6 +96,7 @@ export function buildToolMetadata(
       failedTools.push(tool.name);
     }
     const uiStreamMode = extractToolUiStreamMode(tool._meta);
+    const annotations = extractToolAnnotations(tool.annotations);
     metadata.push({
       name,
       originalName: tool.name,
@@ -105,6 +106,7 @@ export function buildToolMetadata(
       ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
       ...(uiVisibility !== undefined ? { uiVisibility } : {}),
       ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
+      ...(annotations !== undefined ? { annotations } : {}),
     });
   }
 

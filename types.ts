@@ -97,6 +97,7 @@ export interface McpTool {
   description?: SdkTool["description"];
   inputSchema?: SdkTool["inputSchema"]; // JSON Schema
   outputSchema?: SdkTool["outputSchema"]; // JSON Schema for structuredContent
+  annotations?: SdkTool["annotations"];
   _meta?: SdkTool["_meta"];
 }
 
@@ -739,6 +740,16 @@ export interface ToolMetadata {
   inputSchema?: unknown;  // JSON Schema for parameters (stored for describe/errors)
   outputSchema?: unknown; // Server schema for structuredContent (stored for describe)
   uiStreamMode?: UiStreamMode;
+  annotations?: McpToolAnnotations;
+}
+
+/** Behavior hints a server declared on a tool. Hints, not guarantees. */
+export interface McpToolAnnotations {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
 }
 
 export interface PromptMetadata {
@@ -761,6 +772,7 @@ export interface DirectToolSpec {
   resourceUri?: string;
   uiResourceUri?: string;
   uiStreamMode?: UiStreamMode;
+  annotations?: McpToolAnnotations;
 }
 
 export interface ServerProvenance {
@@ -782,6 +794,7 @@ export interface CachedTool {
   uiResourceUri?: string;
   uiVisibility?: UiToolVisibility[];
   uiStreamMode?: "eager" | "stream-first";
+  annotations?: McpToolAnnotations;
 }
 
 export interface CachedResource {

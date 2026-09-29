@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { McpConfig, ServerEntry } from "./types.ts";
+import type { McpConfig, McpToolAnnotations, ServerEntry } from "./types.ts";
 export declare function stripUtf8Bom(raw: string): string;
 export declare function parseJsonWithComments(raw: string): unknown;
 /** Resolve a candidate only when its real path stays within the real root. */
@@ -43,3 +43,8 @@ export declare function formatMcpFooterStatus(config: Pick<McpConfig, "settings"
  * Extract the adapter-owned UI stream mode from tool metadata.
  */
 export declare function extractToolUiStreamMode(toolMeta: Record<string, unknown> | undefined): "eager" | "stream-first" | undefined;
+/**
+ * Keep only the spec tool annotations with the right types. Server and cache
+ * input is untrusted, so a malformed field is dropped instead of failing the tool list.
+ */
+export declare function extractToolAnnotations(annotations: unknown): McpToolAnnotations | undefined;

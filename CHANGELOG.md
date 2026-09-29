@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Jev semantic search works with an existing OpenRouter key. Set `SYSTEMONE_ENDPOINT=https://openrouter.ai/api/alpha/decisions` and `OPENROUTER_API_KEY` is used as the key, with the model defaulting to `typesafe/jev-1.13`. The key is never sent to any other endpoint.
+- You can now tell a read-only MCP tool from one that deletes data. The hints a server declares on its tools (read-only, destructive, idempotent, open-world, title) are kept, including in the metadata cache, and shown in `mcp({ describe })`, in `tools.describe` inside `mcpScript`, and in the tool approval prompt. Search results and direct-tool descriptions stay unchanged, so nothing is added to every turn's context.
 
 ### Fixed
 

@@ -10,7 +10,7 @@ import {
 import { ContentBlockSchema } from "@modelcontextprotocol/core";
 import type { ConsentManager } from "./consent-manager.ts";
 import { ServerError, wrapError } from "./errors.ts";
-import { formatAuthRequiredMessage, normalizeToolArguments } from "./utils.ts";
+import { extractToolAnnotations, formatAuthRequiredMessage, normalizeToolArguments } from "./utils.ts";
 import { buildHostHtmlTemplate, buildSandboxResourceCsp } from "./host-html-template.ts";
 import {
   buildSandboxProxyCsp,
@@ -471,6 +471,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         } catch {
           // Preserve the endpoint's existing behavior for malformed declarations.
         }
+        const annotations = extractToolAnnotations(toolDefinition.annotations);
         const toolMeta = {
           name: callParams.name,
           originalName: callParams.name,
@@ -478,6 +479,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           ...(toolDefinition?.inputSchema !== undefined ? { inputSchema: toolDefinition.inputSchema } : {}),
           ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
           ...(uiVisibility !== undefined ? { uiVisibility } : {}),
+          ...(annotations !== undefined ? { annotations } : {}),
         };
         const approvalMetadata = new Map(options.state?.toolMetadata);
         const definition = options.config?.mcpServers[options.serverName] ?? options.state?.config.mcpServers[options.serverName];

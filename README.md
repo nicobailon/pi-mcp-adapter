@@ -1004,6 +1004,8 @@ Search includes both MCP tools and Pi tools (from extensions). Pi tools appear f
 
 Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_library_id` finds `context7_resolve-library-id`. When `describe` or `tool` cannot resolve a name, the result includes top suggestions so the agent can correct a typo or missing prefix in the same turn.
 
+When a server declares MCP tool annotations, `describe` adds a `Hints:` line such as `Hints: read-only, idempotent`, `tools.describe` in `mcpScript` returns them as `annotations`, and the approval prompt says when a tool is marked destructive or read-only. They are the server's own hints, not guarantees, and never appear in search results or direct-tool descriptions.
+
 ### Search keywords
 
 Search uses literal matching so a tool whose name and description use different vocabulary than the query won't be found. Per-server `searchKeywords` adds extra vocabulary for matching tools:

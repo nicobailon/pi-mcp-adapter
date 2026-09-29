@@ -4,7 +4,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import stripJsonComments from "strip-json-comments";
-import type { McpConfig, ServerEntry } from "./types.ts";
+import type { McpConfig, McpToolAnnotations, ServerEntry } from "./types.ts";
 
 export function stripUtf8Bom(raw: string): string {
   return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
@@ -476,4 +476,19 @@ export function extractToolUiStreamMode(toolMeta: Record<string, unknown> | unde
     return streamMode;
   }
   return undefined;
+}
+
+/**
+ * Keep only the spec tool annotations with the right types. Server and cache
+ * input is untrusted, so a malformed field is dropped instead of failing the tool list.
+ */
+export function extractToolAnnotations(annotations: unknown): McpToolAnnotations | undefined {
+  if (!annotations || typeof annotations !== "object") return undefined;
+  const source = annotations as Record<string, unknown>;
+  const kept: McpToolAnnotations = {};
+  if (typeof source.title === "string") kept.title = source.title;
+  for (const key of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"] as const) {
+    if (typeof source[key] === "boolean") kept[key] = source[key];
+  }
+  return Object.keys(kept).length > 0 ? kept : undefined;
 }
