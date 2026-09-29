@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { describe, expect, it, vi } from "vitest";
 import type { GetPromptResult } from "@modelcontextprotocol/client";
 import {
+  completePromptArgs,
   createPromptCommand,
   formatPromptResult,
   listAllPromptMetadata,
@@ -112,6 +113,37 @@ describe("parsePromptArgs", () => {
   });
 });
 
+describe("completePromptArgs", () => {
+  it("suggests declared argument names without connecting", () => {
+    expect(completePromptArgs(meta(), "")).toEqual([
+      { value: "topic=", label: "topic=", description: "Topic" },
+      { value: "date=", label: "date=" },
+    ]);
+  });
+
+  it("preserves committed arguments when completing the current name", () => {
+    expect(completePromptArgs(meta(), "topic=ai da")).toEqual([
+      { value: "topic=ai date=", label: "date=" },
+    ]);
+  });
+
+  it("does not suggest arguments already filled by name", () => {
+    expect(completePromptArgs(meta(), "topic=ai ")).toEqual([
+      { value: "topic=ai date=", label: "date=" },
+    ]);
+  });
+
+  it("treats committed positional arguments as occupying declared slots", () => {
+    expect(completePromptArgs(meta(), '"model context" ')).toEqual([
+      { value: '"model context" date=', label: "date=" },
+    ]);
+  });
+
+  it("does not offer name completions while typing a value", () => {
+    expect(completePromptArgs(meta(), "topic=a")).toBeNull();
+  });
+});
+
 describe("resolvePromptArgs", () => {
   it("returns positional args mapped by declared order", () => {
     const result = resolvePromptArgs(meta(), { positional: ["ai", "today"], named: {} });
@@ -199,6 +231,47 @@ describe("formatPromptResult", () => {
     };
     // Images still produce a placeholder marker so the model sees the intent.
     expect(formatPromptResult(result)).toBe("[image image/png (embedded)]");
+  });
+});
+
+describe("createPromptCommand completions", () => {
+  it("uses cached metadata without initializing or connecting the runtime", () => {
+    const ensureState = vi.fn();
+    const lazyConnect = vi.fn();
+    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+    const command = createPromptCommand(pi, () => null, meta(), { ensureState, lazyConnect });
+
+    expect(command.getArgumentCompletions("to")).toEqual([
+      { value: "topic=", label: "topic=", description: "Topic" },
+    ]);
+    expect(ensureState).not.toHaveBeenCalled();
+    expect(lazyConnect).not.toHaveBeenCalled();
+  });
+
+  it("uses refreshed live prompt arguments without starting the server", () => {
+    const live = meta({
+      arguments: [{ name: "audience", required: false, description: "Audience" }],
+    });
+    const state = baseState(new Map([["demo", [live]]]));
+    state.promptMetadataLive = new Set(["demo"]);
+    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+
+    const command = createPromptCommand(pi, () => state, meta());
+
+    expect(command.getArgumentCompletions("au")).toEqual([
+      { value: "audience=", label: "audience=", description: "Audience" },
+    ]);
+    expect(state.manager.getPrompt).not.toHaveBeenCalled();
+  });
+
+  it("stops suggesting a cached prompt after live discovery removes it", () => {
+    const state = baseState(new Map([["demo", []]]));
+    state.promptMetadataLive = new Set(["demo"]);
+    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+
+    const command = createPromptCommand(pi, () => state, meta());
+
+    expect(command.getArgumentCompletions("")).toBeNull();
   });
 });
 
