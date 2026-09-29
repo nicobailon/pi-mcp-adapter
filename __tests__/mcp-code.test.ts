@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,6 +106,25 @@ describe("runMcpScript", () => {
       expect(message).toEqual({ type: "done", returnBlock: expect.objectContaining({ text: "42" }) });
     } finally {
       await worker.terminate();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(!process.versions.bun)("does not run host preloads in the sandbox worker", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mcp-script-preload-"));
+    const preload = join(directory, "preload.cjs");
+    const runner = join(directory, "runner.mts");
+    const source = new URL("../mcp-code.ts", import.meta.url).href;
+    try {
+      await writeFile(preload, 'const { workerData } = require("node:worker_threads"); if (workerData?.code === "return 42;") throw new Error("host preload reached sandbox worker");');
+      await writeFile(runner, `import { runMcpScript } from ${JSON.stringify(source)};
+const state = { config: { settings: {}, mcpServers: {} }, toolMetadata: new Map(), failureTracker: new Map(), completedUiSessions: [] };
+const result = await runMcpScript(state, "return 42;");
+if (result.details.error || result.content[0]?.text !== "42") throw new Error(JSON.stringify(result));
+console.log("sandbox passed");`);
+      const { stdout } = await execFileAsync(process.execPath, ["--require", preload, "--import", "tsx", runner], { timeout: 10_000 });
+      expect(stdout).toContain("sandbox passed");
+    } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });

@@ -272,7 +272,7 @@ const extension = createMcpAdapter({
 // Register `extension` with the host SDK.
 ```
 
-The package ships TypeScript source for Pi's source-loader and SDK integrations. Use a TypeScript-capable loader/toolchain (for example `node --import tsx`) when importing the package from a standalone Node process; raw Node ESM does not execute the `.ts` entry directly.
+The package ships TypeScript source for Pi's source-loader and SDK integrations. Use a TypeScript-capable loader/toolchain (for example `node --import tsx`) when importing the package from a standalone Node process; raw Node ESM does not execute the `.ts` entry directly. The plain JavaScript `mcpScript` worker does not inherit host runtime flags or preloads; its QuickJS sandbox and approval gates are unchanged.
 
 A supplied `config` is a complete, isolated snapshot. It is not merged with files, imports, global config, project config, or `--mcp-config`, and it is never mutated. Explicit `claudePlugins` entries are the sole exception to file isolation: their configured local directories are read because they are part of that supplied snapshot. Relative programmatic plugin paths are normalized against `process.cwd()` when `createMcpAdapter` creates the factory, so the early model-facing surface, load-time initialization, and later session runtime all use the same bundle. Each adapter factory and session receives its own clone, so separate integrations can use different servers and settings safely. In this mode, server status, reconnect, explicit `/mcp-auth <server>`, proxy calls, and direct tools continue to work; setup and no-argument auth/status panels report the limitation instead of discovering or writing ambient config.
 

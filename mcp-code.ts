@@ -420,6 +420,7 @@ export async function runMcpScript(
     worker = new Worker(new URL("./mcp-script-worker.mjs", import.meta.url), {
       workerData: { code, wasm, quickjsUrl: resolveMcpScriptQuickJsUrl(), interrupt, outputMaxBytes: MCP_SCRIPT_OUTPUT_MAX_BYTES },
       env: {},
+      execArgv: [],
       // The sandbox cannot open files, and the host always terminates this worker.
       // Disable Node's unmanaged FD bookkeeping, which emits false warnings when
       // short-lived workers are terminated on Node 24.
