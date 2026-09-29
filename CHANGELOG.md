@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The adapter now detects Pi's built-in MCP extension. Pi 0.99 names it `builtin:mcp`, which the adapter did not recognize, so it took over `/mcp` and warned about `mcp.json` on every start even though the built-in extension owns that file. Thanks to [@Sebastianlopez-dev](https://github.com/Sebastianlopez-dev) for reporting it in [#736](https://github.com/nicobailon/pi-mcp-adapter/issues/736).
+
 ## [3.3.0] - 2026-09-29
 
 ### Highlights

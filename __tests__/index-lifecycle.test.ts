@@ -2678,7 +2678,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(state);
     const { api, handlers } = await loadAdapter({ commands: [
       { name: "mcp", sourceInfo: { path: "/adapter.ts" } },
-      { name: "mcp:1", sourceInfo: { path: "<inline:mcp>" } },
+      { name: "mcp:1", sourceInfo: { path: "builtin:mcp" } },
     ] });
     const ui = { notify: vi.fn() };
 

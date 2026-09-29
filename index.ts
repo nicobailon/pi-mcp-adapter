@@ -61,7 +61,7 @@ const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
 function hasBuiltInMcpCommand(pi: ExtensionAPI): boolean {
   if (typeof pi.getCommands !== "function") return false;
   return pi.getCommands().some((command) => /^mcp(?::\d+)?$/.test(command.name)
-    && command.sourceInfo.path === "<inline:mcp>");
+    && command.sourceInfo.path === "builtin:mcp");
 }
 
 function hasEnabledServerWithoutValidMetadata(
