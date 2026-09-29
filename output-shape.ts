@@ -24,12 +24,15 @@ export interface ObservedOutput {
 
 const MAX_DEPTH = 6;
 const MAX_ARRAY_SAMPLE = 5;
-// Objects wider than this are treated as maps keyed by data (ids, emails, dates), so their keys are not kept.
+// Objects wider than this, or with any key that does not look like a field name, are treated as maps
+// keyed by data (ids, emails, dates), so their keys are not kept.
 const MAX_OBJECT_KEYS = 40;
+const FIELD_NAME = /^[A-Za-z_$][A-Za-z0-9_$]{0,39}$/;
 const MAX_UNION = 4;
 const MAX_NODES_PER_CALL = 1000;
-const MAX_SHAPE_BYTES = 4 * 1024;
-const MAX_JSON_TEXT_BYTES = 256 * 1024;
+// Sizes count UTF-16 code units (string length), not bytes.
+const MAX_SHAPE_CHARS = 4 * 1024;
+const MAX_JSON_TEXT_CHARS = 256 * 1024;
 
 export function recordObservedOutput(
   state: McpExtensionState,
@@ -91,7 +94,7 @@ function readResultValue(result: Record<string, unknown>): { source: ObservedOut
   const content = result.content;
   if (!Array.isArray(content) || content.length !== 1) return undefined;
   const block = content[0] as { type?: unknown; text?: unknown };
-  if (block.type !== "text" || typeof block.text !== "string" || block.text.length > MAX_JSON_TEXT_BYTES) return undefined;
+  if (block.type !== "text" || typeof block.text !== "string" || block.text.length > MAX_JSON_TEXT_CHARS) return undefined;
   const text = block.text.trim();
   if (!text.startsWith("{") && !text.startsWith("[")) return undefined;
   try {
@@ -110,9 +113,19 @@ function inferShape(value: unknown, depth: number, budget: { nodes: number }): O
     const items = value.slice(0, MAX_ARRAY_SAMPLE).map(item => inferShape(item, depth + 1, budget));
     return items.length === 0 ? { type: "array" } : { type: "array", items: items.reduce(mergeShapes) };
   }
-  const keys = Object.keys(value);
   const record = value as Record<string, unknown>;
-  if (keys.length > MAX_OBJECT_KEYS) {
+  const keys: string[] = [];
+  let isMap = false;
+  // Stops at the first key that makes this a map, so a huge object costs O(MAX_OBJECT_KEYS) here.
+  for (const key in record) {
+    if (!Object.hasOwn(record, key)) continue;
+    keys.push(key);
+    if (keys.length > MAX_OBJECT_KEYS || !FIELD_NAME.test(key) || /\d{4}/.test(key)) {
+      isMap = true;
+      break;
+    }
+  }
+  if (isMap) {
     const values = keys.slice(0, MAX_ARRAY_SAMPLE).map(key => inferShape(record[key], depth + 1, budget));
     return { type: "object", additionalProperties: values.reduce(mergeShapes) };
   }
@@ -167,7 +180,7 @@ function mergeSameType(left: OutputShape, right: OutputShape): OutputShape {
 function fitShape(shape: OutputShape): OutputShape {
   for (let depth = MAX_DEPTH; depth > 0; depth--) {
     const pruned = pruneShape(shape, depth);
-    if (JSON.stringify(pruned).length <= MAX_SHAPE_BYTES) return pruned;
+    if (JSON.stringify(pruned).length <= MAX_SHAPE_CHARS) return pruned;
   }
   return {};
 }

@@ -51,6 +51,17 @@ describe("observed output shapes", () => {
     expect(text).not.toContain("example.com");
   });
 
+  it("renders a small object keyed by data as a map without its keys", async () => {
+    const state = stateWith([{ content: [], structuredContent: {
+      results: { "alice@example.com": { score: 1 }, "550e8400-e29b-41d4-a716-446655440000": { score: 2 } },
+    } }]);
+    await executeCall(state, "demo_list", {});
+
+    const text = describeText(state);
+    expect(text).toContain("{ results: Record<string, { score: number; }>; }");
+    expect(text).not.toMatch(/alice|550e8400/);
+  });
+
   it("shows nothing for tools that declare an output schema", async () => {
     const state = stateWith([{ content: [], structuredContent: { id: "x" } }], { type: "object" });
     await executeCall(state, "demo_list", {});
