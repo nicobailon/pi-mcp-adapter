@@ -54,6 +54,28 @@ export function saveMetadataCache(cache) {
     writeFileSync(tmpPath, JSON.stringify(merged), "utf-8");
     renameSync(tmpPath, cachePath);
 }
+export function deleteMetadataCacheEntry(serverName) {
+    const cachePath = getMetadataCachePath();
+    if (!existsSync(cachePath))
+        return;
+    let cache;
+    try {
+        const existing = JSON.parse(readFileSync(cachePath, "utf-8"));
+        if (!existing || existing.version !== CACHE_VERSION || !existing.servers)
+            return;
+        cache = existing;
+    }
+    catch {
+        return;
+    }
+    if (!(serverName in cache.servers))
+        return;
+    const servers = { ...cache.servers };
+    delete servers[serverName];
+    const tmpPath = cachePath + "." + process.pid + ".tmp";
+    writeFileSync(tmpPath, JSON.stringify({ version: CACHE_VERSION, servers }), "utf-8");
+    renameSync(tmpPath, cachePath);
+}
 export function computeServerHash(definition, environment = process.env) {
     // Hash only fields that affect server identity and tool/resource output.
     // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
@@ -99,6 +121,10 @@ export function isServerCacheValid(entry, definition, maxAgeMs = CACHE_MAX_AGE_M
     if (!entry || entry.configHash !== configHash)
         return false;
     if (!entry.cachedAt || typeof entry.cachedAt !== "number")
+        return false;
+    // The persistent cache has no authorization-context partition, so private
+    // MCP metadata must never be reused by a later login/session.
+    if (entry.cacheScope === "private")
         return false;
     const declaredTtlMs = entry.ttlMs;
     if (typeof declaredTtlMs === "number" && Number.isSafeInteger(declaredTtlMs) && declaredTtlMs >= 0) {

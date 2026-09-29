@@ -76,22 +76,32 @@ describe("metadata cache ttl hints", () => {
     expect(result.tools[0]).not.toHaveProperty("ttlMs");
     expect(result.tools[0]).not.toHaveProperty("cacheScope");
 
-    updateMetadataCache({
-      config: { mcpServers: { demo: definition() } },
+    const server = definition();
+    const state = {
+      config: { mcpServers: { demo: server } },
       manager: {
         getConnection: () => ({
           status: "connected",
+          client: {
+            getProtocolEra: () => "modern",
+            getServerCapabilities: () => ({ tools: {} }),
+            getDiscoverResult: () => ({ ttlMs: 10_000, cacheScope: "public" }),
+          },
           tools: result.tools,
           resources: [],
           prompts: [],
           toolListHints: result.hints,
         }),
       },
-    } as any, "demo");
+    } as any;
+    updateMetadataCache(state, "demo");
 
-    const cached = loadMetadataCache()?.servers.demo;
-    expect(cached).toMatchObject({ ttlMs: 5_000, cacheScope: "private" });
-    expect(cached?.tools[0]).toEqual({ name: "search" });
+    expect(loadMetadataCache()?.servers.demo).toBeUndefined();
+    expect(state.sessionMetadata.get("demo")).toMatchObject({
+      ttlMs: 0,
+      cacheScope: "private",
+      tools: [{ name: "search" }],
+    });
   });
 
   it("persists a successful empty resource list as authoritative across reload", () => {

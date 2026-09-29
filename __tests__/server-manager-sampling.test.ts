@@ -286,7 +286,7 @@ describe("McpServerManager sampling", () => {
     expect(metadataChanged).toHaveBeenCalledWith("demo", "resources-list-changed");
   });
 
-  it("preserves tools list cache hints across list-changed refreshes", async () => {
+  it("invalidates tools list cache hints across list-changed refreshes", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
     const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
@@ -296,7 +296,7 @@ describe("McpServerManager sampling", () => {
     client.options.listChanged.tools.onChanged(null, [{ name: "fresh_tool" }]);
 
     expect(connection.tools).toEqual([{ name: "fresh_tool" }]);
-    expect(connection.toolListHints).toEqual({ ttlMs: 0, cacheScope: "private" });
+    expect(connection.toolListHints).toBeUndefined();
   });
 
   it("forces an authoritative tool refresh and publishes catalog changes", async () => {

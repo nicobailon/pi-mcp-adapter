@@ -1520,6 +1520,7 @@ describe("mcpAdapter session lifecycle", () => {
       });
       const liveEntry = {
         ...diskEntry,
+        cacheScope: "private" as const,
         tools: actualCache.serializeTools(connections.get("demo").tools),
         resources: actualCache.serializeResources(connections.get("demo").resources),
       };

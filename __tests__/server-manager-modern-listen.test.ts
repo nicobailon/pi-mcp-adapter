@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 
 describe("McpServerManager modern subscriptions/listen", () => {
-  it("publishes tools, prompts, and resources list changes to metadata and disk cache", async () => {
+  it("publishes private list changes to session metadata without persisting them", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-listen-"));
     process.env.PI_CODING_AGENT_DIR = agentDir;
     const manager = new McpServerManager();
@@ -80,6 +80,9 @@ describe("McpServerManager modern subscriptions/listen", () => {
       expect(connection.tools.map(tool => tool.name)).toContain("updated_tool");
       expect(connection.prompts.map(prompt => prompt.name)).toEqual(["updated_prompt"]);
       expect(connection.resources.map(resource => resource.uri)).toEqual(["ui://fixture/updated"]);
+      expect(connection.toolListHints).toBeUndefined();
+      expect(connection.promptListHints).toBeUndefined();
+      expect(connection.resourceListHints).toBeUndefined();
       expect(state.toolMetadata.get("modern").map((tool: { originalName: string }) => tool.originalName))
         .toContain("updated_tool");
       expect(reasons).toEqual(expect.arrayContaining([
@@ -88,12 +91,14 @@ describe("McpServerManager modern subscriptions/listen", () => {
         "resources-list-changed",
       ]));
 
-      const cache = JSON.parse(readFileSync(join(agentDir, "mcp-cache.json"), "utf8"));
-      expect(cache.servers.modern.tools.map((tool: { name: string }) => tool.name)).toContain("updated_tool");
-      expect(cache.servers.modern.prompts).toEqual([{ name: "updated_prompt" }]);
-      expect(cache.servers.modern.resources).toEqual(expect.arrayContaining([
-        expect.objectContaining({ uri: "ui://fixture/updated" }),
-      ]));
+      expect(existsSync(join(agentDir, "mcp-cache.json"))).toBe(false);
+      expect(state.sessionMetadata.get("modern")).toMatchObject({
+        tools: expect.arrayContaining([expect.objectContaining({ name: "updated_tool" })]),
+        prompts: [{ name: "updated_prompt" }],
+        resources: expect.arrayContaining([expect.objectContaining({ uri: "ui://fixture/updated" })]),
+        ttlMs: 0,
+        cacheScope: "private",
+      });
     } finally {
       rmSync(agentDir, { recursive: true, force: true });
     }

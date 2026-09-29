@@ -9,6 +9,7 @@ import { McpLifecycleManager } from "./lifecycle.ts";
 import {
   computeServerHash,
   createCachedToolSelectorCandidateIndex,
+  deleteMetadataCacheEntry,
   getMetadataCachePath,
   getMissingConfiguredDirectToolServers,
   isServerCacheValid,
@@ -21,7 +22,7 @@ import {
   serializeTools,
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
-import { McpServerManager, isTransientHttpConnectError } from "./server-manager.ts";
+import { extractCacheHints, McpServerManager, isTransientHttpConnectError } from "./server-manager.ts";
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
@@ -585,6 +586,43 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
   }
 }
 
+function getPersistentMetadataHints(
+  connection: ReturnType<McpExtensionState["manager"]["getConnection"]>,
+  definition: McpExtensionState["config"]["mcpServers"][string],
+): { ttlMs?: number; cacheScope?: "public" | "private" } {
+  if (!connection || connection.client?.getProtocolEra?.() !== "modern") {
+    return {
+      ...(connection?.toolListHints?.ttlMs !== undefined ? { ttlMs: connection.toolListHints.ttlMs } : {}),
+      ...(connection?.toolListHints?.cacheScope !== undefined ? { cacheScope: connection.toolListHints.cacheScope } : {}),
+    };
+  }
+
+  const capabilities = connection.client.getServerCapabilities?.();
+  const relevantHints: Array<{ ttlMs?: number; cacheScope?: "public" | "private" } | undefined> = [];
+  const discoverResult = connection.client.getDiscoverResult?.();
+  relevantHints.push(discoverResult ? extractCacheHints(discoverResult as object) : undefined);
+  if (capabilities?.tools) relevantHints.push(connection.toolListHints);
+  if (capabilities?.prompts) {
+    relevantHints.push(connection.promptDiscoveryFailed ? undefined : connection.promptListHints);
+  }
+  if (definition.exposeResources !== false && capabilities?.resources) {
+    relevantHints.push(connection.resourceDiscoveryFailed ? undefined : connection.resourceListHints);
+  }
+
+  const safelyPublic = relevantHints.length > 0 && relevantHints.every(hint =>
+    hint?.cacheScope === "public" &&
+    typeof hint.ttlMs === "number" &&
+    Number.isSafeInteger(hint.ttlMs) &&
+    hint.ttlMs > 0
+  );
+  if (!safelyPublic) return { ttlMs: 0, cacheScope: "private" };
+
+  return {
+    ttlMs: Math.min(...relevantHints.map(hint => hint!.ttlMs!)),
+    cacheScope: "public",
+  };
+}
+
 export function updateMetadataCache(
   state: McpExtensionState,
   serverName: string,
@@ -616,18 +654,28 @@ export function updateMetadataCache(
     }
   }
 
+  const persistentHints = getPersistentMetadataHints(connection, definition);
   const entry: ServerCacheEntry = {
     configHash,
     tools,
     resources,
     ...(prompts !== undefined ? { prompts } : {}),
     ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
-    ...(connection.toolListHints?.ttlMs !== undefined ? { ttlMs: connection.toolListHints.ttlMs } : {}),
-    ...(connection.toolListHints?.cacheScope !== undefined ? { cacheScope: connection.toolListHints.cacheScope } : {}),
+    ...(persistentHints.ttlMs !== undefined ? { ttlMs: persistentHints.ttlMs } : {}),
+    ...(persistentHints.cacheScope !== undefined ? { cacheScope: persistentHints.cacheScope } : {}),
     cachedAt: Date.now(),
   };
 
   (state.sessionMetadata ??= new Map()).set(serverName, entry);
+
+  if (
+    connection.client?.getProtocolEra?.() === "modern" &&
+    !(entry.cacheScope === "public" && typeof entry.ttlMs === "number" && entry.ttlMs > 0)
+  ) {
+    deleteMetadataCacheEntry(serverName);
+    return;
+  }
+
   saveMetadataCache({ version: 1, servers: { [serverName]: entry } });
 }
 

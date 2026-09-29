@@ -185,13 +185,17 @@ export interface ServerConnection {
   definition: ServerDefinition;
   tools: McpTool[];
   /** Cache hints from the server's aggregated tools/list result. */
-  toolListHints?: Partial<Pick<ListToolsResult, "ttlMs" | "cacheScope">> | undefined;
+  toolListHints?: ListCacheHints | undefined;
   /** Monotonic guard against older refresh responses replacing newer notifications. */
   toolsRevision?: number;
   resources: McpResource[];
+  /** Cache hints from the server's aggregated resources/list result. */
+  resourceListHints?: ListCacheHints | undefined;
   /** True when resources were advertised but resources/list failed. */
   resourceDiscoveryFailed?: boolean;
   prompts: McpPrompt[];
+  /** Cache hints from the server's aggregated prompts/list result. */
+  promptListHints?: ListCacheHints | undefined;
   /** True when prompts were advertised but prompts/list failed. */
   promptDiscoveryFailed?: boolean;
   instructions?: string;
@@ -226,9 +230,29 @@ type ResourceUpdatedListener = (serverName: string, uri: string) => void;
 
 export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refresh-timeout";
 
-type ToolListCacheHints = Partial<Pick<ListToolsResult, "ttlMs" | "cacheScope">>;
-type ToolListResult = { tools: McpTool[]; hints?: ToolListCacheHints };
-type ResourceListResult = { resources: McpResource[]; failed: boolean };
+type ListCacheHints = {
+  ttlMs?: number;
+  cacheScope?: "public" | "private";
+};
+type ToolListResult = { tools: McpTool[]; hints?: ListCacheHints };
+type PromptListResult = { prompts: McpPrompt[]; failed: boolean; hints?: ListCacheHints };
+type ResourceListResult = { resources: McpResource[]; failed: boolean; hints?: ListCacheHints };
+
+export function extractCacheHints(result: object): ListCacheHints | undefined {
+  const hints = result as { ttlMs?: unknown; cacheScope?: unknown };
+  const ttlMs = typeof hints.ttlMs === "number" && Number.isSafeInteger(hints.ttlMs) && hints.ttlMs >= 0
+    ? hints.ttlMs
+    : undefined;
+  const cacheScope = hints.cacheScope === "public" || hints.cacheScope === "private"
+    ? hints.cacheScope
+    : undefined;
+  return ttlMs !== undefined || cacheScope !== undefined
+    ? {
+        ...(ttlMs !== undefined ? { ttlMs } : {}),
+        ...(cacheScope !== undefined ? { cacheScope } : {}),
+      }
+    : undefined;
+}
 
 const KEEP_ALIVE_REFRESH_TIMEOUT_MS = 5_000;
 const LISTEN_RETRY_DELAY_MS = 5_000;
@@ -858,10 +882,12 @@ export class McpServerManager {
     )) ||
       (nextResources !== undefined && (
         !isDeepStrictEqual(expectedConnection.resources, nextResources.resources) ||
+        !isDeepStrictEqual(expectedConnection.resourceListHints, nextResources.hints) ||
         expectedConnection.resourceDiscoveryFailed !== nextResources.failed
       )) ||
       (nextPrompts !== undefined && (
         !isDeepStrictEqual(expectedConnection.prompts, nextPrompts.prompts) ||
+        !isDeepStrictEqual(expectedConnection.promptListHints, nextPrompts.hints) ||
         expectedConnection.promptDiscoveryFailed !== false
       ));
     if (!changed) {
@@ -878,10 +904,12 @@ export class McpServerManager {
     }
     if (nextResources !== undefined) {
       expectedConnection.resources = nextResources.resources;
+      expectedConnection.resourceListHints = nextResources.hints;
       expectedConnection.resourceDiscoveryFailed = nextResources.failed;
     }
     if (nextPrompts !== undefined) {
       expectedConnection.prompts = nextPrompts.prompts;
+      expectedConnection.promptListHints = nextPrompts.hints;
       expectedConnection.promptDiscoveryFailed = false;
     }
     if (confirmed) delete expectedConnection.listenCatalogStale;
@@ -1186,8 +1214,10 @@ export class McpServerManager {
       connection.tools = toolResult.tools;
       connection.toolListHints = toolResult.hints;
       connection.resources = resources.resources;
+      connection.resourceListHints = resources.hints;
       connection.resourceDiscoveryFailed = resources.failed;
       connection.prompts = promptResult.prompts;
+      connection.promptListHints = promptResult.hints;
       connection.promptDiscoveryFailed = promptResult.failed;
 
       if (definition.tasks !== false) {
@@ -1421,6 +1451,7 @@ export class McpServerManager {
     const connection = this.connections.get(serverName);
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.tools = tools;
+    connection.toolListHints = undefined;
     connection.toolsRevision = (connection.toolsRevision ?? 0) + 1;
     this.metadataListChangedListener?.(serverName, "tools-list-changed");
     this.pendingMetadataPublications.delete(serverName);
@@ -1440,6 +1471,7 @@ export class McpServerManager {
     const connection = this.connections.get(serverName);
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.prompts = prompts;
+    connection.promptListHints = undefined;
     connection.promptDiscoveryFailed = false;
     this.metadataListChangedListener?.(serverName, "prompts-list-changed");
     this.pendingMetadataPublications.delete(serverName);
@@ -1459,6 +1491,7 @@ export class McpServerManager {
     const connection = this.connections.get(serverName);
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.resources = resources;
+    connection.resourceListHints = undefined;
     connection.resourceDiscoveryFailed = false;
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
     this.pendingMetadataPublications.delete(serverName);
@@ -1745,24 +1778,13 @@ export class McpServerManager {
   private async fetchAllTools(client: Client, requestOptions?: CacheableRequestOptions): Promise<ToolListResult> {
     const allTools: McpTool[] = [];
     let cursor: string | undefined;
-    let hints: ToolListCacheHints | undefined;
+    let hints: ListCacheHints | undefined;
     let firstPage = true;
 
     do {
       const result = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
       if (firstPage) {
-        const ttlMs = typeof result.ttlMs === "number" && Number.isSafeInteger(result.ttlMs) && result.ttlMs >= 0
-          ? result.ttlMs
-          : undefined;
-        const cacheScope = result.cacheScope === "public" || result.cacheScope === "private"
-          ? result.cacheScope
-          : undefined;
-        if (ttlMs !== undefined || cacheScope !== undefined) {
-          hints = {
-            ...(ttlMs !== undefined ? { ttlMs } : {}),
-            ...(cacheScope !== undefined ? { cacheScope } : {}),
-          };
-        }
+        hints = extractCacheHints(result);
         firstPage = false;
       }
       allTools.push(...(result.tools ?? []));
@@ -1775,19 +1797,25 @@ export class McpServerManager {
   private async fetchAllPrompts(
     client: Client,
     requestOptions?: RequestOptions,
-  ): Promise<{ prompts: McpPrompt[]; failed: boolean }> {
+  ): Promise<PromptListResult> {
     const capabilities = client.getServerCapabilities?.();
     if (!capabilities?.prompts) return { prompts: [], failed: false };
 
     try {
       const prompts: McpPrompt[] = [];
       let cursor: string | undefined;
+      let hints: ListCacheHints | undefined;
+      let firstPage = true;
       do {
         const result = await client.listPrompts(cursor ? { cursor } : undefined, requestOptions);
+        if (firstPage) {
+          hints = extractCacheHints(result);
+          firstPage = false;
+        }
         prompts.push(...(result.prompts ?? []));
         cursor = result.nextCursor;
       } while (cursor);
-      return { prompts, failed: false };
+      return { prompts, failed: false, ...(hints !== undefined ? { hints } : {}) };
     } catch (error) {
       if (requestOptions?.signal?.aborted) throwIfAborted(requestOptions.signal);
       if (isUnauthorizedHttpError(error)) throw error;
@@ -1804,14 +1832,20 @@ export class McpServerManager {
     try {
       const allResources: McpResource[] = [];
       let cursor: string | undefined;
+      let hints: ListCacheHints | undefined;
+      let firstPage = true;
 
       do {
         const result = await client.listResources(cursor ? { cursor } : undefined, requestOptions);
+        if (firstPage) {
+          hints = extractCacheHints(result);
+          firstPage = false;
+        }
         allResources.push(...(result.resources ?? []));
         cursor = result.nextCursor;
       } while (cursor);
 
-      return { resources: allResources, failed: false };
+      return { resources: allResources, failed: false, ...(hints !== undefined ? { hints } : {}) };
     } catch (error) {
       if (requestOptions?.signal?.aborted) {
         throwIfAborted(requestOptions.signal);
