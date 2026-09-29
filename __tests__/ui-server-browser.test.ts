@@ -24,10 +24,10 @@ function closeServer(server: http.Server): Promise<void> {
 }
 
 async function stopChrome(chrome: ChildProcess): Promise<void> {
-  if (chrome.exitCode !== null) return;
+  if (chrome.exitCode !== null || chrome.pid === undefined) return;
   // Kill the whole process group: helpers outlive a main-only kill on Linux and keep
   // writing to the profile directory while the test removes it.
-  process.kill(-chrome.pid!, "SIGKILL");
+  process.kill(-chrome.pid, "SIGKILL");
   await Promise.race([
     once(chrome, "exit").then(() => undefined),
     new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
