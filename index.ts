@@ -386,8 +386,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       resourceUri: spec.resourceUri,
       uiResourceUri: spec.uiResourceUri,
       uiStreamMode: spec.uiStreamMode,
-      // The registered executor closes over the spec, so changed hints must re-register it.
-      annotations: spec.annotations,
       // A mode-only change (search ↔ eager) must re-register, or the tool
       // keeps the activation behavior of the mode it was registered under.
       lazy: spec.lazy === true,

@@ -554,7 +554,6 @@ export interface DirectToolSpec {
     resourceUri?: string;
     uiResourceUri?: string;
     uiStreamMode?: UiStreamMode;
-    annotations?: McpToolAnnotations;
 }
 export interface ServerProvenance {
     path: string;

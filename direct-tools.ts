@@ -207,6 +207,10 @@ export function createDirectToolExecutor(
     }
 
     const normalizedParams = spec.resourceUri ? params : normalizeToolArguments(params);
+    // The spec is fixed at registration; approval must see the hints the server advertises now.
+    const annotations = spec.resourceUri
+      ? undefined
+      : state.toolMetadata.get(spec.serverName)?.find(tool => !tool.resourceUri && tool.originalName === spec.originalName)?.annotations;
     const approval = await ensureToolCallApproved(state, spec.serverName, {
       name: spec.prefixedName,
       originalName: spec.originalName,
@@ -215,7 +219,7 @@ export function createDirectToolExecutor(
       ...(spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : {}),
       ...(spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : {}),
       ...(spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : {}),
-      ...(spec.annotations !== undefined ? { annotations: spec.annotations } : {}),
+      ...(annotations !== undefined ? { annotations } : {}),
     }, normalizedParams, ownedSignal, spec.resourceUri ? "resource" : "direct");
     if (approval.ok === false) {
       const denied = approval.reason === "denied";
