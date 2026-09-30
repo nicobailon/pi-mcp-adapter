@@ -13,7 +13,7 @@ export interface KnownServerPreset {
 }
 export declare const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[];
 interface ConfigSourceSpec {
-    id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-global" | "shared-project-ancestor" | "pi-project-ancestor" | "shared-project" | "pi-project";
+    id: "shared-global" | "agents-global" | "agents-nested-global" | "pi-mcp-global" | "pi-global" | "shared-project-ancestor" | "pi-project-ancestor" | "shared-project" | "pi-mcp-project" | "pi-project";
     label: string;
     readPath: string;
     writePath: string;
@@ -93,11 +93,11 @@ export interface ConfigWritePreview {
 }
 export type SharedConfigTarget = "project" | "global";
 export declare function getPiGlobalConfigPath(overridePath?: string): string;
-export declare function getLegacyPiMcpGlobalConfigPath(): string;
+export declare function getPiMcpGlobalConfigPath(): string;
 export declare function getGenericGlobalConfigPath(): string;
 export declare function getProjectConfigPath(cwd?: string): string;
 export declare function getProjectPiConfigPath(cwd?: string): string;
-export declare function getLegacyProjectPiMcpConfigPath(cwd?: string): string;
+export declare function getProjectPiMcpConfigPath(cwd?: string): string;
 export declare function getLegacyMcpMigrationNotices(cwd?: string, overridePath?: string, piOwnsServers?: boolean): string[];
 export declare function getSharedConfigPath(target: SharedConfigTarget, cwd?: string): string;
 export declare function getConfigDiscoveryPaths(overridePath?: string, cwd?: string): ConfigDiscoveryPath[];

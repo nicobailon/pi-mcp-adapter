@@ -7,7 +7,7 @@ import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type Mcp
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
+import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectServer, excludeProjectServersAtLoadTime, hasProjectServerDefinitions } from "./project-server-trust.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -62,6 +62,11 @@ function hasBuiltInMcpCommand(pi: ExtensionAPI): boolean {
   if (typeof pi.getCommands !== "function") return false;
   return pi.getCommands().some((command) => /^mcp(?::\d+)?$/.test(command.name)
     && command.sourceInfo.path === "builtin:mcp");
+}
+
+/** Pi 0.99+ has its own MCP config; on Pi 0.84–0.87, `mcp.json` is an old adapter config. */
+function piSupportsMcp(pi: ExtensionAPI): boolean {
+  return typeof pi.registerMcpServer === "function";
 }
 
 function hasEnabledServerWithoutValidMetadata(
@@ -195,6 +200,8 @@ function resolveNamespaceEnvOverride(
 function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const sessionConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
   const programmaticConfig = sessionConfig !== undefined;
+  // Before the first config load, so every load in this process agrees.
+  if (!programmaticConfig) setPiMcpConfigEnabled(piSupportsMcp(pi));
   let state: McpExtensionState | null = null;
   let sessionCtx: ExtensionContext | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;

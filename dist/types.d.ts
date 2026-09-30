@@ -563,6 +563,8 @@ export interface ServerProvenance {
     path: string;
     kind: "user" | "project" | "import";
     importKind?: string;
+    /** Settings from Pi's `mcp.json` that the adapter could not translate for this server. */
+    ignoredSettings?: string[];
 }
 export interface McpAuthResult {
     ok: boolean;

@@ -20,9 +20,9 @@ Use shared MCP files when you want one setup to work across hosts, and adapter-o
 | `~/.agents/mcp.json` | User-global tool-agnostic MCP config |
 | `~/.agents/mcp/mcp.json` | User-global tool-agnostic MCP config |
 | `.mcp.json` | Project-local shared MCP config |
-| `<Pi agent dir>/mcp.json` | Pi built-in MCP config; never read by this adapter |
+| `<Pi agent dir>/mcp.json` | Pi's own MCP config; read on Pi 0.99 and later (see below) |
 | `<Pi agent dir>/mcp-adapter.json` | Global adapter settings, imports, and overrides (`~/.pi/agent/mcp-adapter.json` by default) |
-| `.pi/mcp.json` | Project Pi built-in MCP config; never read by this adapter |
+| `.pi/mcp.json` | Pi's own project MCP config; read on Pi 0.99 and later (see below) |
 | `.pi/mcp-adapter.json` | Project adapter settings and overrides |
 
 For local stdio servers, a leading `~/` is expanded to the current user's home
@@ -36,7 +36,31 @@ Pi-specific files are the write targets for imported or shared global servers wh
 
 Preferred user-global shared config: `~/.config/mcp/mcp.json` (for all projects). Pi also reads the tool-agnostic global paths `~/.agents/mcp.json` and `~/.agents/mcp/mcp.json` as compatibility inputs.
 
-The adapter does not read Pi's `<Pi agent dir>/mcp.json` or `.pi/mcp.json` at all. If you previously used either file with this adapter, rename it to `mcp-adapter.json`; the format is unchanged, so a plain `mv` works (merge the files if the target already exists). This leaves `mcp.json` exclusively to Pi's built-in MCP support, so Pi and the adapter never start the same servers.
+On Pi 0.99 and later, the adapter reads Pi's own `<Pi agent dir>/mcp.json` and `.pi/mcp.json` in Pi's format, so servers added with `pi mcp add` show up here too. Only `mcpServers` is read, and each entry is translated:
+
+| Pi field | Adapter field |
+|---|---|
+| `command`, `args`, `env`, `cwd`, `url`, `headers` | same |
+| `type: "stdio"`, `"http"`, `"streamable-http"` | dropped (the transport follows `command` or `url`) |
+| `enabled: false` | `disabled: true` |
+| `timeout` (seconds) | `requestTimeoutMs` |
+| `oauth.clientId`, `clientSecret`, `scope`, `clientName` | same |
+| `oauth.callbackPort` | `oauth.redirectUri: "http://127.0.0.1:<port>/callback"` |
+| `oauth.callbackUrl` | `oauth.redirectUri`; a URL without a port gets `callbackPort`, or `{port}` for a free port |
+| `exposure: "direct"` | `directTools: true` |
+| `exposure: "deferred"` | `directTools: "search"` |
+| `exposure: "codemode"` | proxy only (the default) |
+| `exposure: "hidden"` | `disabled: true` |
+| `toolExposure` exact names set to `"direct"` | `directTools: [names]` |
+| `toolExposure` entries set to `"hidden"` | `excludeTools` (patterns only when every entry is `"hidden"`) |
+
+Entries with `type: "sse"` or `auth: { "provider": ... }`, and entries Pi itself rejects, are skipped. Any other setting without an exact equivalent, such as a per-tool `codemode` or `deferred` or a pattern whose order matters, is ignored: the server keeps its server-level setting. `description` and the top-level `autoEnableCodemode` are ignored silently. Skipped entries and ignored settings are reported once per file at startup, and each server's ignored settings are listed when you select it in `/mcp-adapter`.
+
+When `.pi/mcp.json` defines a server that `<Pi agent dir>/mcp.json` also defines, the project entry replaces the global one as a whole, as in Pi. The adapter never writes Pi's files: changes such as direct tools go to the `mcp-adapter.json` in the same folder. `.pi/mcp.json` is project config, so its servers need project trust and approval like `.mcp.json` servers. Exclusive mode (`PI_MCP_CONFIG_MODE=exclusive`) does not read either file.
+
+Adapter-only keys in these files (`settings`, `imports`, `claudePlugins`, and the old `mcp-servers` key) come from old adapter configs and are ignored with a notice; move them into `mcp-adapter.json`.
+
+On Pi 0.84 to 0.87, the adapter does not read `<Pi agent dir>/mcp.json` or `.pi/mcp.json` at all. If you previously used either file with this adapter, rename it to `mcp-adapter.json`; the format is unchanged, so a plain `mv` works (merge the files if the target already exists).
 
 Host-specific configs are detected and shown by `/mcp-adapter setup` and `pi-mcp-adapter init`, but they are compatibility inputs rather than normal setup paths and are not loaded automatically. The normal `/mcp-adapter` panel does not scan host-specific files when `settings.hostConfigDiscovery` is `"off"`. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `pi-mcp-adapter init --discover-host-configs`. The default is `"off"`; `"prompt"` is available for integrations that want detection without activation. Host configs are lower precedence than every normal config source, and `/mcp-adapter setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
 
@@ -47,10 +71,12 @@ Precedence is (later entries win):
 1. `~/.config/mcp/mcp.json`
 2. `~/.agents/mcp.json`
 3. `~/.agents/mcp/mcp.json`
-4. `<Pi agent dir>/mcp-adapter.json`
-5. opted-in ancestors, farthest first: `.mcp.json`, `.pi/mcp-adapter.json`
-6. `.mcp.json`
-7. `.pi/mcp-adapter.json`
+4. `<Pi agent dir>/mcp.json` (Pi 0.99 and later)
+5. `<Pi agent dir>/mcp-adapter.json`
+6. opted-in ancestors, farthest first: `.mcp.json`, `.pi/mcp-adapter.json`
+7. `.mcp.json`
+8. `.pi/mcp.json` (Pi 0.99 and later)
+9. `.pi/mcp-adapter.json`
 
 Ancestor discovery is off by default. To opt in, set `settings.ancestorConfigRoots` in a user-global source (`~/.config/mcp/mcp.json`, either `~/.agents` MCP file, or the global `mcp-adapter.json`) or in the explicitly selected `--mcp-config`/`configPath` file, for example `"ancestorConfigRoots": ["~/work/team"]`. Each root must be an explicit absolute path or `~/...` and resolve to an existing directory under `$HOME`. Roots that do not contain the canonical cwd are ignored. If several roots match, only the nearest (deepest) is used. Project files cannot enable discovery or extend the boundary.
 

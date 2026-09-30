@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   discoverConfiguredClaudePluginSkills: vi.fn(() => []),
   resolveConfiguredClaudePluginMcp: vi.fn((config: unknown) => structuredClone(config)),
   getLegacyMcpMigrationNotices: vi.fn(() => []),
+  setPiMcpConfigEnabled: vi.fn(),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
   createDirectToolExecutor: vi.fn(() => vi.fn()),
@@ -108,6 +109,7 @@ vi.mock("../config.ts", () => ({
   discoverConfiguredClaudePluginSkills: mocks.discoverConfiguredClaudePluginSkills,
   resolveConfiguredClaudePluginMcp: mocks.resolveConfiguredClaudePluginMcp,
   getLegacyMcpMigrationNotices: mocks.getLegacyMcpMigrationNotices,
+  setPiMcpConfigEnabled: mocks.setPiMcpConfigEnabled,
   getPiGlobalConfigPath: mocks.getPiGlobalConfigPath,
   getProjectConfigPath: mocks.getProjectConfigPath,
   writeSharedServerEntry: mocks.writeSharedServerEntry,
@@ -2655,6 +2657,20 @@ describe("mcpAdapter session lifecycle", () => {
       mcpServers: { first: { url: "https://first.example.com/mcp" } },
     });
     expect(mocks.resolveDirectTools.mock.calls.at(-1)?.[0]).toEqual(secondConfig);
+  });
+
+  it("reads Pi's mcp.json files only when Pi supports MCP, decided before the first config load", async () => {
+    const { createMcpAdapter, default: defaultAdapter } = await import("../index.ts");
+    defaultAdapter({ ...createPi().api, registerMcpServer: vi.fn() });
+    expect(mocks.setPiMcpConfigEnabled.mock.calls).toEqual([[true]]);
+    expect(mocks.setPiMcpConfigEnabled.mock.invocationCallOrder[0]).toBeLessThan(mocks.loadMcpConfig.mock.invocationCallOrder[0]!);
+
+    defaultAdapter(createPi().api);
+    expect(mocks.setPiMcpConfigEnabled.mock.calls).toEqual([[true], [false]]);
+
+    // An in-memory config reads no files, so it leaves the setting alone.
+    createMcpAdapter({ config: { mcpServers: {} } })({ ...createPi().api, registerMcpServer: vi.fn() });
+    expect(mocks.setPiMcpConfigEnabled.mock.calls).toEqual([[true], [false]]);
   });
 
   it("gives configPath precedence without changing the default argv path", async () => {
