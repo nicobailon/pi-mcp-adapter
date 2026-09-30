@@ -100,6 +100,15 @@ function resultErrorMessage(result: { content: ContentBlock[]; details: Record<s
   return typeof result.details.message === "string" ? result.details.message : textFromContent(result.content);
 }
 
+/** Script-usable guidance for scoping errors whose shared text points at mcp(), which scripts cannot call. */
+function scriptScopeMessage(code: string, path: string, server: unknown, retry: string): string | undefined {
+  if (code === "server_not_found") return `Server "${String(server)}" not found. Use the server from a tools.search hit.`;
+  if (code !== "ambiguous_tool") return undefined;
+  return typeof server === "string"
+    ? `Tool "${path}" matches multiple tools on server "${server}". Use an exact path from tools.search({ query: "", server: "${server}" }).`
+    : `Tool "${path}" matches multiple servers. Pass the server from tools.search: ${retry}.`;
+}
+
 function abortReasonError(reason: unknown): Error {
   return reason instanceof Error ? reason : new Error(String(reason ?? "MCP request aborted"));
 }
@@ -207,9 +216,7 @@ export async function runMcpScript(
         : [];
       const message = errorCode === "tool_not_found"
         ? `Tool "${path}" not found. Use await tools.search({ query: "..." }) inside mcpScript.${suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : ""}`
-        : errorCode === "ambiguous_tool" && details.server === undefined
-          ? `Tool "${path}" matches multiple servers. Pass the server from tools.search: tools.call(path, args, { server }).`
-          : resultErrorMessage(result);
+        : scriptScopeMessage(errorCode, path, details.server, "tools.call(path, args, { server })") ?? resultErrorMessage(result);
       calls[index] = { operation: "call", path, ok: false, error: errorCode, durationMs: Date.now() - startedAt, startedAt };
       return {
         envelope: { ok: false, error: { code: errorCode, message } },
@@ -351,16 +358,15 @@ export async function runMcpScript(
       const target = resolveDescribeTarget(state, path, typeof input?.server === "string" ? input.server : undefined);
       if ("error" in target) {
         const details = target.error.details;
-        error = String(details.error);
+        const code = String(details.error);
+        error = code;
         return {
           path,
           error: {
-            code: error,
-            message: error === "tool_not_found"
+            code,
+            message: code === "tool_not_found"
               ? `Tool not found: ${path}`
-              : error === "ambiguous_tool" && details.server === undefined
-                ? `Tool "${path}" matches multiple servers. Pass the server from tools.search: tools.describe({ path, server }).`
-                : resultErrorMessage(target.error),
+              : scriptScopeMessage(code, path, details.server, "tools.describe({ path, server })") ?? resultErrorMessage(target.error),
             suggestions: Array.isArray(details.suggestions) ? details.suggestions : [],
           },
         };
