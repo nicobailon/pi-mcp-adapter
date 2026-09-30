@@ -153,7 +153,7 @@ describe("mcp setup panel theme and component rendering", () => {
       { id: "shared-project", label: "project shared", path: "/tmp/shared", exists: true, scope: "project", kind: "shared", serverCount: 1 },
       { id: "pi-project", label: "project Pi", path: "/tmp/pi", exists: true, scope: "project", kind: "pi", serverCount: 1 },
     ];
-    const summaryLine = panel.render(40).find((line) => line.includes("123 servers · 2 config files"));
+    const summaryLine = panel.render(40).find((line) => line.includes("123 servers"));
     expect(summaryLine).toContain("\x1b[38;5;36m");
     panel.dispose();
   });
@@ -230,6 +230,60 @@ describe("mcp setup panel theme and component rendering", () => {
         expect(stripAnsi(lines.at(-1)!)).toMatch(/^╰─+╯$/);
       }
     }
+    panel.dispose();
+  });
+
+  it("scrolls cut-off details with PageDown without changing the height", () => {
+    const width = 92;
+    const configPath = join(tmpdir(), "pi-mcp-setup-panel-missing", ".mcp.json");
+    const callbacks = createCallbacks();
+    callbacks.previewKnownServer = (preset) => previewSharedServerEntry(configPath, preset.id, preset.entry);
+    const panel = createMcpSetupPanel(
+      createDiscovery(),
+      callbacks,
+      { mode: "setup", onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false } },
+      { requestRender: () => {}, terminal: { rows: 16 } },
+      () => {},
+    );
+    const lastDiffLine = (lines: string[]) => lines.some((line) => stripAnsi(line).includes("+ }"));
+
+    moveCursorTo(panel, "DeepWiki");
+    const before = panel.render(width);
+    expect(lastDiffLine(before)).toBe(false);
+    expect(stripAnsi(before.join("\n"))).toContain("↓ ");
+    expect(stripAnsi(before.at(-2)!)).toContain("pgup/pgdn scroll");
+
+    for (let presses = 0; presses < 5 && !lastDiffLine(panel.render(width)); presses += 1) panel.handleInput("\x1b[6~");
+    const after = panel.render(width);
+    expect(lastDiffLine(after)).toBe(true);
+    expect(after).toHaveLength(before.length);
+    expect(stripAnsi(after.join("\n"))).toContain("↑ ");
+
+    panel.handleInput("\x1b[1;2A");
+    expect(lastDiffLine(panel.render(width))).toBe(false);
+    // Moving the cursor resets the scroll: back on DeepWiki, the diff starts cut off again.
+    panel.handleInput("\x1b[6~");
+    expect(lastDiffLine(panel.render(width))).toBe(true);
+    panel.handleInput(DOWN);
+    panel.handleInput("\x1b[A");
+    expect(lastDiffLine(panel.render(width))).toBe(false);
+    panel.dispose();
+  });
+
+  it("keeps notice text in a one-row details pane", () => {
+    const panel = createMcpSetupPanel(
+      createDiscovery(),
+      createCallbacks(),
+      { mode: "setup", onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false } },
+      { requestRender: () => {}, terminal: { rows: 10 } },
+      () => {},
+    );
+
+    panel.handleInput(DOWN);
+    panel.handleInput(ENTER);
+    const lines = panel.render(60).map(stripAnsi);
+    expect(lines.join("\n")).toContain("New shared servers will be written to global");
+    expect(lines.length).toBeLessThanOrEqual(8);
     panel.dispose();
   });
 });

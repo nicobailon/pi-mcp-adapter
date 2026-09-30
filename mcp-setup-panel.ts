@@ -58,15 +58,27 @@ function wrapIndented(text: string, width: number): string[] {
     .map((line, index) => `${index === 0 ? indent : " ".repeat(indentWidth)}${line}`);
 }
 
-/** Splits text into fixed-width chunks for values like paths that have no spaces to wrap at. */
+const graphemes = new Intl.Segmenter();
+
+/**
+ * Splits text into lines of at most `width` columns for values like paths that
+ * have no spaces to wrap at. Works on whole graphemes, so wide characters and
+ * emoji are never split.
+ */
 function hardWrap(text: string, width: number): string[] {
-  if (width <= 0 || text.length <= width) return [text];
+  if (width <= 0 || visibleWidth(text) <= width) return [text];
   const lines: string[] = [];
-  for (let index = 0; index < text.length; index += width) lines.push(text.slice(index, index + width));
+  let current = "";
+  for (const { segment } of graphemes.segment(text)) {
+    if (current && visibleWidth(current + segment) > width) {
+      lines.push(current);
+      current = "";
+    }
+    current += segment;
+  }
+  if (current) lines.push(current);
   return lines;
 }
-
-const graphemes = new Intl.Segmenter();
 
 /**
  * Cuts plain (unstyled) text to `width` columns with a trailing …. Styling is
@@ -154,6 +166,8 @@ interface McpSetupPanelViewState {
   selectedImports: ReadonlySet<ImportKind>;
   notice: Notice | null;
   busy: boolean;
+  /** Lines the details pane is scrolled down; the view clamps it to the content. */
+  detailScroll: number;
   onboardingState: McpOnboardingState;
   discovery: McpDiscoverySummary;
   actions: readonly Action[];
@@ -206,12 +220,23 @@ function actionSection(id: ActionId): ActionSection {
  */
 class McpSetupPanelView implements Component {
   private readonly container = new Container();
+  /** Details scroll bounds from the last render, used by the controller to clamp PageUp/PageDown. */
+  private detailScrollMax = 0;
+  private detailPageRows = 1;
 
   constructor(
     private readonly getState: () => McpSetupPanelViewState,
     private readonly callbacks: SetupPanelCallbacks,
     private readonly theme: McpPanelTheme,
   ) {}
+
+  get maxDetailScroll(): number {
+    return this.detailScrollMax;
+  }
+
+  get detailPageSize(): number {
+    return this.detailPageRows;
+  }
 
   render(width: number): string[] {
     const panelWidth = Math.max(MIN_PANEL_WIDTH, width);
@@ -227,26 +252,31 @@ class McpSetupPanelView implements Component {
 
     const entries = this.listEntries(state);
 
+    let paneRows: number;
+    let paneLines: string[];
     if (innerWidth >= TWO_PANE_MIN_INNER_WIDTH) {
       const listWidth = Math.max(MIN_LIST_WIDTH, Math.min(MAX_LIST_WIDTH, Math.floor(innerWidth * 0.4)));
       const paneWidth = contentWidth - listWidth - PANE_GUTTER;
       const listLines = this.renderList(entries, bodyRows, listWidth);
-      const paneLines = this.renderPane(this.details(state, paneWidth, !spacers), bodyRows, paneWidth);
+      paneRows = bodyRows;
+      paneLines = this.renderPane(this.details(state, paneWidth, !spacers), paneRows, paneWidth, state.detailScroll);
       const rule = this.theme.border("│");
       for (let row = 0; row < bodyRows; row++) {
         this.addRow(`${listLines[row] ?? " ".repeat(listWidth)} ${rule}  ${paneLines[row] ?? ""}`, innerWidth);
       }
     } else {
       const listRows = Math.min(entries.length, Math.max(1, Math.floor((bodyRows - 1) / 2)));
-      const paneRows = bodyRows - 1 - listRows;
+      paneRows = bodyRows - 1 - listRows;
+      paneLines = this.renderPane(this.details(state, contentWidth, true), paneRows, contentWidth, state.detailScroll);
       for (const line of this.renderList(entries, listRows, contentWidth)) this.addRow(line, innerWidth);
       this.addRow(this.theme.border("─".repeat(contentWidth)), innerWidth);
-      for (const line of this.renderPane(this.details(state, contentWidth, true), paneRows, contentWidth)) this.addRow(line, innerWidth);
+      for (const line of paneLines) this.addRow(line, innerWidth);
     }
+    this.detailPageRows = Math.max(1, paneRows - 2);
 
     if (spacers) this.addRow("", innerWidth);
     this.addFrame("├", "┤");
-    this.addRow(this.renderFooter(state, contentWidth), innerWidth);
+    this.addRow(this.renderFooter(state, contentWidth, this.detailScrollMax > 0), innerWidth);
     this.addFrame("╰", "╯");
     return this.container.render(panelWidth);
   }
@@ -293,8 +323,7 @@ class McpSetupPanelView implements Component {
       status = "Pi found MCP-related setup options, but none are active in Pi yet.";
       tone = this.theme.needsAuth;
     } else {
-      const files = discovery.sources.filter((source) => source.serverCount > 0).length;
-      status = `${plural(discovery.totalServerCount, "server")} · ${plural(files, "config file")}`;
+      status = plural(discovery.totalServerCount, "server");
     }
 
     const extras: string[] = [];
@@ -316,11 +345,15 @@ class McpSetupPanelView implements Component {
     return this.theme.hint;
   }
 
-  /** One footer row: key hints on the left and, while an action runs, `Working…` on the right. */
-  private renderFooter(state: McpSetupPanelViewState, width: number): string {
+  /**
+   * One footer row: key hints on the left (with the scroll keys while the
+   * details overflow) and, while an action runs, `Working…` on the right.
+   */
+  private renderFooter(state: McpSetupPanelViewState, width: number, detailsOverflow: boolean): string {
     const busy = "Working…";
     const hintsWidth = state.busy ? width - visibleWidth(busy) - 2 : width;
-    const hints = fitText(this.keyHints(state.screen), Math.max(0, hintsWidth));
+    const keyHints = `${this.keyHints(state.screen)}${detailsOverflow ? " · pgup/pgdn scroll" : ""}`;
+    const hints = fitText(keyHints, Math.max(0, hintsWidth));
     if (!state.busy) return this.theme.hint(hints);
     const gap = Math.max(2, width - visibleWidth(hints) - visibleWidth(busy));
     return `${this.theme.hint(hints)}${" ".repeat(gap)}${this.theme.hint(busy)}`;
@@ -423,16 +456,24 @@ class McpSetupPanelView implements Component {
     return `${line}${" ".repeat(Math.max(0, width - used))}`;
   }
 
-  /** Renders exactly `rows` pane lines, cutting long content with a `… N more lines` row. */
-  private renderPane(content: PaneLine[], rows: number, width: number): string[] {
+  /**
+   * Renders exactly `rows` details lines starting `scroll` lines down. When the
+   * content doesn't fit and the pane has at least 3 rows, the first and last
+   * rows become muted `↑ N more` / `↓ N more` markers, the same as the list.
+   * Smaller panes show content only; the footer hint says they scroll.
+   */
+  private renderPane(content: PaneLine[], rows: number, width: number, scroll: number): string[] {
     const lines = [...content];
     while (lines.length > 0 && !lines[lines.length - 1]!.text.trim()) lines.pop();
-    let shown = lines;
-    if (lines.length > rows) {
-      let kept = Math.max(0, rows - 1);
-      // Keep the `… N more lines` row right under text rather than after a blank row.
-      while (kept > 0 && !lines[kept - 1]!.text.trim()) kept -= 1;
-      shown = [...lines.slice(0, kept), { text: `… ${plural(lines.length - kept, "more line")}`, tone: this.theme.hint }];
+    this.detailScrollMax = Math.max(0, lines.length - rows);
+    const start = Math.max(0, Math.min(scroll, this.detailScrollMax));
+    const end = Math.min(lines.length, start + rows);
+    const shown = lines.slice(start, end);
+    if (rows >= 3 && start > 0) {
+      shown[0] = { text: `↑ ${start + 1} more`, tone: this.theme.hint };
+    }
+    if (rows >= 3 && end < lines.length) {
+      shown[shown.length - 1] = { text: `↓ ${lines.length - end + 1} more`, tone: this.theme.hint };
     }
     const rendered = shown.map((line) => {
       const fitted = fitText(line.text, width);
@@ -689,6 +730,7 @@ export class McpSetupPanel {
   private sharedConfigTarget: SharedConfigTarget = "project";
   private selectedImports = new Set<ImportKind>();
   private busy = false;
+  private detailScroll = 0;
   private notice: Notice | null = null;
   private readonly tui: SetupPanelTui;
   private readonly view: McpSetupPanelView;
@@ -776,6 +818,9 @@ export class McpSetupPanel {
 
   handleInput(data: string): void {
     this.resetInactivityTimeout();
+    // Scrolling keeps the notice, cursor, and screen; any other key resets the scroll.
+    if (this.handleDetailScroll(data)) return;
+    this.detailScroll = 0;
     if (!this.busy) this.notice = null;
 
     if (matchesKey(data, "ctrl+c")) {
@@ -821,6 +866,22 @@ export class McpSetupPanel {
       const selected = actions[this.actionCursor];
       if (selected) void this.runAction(selected);
     }
+  }
+
+  /** PageUp/PageDown scroll the details by a page, shift+up/shift+down by one line. */
+  private handleDetailScroll(data: string): boolean {
+    let delta = 0;
+    if (matchesKey(data, "pageDown")) delta = this.view.detailPageSize;
+    else if (matchesKey(data, "pageUp")) delta = -this.view.detailPageSize;
+    else if (matchesKey(data, "shift+down")) delta = 1;
+    else if (matchesKey(data, "shift+up")) delta = -1;
+    else return false;
+    const next = Math.max(0, Math.min(this.view.maxDetailScroll, this.detailScroll + delta));
+    if (next !== this.detailScroll) {
+      this.detailScroll = next;
+      this.tui.requestRender();
+    }
+    return true;
   }
 
   private handleImportsInput(data: string): void {
@@ -968,6 +1029,7 @@ export class McpSetupPanel {
       };
     } finally {
       this.busy = false;
+      this.detailScroll = 0;
       this.tui.requestRender();
     }
   }
@@ -982,6 +1044,7 @@ export class McpSetupPanel {
       selectedImports: this.selectedImports,
       notice: this.notice,
       busy: this.busy,
+      detailScroll: this.detailScroll,
       onboardingState: this.options.onboardingState,
       discovery: this.discovery,
       actions: this.getActions(),

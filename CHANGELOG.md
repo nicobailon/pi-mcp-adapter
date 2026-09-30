@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `mcp-scripting` skill now says to write the real script first, check the first item's fields before a loop that writes, and fix the script from the fields listed when it fails or finds nothing.
 - When a server rejects Pi's OAuth client registration, the error now says what to do: for Figma's remote server, use the desktop app's server through `/mcp-adapter setup`; for other servers, set `oauth.clientId` if the provider gave you one. Before, it only said `Dynamic Client Registration rejected (HTTP 403): Forbidden`.
 - When nothing is listening at a `localhost`, `127.0.0.1`, or `[::1]` server URL, the error now says `Nothing is listening at <url>. Start the app or local process that serves this MCP server.` after the original connection error.
-- `/mcp-adapter setup` keeps a fixed size while you move through it, groups actions into sections, and shows details beside the list. The `Close` row is gone; press Esc to close.
+- `/mcp-adapter setup` keeps a fixed size while you move through it, groups actions into sections, and shows details beside the list; PgUp/PgDn scroll long details. The `Close` row is gone; press Esc to close.
 
 ### Fixed
 
