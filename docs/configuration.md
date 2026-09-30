@@ -36,31 +36,26 @@ Pi-specific files are the write targets for imported or shared global servers wh
 
 Preferred user-global shared config: `~/.config/mcp/mcp.json` (for all projects). Pi also reads the tool-agnostic global paths `~/.agents/mcp.json` and `~/.agents/mcp/mcp.json` as compatibility inputs.
 
-On Pi 0.99 and later, the adapter reads Pi's own `<Pi agent dir>/mcp.json` and `.pi/mcp.json` in Pi's format, so servers added with `pi mcp add` show up here too. Only `mcpServers` is read, and each entry is translated:
+On Pi 0.99 and later, the adapter also reads Pi's own `<Pi agent dir>/mcp.json` and `.pi/mcp.json`, so servers added with `pi mcp add` work here. It reads only their `mcpServers` and translates each entry:
 
 | Pi field | Adapter field |
 |---|---|
-| `command`, `args`, `env`, `cwd`, `url`, `headers` | same |
-| `type: "stdio"`, `"http"`, `"streamable-http"` | dropped (the transport follows `command` or `url`) |
+| `command`, `args`, `env`, `cwd`, `url`, `headers`, `description` | same |
+| `type: "stdio"`, `"http"`, `"streamable-http"` | dropped |
 | `enabled: false` | `disabled: true` |
 | `timeout` (seconds) | `requestTimeoutMs` |
 | `oauth.clientId`, `clientSecret`, `scope`, `clientName` | same |
 | `oauth.callbackPort` | `oauth.redirectUri: "http://127.0.0.1:<port>/callback"` |
-| `oauth.callbackUrl` | `oauth.redirectUri`; a URL without a port gets `callbackPort`, or `{port}` for a free port |
-| `exposure: "direct"` | `directTools: true` |
-| `exposure: "deferred"` | `directTools: "search"` |
-| `exposure: "codemode"` | proxy only (the default) |
-| `exposure: "hidden"` | `disabled: true` |
+| `oauth.callbackUrl` | `oauth.redirectUri`; without a port it gets `callbackPort`, or `{port}` |
+| `exposure: "direct"` / `"deferred"` / `"codemode"` / `"hidden"` | `directTools: true` / `directTools: "search"` / proxy only / `disabled: true` |
 | `toolExposure` exact names set to `"direct"` | `directTools: [names]` |
-| `toolExposure` entries set to `"hidden"` | `excludeTools` (patterns only when every entry is `"hidden"`) |
+| `toolExposure` exact names set to `"hidden"` | `excludeTools` |
 
-Entries with `type: "sse"` or `auth: { "provider": ... }`, and entries Pi itself rejects, are skipped. Any other setting without an exact equivalent, such as a per-tool `codemode` or `deferred` or a pattern whose order matters, is ignored: the server keeps its server-level setting. `description` and the top-level `autoEnableCodemode` are ignored silently. Skipped entries and ignored settings are reported once per file at startup, and each server's ignored settings are listed when you select it in `/mcp-adapter`.
+Entries with `type: "sse"` or `auth: { "provider": ... }`, and entries Pi rejects, are skipped. Other settings without an exact equivalent are ignored, and the server keeps its server-level setting. Examples are a per-tool `codemode` or `deferred`, a hidden pattern, or a hidden name that starts with the server's tool prefix. Top-level `settings`, `imports`, `claudePlugins`, and `mcp-servers` come from old adapter configs; they are ignored too and belong in `mcp-adapter.json`. Everything skipped or ignored is reported once per file at startup and listed under the server in `/mcp-adapter`.
 
-When `.pi/mcp.json` defines a server that `<Pi agent dir>/mcp.json` also defines, the project entry replaces the global one as a whole, as in Pi. The adapter never writes Pi's files: changes such as direct tools go to the `mcp-adapter.json` in the same folder. `.pi/mcp.json` is project config, so its servers need project trust and approval like `.mcp.json` servers. Exclusive mode (`PI_MCP_CONFIG_MODE=exclusive`) does not read either file.
+A server in `.pi/mcp.json` replaces the same-named server from `<Pi agent dir>/mcp.json` as a whole, as in Pi. The adapter never writes Pi's files; changes such as direct tools go to the `mcp-adapter.json` in the same folder. `.pi/mcp.json` servers need project trust and approval like `.mcp.json` servers. Exclusive mode reads neither file.
 
-Adapter-only keys in these files (`settings`, `imports`, `claudePlugins`, and the old `mcp-servers` key) come from old adapter configs and are ignored with a notice; move them into `mcp-adapter.json`.
-
-On Pi 0.84 to 0.87, the adapter does not read `<Pi agent dir>/mcp.json` or `.pi/mcp.json` at all. If you previously used either file with this adapter, rename it to `mcp-adapter.json`; the format is unchanged, so a plain `mv` works (merge the files if the target already exists).
+On Pi 0.84 to 0.87, the adapter does not read either file. If you used one with this adapter, rename it to `mcp-adapter.json` (merge the files if the target exists).
 
 Host-specific configs are detected and shown by `/mcp-adapter setup` and `pi-mcp-adapter init`, but they are compatibility inputs rather than normal setup paths and are not loaded automatically. The normal `/mcp-adapter` panel does not scan host-specific files when `settings.hostConfigDiscovery` is `"off"`. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `pi-mcp-adapter init --discover-host-configs`. The default is `"off"`; `"prompt"` is available for integrations that want detection without activation. Host configs are lower precedence than every normal config source, and `/mcp-adapter setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
 

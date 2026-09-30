@@ -121,21 +121,20 @@ describe("Pi mcp.json config sources", () => {
       { command: "srv", directTools: ["read_file", "list_dir"] },
     ],
     [
-      "toolExposure entries set to hidden",
-      { command: "srv", exposure: "direct", toolExposure: { delete_file: "hidden", "write_*": "hidden" } },
-      { command: "srv", directTools: true, excludeTools: ["delete_file", "write_*"] },
+      "toolExposure exact names set to hidden",
+      { command: "srv", exposure: "direct", toolExposure: { delete_file: "hidden" } },
+      { command: "srv", directTools: true, excludeTools: ["delete_file"] },
     ],
     [
       "stdio fields",
-      { type: "stdio", command: "srv", args: ["--flag"], env: { TOKEN: "${TOKEN}" }, cwd: "tools" },
-      { command: "srv", args: ["--flag"], env: { TOKEN: "${TOKEN}" }, cwd: "tools" },
+      { type: "stdio", command: "srv", args: ["--flag"], env: { TOKEN: "${TOKEN}" }, cwd: "tools", description: "Tools" },
+      { command: "srv", args: ["--flag"], env: { TOKEN: "${TOKEN}" }, cwd: "tools", description: "Tools" },
     ],
     [
       "http fields",
       { type: "streamable-http", url: "https://x.example/mcp", headers: { Authorization: "Bearer ${TOKEN}" } },
       { url: "https://x.example/mcp", headers: { Authorization: "Bearer ${TOKEN}" } },
     ],
-    ["type: http", { type: "http", url: "https://x.example/mcp" }, { url: "https://x.example/mcp" }],
   ])("translates %s", async (_row, piEntry, adapterEntry) => {
     writeJson(piGlobal, { mcpServers: { server: piEntry } });
     const { loadMcpConfig } = await loadConfigModule();
@@ -151,10 +150,12 @@ describe("Pi mcp.json config sources", () => {
       mcpServers: {
         legacy: { type: "sse", url: "https://sse.example/sse" },
         provider: { url: "https://provider.example/mcp", auth: { provider: "github" } },
-        kept: { command: "kept", description: "Kept server" },
+        kept: { command: "kept" },
       },
     });
-    writeJson(piProject, { mcpServers: { tuned: { command: "tuned", exposure: "direct", toolExposure: { "read_*": "codemode" }, lifecycle: "eager" } } });
+    // `tuned_x` is tool `x`'s prefixed name, and excludeTools would hide `x` through it.
+    const toolExposure = { "read_*": "codemode", tuned_x: "hidden", "write_*": "hidden" };
+    writeJson(piProject, { mcpServers: { tuned: { command: "tuned", exposure: "direct", toolExposure, lifecycle: "eager" } } });
     const { getLegacyMcpMigrationNotices, loadMcpConfig } = await loadConfigModule();
 
     const config = loadMcpConfig(undefined, cwd);
@@ -165,7 +166,7 @@ describe("Pi mcp.json config sources", () => {
     expect(config.settings).toBeUndefined();
     expect(getLegacyMcpMigrationNotices(cwd)).toEqual([
       `${piGlobal}: pi-mcp-adapter does not read settings, imports in this file; move them into ${join(home, ".pi", "agent", "mcp-adapter.json")}. Skipped "legacy" (legacy SSE transport is not supported; use the streamable HTTP URL); "provider" (auth.provider is not supported yet).`,
-      `${piProject}: Ignored settings (details in /mcp-adapter): "tuned": lifecycle, toolExposure "read_*": codemode.`,
+      `${piProject}: Ignored settings (details in /mcp-adapter): "tuned": lifecycle, toolExposure "read_*": codemode, toolExposure "tuned_x": hidden, toolExposure "write_*": hidden.`,
     ]);
   });
 

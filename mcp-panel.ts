@@ -768,7 +768,7 @@ class McpPanel {
         if (!tool) return;
         this.toggleToolDirect(server, tool);
         if (tool.isDirect && server.source === "import") {
-          this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
+          this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to adapter config on save`;
         }
         this.updateDirty();
       }
@@ -927,7 +927,7 @@ class McpPanel {
     if (item.type === "server") {
       const newState = !server.tools.every((t) => t.isDirect);
       if (server.source === "import" && newState) {
-        this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
+        this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to adapter config on save`;
       }
       let directTokens = 0;
       for (const tool of server.tools) {
@@ -941,7 +941,7 @@ class McpPanel {
       if (!tool) return;
       this.toggleToolDirect(server, tool);
       if (tool.isDirect && server.source === "import") {
-        this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to user config on save`;
+        this.importNotice = `Imported from ${sanitizeDisplayText(server.importKind ?? "external")} — will copy to adapter config on save`;
       }
     }
     this.updateDirty();

@@ -10,7 +10,7 @@ import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPl
 import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
 import { validateJevSettings } from "./jev-client.js";
-import { formatServerNamespace, isServerDisabled } from "./types.js";
+import { formatServerNamespace, getServerPrefix, isServerDisabled } from "./types.js";
 import { parseJsonWithComments, stripUtf8Bom, toStringRecord } from "./utils.js";
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [
@@ -118,11 +118,7 @@ export function getProjectPiMcpConfigPath(cwd = process.cwd()) {
     return resolve(cwd, getConfigDirName(), PI_MCP_CONFIG_NAME);
 }
 let piMcpConfigEnabled = false;
-/**
- * @internal Whether Pi's own `mcp.json` files are config sources. Only the extension turns this
- * on, once at load and only on Pi 0.99+, so every loader in the process agrees; the CLI and
- * embedders keep it off. On older Pi those files are old adapter configs.
- */
+/** @internal Set once by the extension on Pi 0.99+, so every loader in the process agrees. */
 export function setPiMcpConfigEnabled(enabled) {
     piMcpConfigEnabled = enabled;
 }
@@ -329,13 +325,12 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
             projectServers.set(name, { path: source.path });
     }
     const piProjectSource = sourceSpecs.find((source) => source.id === "pi-mcp-project");
-    const piProjectNames = Object.keys(piProjectSource ? readSourceConfig(piProjectSource.id, piProjectSource.readPath)?.mcpServers ?? {} : {});
+    const piProjectNames = Object.keys((piProjectSource && readPiMcpConfig(piProjectSource.readPath))?.mcpServers ?? {});
     for (const source of sourceSpecs) {
         const loaded = readSourceConfig(source.id, source.readPath);
         if (!loaded)
             continue;
-        // Pi replaces a global entry with the project entry of the same name. Drop it here, since
-        // mergeServerMaps merges field by field and would leak its fields into the project entry.
+        // Pi replaces a global entry that the project file redefines; mergeServerMaps would merge fields.
         if (source.id === "pi-mcp-global") {
             for (const name of piProjectNames)
                 delete loaded.mcpServers[name];
@@ -954,13 +949,10 @@ function isPiMcpSource(id) {
     return id === "pi-mcp-global" || id === "pi-mcp-project";
 }
 function readSourceConfig(id, path) {
-    if (!isPiMcpSource(id))
-        return readValidatedConfig(path, `MCP config from ${path}`);
-    const file = readPiMcpConfig(path);
-    return file && { mcpServers: file.mcpServers };
+    return isPiMcpSource(id) ? readPiMcpConfig(path) : readValidatedConfig(path, `MCP config from ${path}`);
 }
 const PI_MCP_EXPOSURES = ["codemode", "codemode-deferred", "deferred", "direct", "hidden"];
-/** Read a Pi `mcp.json`. Only `mcpServers` is used; Pi's `autoEnableCodemode` is ignored. */
+/** Pi's top-level `autoEnableCodemode` has no adapter equivalent and is ignored. */
 function readPiMcpConfig(path) {
     if (!existsSync(path))
         return null;
@@ -997,13 +989,13 @@ function readPiMcpConfig(path) {
     }
     return file;
 }
-/** Translate one Pi server entry, or return why it is skipped. Pi skips the same invalid entries. */
+/** Returns why the entry is skipped when Pi would reject it or the adapter can't run it. */
 function translatePiMcpServer(name, value) {
     if (!/^[A-Za-z0-9_-]+$/.test(name))
         return 'invalid server name (use letters, digits, "_" and "-")';
     if (!isRecord(value))
         return "must be an object";
-    const { type, command, args, env, cwd, url, headers, oauth, exposure, toolExposure, enabled, timeout, auth, description: _description, ...unknown } = value;
+    const { type, command, args, env, cwd, url, headers, oauth, exposure, toolExposure, enabled, timeout, auth, description, ...unknown } = value;
     const isExposure = (candidate) => typeof candidate === "string" && PI_MCP_EXPOSURES.includes(candidate);
     if (exposure !== undefined && !isExposure(exposure))
         return `exposure must be one of ${PI_MCP_EXPOSURES.join(", ")}`;
@@ -1014,6 +1006,8 @@ function translatePiMcpServer(name, value) {
         return "enabled must be a boolean";
     if (timeout !== undefined && (typeof timeout !== "number" || !(timeout > 0)))
         return "timeout must be a positive number of seconds";
+    if (description !== undefined && typeof description !== "string")
+        return "description must be a string";
     if (type === "sse")
         return "legacy SSE transport is not supported; use the streamable HTTP URL";
     if (isRecord(auth) && typeof auth.provider === "string")
@@ -1052,6 +1046,8 @@ function translatePiMcpServer(name, value) {
         return 'needs either "command" (stdio) or "url" (streamable HTTP)';
     }
     ignored.push(...otherTransportKeys.filter((key) => value[key] !== undefined));
+    if (description !== undefined)
+        entry.description = description;
     // `codemode-deferred` is an alias of `codemode` since Pi 0.99.2; both are proxy-only here.
     const serverExposure = exposure === undefined || exposure === "codemode-deferred" ? "codemode" : exposure;
     if (enabled === false || serverExposure === "hidden")
@@ -1062,20 +1058,18 @@ function translatePiMcpServer(name, value) {
         entry.directTools = "search";
     if (timeout !== undefined)
         entry.requestTimeoutMs = Math.round(timeout * 1000);
-    const toolEntries = Object.entries(toolExposure ?? {}).map(([tool, toolValue]) => [tool, toolValue === "codemode-deferred" ? "codemode" : toolValue]);
-    // Pi picks an exact name over patterns, then the first matching pattern. excludeTools has no
-    // order, so hidden patterns translate only when every entry is hidden.
-    const allHidden = toolEntries.every(([, toolValue]) => toolValue === "hidden");
+    // excludeTools also matches prefixed names, so `srv_x` would hide tool `x` of server `srv`, and
+    // treats `*` and `?` as wildcards; such hidden entries have no exact equivalent.
+    const prefixes = ["server", "short", "mcp"].map((mode) => `${getServerPrefix(name, mode)}_`);
     const directTools = [];
     const excludeTools = [];
-    for (const [tool, toolValue] of toolEntries) {
+    for (const [tool, rawValue] of Object.entries(toolExposure ?? {})) {
+        const toolValue = rawValue === "codemode-deferred" ? "codemode" : rawValue;
         if (toolValue === serverExposure)
             continue;
-        // Adapter tool selectors treat `?` as a wildcard; Pi matches it literally.
-        const exact = !tool.includes("*") && !tool.includes("?");
-        if (toolValue === "hidden" && !tool.includes("?") && (exact || allHidden))
+        if (toolValue === "hidden" && !/[*?]/.test(tool) && !prefixes.some((prefix) => tool.startsWith(prefix)))
             excludeTools.push(tool);
-        else if (toolValue === "direct" && exact && serverExposure === "codemode")
+        else if (toolValue === "direct" && !tool.includes("*") && serverExposure === "codemode")
             directTools.push(tool);
         else
             ignored.push(`toolExposure ${JSON.stringify(tool)}: ${toolValue}`);
@@ -1703,7 +1697,6 @@ export function getServerProvenance(overridePath, cwd = process.cwd()) {
         const loaded = readSourceConfig(source.id, source.readPath);
         if (!loaded)
             continue;
-        const piIgnored = isPiMcpSource(source.id) ? readPiMcpConfig(source.readPath)?.ignoredSettings : undefined;
         if (loaded.imports?.length) {
             for (const importKind of loaded.imports) {
                 const imported = loadImportedConfig(importKind, cwd, `Failed to inspect imported MCP config from ${importKind}:`);
@@ -1718,7 +1711,8 @@ export function getServerProvenance(overridePath, cwd = process.cwd()) {
             }
         }
         for (const name of Object.keys(loaded.mcpServers)) {
-            const ignoredSettings = piIgnored?.get(name) ?? (isPiMcpSource(source.id) ? undefined : provenance.get(name)?.ignoredSettings);
+            // A Pi entry brings its own list; other sources keep the one from the Pi entry below them.
+            const ignoredSettings = loaded.ignoredSettings ? loaded.ignoredSettings.get(name) : provenance.get(name)?.ignoredSettings;
             provenance.set(name, {
                 path: source.writePath,
                 kind: source.kind,
