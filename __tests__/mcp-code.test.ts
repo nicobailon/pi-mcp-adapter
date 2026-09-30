@@ -346,10 +346,20 @@ describe("runMcpScript", () => {
     const result = await runMcpScript({ ...state, observedOutputs: new WeakMap() },
       'await tools.fixture_echo({ value: "hidden" }); return (await tools.describe({ path: "fixture_echo" })).observedOutput;');
     expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
-      target: "data.structuredContent",
+      target: '(await tools.call("fixture_echo", args)).data.structuredContent',
       typeScript: "{ echoed: string; }",
       calls: 1,
     });
+  });
+
+  it("lists the fields seen when a script finds nothing, and not when it returns data", async () => {
+    const empty = await runMcpScript({ ...state, observedOutputs: new WeakMap() },
+      'const result = await tools.fixture_echo({ value: "hidden" }); return result.data.structuredContent.items ?? [];');
+    expect(textBlocks(empty).join("\n")).toContain('(await tools.call("fixture_echo", args)).data.structuredContent is:\n{ echoed: string; }]');
+
+    const found = await runMcpScript({ ...state, observedOutputs: new WeakMap() },
+      'const result = await tools.fixture_echo({ value: "hidden" }); return result.data.structuredContent.echoed;');
+    expect(textBlocks(found).join("\n")).not.toContain("Result fields seen");
   });
 
   it("keeps active failed-backoff tools out of script describe results", async () => {

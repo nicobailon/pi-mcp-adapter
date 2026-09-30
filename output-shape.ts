@@ -33,6 +33,8 @@ const MAX_NODES_PER_CALL = 1000;
 // Sizes count UTF-16 code units (string length), not bytes.
 const MAX_SHAPE_CHARS = 4 * 1024;
 const MAX_JSON_TEXT_CHARS = 256 * 1024;
+// Object shapes at least this long that appear more than once are written once as a named type.
+const MIN_ALIAS_CHARS = 80;
 
 export function recordObservedOutput(
   state: McpExtensionState,
@@ -67,21 +69,59 @@ export function getObservedOutput(
 }
 
 export function renderOutputShape(shape: OutputShape): string {
-  if (shape.anyOf) return shape.anyOf.map(renderOutputShape).join(" | ");
+  // First pass: each object's full text, counted, so APIs that repeat a wide object (a user under
+  // user, assignee, and assignees) show its fields once instead of three times.
+  const plain = new Map<OutputShape, string>();
+  const uses = new Map<string, { count: number; field: string }>();
+  const once = renderShape(shape, "item", (node, field, text) => {
+    plain.set(node, text);
+    const use = uses.get(text);
+    if (use) use.count++;
+    else uses.set(text, { count: 1, field });
+    return text;
+  });
+  const names = new Map<string, string>();
+  const taken = new Set(["Record"]);
+  for (const [text, use] of uses) {
+    if (use.count < 2 || text.length < MIN_ALIAS_CHARS) continue;
+    const words = use.field.split(/[^A-Za-z0-9]+/).filter(Boolean).map(part => part[0]!.toUpperCase() + part.slice(1)).join("");
+    const base = /^[A-Za-z]/.test(words) ? words : `T${words}`;
+    let name = base;
+    for (let suffix = 2; taken.has(name); suffix++) name = `${base}${suffix}`;
+    taken.add(name);
+    names.set(text, name);
+  }
+  if (names.size === 0) return once;
+  const definitions = new Map<string, string>();
+  const main = renderShape(shape, "item", (node, _field, text) => {
+    const name = names.get(plain.get(node)!);
+    if (!name) return text;
+    if (!definitions.has(name)) definitions.set(name, text);
+    return name;
+  });
+  return [...[...definitions].map(([name, body]) => `type ${name} = ${body};`), main].join("\n");
+}
+
+function renderShape(
+  shape: OutputShape,
+  field: string,
+  onObject: (node: OutputShape, field: string, text: string) => string,
+): string {
+  if (shape.anyOf) return shape.anyOf.map(variant => renderShape(variant, field, onObject)).join(" | ");
   switch (shape.type) {
     case undefined:
       return "unknown";
     case "object": {
-      if (shape.additionalProperties) return `Record<string, ${renderOutputShape(shape.additionalProperties)}>`;
+      if (shape.additionalProperties) return `Record<string, ${renderShape(shape.additionalProperties, field, onObject)}>`;
       const required = new Set(shape.required);
       const properties = Object.entries(shape.properties ?? {})
-        .map(([name, property]) => `${formatPropertyName(name)}${required.has(name) ? "" : "?"}: ${renderOutputShape(property)};`);
-      return properties.length === 0 ? "{}" : `{ ${properties.join(" ")} }`;
+        .map(([name, property]) => `${formatPropertyName(name)}${required.has(name) ? "" : "?"}: ${renderShape(property, name, onObject)};`);
+      return onObject(shape, field, properties.length === 0 ? "{}" : `{ ${properties.join(" ")} }`);
     }
     case "array": {
       if (!shape.items) return "unknown[]";
-      const item = renderOutputShape(shape.items);
-      return item.includes(" | ") ? `(${item})[]` : `${item}[]`;
+      const item = renderShape(shape.items, field, onObject);
+      return shape.items.anyOf ? `(${item})[]` : `${item}[]`;
     }
     default:
       return shape.type;

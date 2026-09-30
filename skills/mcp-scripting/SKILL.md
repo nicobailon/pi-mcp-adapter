@@ -33,7 +33,7 @@ return issues.filter((issue) => issue.comments === 0).map((issue) => issue.numbe
 
 A tool call's `data` is the raw MCP `CallToolResult` (`{ content, structuredContent?, isError? }`), not the domain payload; resource reads return text. Use `data.structuredContent` when present. Otherwise most JSON APIs return their payload as text, so parse `data.content[0].text` (some servers emit newline-delimited JSON). If neither shape is understood, emit the envelope for inspection instead of coercing it to `[]` or `{}`.
 
-To learn an unfamiliar result's fields, call the tool once and emit `(await tools.describe({ path })).observedOutput`, or one item. Never emit the whole list.
+Write the real script first instead of spending a turn looking at a result. Use `observedOutput` when describe has it; otherwise use the tool description and the field names the API most likely uses. Before a loop that writes (comments, closes, creates), check that the first item has the fields you filter on and throw if it does not, so a wrong guess stops before it changes anything. When a script throws, times out, or returns `[]`, `{}`, `null`, or `""`, its result lists the fields seen from the tools it called; fix the script from that. Never emit a whole list to inspect it.
 
 ## Limits
 

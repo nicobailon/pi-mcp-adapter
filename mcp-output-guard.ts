@@ -160,7 +160,10 @@ export async function guardMcpOutput(
   if (truncation.truncated) {
     const { path: fullOutputPath, error: writeError } = await saveArtifact("output", composedOutput);
     const initialNotice = formatTruncationNotice(truncation, fullOutputPath, writeError);
-    const previewBudget = reserveBudget(maxBytes, maxLines, `${initialNotice}${footer}`);
+    // Footers are optional guidance: drop one that would not fit beside the notice rather than exceed the limits.
+    const noticeWithFooter = textStats(`\n\n${initialNotice}${footer}`);
+    const keptFooter = noticeWithFooter.bytes < maxBytes && noticeWithFooter.lines < maxLines ? footer : "";
+    const previewBudget = reserveBudget(maxBytes, maxLines, `${initialNotice}${keptFooter}`);
     const preview = truncateHead(composedOutput, {
       maxBytes: previewBudget.maxBytes,
       maxLines: previewBudget.maxLines,
@@ -170,7 +173,7 @@ export async function guardMcpOutput(
       fullOutputPath,
       writeError,
     );
-    const finalText = `${preview.content}\n\n${notice}${footer}`;
+    const finalText = `${preview.content}\n\n${notice}${keptFooter}`;
     const finalStats = textStats(finalText);
 
     guardedContent = [{ type: "text" as const, text: finalText }, ...imageBlocks];

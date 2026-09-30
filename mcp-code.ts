@@ -15,11 +15,20 @@ import type { McpExtensionState } from "./state.ts";
 import { findToolByName, formatSchema, hasSchemaDescriptions } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import { getObservedOutput, renderOutputShape } from "./output-shape.ts";
+import type { ObservedOutput } from "./output-shape.ts";
 import type { ContentBlock } from "./types.ts";
 
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 const MCP_SCRIPT_INTERMEDIATE_MAX_BYTES = 16 * 1024 * 1024;
 const MCP_SCRIPT_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
+const SEEN_FIELDS_MAX_CHARS = 8 * 1024;
+const EMPTY_RETURNS = new Set(["[]", "{}", "null", ""]);
+
+// Spelled out from the call because models otherwise read `content` off the { ok, data } envelope.
+const observedTarget = (observed: ObservedOutput, path: string) => {
+  const call = `(await tools.call(${JSON.stringify(path)}, args))`;
+  return observed.source === "structuredContent" ? `${call}.data.structuredContent` : `JSON.parse(${call}.data.content[0].text)`;
+};
 
 class McpScriptTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -162,6 +171,9 @@ export async function runMcpScript(
   }));
   let callsSnapshot: ScriptOperation[] | undefined;
   let intermediateBytes = 0;
+  // Successful calls by path, for listing the result fields they returned when the script fails or finds nothing.
+  const calledTools = new Map<string, { server: string; tool: string }>();
+  let returnedEmpty = false;
   const reserveIntermediateBytes = (dataJson: string): boolean => {
     const bytes = Buffer.byteLength(dataJson, "utf8");
     if (bytes > MCP_SCRIPT_INTERMEDIATE_MAX_BYTES - intermediateBytes) return false;
@@ -210,6 +222,9 @@ export async function runMcpScript(
     }
     // Rejected responses do not consume budget. This bounds transfer, not upstream allocation.
     calls[index] = { operation: "call", path, ok: true, durationMs: Date.now() - startedAt, startedAt };
+    if (typeof details.server === "string" && typeof details.tool === "string") {
+      calledTools.set(typeof details.canonicalTool === "string" ? details.canonicalTool : path, { server: details.server, tool: details.tool });
+    }
     return { dataJson };
   };
 
@@ -355,7 +370,7 @@ export async function runMcpScript(
           ...(tool.annotations ? { annotations: tool.annotations } : {}),
           ...(observed ? {
             observedOutput: {
-              target: observed.source === "structuredContent" ? "data.structuredContent" : "JSON.parse(data.content[0].text)",
+              target: observedTarget(observed, tool.name),
               typeScript: renderOutputShape(observed.shape),
               calls: observed.calls,
             },
@@ -457,6 +472,8 @@ export async function runMcpScript(
             rejectOutputBudget();
             return;
           }
+          const returned = message.returnBlock as { type?: unknown; text?: unknown } | undefined;
+          returnedEmpty = returned?.type === "text" && typeof returned.text === "string" && EMPTY_RETURNS.has(returned.text.trim());
           completed = true;
           resolve();
           return;
@@ -514,10 +531,30 @@ export async function runMcpScript(
     await worker?.terminate();
   }
 
+  // A script that fails or finds nothing after calling a tool without an output schema usually guessed
+  // the result fields wrong. Listing the fields seen saves a separate turn spent looking at the data.
+  let seenFields: string | undefined;
+  if (errorCode === "timeout" || errorCode === "script_error" || returnedEmpty || output.length === 0) {
+    const sections: string[] = [];
+    let chars = 0;
+    for (const [path, { server, tool }] of calledTools) {
+      const meta = state.toolMetadata.get(server)?.find(entry => entry.originalName === tool && !entry.resourceUri);
+      const observed = meta && getObservedOutput(state, server, meta);
+      if (!observed) continue;
+      const section = `${observedTarget(observed, path)} is:\n${renderOutputShape(observed.shape)}`;
+      if (chars + section.length > SEEN_FIELDS_MAX_CHARS) break;
+      chars += section.length;
+      sections.push(section);
+    }
+    if (sections.length > 0) {
+      seenFields = `\n\n[Result fields seen from the tools this script called (names and types only, not a contract):\n${sections.join("\n\n")}]`;
+    }
+  }
+
   // Snapshot before the asynchronous output guard; the terminated worker can no longer emit.
   const guarded = await guardMcpOutput(
     output.length > 0 ? [...output] : [{ type: "text", text: "(no output)" }],
-    resolveMcpOutputGuardOptions(state.config.settings),
+    { ...resolveMcpOutputGuardOptions(state.config.settings), ...(seenFields ? { footer: seenFields } : {}) },
   );
   return {
     content: guarded.content,

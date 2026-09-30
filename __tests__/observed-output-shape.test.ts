@@ -93,4 +93,24 @@ describe("observed output shapes", () => {
 
     expect(describeText(state)).toContain("labels: { name: string; }[];");
   });
+
+  it("writes a wide object that repeats once as a named type", async () => {
+    const person = { login: "ada", id: 1, avatar_url: "https://example.com/a", html_url: "https://example.com/ada", followers_url: "https://example.com/f" };
+    const state = stateWith([{ content: [], structuredContent: { user: person, assignee: person, reviewers: [person] } }]);
+    await executeCall(state, "demo_list", {});
+
+    expect(describeText(state)).toContain(
+      "type User = { login: string; id: number; avatar_url: string; html_url: string; followers_url: string; };\n"
+      + "{ user: User; assignee: User; reviewers: User[]; }",
+    );
+  });
+
+  it("names repeated objects under numeric-looking fields with valid, distinct type names", async () => {
+    const words = { alpha: "a", bravo: "b", charlie: "c", delta: "d", echo: "e", foxtrot: "f" };
+    const counts = { alpha: 1, bravo: 2, charlie: 3, delta: 4, echo: 5, foxtrot: 6 };
+    const state = stateWith([{ content: [], structuredContent: { $123: words, first: words, _123: counts, second: counts } }]);
+    await executeCall(state, "demo_list", {});
+
+    expect(describeText(state)).toContain("{ $123: T123; first: T123; _123: T1232; second: T1232; }");
+  });
 });

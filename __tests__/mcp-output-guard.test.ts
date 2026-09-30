@@ -436,6 +436,17 @@ describe("guardMcpOutput", () => {
     expect(saved).toBe("Error: body\n\nExpected parameters:\n{}");
   });
 
+  it("drops a footer that would not fit the limits beside the truncation notice", async () => {
+    const guarded = await guardMcpOutput(
+      [{ type: "text", text: "x".repeat(5000) }],
+      { maxBytes: 1024, footer: `\n\n[${"f".repeat(2000)}]` },
+    );
+
+    const text = (guarded.content[0] as { text: string }).text;
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(1024);
+    expect(text).not.toContain("ffff");
+  });
+
   it("can be disabled to return raw output and raw details", async () => {
     const text = "x".repeat(1000);
     const rawMcpResult = { content: [{ type: "text", text }], isError: false };
