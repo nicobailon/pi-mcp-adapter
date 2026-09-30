@@ -14,7 +14,7 @@ export function getLargeDirectToolsAdvisory(config: McpConfig, specs: readonly D
   if (config.settings?.warnOnLargeDirectTools === false) return undefined;
   const eagerCount = specs.filter((spec) => !spec.lazy).length;
   if (eagerCount < DIRECT_TOOLS_ADVISORY_THRESHOLD) return undefined;
-  return `MCP: ${eagerCount} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered. Set settings.warnOnLargeDirectTools to false to hide this advisory.`;
+  return `MCP: ${eagerCount} direct tools resolved. Each direct tool adds prompt context; the direct tools guide in docs/tools.md recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered. Set settings.warnOnLargeDirectTools to false to hide this advisory.`;
 }
 
 /**

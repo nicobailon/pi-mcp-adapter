@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The README is now a short overview. The full reference moved into `docs/`: configuration, server options, authentication (formerly `OAUTH.md`), using MCP tools, scripting, prompts and MCP UI, and the extension API.
+
 ### Fixed
 
 - Connecting to Figma (desktop) while its server is off now says nothing is listening on `127.0.0.1:3845` instead of a bare `fetch failed`.

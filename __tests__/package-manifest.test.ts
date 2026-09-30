@@ -27,13 +27,17 @@ describe("package.json files", () => {
     expect(skill).toMatch(/^disable-model-invocation:\s*true\s*$/m);
   });
 
-  it("ships the OAuth guide linked by the published README", () => {
+  it("ships every doc section the published README links to", () => {
     const readme = readFileSync(join(repoRoot, "README.md"), "utf-8");
-    const guide = readme.match(/\[OAuth\]\(([^)#]+)#token-storage\)/)?.[1];
+    const links = [...readme.matchAll(/\(https:\/\/github\.com\/nicobailon\/pi-mcp-adapter\/blob\/main\/(docs\/[\w-]+\.md)(?:#([\w-]+))?\)/g)];
 
-    expect(guide).toBe("OAUTH.md");
-    expect(packageJson.files).toContain(guide);
-    expect(readFileSync(join(repoRoot, "OAUTH.md"), "utf-8")).toMatch(/^## Token Storage$/m);
+    expect(links.length).toBeGreaterThan(0);
+    expect(packageJson.files).toContain("docs");
+    for (const [, path, anchor] of links) {
+      const headings = readFileSync(join(repoRoot, path!), "utf-8").match(/^#+ .+$/gm)!
+        .map((heading) => heading.replace(/^#+ /, "").toLowerCase().replace(/[^\w\- ]/g, "").replaceAll(" ", "-"));
+      if (anchor) expect(headings, `${path}#${anchor}`).toContain(anchor);
+    }
   });
 
   it("exports source entry points and plain Node host helpers", () => {
