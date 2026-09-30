@@ -248,19 +248,30 @@ describe("semantic search", () => {
   });
 
   it("aborts and traces an in-flight semantic worker search at the script deadline", async () => {
-    const evaluator: SemanticSearchEvaluator = (_state, _input, options) => new Promise(resolve => {
-      options.signal?.addEventListener("abort", () => resolve({ ok: false, error: { code: "aborted", message: "aborted" } }), { once: true });
-    });
-    const result = await runMcpScript(
-      stateWithTools(),
-      'await tools.search({ query: "umbrella", searchMode: "semantic" })',
-      100,
-      undefined,
-      undefined,
-      undefined,
-      evaluator,
-    );
-    expect(result.details).toMatchObject({ error: "timeout", calls: [{ operation: "search", query: "umbrella", ok: false, error: "incomplete" }] });
+    // The deadline also covers worker startup, so it only fires once the search is in flight.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let searchStarted!: () => void;
+      const searching = new Promise<void>(resolve => { searchStarted = resolve; });
+      const evaluator: SemanticSearchEvaluator = (_state, _input, options) => new Promise(resolve => {
+        options.signal?.addEventListener("abort", () => resolve({ ok: false, error: { code: "aborted", message: "aborted" } }), { once: true });
+        searchStarted();
+      });
+      const run = runMcpScript(
+        stateWithTools(),
+        'await tools.search({ query: "umbrella", searchMode: "semantic" })',
+        100,
+        undefined,
+        undefined,
+        undefined,
+        evaluator,
+      );
+      await searching;
+      await vi.advanceTimersByTimeAsync(100);
+      expect((await run).details).toMatchObject({ error: "timeout", calls: [{ operation: "search", query: "umbrella", ok: false, error: "incomplete" }] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("applies the script token budget to semantic worker searches", async () => {
