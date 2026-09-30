@@ -607,17 +607,22 @@ export function updateMetadataCache(
   const tools = serializeTools(connection.tools);
   let resources = definition.exposeResources === false ? [] : serializeResources(connection.resources);
   const sessionEntry = state.sessionMetadata?.get(serverName);
+  const cacheScope = connection.toolListHints?.cacheScope;
+  // Metadata from a private listing is tied to that authorization context; it may only fill an entry that is private too.
+  const sessionFallback = sessionEntry?.configHash === configHash && (sessionEntry.cacheScope !== "private" || cacheScope === "private")
+    ? sessionEntry
+    : undefined;
   const prompts = connection.promptDiscoveryFailed
-    ? sessionEntry?.configHash === configHash
-      ? sessionEntry.prompts
+    ? sessionFallback
+      ? sessionFallback.prompts
       : existingEntry?.configHash === configHash && isServerCacheValid(existingEntry, definition)
         ? existingEntry.prompts
         : undefined
     : serializePrompts(connection.prompts ?? []);
 
   if (definition.exposeResources !== false && connection.resourceDiscoveryFailed === true) {
-    if (sessionEntry?.configHash === configHash) {
-      resources = sessionEntry.resources ?? [];
+    if (sessionFallback) {
+      resources = sessionFallback.resources ?? [];
     } else if (existingEntry?.resources?.length && isServerCacheValid(existingEntry, definition)) {
       resources = existingEntry.resources;
     }
@@ -631,7 +636,7 @@ export function updateMetadataCache(
     ...(prompts !== undefined ? { prompts } : {}),
     ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
     ...(connection.toolListHints?.ttlMs !== undefined ? { ttlMs: connection.toolListHints.ttlMs } : {}),
-    ...(connection.toolListHints?.cacheScope !== undefined ? { cacheScope: connection.toolListHints.cacheScope } : {}),
+    ...(cacheScope !== undefined ? { cacheScope } : {}),
     ...(outputShapes !== undefined ? { outputShapes } : {}),
     cachedAt: Date.now(),
   };
