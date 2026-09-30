@@ -261,6 +261,15 @@ describe("native SDK OAuth service headers", () => {
     assert(!seen.some(request => request.url.includes("/authorize") || request.url.includes("/callback")))
   })
 
+  it("explains how to proceed when dynamic client registration is rejected", async () => {
+    const fakeServer = globalThis.fetch
+    globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => new Request(input, init).url.endsWith("/register")
+      ? new Response("Forbidden", { status: 403 })
+      : fakeServer(input, init)) as typeof fetch
+    await assert.rejects(startAuth("rejected", serverUrl, definition(), { runtime }),
+      /^Error: Dynamic Client Registration rejected \(HTTP 403\).*pre-registered OAuth clients.*set oauth\.clientId/)
+  })
+
   it("command-protected gateway HTML probe does not block authenticated SDK discovery", async () => {
     const config = definition()
     config.headers = { "x-service-auth": `!printf '${service}'` }
