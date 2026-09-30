@@ -18,14 +18,15 @@ const MIN_LIST_WIDTH = 30;
 const MAX_LIST_WIDTH = 38;
 /** Width of the ` │  ` gutter between the list and details panes. */
 const PANE_GUTTER = 4;
-/** Footer rows reserved for the notice, above the key hints row. */
-const FOOTER_NOTICE_ROWS = 2;
-/** Rows outside the body: top border, header, blank, blank, separator, notice rows, hints, bottom border. */
-const CHROME_ROWS = 7 + FOOTER_NOTICE_ROWS;
-/** Body height used when the terminal size is unknown. */
-const DEFAULT_BODY_ROWS = 24;
-const MIN_BODY_ROWS = 8;
-const MAX_BODY_ROWS = 30;
+/** Rows outside the body: top border, header, separator, hints, bottom border. */
+const FRAME_ROWS = 5;
+/** Blank rows under the header and above the separator, dropped when the terminal is short. */
+const SPACER_ROWS = 2;
+/** The spacer rows are kept only while the body still gets at least this many rows. */
+const MIN_SPACED_BODY_ROWS = 10;
+/** Body height cap, also used when the terminal size is unknown. */
+const MAX_BODY_ROWS = 22;
+const MIN_BODY_ROWS = 3;
 /** Rows kept free above and below the overlay; matches overlayOptions.margin in commands.ts. */
 const OVERLAY_VERTICAL_MARGIN = 1;
 
@@ -152,6 +153,7 @@ interface McpSetupPanelViewState {
   sharedConfigTarget: SharedConfigTarget;
   selectedImports: ReadonlySet<ImportKind>;
   notice: Notice | null;
+  busy: boolean;
   onboardingState: McpOnboardingState;
   discovery: McpDiscoverySummary;
   actions: readonly Action[];
@@ -163,6 +165,8 @@ interface McpSetupPanelViewState {
 interface PaneLine {
   text: string;
   tone?: (text: string) => string;
+  /** Marks the details heading, whose blank row below is dropped in compact layouts. */
+  heading?: boolean;
 }
 
 type ListEntry =
@@ -214,44 +218,35 @@ class McpSetupPanelView implements Component {
     const innerWidth = panelWidth - 2;
     const contentWidth = innerWidth - INSET * 2;
     const state = this.getState();
-    const bodyRows = this.bodyRows(state.terminalRows);
+    const { bodyRows, spacers } = this.layoutRows(state.terminalRows);
     this.container.clear();
 
     this.addFrame("╭", "╮", "MCP setup");
     this.addRow(this.renderHeader(state, contentWidth), innerWidth);
-    this.addRow("", innerWidth);
+    if (spacers) this.addRow("", innerWidth);
 
-    const notice = this.layoutNotice(state.notice, contentWidth);
     const entries = this.listEntries(state);
-    const noticeLines = notice.overflow && state.notice
-      ? (paneWidth: number) => [
-        ...wrapIndented(state.notice!.text, paneWidth).map((text) => ({ text, tone: this.noticeTone(state.notice!) })),
-        { text: "" },
-      ]
-      : () => [];
-    const details = (paneWidth: number) => [...noticeLines(paneWidth), ...this.details(state, paneWidth)];
 
     if (innerWidth >= TWO_PANE_MIN_INNER_WIDTH) {
       const listWidth = Math.max(MIN_LIST_WIDTH, Math.min(MAX_LIST_WIDTH, Math.floor(innerWidth * 0.4)));
       const paneWidth = contentWidth - listWidth - PANE_GUTTER;
       const listLines = this.renderList(entries, bodyRows, listWidth);
-      const paneLines = this.renderPane(details(paneWidth), bodyRows, paneWidth);
+      const paneLines = this.renderPane(this.details(state, paneWidth, !spacers), bodyRows, paneWidth);
       const rule = this.theme.border("│");
       for (let row = 0; row < bodyRows; row++) {
         this.addRow(`${listLines[row] ?? " ".repeat(listWidth)} ${rule}  ${paneLines[row] ?? ""}`, innerWidth);
       }
     } else {
-      const listRows = Math.min(entries.length, Math.max(3, Math.floor((bodyRows - 1) / 2)));
+      const listRows = Math.min(entries.length, Math.max(1, Math.floor((bodyRows - 1) / 2)));
       const paneRows = bodyRows - 1 - listRows;
       for (const line of this.renderList(entries, listRows, contentWidth)) this.addRow(line, innerWidth);
       this.addRow(this.theme.border("─".repeat(contentWidth)), innerWidth);
-      for (const line of this.renderPane(details(contentWidth), paneRows, contentWidth)) this.addRow(line, innerWidth);
+      for (const line of this.renderPane(this.details(state, contentWidth, true), paneRows, contentWidth)) this.addRow(line, innerWidth);
     }
 
-    this.addRow("", innerWidth);
+    if (spacers) this.addRow("", innerWidth);
     this.addFrame("├", "┤");
-    for (const line of notice.lines) this.addRow(line, innerWidth);
-    this.addRow(this.theme.hint(fitText(this.keyHints(state.screen), contentWidth)), innerWidth);
+    this.addRow(this.renderFooter(state, contentWidth), innerWidth);
     this.addFrame("╰", "╯");
     return this.container.render(panelWidth);
   }
@@ -260,10 +255,18 @@ class McpSetupPanelView implements Component {
     this.container.invalidate();
   }
 
-  private bodyRows(terminalRows: number | undefined): number {
-    if (!terminalRows || terminalRows <= 0) return DEFAULT_BODY_ROWS;
-    const available = terminalRows - OVERLAY_VERTICAL_MARGIN * 2 - CHROME_ROWS;
-    return Math.max(MIN_BODY_ROWS, Math.min(MAX_BODY_ROWS, available));
+  /**
+   * Splits the terminal's height budget between chrome and body. Short
+   * terminals lose the spacer rows first, then body rows, so the borders and
+   * hints row always fit down to about 10 terminal rows.
+   */
+  private layoutRows(terminalRows: number | undefined): { bodyRows: number; spacers: boolean } {
+    if (!terminalRows || terminalRows <= 0) return { bodyRows: MAX_BODY_ROWS, spacers: true };
+    const budget = terminalRows - OVERLAY_VERTICAL_MARGIN * 2 - FRAME_ROWS;
+    if (budget - SPACER_ROWS >= MIN_SPACED_BODY_ROWS) {
+      return { bodyRows: Math.min(MAX_BODY_ROWS, budget - SPACER_ROWS), spacers: true };
+    }
+    return { bodyRows: Math.max(MIN_BODY_ROWS, budget), spacers: false };
   }
 
   private addFrame(left: string, right: string, title?: string): void {
@@ -313,30 +316,14 @@ class McpSetupPanelView implements Component {
     return this.theme.hint;
   }
 
-  /**
-   * Fits the notice into the fixed footer rows. A notice that needs more rows
-   * is cut with … there and shown in full at the top of the details pane.
-   */
-  private layoutNotice(notice: Notice | null, width: number): { lines: string[]; overflow: boolean } {
-    const lines: string[] = [];
-    let overflow = false;
-    if (notice) {
-      const tone = this.noticeTone(notice);
-      const wrapped = wrapText(notice.text, width);
-      overflow = wrapped.length > FOOTER_NOTICE_ROWS || wrapped.some((line) => visibleWidth(line) > width);
-      for (let row = 0; row < FOOTER_NOTICE_ROWS && row < wrapped.length; row++) {
-        let text = wrapped[row] ?? "";
-        if (row === FOOTER_NOTICE_ROWS - 1 && wrapped.length > FOOTER_NOTICE_ROWS) {
-          // Cut at a word boundary so the last footer row ends with " …".
-          const words = text.split(" ");
-          while (words.length > 1 && visibleWidth(`${words.join(" ")} …`) > width) words.pop();
-          text = `${words.join(" ")} …`;
-        }
-        lines.push(tone(fitText(text, width)));
-      }
-    }
-    while (lines.length < FOOTER_NOTICE_ROWS) lines.push("");
-    return { lines, overflow };
+  /** One footer row: key hints on the left and, while an action runs, `Working…` on the right. */
+  private renderFooter(state: McpSetupPanelViewState, width: number): string {
+    const busy = "Working…";
+    const hintsWidth = state.busy ? width - visibleWidth(busy) - 2 : width;
+    const hints = fitText(this.keyHints(state.screen), Math.max(0, hintsWidth));
+    if (!state.busy) return this.theme.hint(hints);
+    const gap = Math.max(2, width - visibleWidth(hints) - visibleWidth(busy));
+    return `${this.theme.hint(hints)}${" ".repeat(gap)}${this.theme.hint(busy)}`;
   }
 
   private keyHints(screen: Screen): string {
@@ -385,7 +372,10 @@ class McpSetupPanelView implements Component {
     return entries;
   }
 
-  /** Renders exactly `rows` list lines, scrolling to keep the selected item visible. */
+  /**
+   * Renders exactly `rows` list lines, scrolling to keep the selected item
+   * visible. `↑/↓ N more` rows need at least 3 rows so they never cover the cursor.
+   */
   private renderList(entries: ListEntry[], rows: number, width: number): string[] {
     let start = 0;
     if (entries.length > rows) {
@@ -394,11 +384,12 @@ class McpSetupPanelView implements Component {
     }
     const end = Math.min(entries.length, start + rows);
     const hiddenItems = (from: number, to: number) => entries.slice(from, to).filter((entry) => entry.kind === "item").length;
+    const indicators = rows >= 3;
     const lines: string[] = [];
     for (let index = start; index < end; index++) {
-      if (index === start && start > 0) {
+      if (indicators && index === start && start > 0) {
         lines.push(this.moreLine("↑", hiddenItems(0, start + 1), width));
-      } else if (index === end - 1 && end < entries.length) {
+      } else if (indicators && index === end - 1 && end < entries.length) {
         lines.push(this.moreLine("↓", hiddenItems(end - 1, entries.length), width));
       } else {
         lines.push(this.renderEntry(entries[index]!, width));
@@ -438,7 +429,9 @@ class McpSetupPanelView implements Component {
     while (lines.length > 0 && !lines[lines.length - 1]!.text.trim()) lines.pop();
     let shown = lines;
     if (lines.length > rows) {
-      const kept = Math.max(0, rows - 1);
+      let kept = Math.max(0, rows - 1);
+      // Keep the `… N more lines` row right under text rather than after a blank row.
+      while (kept > 0 && !lines[kept - 1]!.text.trim()) kept -= 1;
       shown = [...lines.slice(0, kept), { text: `… ${plural(lines.length - kept, "more line")}`, tone: this.theme.hint }];
     }
     const rendered = shown.map((line) => {
@@ -451,7 +444,7 @@ class McpSetupPanelView implements Component {
   }
 
   private heading(text: string): PaneLine[] {
-    return [{ text, tone: (value) => this.theme.selected(this.theme.bold(value)) }, { text: "" }];
+    return [{ text, tone: (value) => this.theme.selected(this.theme.bold(value)), heading: true }, { text: "" }];
   }
 
   private prose(width: number, ...paragraphs: string[]): PaneLine[] {
@@ -466,13 +459,30 @@ class McpSetupPanelView implements Component {
     return { text, tone: this.theme.description };
   }
 
-  private details(state: McpSetupPanelViewState, width: number): PaneLine[] {
-    if (state.screen === "imports") return this.importDetails(state, width);
-    if (state.screen === "paths") return this.pathDetails(state, width);
-    return this.actionDetails(state, state.actions[state.actionCursor], width);
+  /**
+   * Details pane content, most urgent first: the notice, then any preview
+   * error, then the highlighted item, so short panes still show what matters.
+   * `compact` (stacked or short layouts) drops the blank row under the heading.
+   */
+  private details(state: McpSetupPanelViewState, width: number, compact: boolean): PaneLine[] {
+    const errors: PaneLine[] = [];
+    let body: PaneLine[];
+    if (state.screen === "imports") body = this.importDetails(state, width, errors);
+    else if (state.screen === "paths") body = this.pathDetails(state, width);
+    else body = this.actionDetails(state, state.actions[state.actionCursor], width, errors);
+    if (compact && body[0]?.heading && body[1]?.text === "") body.splice(1, 1);
+
+    const lines: PaneLine[] = [];
+    const notice = state.busy ? null : state.notice;
+    if (notice) {
+      const tone = this.noticeTone(notice);
+      lines.push(...wrapIndented(notice.text, width).map((text) => ({ text, tone })), { text: "" });
+    }
+    if (errors.length > 0) lines.push(...errors, { text: "" });
+    return [...lines, ...body];
   }
 
-  private importDetails(state: McpSetupPanelViewState, width: number): PaneLine[] {
+  private importDetails(state: McpSetupPanelViewState, width: number, errors: PaneLine[]): PaneLine[] {
     const selected = state.discovery.imports
       .filter((entry) => state.selectedImports.has(entry.kind))
       .map((entry) => entry.kind);
@@ -481,7 +491,7 @@ class McpSetupPanelView implements Component {
       ...this.prose(width, "Space toggles an import. Enter writes the selected imports to mcp-adapter.json in the Pi agent dir."),
       { text: "" },
       this.muted(`${selected.length} of ${state.discovery.imports.length} selected`),
-      ...this.writePreview(() => this.callbacks.previewImports(selected), width),
+      ...this.writePreview(() => this.callbacks.previewImports(selected), width, errors),
     ];
   }
 
@@ -496,7 +506,7 @@ class McpSetupPanelView implements Component {
     ];
   }
 
-  private actionDetails(state: McpSetupPanelViewState, action: Action | undefined, width: number): PaneLine[] {
+  private actionDetails(state: McpSetupPanelViewState, action: Action | undefined, width: number, errors: PaneLine[]): PaneLine[] {
     const { discovery } = state;
     switch (action?.id) {
       case "run-setup":
@@ -529,7 +539,7 @@ class McpSetupPanelView implements Component {
           ...this.heading(preset.name),
           ...this.prose(width, preset.summary),
           ...(preset.desktopApp ? [{ text: "" }, ...this.prose(width, preset.desktopApp.enableSteps)] : []),
-          ...this.writePreview(() => this.callbacks.previewKnownServer(preset, state.sharedConfigTarget), width),
+          ...this.writePreview(() => this.callbacks.previewKnownServer(preset, state.sharedConfigTarget), width, errors),
         ];
       }
       case "add-repoprompt": {
@@ -541,7 +551,7 @@ class McpSetupPanelView implements Component {
           this.muted(`Executable   ${repoPrompt.executablePath ? shortenPath(repoPrompt.executablePath) : "not found"}`),
           this.muted(`Server name  ${repoPrompt.serverName ?? "repoprompt"}`),
         ];
-        const preview = this.previewOrError(() => this.callbacks.previewRepoPrompt(state.sharedConfigTarget), width);
+        const preview = this.previewOrError(() => this.callbacks.previewRepoPrompt(state.sharedConfigTarget), width, errors);
         if (preview === null) return [...lines, { text: "" }, ...this.prose(width, "RepoPrompt is not available to add from this setup screen.")];
         return [...lines, ...preview];
       }
@@ -556,14 +566,14 @@ class McpSetupPanelView implements Component {
             `Detected: ${discovery.imports.map((entry) => `${entry.kind} (${plural(entry.serverCount, "server")})`).join(", ")}.`,
             "Selected imports are written to mcp-adapter.json in the Pi agent dir as adapter-owned compatibility state.",
           ),
-          ...this.writePreview(() => this.callbacks.previewImports(selected), width),
+          ...this.writePreview(() => this.callbacks.previewImports(selected), width, errors),
         ];
       }
       case "scaffold-shared-config":
         return [
           ...this.heading(action.label),
           ...this.prose(width, "Writes a minimal config with no servers, so nothing fails on the first reload."),
-          ...this.writePreview(() => this.callbacks.previewStarterConfig(state.sharedConfigTarget), width),
+          ...this.writePreview(() => this.callbacks.previewStarterConfig(state.sharedConfigTarget), width, errors),
         ];
       case "view-example":
         return [
@@ -596,11 +606,6 @@ class McpSetupPanelView implements Component {
             `- ${conflict.serverName}: ${conflict.sources.map((source) => shortenPath(source.path)).join(" -> ")} (winner: ${shortenPath(conflict.winner.path)})`,
           ).map((line) => ({ ...line, tone: this.theme.needsAuth }))),
           { text: "" },
-          ...this.prose(
-            width,
-            "Use .mcp.json for project/team servers or ~/.config/mcp/mcp.json for all projects. mcp-adapter.json files are for compatibility imports and adapter-specific overrides; Pi mcp.json files are not read by the adapter.",
-          ),
-          { text: "" },
           ...this.prose(width, "Recommended shared config:", "  project/team: .mcp.json", "  all projects: ~/.config/mcp/mcp.json"),
           { text: "" },
           ...this.prose(
@@ -621,6 +626,7 @@ class McpSetupPanelView implements Component {
             width,
             "Advanced compatibility and adapter-owned layers:",
             "  host imports, .agents files, package MCP manifests, and Pi overrides",
+            "mcp-adapter.json files are for compatibility imports and adapter-specific overrides; Pi mcp.json files are not read by the adapter.",
           ),
         ];
       case "open-paths":
@@ -635,23 +641,27 @@ class McpSetupPanelView implements Component {
     }
   }
 
-  /** Runs a preview callback, turning a thrown error into readable pane lines. */
-  private previewOrError(getPreview: () => ConfigWritePreview | null, width: number): PaneLine[] | null {
+  /**
+   * Runs a preview callback. A thrown error becomes readable lines in `errors`,
+   * which the details pane shows first; the preview itself is then empty.
+   */
+  private previewOrError(getPreview: () => ConfigWritePreview | null, width: number, errors: PaneLine[]): PaneLine[] | null {
     let preview: ConfigWritePreview | null;
     try {
       preview = getPreview();
     } catch (error) {
-      return [
-        { text: "" },
+      errors.push(
         { text: "Preview unavailable:", tone: this.theme.needsAuth },
-        ...this.prose(width, error instanceof Error ? error.message : String(error)),
-      ];
+        ...this.prose(width, error instanceof Error ? error.message : String(error))
+          .map((line) => ({ ...line, tone: this.theme.needsAuth })),
+      );
+      return [];
     }
     return preview ? this.formatWritePreview(preview) : null;
   }
 
-  private writePreview(getPreview: () => ConfigWritePreview, width: number): PaneLine[] {
-    return this.previewOrError(getPreview, width) ?? [];
+  private writePreview(getPreview: () => ConfigWritePreview, width: number, errors: PaneLine[]): PaneLine[] {
+    return this.previewOrError(getPreview, width, errors) ?? [];
   }
 
   /** Diff lines are never word-wrapped: each keeps its indentation and is cut with … at the pane edge. */
@@ -680,9 +690,9 @@ export class McpSetupPanel {
   private selectedImports = new Set<ImportKind>();
   private busy = false;
   private notice: Notice | null = null;
-  private tui: SetupPanelTui;
+  private readonly tui: SetupPanelTui;
   private readonly view: McpSetupPanelView;
-  private keys: PanelKeys;
+  private readonly keys: PanelKeys;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly INACTIVITY_MS = 60_000;
 
@@ -971,6 +981,7 @@ export class McpSetupPanel {
       sharedConfigTarget: this.sharedConfigTarget,
       selectedImports: this.selectedImports,
       notice: this.notice,
+      busy: this.busy,
       onboardingState: this.options.onboardingState,
       discovery: this.discovery,
       actions: this.getActions(),

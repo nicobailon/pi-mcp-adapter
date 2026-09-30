@@ -70,16 +70,24 @@ describe("mcp setup panel theme and component rendering", () => {
     discovery.imports = [{ kind: "cursor", path: "/tmp/cursor-mcp.json", serverCount: 1 }];
     const callbacks = createCallbacks();
     callbacks.previewImports = () => { throw new Error("Failed to read MCP config at /tmp/mcp.json"); };
+    const terminal = { rows: 40 };
     const panel = createMcpSetupPanel(
       discovery,
       callbacks,
       { mode: "setup", onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false } },
-      { requestRender: () => {} },
+      { requestRender: () => {}, terminal },
       () => {},
     );
 
     moveCursorTo(panel, "Adopt compatibility imports");
     expect(panel.render(100).join("\n")).toContain("Failed to read MCP config at /tmp/mcp.json");
+    // The error leads the details pane, so the small stacked pane of a short, narrow terminal still shows it.
+    terminal.rows = 20;
+    const narrow = panel.render(60).map(stripAnsi);
+    expect(narrow.join("\n")).toContain("Preview unavailable:");
+    expect(narrow.join("\n")).toContain("Failed to read MCP config at /tmp/mcp.json");
+    expect(narrow.length).toBeLessThanOrEqual(18);
+    terminal.rows = 40;
     panel.handleInput(ENTER);
     expect(panel.render(100).join("\n")).toContain("[x] cursor");
     expect(panel.render(100).join("\n")).toContain("Failed to read MCP config at /tmp/mcp.json");
@@ -152,7 +160,6 @@ describe("mcp setup panel theme and component rendering", () => {
 
   it("keeps one height for every cursor position, screen, and notice", async () => {
     const width = 92;
-    const figma = KNOWN_SERVER_PRESETS.find(({ id }) => id === "figma")!;
     const discovery: McpDiscoverySummary = {
       ...createDiscovery(),
       hasAnyConfig: true,
@@ -164,11 +171,12 @@ describe("mcp setup panel theme and component rendering", () => {
     const callbacks = createCallbacks();
     callbacks.previewKnownServer = (preset) => previewSharedServerEntry(configPath, preset.id, preset.entry);
     callbacks.addKnownServer = vi.fn(async (preset) => ({ path: configPath, serverName: preset.name, reachable: false }));
+    const terminal = { rows: 40 };
     const panel = createMcpSetupPanel(
       discovery,
       callbacks,
       { mode: "setup", onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false } },
-      { requestRender: () => {}, terminal: { rows: 40 } },
+      { requestRender: () => {}, terminal },
       () => {},
     );
 
@@ -177,8 +185,8 @@ describe("mcp setup panel theme and component rendering", () => {
       panel.handleInput(DOWN);
       renders.push(panel.render(width));
     }
-    // 40 terminal rows minus a 1-row margin above and below.
-    expect(new Set(renders.map((lines) => lines.length))).toEqual(new Set([38]));
+    // 22 body rows (the cap) plus 7 rows of frame, header, spacers, and footer.
+    expect(new Set(renders.map((lines) => lines.length))).toEqual(new Set([29]));
     for (let presses = 0; presses < 20; presses += 1) panel.handleInput("\x1b[A");
 
     moveCursorTo(panel, "DeepWiki");
@@ -201,9 +209,26 @@ describe("mcp setup panel theme and component rendering", () => {
     renders.push(panel.render(width));
 
     const heights = new Set(renders.map((lines) => lines.length));
-    expect([...heights]).toEqual([38]);
+    expect([...heights]).toEqual([29]);
     for (const lines of renders) {
       for (const line of lines) expect(visibleWidth(line)).toBe(width);
+    }
+
+    // Short terminals: the panel fits in rows minus the 2 margin rows and keeps the hints row.
+    panel.handleInput("\x1b");
+    for (const rows of [16, 12]) {
+      terminal.rows = rows;
+      const tiny: string[][] = [];
+      for (let presses = 0; presses < 20; presses += 1) {
+        panel.handleInput(presses < 10 ? DOWN : "\x1b[A");
+        tiny.push(panel.render(width));
+      }
+      expect(new Set(tiny.map((lines) => lines.length)).size).toBe(1);
+      for (const lines of tiny) {
+        expect(lines.length).toBeLessThanOrEqual(rows - 2);
+        expect(stripAnsi(lines.at(-2)!)).toContain("↑↓ move · enter select · esc close");
+        expect(stripAnsi(lines.at(-1)!)).toMatch(/^╰─+╯$/);
+      }
     }
     panel.dispose();
   });
