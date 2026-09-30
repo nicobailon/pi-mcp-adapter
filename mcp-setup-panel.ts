@@ -6,11 +6,28 @@ import type { ImportKind } from "./types.ts";
 import { getConfigDirName } from "./agent-dir.ts";
 import type { ConfigWritePreview, KnownServerPreset, McpDiscoverySummary, SharedConfigTarget } from "./config.ts";
 import type { McpOnboardingState } from "./onboarding-state.ts";
+import { homedir } from "node:os";
+import { basename } from "node:path";
 
 const MIN_PANEL_WIDTH = 24;
-const COMPACT_WIDTH = 60;
-const COMPACT_ACTION_ROWS = 7;
-const DESKTOP_PREVIEW_WIDTH = 74;
+/** Blank columns between the frame border and the content on each side. */
+const INSET = 2;
+/** Below this inner width the list and details stack instead of sitting side by side. */
+const TWO_PANE_MIN_INNER_WIDTH = 72;
+const MIN_LIST_WIDTH = 30;
+const MAX_LIST_WIDTH = 38;
+/** Width of the ` │  ` gutter between the list and details panes. */
+const PANE_GUTTER = 4;
+/** Footer rows reserved for the notice, above the key hints row. */
+const FOOTER_NOTICE_ROWS = 2;
+/** Rows outside the body: top border, header, blank, blank, separator, notice rows, hints, bottom border. */
+const CHROME_ROWS = 7 + FOOTER_NOTICE_ROWS;
+/** Body height used when the terminal size is unknown. */
+const DEFAULT_BODY_ROWS = 24;
+const MIN_BODY_ROWS = 8;
+const MAX_BODY_ROWS = 30;
+/** Rows kept free above and below the overlay; matches overlayOptions.margin in commands.ts. */
+const OVERLAY_VERTICAL_MARGIN = 1;
 
 function wrapText(text: string, width: number): string[] {
   if (width <= 8) return [text];
@@ -28,6 +45,53 @@ function wrapText(text: string, width: number): string[] {
   }
   if (current) lines.push(current);
   return lines.length > 0 ? lines : [""];
+}
+
+/** Wraps prose, keeping leading indentation and list markers as a hanging indent. */
+function wrapIndented(text: string, width: number): string[] {
+  const indent = /^\s*(?:\d+\.\s+|[-•]\s+)?/.exec(text)?.[0] ?? "";
+  const body = text.slice(indent.length);
+  if (!body.trim()) return [text.trimEnd()];
+  const indentWidth = visibleWidth(indent);
+  return wrapText(body, Math.max(8, width - indentWidth))
+    .map((line, index) => `${index === 0 ? indent : " ".repeat(indentWidth)}${line}`);
+}
+
+/** Splits text into fixed-width chunks for values like paths that have no spaces to wrap at. */
+function hardWrap(text: string, width: number): string[] {
+  if (width <= 0 || text.length <= width) return [text];
+  const lines: string[] = [];
+  for (let index = 0; index < text.length; index += width) lines.push(text.slice(index, index + width));
+  return lines;
+}
+
+const graphemes = new Intl.Segmenter();
+
+/**
+ * Cuts plain (unstyled) text to `width` columns with a trailing …. Styling is
+ * applied after fitting, so no reset codes end up inside the panel.
+ */
+function fitText(text: string, width: number, pad = false): string {
+  let fitted = text;
+  if (visibleWidth(text) > width) {
+    fitted = "";
+    for (const { segment } of graphemes.segment(text)) {
+      if (visibleWidth(fitted + segment) > width - 1) break;
+      fitted += segment;
+    }
+    fitted = width > 0 ? `${fitted}…` : "";
+  }
+  return pad ? `${fitted}${" ".repeat(Math.max(0, width - visibleWidth(fitted)))}` : fitted;
+}
+
+function shortenPath(path: string): string {
+  const home = homedir();
+  if (home && (path === home || path.startsWith(`${home}/`))) return `~${path.slice(home.length)}`;
+  return path;
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 export interface SetupPanelCallbacks {
@@ -50,6 +114,12 @@ export interface SetupPanelOptions {
   theme?: Theme;
 }
 
+/** The subset of Pi's TUI the setup panel uses. `terminal` sizes the panel to the screen. */
+export interface SetupPanelTui {
+  requestRender(): void;
+  terminal?: { rows: number };
+}
+
 type Screen = "empty" | "setup" | "imports" | "paths";
 
 type ActionId =
@@ -61,15 +131,18 @@ type ActionId =
   | "open-paths"
   | "add-repoprompt"
   | "add-known-server"
-  | "scaffold-shared-config"
-  | "close";
+  | "scaffold-shared-config";
 
 interface Action {
   id: ActionId;
   label: string;
+  /** Muted text shown after the label, such as a config path. */
+  detail?: string;
   preset?: KnownServerPreset;
   target?: SharedConfigTarget;
 }
+
+type Notice = { text: string; tone: "success" | "warning" | "muted" };
 
 interface McpSetupPanelViewState {
   screen: Screen;
@@ -78,16 +151,54 @@ interface McpSetupPanelViewState {
   pathCursor: number;
   sharedConfigTarget: SharedConfigTarget;
   selectedImports: ReadonlySet<ImportKind>;
-  notice: { text: string; tone: "success" | "warning" | "muted" } | null;
+  notice: Notice | null;
   onboardingState: McpOnboardingState;
   discovery: McpDiscoverySummary;
   actions: readonly Action[];
   detectedPaths: readonly string[];
+  terminalRows?: number | undefined;
+}
+
+/** One line of the details pane. `text` is plain; `tone` styles it after it is fitted to the pane. */
+interface PaneLine {
+  text: string;
+  tone?: (text: string) => string;
+}
+
+type ListEntry =
+  | { kind: "header"; text: string }
+  | { kind: "blank" }
+  | { kind: "item"; label: string; detail?: string | undefined; selected: boolean };
+
+type ActionSection = "start" | "target" | "servers" | "files";
+
+const SECTION_HEADERS: Record<ActionSection, string | undefined> = {
+  start: undefined,
+  target: "WRITE NEW SERVERS TO",
+  servers: "ADD A SERVER",
+  files: "CONFIG FILES",
+};
+
+function actionSection(id: ActionId): ActionSection {
+  switch (id) {
+    case "run-setup":
+      return "start";
+    case "select-shared-target":
+      return "target";
+    case "add-known-server":
+    case "add-repoprompt":
+      return "servers";
+    default:
+      return "files";
+  }
 }
 
 /**
- * The setup view owns component composition and display formatting. The panel
- * below remains the controller for input routing, async actions, and timers.
+ * The setup view owns layout and display formatting. The panel below remains
+ * the controller for input routing, async actions, and timers.
+ *
+ * The rendered height depends only on the terminal height, never on the
+ * cursor, screen, or notice, so the overlay does not jump while navigating.
  */
 class McpSetupPanelView implements Component {
   private readonly container = new Container();
@@ -101,46 +212,47 @@ class McpSetupPanelView implements Component {
   render(width: number): string[] {
     const panelWidth = Math.max(MIN_PANEL_WIDTH, width);
     const innerWidth = panelWidth - 2;
-    const contentWidth = this.contentWidth(innerWidth);
+    const contentWidth = innerWidth - INSET * 2;
     const state = this.getState();
+    const bodyRows = this.bodyRows(state.terminalRows);
     this.container.clear();
 
-    this.addFrame("┌", "┐");
-    this.addRow(this.theme.title("MCP setup"), innerWidth);
-    let discoveryTone = this.theme.hint;
-    if (!state.discovery.hasAnyConfig || (state.discovery.totalServerCount === 0 && (state.discovery.imports.length > 0 || !!state.discovery.repoPrompt.executablePath))) {
-      discoveryTone = this.theme.needsAuth;
-    }
-    for (const line of wrapText(this.discoverySummaryLine(state), contentWidth)) {
-      this.addRow(discoveryTone(line), innerWidth);
-    }
-    for (const line of wrapText(this.secondarySummaryLine(state), contentWidth)) {
-      this.addRow(this.theme.description(this.theme.italic(line)), innerWidth);
-    }
+    this.addFrame("╭", "╮", "MCP setup");
+    this.addRow(this.renderHeader(state, contentWidth), innerWidth);
     this.addRow("", innerWidth);
 
-    if (state.notice) {
-      let tone = this.theme.hint;
-      if (state.notice.tone === "success") {
-        tone = this.theme.confirm;
-      } else if (state.notice.tone === "warning") {
-        tone = this.theme.needsAuth;
+    const notice = this.layoutNotice(state.notice, contentWidth);
+    const entries = this.listEntries(state);
+    const noticeLines = notice.overflow && state.notice
+      ? (paneWidth: number) => [
+        ...wrapIndented(state.notice!.text, paneWidth).map((text) => ({ text, tone: this.noticeTone(state.notice!) })),
+        { text: "" },
+      ]
+      : () => [];
+    const details = (paneWidth: number) => [...noticeLines(paneWidth), ...this.details(state, paneWidth)];
+
+    if (innerWidth >= TWO_PANE_MIN_INNER_WIDTH) {
+      const listWidth = Math.max(MIN_LIST_WIDTH, Math.min(MAX_LIST_WIDTH, Math.floor(innerWidth * 0.4)));
+      const paneWidth = contentWidth - listWidth - PANE_GUTTER;
+      const listLines = this.renderList(entries, bodyRows, listWidth);
+      const paneLines = this.renderPane(details(paneWidth), bodyRows, paneWidth);
+      const rule = this.theme.border("│");
+      for (let row = 0; row < bodyRows; row++) {
+        this.addRow(`${listLines[row] ?? " ".repeat(listWidth)} ${rule}  ${paneLines[row] ?? ""}`, innerWidth);
       }
-      for (const line of wrapText(state.notice.text, contentWidth)) {
-        this.addRow(tone(line), innerWidth);
-      }
-      this.addRow("", innerWidth);
+    } else {
+      const listRows = Math.min(entries.length, Math.max(3, Math.floor((bodyRows - 1) / 2)));
+      const paneRows = bodyRows - 1 - listRows;
+      for (const line of this.renderList(entries, listRows, contentWidth)) this.addRow(line, innerWidth);
+      this.addRow(this.theme.border("─".repeat(contentWidth)), innerWidth);
+      for (const line of this.renderPane(details(contentWidth), paneRows, contentWidth)) this.addRow(line, innerWidth);
     }
 
+    this.addRow("", innerWidth);
     this.addFrame("├", "┤");
-    if (state.screen === "imports") {
-      for (const line of this.renderImports(state, innerWidth)) this.addRow(line, innerWidth);
-    } else if (state.screen === "paths") {
-      for (const line of this.renderPaths(state)) this.addRow(line, innerWidth);
-    } else {
-      for (const line of this.renderActions(state, innerWidth)) this.addRow(line, innerWidth);
-    }
-    this.addFrame("└", "┘");
+    for (const line of notice.lines) this.addRow(line, innerWidth);
+    this.addRow(this.theme.hint(fitText(this.keyHints(state.screen), contentWidth)), innerWidth);
+    this.addFrame("╰", "╯");
     return this.container.render(panelWidth);
   }
 
@@ -148,286 +260,414 @@ class McpSetupPanelView implements Component {
     this.container.invalidate();
   }
 
-  private addFrame(left: string, right: string): void {
-    this.container.addChild(new McpPanelFrame(this.theme, left, right));
+  private bodyRows(terminalRows: number | undefined): number {
+    if (!terminalRows || terminalRows <= 0) return DEFAULT_BODY_ROWS;
+    const available = terminalRows - OVERLAY_VERTICAL_MARGIN * 2 - CHROME_ROWS;
+    return Math.max(MIN_BODY_ROWS, Math.min(MAX_BODY_ROWS, available));
+  }
+
+  private addFrame(left: string, right: string, title?: string): void {
+    this.container.addChild(new McpPanelFrame(this.theme, left, right, title));
   }
 
   private addRow(content: string, innerWidth: number): void {
-    this.container.addChild(new Text(this.padLine(content, innerWidth), 0, 0));
+    const contentWidth = Math.max(0, innerWidth - INSET * 2);
+    const fitted = truncateToWidth(content, contentWidth, "…", true);
+    const padding = Math.max(0, contentWidth - visibleWidth(fitted));
+    const inset = " ".repeat(INSET);
+    const border = this.theme.border("│");
+    this.container.addChild(new Text(`${border}${inset}${fitted}${" ".repeat(padding)}${inset}${border}`, 0, 0));
   }
 
-  private renderActions(state: McpSetupPanelViewState, innerWidth: number): string[] {
+  private renderHeader(state: McpSetupPanelViewState, width: number): string {
+    const { discovery } = state;
+    let status: string;
+    let tone = this.theme.hint;
+    if (!discovery.hasAnyConfig) {
+      status = state.onboardingState.setupCompleted ? "No MCP servers are active right now." : "No MCP config is active yet.";
+      tone = this.theme.needsAuth;
+    } else if (discovery.totalServerCount === 0 && (discovery.imports.length > 0 || !!discovery.repoPrompt.executablePath)) {
+      status = "Pi found MCP-related setup options, but none are active in Pi yet.";
+      tone = this.theme.needsAuth;
+    } else {
+      const files = discovery.sources.filter((source) => source.serverCount > 0).length;
+      status = `${plural(discovery.totalServerCount, "server")} · ${plural(files, "config file")}`;
+    }
+
+    const extras: string[] = [];
+    if (discovery.imports.length > 0) extras.push(plural(discovery.imports.length, "import"));
+    if (discovery.hostConfigs.length > 0) extras.push(plural(discovery.hostConfigs.length, "host config"));
+    if (discovery.conflicts.length > 0) extras.push(plural(discovery.conflicts.length, "conflict"));
+    const summary = extras.join(" · ");
+    const statusWidth = visibleWidth(status);
+    const summaryWidth = visibleWidth(summary);
+    if (!summary || statusWidth + 2 + summaryWidth > width) {
+      return tone(fitText(status, width));
+    }
+    return `${tone(status)}${" ".repeat(width - statusWidth - summaryWidth)}${this.theme.hint(summary)}`;
+  }
+
+  private noticeTone(notice: Notice): (text: string) => string {
+    if (notice.tone === "success") return this.theme.confirm;
+    if (notice.tone === "warning") return this.theme.needsAuth;
+    return this.theme.hint;
+  }
+
+  /**
+   * Fits the notice into the fixed footer rows. A notice that needs more rows
+   * is cut with … there and shown in full at the top of the details pane.
+   */
+  private layoutNotice(notice: Notice | null, width: number): { lines: string[]; overflow: boolean } {
     const lines: string[] = [];
-    const actions = state.actions;
-    const compact = innerWidth < COMPACT_WIDTH;
-    const { start, end } = compact
-      ? this.visibleActionRange(actions.length, state.actionCursor)
-      : { start: 0, end: actions.length };
-
-    if (start > 0) {
-      lines.push(this.theme.description(`… ${start} more above`));
+    let overflow = false;
+    if (notice) {
+      const tone = this.noticeTone(notice);
+      const wrapped = wrapText(notice.text, width);
+      overflow = wrapped.length > FOOTER_NOTICE_ROWS || wrapped.some((line) => visibleWidth(line) > width);
+      for (let row = 0; row < FOOTER_NOTICE_ROWS && row < wrapped.length; row++) {
+        let text = wrapped[row] ?? "";
+        if (row === FOOTER_NOTICE_ROWS - 1 && wrapped.length > FOOTER_NOTICE_ROWS) {
+          // Cut at a word boundary so the last footer row ends with " …".
+          const words = text.split(" ");
+          while (words.length > 1 && visibleWidth(`${words.join(" ")} …`) > width) words.pop();
+          text = `${words.join(" ")} …`;
+        }
+        lines.push(tone(fitText(text, width)));
+      }
     }
+    while (lines.length < FOOTER_NOTICE_ROWS) lines.push("");
+    return { lines, overflow };
+  }
+
+  private keyHints(screen: Screen): string {
+    if (screen === "imports") return "↑↓ move · space toggle · enter save · esc back";
+    if (screen === "paths") return "↑↓ move · enter open · esc back";
+    return "↑↓ move · enter select · esc close";
+  }
+
+  private listEntries(state: McpSetupPanelViewState): ListEntry[] {
+    if (state.screen === "imports") {
+      const imports = state.discovery.imports;
+      const kindWidth = Math.max(0, ...imports.map((entry) => entry.kind.length));
+      return [
+        { kind: "header", text: "ADOPT IMPORTS FROM" },
+        ...imports.map((entry, index): ListEntry => ({
+          kind: "item",
+          label: `${state.selectedImports.has(entry.kind) ? "[x]" : "[ ]"} ${entry.kind.padEnd(kindWidth)}`,
+          detail: shortenPath(entry.path),
+          selected: index === state.importCursor,
+        })),
+      ];
+    }
+    if (state.screen === "paths") {
+      return [
+        { kind: "header", text: "OPEN A CONFIG FILE" },
+        ...state.detectedPaths.map((path, index): ListEntry => ({
+          kind: "item",
+          label: shortenPath(path),
+          selected: index === state.pathCursor,
+        })),
+      ];
+    }
+
+    const entries: ListEntry[] = [];
+    let section: ActionSection | undefined;
+    state.actions.forEach((action, index) => {
+      const next = actionSection(action.id);
+      if (next !== section) {
+        if (section !== undefined) entries.push({ kind: "blank" });
+        const header = SECTION_HEADERS[next];
+        if (header) entries.push({ kind: "header", text: header });
+        section = next;
+      }
+      entries.push({ kind: "item", label: action.label, detail: action.detail, selected: index === state.actionCursor });
+    });
+    return entries;
+  }
+
+  /** Renders exactly `rows` list lines, scrolling to keep the selected item visible. */
+  private renderList(entries: ListEntry[], rows: number, width: number): string[] {
+    let start = 0;
+    if (entries.length > rows) {
+      const cursor = Math.max(0, entries.findIndex((entry) => entry.kind === "item" && entry.selected));
+      start = Math.max(0, Math.min(cursor - Math.floor(rows / 2), entries.length - rows));
+    }
+    const end = Math.min(entries.length, start + rows);
+    const hiddenItems = (from: number, to: number) => entries.slice(from, to).filter((entry) => entry.kind === "item").length;
+    const lines: string[] = [];
     for (let index = start; index < end; index++) {
-      const action = actions[index];
-      if (!action) continue;
-      if (action.id === "select-shared-target" && (index === start || actions[index - 1]?.id !== "select-shared-target")) {
-        lines.push(this.theme.title("Choose where new shared servers go"));
+      if (index === start && start > 0) {
+        lines.push(this.moreLine("↑", hiddenItems(0, start + 1), width));
+      } else if (index === end - 1 && end < entries.length) {
+        lines.push(this.moreLine("↓", hiddenItems(end - 1, entries.length), width));
+      } else {
+        lines.push(this.renderEntry(entries[index]!, width));
       }
-      if (action.id === "add-known-server" && (index === start || actions[index - 1]?.id !== "add-known-server")) {
-        lines.push(this.theme.title(`Add a known server to ${this.sharedTargetLabel(state)}`));
-      }
-      const selected = index === state.actionCursor;
-      const cursor = selected ? this.theme.selected("›") : " ";
-      lines.push(`${cursor} ${truncateToWidth(action.label, this.contentWidth(innerWidth) - 2)}`);
     }
-    if (end < actions.length) {
-      lines.push(this.theme.description(`… ${actions.length - end} more below`));
-    }
-    lines.push("");
-
-    const previewWidth = this.previewWidth(innerWidth);
-    lines.push(...this.previewOrError(
-      () => this.getActionPreview(state, actions[state.actionCursor], previewWidth),
-      previewWidth,
-    ));
-    lines.push("");
-    const hint = compact ? "Enter select · Esc back" : "Enter selects, Esc goes back, Ctrl+C closes.";
-    lines.push(this.theme.description(hint));
+    while (lines.length < rows) lines.push(" ".repeat(width));
     return lines;
   }
 
-  private renderImports(state: McpSetupPanelViewState, innerWidth: number): string[] {
-    const lines: string[] = [];
-    lines.push("Select compatibility imports. Space toggles, Enter saves, Esc goes back.");
-    lines.push("");
-    for (let index = 0; index < state.discovery.imports.length; index++) {
-      const entry = state.discovery.imports[index];
-      if (!entry) continue;
-      const selected = state.selectedImports.has(entry.kind) ? "[x]" : "[ ]";
-      const cursor = index === state.importCursor ? this.theme.selected("›") : " ";
-      lines.push(`${cursor} ${selected} ${entry.kind}  ${entry.path}`);
+  private moreLine(arrow: string, count: number, width: number): string {
+    const text = count > 0 ? `  ${arrow} ${count} more` : "";
+    return this.theme.hint(fitText(text, width, true));
+  }
+
+  private renderEntry(entry: ListEntry, width: number): string {
+    if (entry.kind === "blank") return " ".repeat(width);
+    if (entry.kind === "header") return this.theme.description(fitText(entry.text, width, true));
+
+    const cursor = entry.selected ? this.theme.selected("›") : " ";
+    const available = width - 2;
+    const label = fitText(entry.label, available);
+    const styledLabel = entry.selected ? this.theme.selected(this.theme.bold(label)) : label;
+    let line = `${cursor} ${styledLabel}`;
+    let used = 2 + visibleWidth(label);
+    const detailRoom = available - visibleWidth(label) - 2;
+    if (entry.detail && detailRoom >= 4) {
+      const detail = fitText(entry.detail, detailRoom);
+      line += `  ${this.theme.description(detail)}`;
+      used += 2 + visibleWidth(detail);
     }
-    lines.push("");
+    return `${line}${" ".repeat(Math.max(0, width - used))}`;
+  }
+
+  /** Renders exactly `rows` pane lines, cutting long content with a `… N more lines` row. */
+  private renderPane(content: PaneLine[], rows: number, width: number): string[] {
+    const lines = [...content];
+    while (lines.length > 0 && !lines[lines.length - 1]!.text.trim()) lines.pop();
+    let shown = lines;
+    if (lines.length > rows) {
+      const kept = Math.max(0, rows - 1);
+      shown = [...lines.slice(0, kept), { text: `… ${plural(lines.length - kept, "more line")}`, tone: this.theme.hint }];
+    }
+    const rendered = shown.map((line) => {
+      const fitted = fitText(line.text, width);
+      const styled = line.tone ? line.tone(fitted) : fitted;
+      return `${styled}${" ".repeat(Math.max(0, width - visibleWidth(fitted)))}`;
+    });
+    while (rendered.length < rows) rendered.push(" ".repeat(width));
+    return rendered;
+  }
+
+  private heading(text: string): PaneLine[] {
+    return [{ text, tone: (value) => this.theme.selected(this.theme.bold(value)) }, { text: "" }];
+  }
+
+  private prose(width: number, ...paragraphs: string[]): PaneLine[] {
+    const lines: PaneLine[] = [];
+    for (const paragraph of paragraphs) {
+      for (const text of wrapIndented(paragraph, width)) lines.push({ text });
+    }
+    return lines;
+  }
+
+  private muted(text: string): PaneLine {
+    return { text, tone: this.theme.description };
+  }
+
+  private details(state: McpSetupPanelViewState, width: number): PaneLine[] {
+    if (state.screen === "imports") return this.importDetails(state, width);
+    if (state.screen === "paths") return this.pathDetails(state, width);
+    return this.actionDetails(state, state.actions[state.actionCursor], width);
+  }
+
+  private importDetails(state: McpSetupPanelViewState, width: number): PaneLine[] {
     const selected = state.discovery.imports
       .filter((entry) => state.selectedImports.has(entry.kind))
       .map((entry) => entry.kind);
-    const previewWidth = this.previewWidth(innerWidth);
-    lines.push(...this.previewOrError(
-      () => this.formatWritePreview("Compatibility import write preview", this.callbacks.previewImports(selected), [], previewWidth),
-      previewWidth,
-    ));
-    return lines;
+    return [
+      ...this.heading("Adopt compatibility imports"),
+      ...this.prose(width, "Space toggles an import. Enter writes the selected imports to mcp-adapter.json in the Pi agent dir."),
+      { text: "" },
+      this.muted(`${selected.length} of ${state.discovery.imports.length} selected`),
+      ...this.writePreview(() => this.callbacks.previewImports(selected), width),
+    ];
   }
 
-  private renderPaths(state: McpSetupPanelViewState): string[] {
-    const lines: string[] = [];
-    lines.push("Select a detected config path to open. Enter opens it, Esc goes back.");
-    lines.push("");
-    for (let index = 0; index < state.detectedPaths.length; index++) {
-      const path = state.detectedPaths[index];
-      const cursor = index === state.pathCursor ? this.theme.selected("›") : " ";
-      if (path !== undefined) lines.push(`${cursor} ${path}`);
-    }
-    return lines;
+  private pathDetails(state: McpSetupPanelViewState, width: number): PaneLine[] {
+    const path = state.detectedPaths[state.pathCursor];
+    if (path === undefined) return this.prose(width, "No config paths were detected.");
+    return [
+      ...this.heading(basename(path)),
+      ...hardWrap(shortenPath(path), width).map((text) => this.muted(text)),
+      { text: "" },
+      ...this.prose(width, "Enter opens this file with your system's default app."),
+    ];
   }
 
-  private discoverySummaryLine(state: McpSetupPanelViewState): string {
-    if (!state.discovery.hasAnyConfig) {
-      return state.onboardingState.setupCompleted
-        ? "No MCP servers are active right now."
-        : "No MCP config is active yet.";
-    }
-
-    if (state.discovery.totalServerCount === 0 && (state.discovery.imports.length > 0 || !!state.discovery.repoPrompt.executablePath)) {
-      return "Pi found MCP-related setup options, but none are active in Pi yet.";
-    }
-
-    const shared = state.discovery.sources.filter((source) => source.kind === "shared" && source.serverCount > 0).length;
-    const piOwned = state.discovery.sources.filter((source) => source.kind === "pi" && source.serverCount > 0).length;
-    return `Detected ${state.discovery.totalServerCount} configured servers across ${shared} shared and ${piOwned} adapter-owned source${shared + piOwned === 1 ? "" : "s"}.`;
-  }
-
-  private secondarySummaryLine(state: McpSetupPanelViewState): string {
-    const hostNote = state.discovery.hostConfigs.length > 0
-      ? ` Host discovery is ${state.discovery.hostConfigDiscovery}; ${state.discovery.hostConfigs.length} host source${state.discovery.hostConfigs.length === 1 ? "" : "s"} detected.`
-      : "";
-    const conflictNote = state.discovery.conflicts.length > 0
-      ? ` ${state.discovery.conflicts.length} same-name conflict${state.discovery.conflicts.length === 1 ? "" : "s"} reported.`
-      : "";
-    if (!state.discovery.hasAnyConfig) {
-      return `Add shared servers to .mcp.json for this project/team or ~/.config/mcp/mcp.json for all projects. Adopt host imports or quick-add RepoPrompt from this screen.${hostNote}${conflictNote}`;
-    }
-    if (state.discovery.totalServerCount === 0 && state.discovery.imports.length > 0) {
-      return `Detected ${state.discovery.imports.length} compatibility import source${state.discovery.imports.length === 1 ? "" : "s"}. Adopt them into the adapter or inspect the underlying files.${hostNote}${conflictNote}`;
-    }
-    return `Use .mcp.json for project/team servers or ~/.config/mcp/mcp.json for all projects. mcp-adapter.json files are for compatibility imports and adapter-specific overrides; Pi mcp.json files are not read by the adapter.${hostNote}${conflictNote}`;
-  }
-
-  private visibleActionRange(total: number, cursor: number): { start: number; end: number } {
-    if (total <= COMPACT_ACTION_ROWS) return { start: 0, end: total };
-    const half = Math.floor(COMPACT_ACTION_ROWS / 2);
-    const start = Math.min(Math.max(0, cursor - half), Math.max(0, total - COMPACT_ACTION_ROWS));
-    return { start, end: Math.min(total, start + COMPACT_ACTION_ROWS) };
-  }
-
-  private contentWidth(innerWidth: number): number {
-    return Math.max(8, innerWidth - 4);
-  }
-
-  private previewWidth(innerWidth: number): number {
-    return Math.max(12, Math.min(DESKTOP_PREVIEW_WIDTH, this.contentWidth(innerWidth)));
-  }
-
-  private sharedTargetLabel(state: McpSetupPanelViewState): string {
-    return state.sharedConfigTarget === "project" ? "project .mcp.json" : "global ~/.config/mcp/mcp.json";
-  }
-
-  private getActionPreview(state: McpSetupPanelViewState, action?: Action, previewW = DESKTOP_PREVIEW_WIDTH): string[] {
+  private actionDetails(state: McpSetupPanelViewState, action: Action | undefined, width: number): PaneLine[] {
+    const { discovery } = state;
     switch (action?.id) {
       case "run-setup":
-        return this.formatPreview([
-          "Run setup to adopt host-specific imports, inspect detected paths, and scaffold a minimal `.mcp.json` if needed.",
-        ], previewW);
-      case "adopt-imports":
-        return this.formatWritePreview(
-          "Compatibility import write preview",
-          this.callbacks.previewImports(state.discovery.imports
-            .filter((entry) => state.selectedImports.has(entry.kind))
-            .map((entry) => entry.kind)),
-          [
-            `Detected imports: ${state.discovery.imports.map((entry) => `${entry.kind} (${entry.serverCount} servers)`).join(", ")}`,
-            "Selected imports are written into the Pi agent dir mcp-adapter.json as adapter-owned compatibility state.",
-          ],
-          previewW,
-        );
-      case "select-shared-target":
-        return this.formatPreview([
-          action.target === "project" ? "Project target: .mcp.json" : "Global target: ~/.config/mcp/mcp.json",
-          "Known server presets and starter configs will be written to the selected normal MCP setup path.",
-        ], previewW);
-      case "view-example":
-        return this.formatPreview([
-          "Example shared `.mcp.json`:",
-          "{",
-          '  "mcpServers": {',
-          '    "chrome-devtools": {',
-          '      "command": "npx",',
-          '      "args": ["-y", "chrome-devtools-mcp@1.6.0"]',
-          "    }",
-          "  }",
-          "}",
-          "",
-          "Use Scaffold selected config when you want a safe empty shell instead of a live example server.",
-        ], previewW);
-      case "show-precedence":
-        return this.formatPreview([
-          "Recommended shared config:",
-          "  project/team: .mcp.json",
-          "  all projects: ~/.config/mcp/mcp.json",
-          "",
-          "Advanced compatibility and adapter-owned layers:",
-          "  host imports, .agents files, package MCP manifests, and Pi overrides",
-          "",
-          "Read order (later entries win):",
-          "0. detected host configs (opt-in lowest-precedence fallback)",
-          "1. ~/.config/mcp/mcp.json",
-          "2. ~/.agents/mcp.json",
-          "3. ~/.agents/mcp/mcp.json",
-          "4. <Pi agent dir>/mcp-adapter.json",
-          "5. configured ancestor root to parent(cwd), farthest first (opt-in)",
-          `   per directory: .mcp.json, then ${getConfigDirName()}/mcp-adapter.json`,
-          "6. cwd/.mcp.json",
-          `7. cwd/${getConfigDirName()}/mcp-adapter.json`,
-          `Host discovery: ${state.discovery.hostConfigDiscovery}. Conflicts reported: ${state.discovery.conflicts.length}.`,
-          ...state.discovery.conflicts.slice(0, 8).map((conflict) =>
-            `${conflict.serverName}: ${conflict.sources.map((source) => source.path).join(" -> ")} (winner: ${conflict.winner.path})`,
+        return [
+          ...this.heading("Run setup"),
+          ...this.prose(width, "Adopt host-specific imports, inspect detected paths, and scaffold a minimal .mcp.json if needed."),
+        ];
+      case "select-shared-target": {
+        const project = action.target === "project";
+        return [
+          ...this.heading(project ? "Project config" : "Global config"),
+          this.muted(project ? ".mcp.json" : "~/.config/mcp/mcp.json"),
+          { text: "" },
+          ...this.prose(
+            width,
+            project
+              ? "Servers here load in this project only. Commit the file to share them with your team."
+              : "Servers here load in every project on this machine.",
           ),
-          "The adapter writes compatibility imports and adapter-only overrides to mcp-adapter.json files.",
-        ], previewW);
-      case "open-paths":
-        return this.formatPreview(state.detectedPaths.length > 0
-          ? ["Detected paths:", ...state.detectedPaths]
-          : ["No config paths were detected."], previewW);
-      case "add-repoprompt": {
-        const repoPrompt = state.discovery.repoPrompt;
-        const preview = this.callbacks.previewRepoPrompt(state.sharedConfigTarget);
-        if (!preview) {
-          return this.formatPreview(["RepoPrompt is not available to add from this setup screen."], previewW);
-        }
-        return this.formatWritePreview(
-          "RepoPrompt write preview",
-          preview,
-          [
-            `Executable: ${repoPrompt.executablePath ?? "not found"}`,
-            `Target: ${this.sharedTargetLabel(state)}`,
-            `Server name: ${repoPrompt.serverName ?? "repoprompt"}`,
-          ],
-          previewW,
-        );
+          { text: "" },
+          ...this.prose(width, "Known servers and starter configs are written to the selected file."),
+          { text: "" },
+          this.muted(state.sharedConfigTarget === action.target ? "Selected." : "Press enter to write new servers here."),
+        ];
       }
       case "add-known-server": {
         const preset = action.preset;
-        if (!preset) return this.formatPreview(["Known server preset is unavailable."], previewW);
-        return this.formatWritePreview(
-          `${preset.name} write preview`,
-          this.callbacks.previewKnownServer(preset, state.sharedConfigTarget),
-          [preset.summary, ...(preset.desktopApp ? [preset.desktopApp.enableSteps] : []), `Target: ${this.sharedTargetLabel(state)}`],
-          previewW,
-        );
+        if (!preset) return this.prose(width, "Known server preset is unavailable.");
+        return [
+          ...this.heading(preset.name),
+          ...this.prose(width, preset.summary),
+          ...(preset.desktopApp ? [{ text: "" }, ...this.prose(width, preset.desktopApp.enableSteps)] : []),
+          ...this.writePreview(() => this.callbacks.previewKnownServer(preset, state.sharedConfigTarget), width),
+        ];
+      }
+      case "add-repoprompt": {
+        const repoPrompt = discovery.repoPrompt;
+        const lines = [
+          ...this.heading("RepoPrompt"),
+          ...this.prose(width, "Adds the RepoPrompt MCP server installed on this machine."),
+          { text: "" },
+          this.muted(`Executable   ${repoPrompt.executablePath ? shortenPath(repoPrompt.executablePath) : "not found"}`),
+          this.muted(`Server name  ${repoPrompt.serverName ?? "repoprompt"}`),
+        ];
+        const preview = this.previewOrError(() => this.callbacks.previewRepoPrompt(state.sharedConfigTarget), width);
+        if (preview === null) return [...lines, { text: "" }, ...this.prose(width, "RepoPrompt is not available to add from this setup screen.")];
+        return [...lines, ...preview];
+      }
+      case "adopt-imports": {
+        const selected = discovery.imports
+          .filter((entry) => state.selectedImports.has(entry.kind))
+          .map((entry) => entry.kind);
+        return [
+          ...this.heading("Adopt compatibility imports"),
+          ...this.prose(
+            width,
+            `Detected: ${discovery.imports.map((entry) => `${entry.kind} (${plural(entry.serverCount, "server")})`).join(", ")}.`,
+            "Selected imports are written to mcp-adapter.json in the Pi agent dir as adapter-owned compatibility state.",
+          ),
+          ...this.writePreview(() => this.callbacks.previewImports(selected), width),
+        ];
       }
       case "scaffold-shared-config":
-        return this.formatWritePreview(
-          `${this.sharedTargetLabel(state)} starter write preview`,
-          this.callbacks.previewStarterConfig(state.sharedConfigTarget),
-          [
-            "This writes a minimal config at the selected normal MCP setup path.",
-            "It intentionally avoids adding a fake placeholder server that would fail on first reload.",
-          ],
-          previewW,
-        );
-      case "close":
+        return [
+          ...this.heading(action.label),
+          ...this.prose(width, "Writes a minimal config with no servers, so nothing fails on the first reload."),
+          ...this.writePreview(() => this.callbacks.previewStarterConfig(state.sharedConfigTarget), width),
+        ];
+      case "view-example":
+        return [
+          ...this.heading("Example config"),
+          ...this.prose(width, "A shared .mcp.json with one server:"),
+          { text: "" },
+          ...[
+            "{",
+            '  "mcpServers": {',
+            '    "chrome-devtools": {',
+            '      "command": "npx",',
+            '      "args": ["-y", "chrome-devtools-mcp@1.6.0"]',
+            "    }",
+            "  }",
+            "}",
+          ].map((text) => this.muted(text)),
+          { text: "" },
+          ...this.prose(width, "Scaffold writes an empty config instead when you don't want a live example server."),
+        ];
+      case "show-precedence":
+        return [
+          ...this.heading("Config precedence"),
+          this.muted([
+            `Host discovery: ${discovery.hostConfigDiscovery}`,
+            ...(discovery.hostConfigs.length > 0 ? [plural(discovery.hostConfigs.length, "host config")] : []),
+            plural(discovery.conflicts.length, "conflict"),
+          ].join(" · ")),
+          ...discovery.conflicts.slice(0, 8).flatMap((conflict) => this.prose(
+            width,
+            `- ${conflict.serverName}: ${conflict.sources.map((source) => shortenPath(source.path)).join(" -> ")} (winner: ${shortenPath(conflict.winner.path)})`,
+          ).map((line) => ({ ...line, tone: this.theme.needsAuth }))),
+          { text: "" },
+          ...this.prose(
+            width,
+            "Use .mcp.json for project/team servers or ~/.config/mcp/mcp.json for all projects. mcp-adapter.json files are for compatibility imports and adapter-specific overrides; Pi mcp.json files are not read by the adapter.",
+          ),
+          { text: "" },
+          ...this.prose(width, "Recommended shared config:", "  project/team: .mcp.json", "  all projects: ~/.config/mcp/mcp.json"),
+          { text: "" },
+          ...this.prose(
+            width,
+            "Read order (later entries win):",
+            "0. detected host configs (opt-in lowest-precedence fallback)",
+            "1. ~/.config/mcp/mcp.json",
+            "2. ~/.agents/mcp.json",
+            "3. ~/.agents/mcp/mcp.json",
+            "4. <Pi agent dir>/mcp-adapter.json",
+            "5. configured ancestor root to parent(cwd), farthest first (opt-in)",
+            `   per directory: .mcp.json, then ${getConfigDirName()}/mcp-adapter.json`,
+            "6. cwd/.mcp.json",
+            `7. cwd/${getConfigDirName()}/mcp-adapter.json`,
+          ),
+          { text: "" },
+          ...this.prose(
+            width,
+            "Advanced compatibility and adapter-owned layers:",
+            "  host imports, .agents files, package MCP manifests, and Pi overrides",
+          ),
+        ];
+      case "open-paths":
+        return [
+          ...this.heading("Open config files"),
+          ...this.prose(width, "Press enter to pick a detected config file and open it."),
+          { text: "" },
+          ...state.detectedPaths.map((path) => this.muted(shortenPath(path))),
+        ];
       default:
-        return this.formatPreview(["Close the setup flow."], previewW);
+        return [];
     }
   }
 
-  private formatPreview(lines: string[], width = DESKTOP_PREVIEW_WIDTH): string[] {
-    const preview: string[] = [];
-    for (const line of lines) preview.push(...wrapText(line, width));
-    return preview;
-  }
-
-  private previewOrError(renderPreview: () => string[], width: number): string[] {
+  /** Runs a preview callback, turning a thrown error into readable pane lines. */
+  private previewOrError(getPreview: () => ConfigWritePreview | null, width: number): PaneLine[] | null {
+    let preview: ConfigWritePreview | null;
     try {
-      return renderPreview();
+      preview = getPreview();
     } catch (error) {
-      return this.formatPreview([`Preview unavailable: ${error instanceof Error ? error.message : String(error)}`], width);
+      return [
+        { text: "" },
+        { text: "Preview unavailable:", tone: this.theme.needsAuth },
+        ...this.prose(width, error instanceof Error ? error.message : String(error)),
+      ];
     }
+    return preview ? this.formatWritePreview(preview) : null;
   }
 
-  private formatWritePreview(title: string, preview: ConfigWritePreview, intro: string[] = [], width = DESKTOP_PREVIEW_WIDTH): string[] {
-    const lines: string[] = [];
-    for (const line of intro) lines.push(...wrapText(line, width));
-    if (intro.length > 0) lines.push("");
-    lines.push(...wrapText(`${title}: ${preview.path}`, width));
-    lines.push(...wrapText(preview.existed ? "Existing file detected. Showing exact before/after diff." : "New file will be created. Showing exact content diff.", width));
-    lines.push("");
-    const diffLines = preview.diffText.split("\n");
-    const maxLines = 18;
-    const shown = diffLines.slice(0, maxLines);
-    for (const line of shown) lines.push(...wrapText(line, width));
-    if (diffLines.length > maxLines) {
-      lines.push(...wrapText(`… ${diffLines.length - maxLines} more diff line${diffLines.length - maxLines === 1 ? "" : "s"}`, width));
+  private writePreview(getPreview: () => ConfigWritePreview, width: number): PaneLine[] {
+    return this.previewOrError(getPreview, width) ?? [];
+  }
+
+  /** Diff lines are never word-wrapped: each keeps its indentation and is cut with … at the pane edge. */
+  private formatWritePreview(preview: ConfigWritePreview): PaneLine[] {
+    const path = shortenPath(preview.path);
+    if (preview.existed && !preview.changed) return [{ text: "" }, this.muted(`No changes to ${path}`)];
+    const lines: PaneLine[] = [{ text: "" }, this.muted(`${preview.existed ? "Updates" : "Creates"} ${path}`)];
+    const diffLines = preview.diffText.split("\n").filter((line) => line !== "--- before" && line !== "+++ after");
+    while (diffLines.length > 0 && !diffLines[diffLines.length - 1]!.trim()) diffLines.pop();
+    for (const line of diffLines) {
+      let tone = this.theme.description;
+      if (line.startsWith("+")) tone = this.theme.confirm;
+      else if (line.startsWith("-")) tone = this.theme.cancel;
+      lines.push({ text: line, tone });
     }
     return lines;
-  }
-
-  private padLine(text: string, innerWidth: number): string {
-    const inset = 2;
-    const contentWidth = Math.max(0, innerWidth - inset * 2);
-    const fitted = truncateToWidth(text, contentWidth, "…", true);
-    const padding = Math.max(0, contentWidth - visibleWidth(fitted));
-    return `${this.theme.border("│")}${" ".repeat(inset)}${fitted}${" ".repeat(padding)}${" ".repeat(inset)}${this.theme.border("│")}`;
   }
 }
 
@@ -439,8 +679,8 @@ export class McpSetupPanel {
   private sharedConfigTarget: SharedConfigTarget = "project";
   private selectedImports = new Set<ImportKind>();
   private busy = false;
-  private notice: { text: string; tone: "success" | "warning" | "muted" } | null = null;
-  private tui: { requestRender(): void };
+  private notice: Notice | null = null;
+  private tui: SetupPanelTui;
   private readonly view: McpSetupPanelView;
   private keys: PanelKeys;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -450,7 +690,7 @@ export class McpSetupPanel {
     private discovery: McpDiscoverySummary,
     private callbacks: SetupPanelCallbacks,
     private options: SetupPanelOptions,
-    tui: { requestRender(): void },
+    tui: SetupPanelTui,
     private done: () => void,
   ) {
     this.tui = tui;
@@ -483,28 +723,27 @@ export class McpSetupPanel {
     if (this.screen === "empty") {
       actions.push({ id: "run-setup", label: "Run setup" });
     }
-    if (this.discovery.imports.length > 0) {
-      actions.push({ id: "adopt-imports", label: "Adopt detected compatibility imports" });
-    }
     actions.push(
-      { id: "select-shared-target", label: `${this.sharedConfigTarget === "project" ? "●" : "○"} Add to this project (.mcp.json)`, target: "project" },
-      { id: "select-shared-target", label: `${this.sharedConfigTarget === "global" ? "●" : "○"} Add globally (~/.config/mcp/mcp.json)`, target: "global" },
+      { id: "select-shared-target", label: `${this.sharedConfigTarget === "project" ? "●" : "○"} Project`, detail: ".mcp.json", target: "project" },
+      { id: "select-shared-target", label: `${this.sharedConfigTarget === "global" ? "●" : "○"} Global `, detail: "~/.config/mcp/mcp.json", target: "global" },
     );
-    actions.push({ id: "view-example", label: "View example shared config" });
-    if (!this.selectedSharedConfigExists()) {
-      actions.push({ id: "scaffold-shared-config", label: `Scaffold ${this.sharedTargetLabel()}` });
-    }
-    actions.push({ id: "show-precedence", label: "Explain config precedence" });
-    if (this.getDetectedPaths().length > 0) {
-      actions.push({ id: "open-paths", label: "Open detected config paths" });
-    }
     for (const preset of this.discovery.knownServerPresets) {
       actions.push({ id: "add-known-server", label: preset.name, preset });
     }
     if (!this.discovery.repoPrompt.configured && this.discovery.repoPrompt.executablePath && this.discovery.repoPrompt.targetPath && this.discovery.repoPrompt.entry && this.discovery.repoPrompt.serverName) {
-      actions.push({ id: "add-repoprompt", label: "Add RepoPrompt to selected shared config" });
+      actions.push({ id: "add-repoprompt", label: "RepoPrompt" });
     }
-    actions.push({ id: "close", label: "Close" });
+    if (this.discovery.imports.length > 0) {
+      actions.push({ id: "adopt-imports", label: "Adopt compatibility imports" });
+    }
+    if (!this.selectedSharedConfigExists()) {
+      actions.push({ id: "scaffold-shared-config", label: `Scaffold ${this.sharedConfigTarget === "project" ? ".mcp.json" : "~/.config/mcp/mcp.json"}` });
+    }
+    actions.push({ id: "view-example", label: "Example config" });
+    actions.push({ id: "show-precedence", label: "Config precedence" });
+    if (this.getDetectedPaths().length > 0) {
+      actions.push({ id: "open-paths", label: "Open config files" });
+    }
     return actions;
   }
 
@@ -683,13 +922,7 @@ export class McpSetupPanel {
       });
       return;
     }
-    if (action.id === "close") {
-      this.cleanup();
-      this.done();
-      return;
-    }
-
-    this.notice = { text: "Review the details below. Press Enter on an action with a side effect to apply it.", tone: "muted" };
+    this.notice = { text: "Review the details. Press Enter on an action with a side effect to apply it.", tone: "muted" };
     this.tui.requestRender();
   }
 
@@ -742,6 +975,7 @@ export class McpSetupPanel {
       discovery: this.discovery,
       actions: this.getActions(),
       detectedPaths: this.getDetectedPaths(),
+      terminalRows: this.tui.terminal?.rows,
     };
   }
 
@@ -762,7 +996,7 @@ export function createMcpSetupPanel(
   discovery: McpDiscoverySummary,
   callbacks: SetupPanelCallbacks,
   options: SetupPanelOptions,
-  tui: { requestRender(): void },
+  tui: SetupPanelTui,
   done: () => void,
 ): McpSetupPanel & { dispose(): void } {
   return new McpSetupPanel(discovery, callbacks, options, tui, done);

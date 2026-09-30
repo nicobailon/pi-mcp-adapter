@@ -20,6 +20,15 @@ function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
+/** Presses DOWN until the setup panel's cursor row shows `label`. */
+function moveSetupCursorTo(panel: { render(width: number): string[]; handleInput(data: string): void }, label: string, key = DOWN): void {
+  for (let presses = 0; presses < 40; presses += 1) {
+    if (panel.render(200).some((line) => stripAnsi(line).includes(`› ${label}`))) return;
+    panel.handleInput(key);
+  }
+  throw new Error(`Setup cursor never reached ${label}`);
+}
+
 function createEmacsKeybindings(): KeybindingsManager {
   return new KeybindingsManager(TUI_KEYBINDINGS, {
     "tui.select.up": ["up", "ctrl+p"],
@@ -262,8 +271,7 @@ describe("mcp-setup-panel custom keybindings", () => {
     // Select global target, then scaffold the selected normal config path.
     panel.handleInput(CTRL_N);
     panel.handleInput(ENTER);
-    panel.handleInput(CTRL_N);
-    panel.handleInput(CTRL_N);
+    moveSetupCursorTo(panel, "Scaffold ~/.config/mcp/mcp.json", CTRL_N);
     await Promise.resolve();
     await Promise.resolve();
     panel.handleInput(ENTER);
@@ -288,7 +296,7 @@ describe("mcp-setup-panel custom keybindings", () => {
 
     panel.handleInput(DOWN);
     panel.handleInput(ENTER);
-    for (let i = 0; i < 4; i += 1) panel.handleInput(DOWN);
+    moveSetupCursorTo(panel, "DeepWiki");
     panel.handleInput(ENTER);
     await Promise.resolve();
     await Promise.resolve();
@@ -313,7 +321,7 @@ describe("mcp-setup-panel custom keybindings", () => {
         () => {},
       );
 
-      for (let i = 0; i < 5; i += 1) panel.handleInput(DOWN);
+      moveSetupCursorTo(panel, "Figma (desktop)");
       panel.handleInput(ENTER);
       await vi.waitFor(() => expect(stripAnsi(panel.render(400).join("\n"))).toContain(`Added Figma (desktop) to /tmp/x. ${message}`));
       panel.dispose();
@@ -332,17 +340,14 @@ describe("mcp-setup-panel custom keybindings", () => {
       () => {},
     );
 
-    // Actions include target selection, scaffold-selected, known presets, close.
-    panel.handleInput(DOWN);
-    panel.handleInput(DOWN);
-    panel.handleInput(DOWN);
+    moveSetupCursorTo(panel, "Scaffold .mcp.json");
     const lines = panel.render(37);
     const output = lines.join("\n");
 
     expect(Math.max(...lines.map((line) => visibleWidth(line)))).toBeLessThanOrEqual(37);
-    expect(output).toContain("DeepWiki");
-    expect(output).toContain("starter write");
-    expect(output).toContain("Enter select");
+    expect(output).toContain("› Scaffold .mcp.json");
+    expect(output).toContain("Creates /tmp/x");
+    expect(output).toContain("enter select");
     panel.dispose();
   });
 
@@ -354,16 +359,13 @@ describe("mcp-setup-panel custom keybindings", () => {
         mode: "setup",
         onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
       },
-      { requestRender: () => {} },
+      // A tall terminal leaves room for the full precedence details.
+      { requestRender: () => {}, terminal: { rows: 60 } },
       () => {},
     );
 
-    // Actions include target selection, view-example, scaffold-selected, show-precedence, close.
-    panel.handleInput(DOWN);
-    panel.handleInput(DOWN);
-    panel.handleInput(DOWN);
-    panel.handleInput(DOWN);
-    const output = panel.render(100).join("\n");
+    moveSetupCursorTo(panel, "Config precedence");
+    const output = panel.render(200).join("\n");
 
     expect(output).toContain("Recommended shared config:");
     expect(output).toContain("project/team: .mcp.json");
@@ -392,15 +394,12 @@ describe("mcp-setup-panel custom keybindings", () => {
           mode: "setup",
           onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
         },
-        { requestRender: () => {} },
+        { requestRender: () => {}, terminal: { rows: 60 } },
         () => {},
       );
 
-      panel.handleInput(DOWN);
-      panel.handleInput(DOWN);
-      panel.handleInput(DOWN);
-      panel.handleInput(DOWN);
-      const output = panel.render(100).join("\n");
+      moveSetupCursorTo(panel, "Config precedence");
+      const output = panel.render(200).join("\n");
 
       expect(output).toContain("7. cwd/.arc/mcp-adapter.json");
       panel.dispose();

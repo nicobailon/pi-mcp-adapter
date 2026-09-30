@@ -676,7 +676,8 @@ export async function openMcpSetup(
           resolve({ configChanged });
         });
       },
-      { overlay: true, overlayOptions: { anchor: "center", width: 92 } },
+      // The panel sizes its height from tui.terminal.rows minus this margin, so it always fits.
+      { overlay: true, overlayOptions: { anchor: "center", width: 92, maxHeight: "100%", margin: { top: 1, bottom: 1 } } },
     );
   });
 }
