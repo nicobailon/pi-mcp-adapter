@@ -350,7 +350,7 @@ describe("McpServerManager StreamableHTTP transport", () => {
     const error = await manager.connect("remote", {
       url,
       auth: "bearer",
-      bearerToken: `!node -e "process.stdout.write('fake-s3cr3t\\\\nfake-t41l')"`,
+      bearerToken: `!node -e "process.stdout.write('fake-s3cr3t' + String.fromCharCode(10) + 'fake-t41l')"`,
     }).then(() => undefined, (failure: unknown) => failure);
 
     const reported = errorChain(error);
