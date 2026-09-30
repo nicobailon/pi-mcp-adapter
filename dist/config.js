@@ -939,8 +939,15 @@ function toServerEntries(servers) {
         return {};
     const entries = {};
     for (const [name, entry] of Object.entries(servers)) {
-        if (isServerEntry(entry))
-            entries[name] = entry;
+        if (!isServerEntry(entry))
+            continue;
+        if (entry.description !== undefined && typeof entry.description !== "string") {
+            console.warn(`Ignoring invalid description for MCP server "${name}": expected a string`);
+            const { description: _description, ...rest } = entry;
+            entries[name] = rest;
+            continue;
+        }
+        entries[name] = entry;
     }
     return entries;
 }

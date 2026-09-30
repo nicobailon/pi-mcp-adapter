@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Server entries accept a `description`, the same key as Pi's `mcp.json`. `mcp({ server })` shows it, `mcp({ search })` ranks the server's tools by it, and the `/mcp-adapter` panel shows it when you expand the server, falling back to the first line of the server's instructions.
+
 ### Changed
 
 - The README is now a short overview. The full reference moved into `docs/`: configuration, server options, authentication (formerly `OAUTH.md`), using MCP tools, scripting, prompts and MCP UI, and the extension API.

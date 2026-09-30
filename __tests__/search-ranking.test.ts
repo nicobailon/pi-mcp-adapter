@@ -107,6 +107,22 @@ describe("search ranking", () => {
     expect(rankToolMatches(state, "create")).toHaveLength(1);
   });
 
+  it("matches tools through their server description", () => {
+    const state = {
+      toolMetadata: new Map([
+        ["weather", [tool("get_alerts", "List active alerts")]],
+        ["calendar", [tool("list_events", "List calendar events")]],
+      ]),
+      config: { mcpServers: { weather: { command: "weather" }, calendar: { command: "calendar" } } },
+      manager: { getConnection: () => undefined },
+      failureTracker: new Map(),
+    } as unknown as McpExtensionState;
+
+    expect(rankToolMatches(state, "forecast")).toHaveLength(0);
+    state.config.mcpServers.weather!.description = "Forecasts and severe weather alerts";
+    expect(rankToolMatches(state, "forecast").map(match => match.tool.name)).toEqual(["get_alerts"]);
+  });
+
   it("paginates including offsets beyond the result set", () => {
     expect(paginate(["a", "b", "c"], 1, 1)).toEqual({
       items: ["b"], total: 3, hasMore: true, nextOffset: 2,

@@ -436,6 +436,8 @@ export interface HttpRequestHeadersCommand {
 
 // Server configuration
 export interface ServerEntry {
+  /** Short human summary shown by mcp({ server }) and the /mcp-adapter panel, and ranked by mcp({ search }). */
+  description?: string;
   command?: string;
   args?: string[];
   /** Explicit rmcp-mux Unix-domain socket path. Mutually exclusive with command and url. */

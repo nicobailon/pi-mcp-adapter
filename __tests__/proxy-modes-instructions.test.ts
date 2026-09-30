@@ -5,11 +5,11 @@ import type { McpExtensionState } from "../state.ts";
 const SHORT_INSTRUCTIONS = "Call read_skill with a skill name before answering.";
 const LONG_INSTRUCTIONS = `Available skills: ${Array.from({ length: 40 }, (_, i) => `skill-${i}`).join(", ")}. Call read_skill with a skill name to load one.`;
 
-function createState(overrides: { instructions?: string; connected?: boolean; noTools?: boolean } = {}): McpExtensionState {
+function createState(overrides: { instructions?: string; connected?: boolean; noTools?: boolean; description?: string } = {}): McpExtensionState {
   return {
     config: {
       mcpServers: {
-        demo: { command: "npx", args: ["demo"] },
+        demo: { command: "npx", args: ["demo"], ...(overrides.description ? { description: overrides.description } : {}) },
       },
     },
     toolMetadata: new Map([
@@ -68,6 +68,15 @@ describe("proxy instructions", () => {
     expect(cached.content[0].text).toContain('Server "demo" has no cached tools');
     expect(cached.content[0].text).toContain(`Server instructions:\n${SHORT_INSTRUCTIONS}`);
     expect(cached.details).toMatchObject({ mode: "list", count: 0, hasInstructions: true });
+  });
+
+  it("shows the configured description under the listing header", () => {
+    const listed = executeList(createState({ description: "Skill library", instructions: SHORT_INSTRUCTIONS }), "demo");
+    const empty = executeList(createState({ description: "Skill library", connected: true, noTools: true }), "demo");
+
+    expect(listed.content[0].text).toMatch(/^demo \(1 tools.*\):\nDescription: Skill library\n\n- demo_read_skill/);
+    expect(listed.content[0].text).toContain(`Server instructions:\n${SHORT_INSTRUCTIONS}`);
+    expect(empty.content[0].text).toBe('Server "demo" has no tools.\nDescription: Skill library');
   });
 
   it("returns the full instructions text", () => {

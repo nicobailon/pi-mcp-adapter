@@ -21,6 +21,7 @@ const FIELD_WEIGHTS = {
   originalName: 10,
   server: 8,
   description: 5,
+  serverDescription: 5,
   keywords: 5,
 } as const;
 
@@ -43,6 +44,7 @@ interface PreparedToolSearch {
 interface CachedServerSearch {
   metadata: ToolMetadata[];
   searchKeywords: ServerEntry["searchKeywords"];
+  serverDescription: ServerEntry["description"];
   toolPrefix: ReturnType<typeof resolveToolPrefix>;
   withKeywords?: PreparedToolSearch[];
   withoutKeywords?: PreparedToolSearch[];
@@ -116,12 +118,13 @@ function matchesAsciiStem(fieldToken: string, queryToken: string): boolean {
     && (fieldToken.startsWith(queryToken) || (fieldToken.length >= MIN_STEM_LENGTH && queryToken.startsWith(fieldToken)));
 }
 
-function prepareToolSearch(tool: ToolMetadata, server: string, keywords?: string[]): PreparedToolSearch {
+function prepareToolSearch(tool: ToolMetadata, server: string, keywords?: string[], serverDescription?: string): PreparedToolSearch {
   const fields = {
     name: normalizeSearchText(tool.name),
     originalName: normalizeSearchText(tool.originalName),
     server: normalizeSearchText(server),
     description: normalizeSearchText(tool.description),
+    serverDescription: normalizeSearchText(serverDescription ?? ""),
   };
   const preparedFields = (Object.entries(fields) as Array<[SearchField, string]>)
     .map(([field, value]): [SearchField, string, string[]] => [field, value, tokenize(value)]);
@@ -240,8 +243,13 @@ function getPreparedTools(
   }
   const toolPrefix = resolveToolPrefix(definition, globalPrefix);
   let cached = stateCache.get(serverName);
-  if (cached?.metadata !== metadata || cached.searchKeywords !== definition?.searchKeywords || cached.toolPrefix !== toolPrefix) {
-    cached = { metadata, searchKeywords: definition?.searchKeywords, toolPrefix };
+  if (
+    cached?.metadata !== metadata
+    || cached.searchKeywords !== definition?.searchKeywords
+    || cached.serverDescription !== definition?.description
+    || cached.toolPrefix !== toolPrefix
+  ) {
+    cached = { metadata, searchKeywords: definition?.searchKeywords, serverDescription: definition?.description, toolPrefix };
     stateCache.set(serverName, cached);
   }
   const cacheKey = includeKeywords ? "withKeywords" : "withoutKeywords";
@@ -253,6 +261,7 @@ function getPreparedTools(
       includeKeywords && definition?.searchKeywords !== undefined
         ? resolveSearchKeywords(definition, tool.originalName, serverName, globalPrefix)
         : undefined,
+      definition?.description,
     ));
     cached[cacheKey] = prepared;
   }

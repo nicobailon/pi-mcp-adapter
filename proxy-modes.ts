@@ -1024,22 +1024,25 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
       instructionsText += `\nUse mcp({ instructions: "${server}" }) for the full text.`;
     }
   }
+  // No instructions fallback here: the instructions preview below already starts with that line.
+  const description = definition.description?.trim();
+  const descriptionText = description ? `\nDescription: ${description}` : "";
 
   if (toolNames.length === 0) {
     if (connection?.status === "connected") {
       return {
-        content: [{ type: "text" as const, text: `Server "${server}" has no tools.${instructionsText}` }],
+        content: [{ type: "text" as const, text: `Server "${server}" has no tools.${descriptionText}${instructionsText}` }],
         details: { mode: "list", server, tools: [], count: 0, hasInstructions: Boolean(instructions) },
       };
     }
     if (metadata !== undefined) {
       return {
-        content: [{ type: "text" as const, text: `Server "${server}" has no cached tools (not connected).${instructionsText}` }],
+        content: [{ type: "text" as const, text: `Server "${server}" has no cached tools (not connected).${descriptionText}${instructionsText}` }],
         details: { mode: "list", server, tools: [], count: 0, cached: true, hasInstructions: Boolean(instructions) },
       };
     }
     return {
-      content: [{ type: "text" as const, text: `Server "${server}" is configured but not connected. Use mcp({ connect: "${server}" }) or /mcp-adapter reconnect ${server} to retry.${instructionsText}` }],
+      content: [{ type: "text" as const, text: `Server "${server}" is configured but not connected. Use mcp({ connect: "${server}" }) or /mcp-adapter reconnect ${server} to retry.${descriptionText}${instructionsText}` }],
       details: { mode: "list", server, tools: [], count: 0, error: "not_connected", hasInstructions: Boolean(instructions) },
     };
   }
@@ -1055,7 +1058,7 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
       cachedNote = ` (lazy: tools from cache, not connected yet — mcp({ connect: "${server}" }) to connect)`;
     }
   }
-  let text = `${server} (${toolNames.length} tools${cachedNote}):\n\n`;
+  let text = `${server} (${toolNames.length} tools${cachedNote}):${descriptionText}\n\n`;
 
   const descMap = new Map<string, string>();
   if (metadata) {

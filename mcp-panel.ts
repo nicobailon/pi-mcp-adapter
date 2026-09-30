@@ -3,7 +3,7 @@ import { copyToClipboard, type Theme } from "@earendil-works/pi-coding-agent";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import { createMcpPanelTheme, McpPanelFrame, type McpPanelTheme } from "./mcp-panel-theme.ts";
 import { getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
-import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance, ToolPrefix } from "./types.ts";
+import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerEntry, ServerProvenance, ToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
 import { isServerCacheValid, type MetadataCache, type ServerCacheEntry, type CachedTool } from "./metadata-cache.ts";
@@ -60,6 +60,11 @@ function sanitizeRowContent(content: string): string {
   return result;
 }
 
+// Servers without a configured description show the first line of their cached instructions.
+function serverDescription(definition: ServerEntry | undefined, entry: ServerCacheEntry | undefined): string | undefined {
+  return definition?.description?.trim() || entry?.instructions?.trim().split("\n", 1)[0] || undefined;
+}
+
 function estimateTokens(tool: CachedTool): number {
   const schemaLen = JSON.stringify(tool.inputSchema ?? {}).length;
   const descLen = tool.description?.length ?? 0;
@@ -78,6 +83,7 @@ interface ToolState {
 
 interface ServerState {
   name: string;
+  summary: string | undefined;
   expanded: boolean;
   source: "user" | "project" | "import";
   importKind?: string;
@@ -190,6 +196,9 @@ class McpPanelView implements Component {
 
         if (item.type === "server") {
           this.addRow(this.renderServerRow(state, server, isCursor), innerWidth);
+          if (server.expanded && server.summary) {
+            this.addRow(`    ${this.theme.description(sanitizeDisplayText(server.summary))}`, innerWidth);
+          }
           if (isCursor && server.connectionStatus === "failed" && server.failureMessage) {
             for (const line of this.wrapText(sanitizeDisplayText(server.failureMessage), innerWidth - 6)) {
               this.addRow(`    ${this.theme.cancel(line)}`, innerWidth);
@@ -539,6 +548,7 @@ class McpPanel {
       }
       this.servers.push({
         name: serverName,
+        summary: serverDescription(definition, serverCache),
         expanded: false,
         source: prov?.kind ?? "user",
         ...(prov?.importKind !== undefined ? { importKind: prov.importKind } : {}),
@@ -883,6 +893,7 @@ class McpPanel {
         if (entry) {
           this.cache ??= { version: 1, servers: {} };
           this.cache.servers[server.name] = entry;
+          server.summary = serverDescription(this.config.mcpServers[server.name], entry);
           this.rebuildServerTools(server, entry);
           server.hasCachedData = true;
         }

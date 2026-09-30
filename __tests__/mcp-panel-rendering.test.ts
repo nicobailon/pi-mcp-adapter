@@ -142,6 +142,30 @@ describe("mcp-panel rendering", () => {
     expect(createFailedPanel("idle", "should not appear", 60)).not.toContain("should not appear");
   });
 
+  it("shows the server description, or the first instructions line, when a server is expanded", () => {
+    const render = (description: string | undefined): { collapsed: string; expanded: string } => {
+      const config = createConfig();
+      if (description) config.mcpServers.atlassian!.description = description;
+      const cache = createCache(config);
+      cache.servers.atlassian!.instructions = "\nJira and Confluence tools.\nCall search first.";
+      const panel = createMcpPanel(config, cache, new Map(), createCallbacks(), { requestRender: () => {} }, () => {});
+      const collapsed = stripAnsi(panel.render(120).join("\n"));
+      panel.handleInput("\r");
+      const expanded = stripAnsi(panel.render(120).join("\n"));
+      panel.dispose();
+      return { collapsed, expanded };
+    };
+
+    const configured = render("Atlassian Cloud");
+    expect(configured.collapsed).not.toContain("Atlassian Cloud");
+    expect(configured.expanded).toContain("Atlassian Cloud");
+    expect(configured.expanded).not.toContain("Jira and Confluence tools.");
+
+    const fallback = render(undefined).expanded;
+    expect(fallback).toContain("Jira and Confluence tools.");
+    expect(fallback).not.toContain("Call search first.");
+  });
+
   it("updates direct counts and token totals after each toggle", () => {
     const config: McpConfig = {
       mcpServers: {
