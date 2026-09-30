@@ -267,7 +267,12 @@ function createBearerCommandFetch(
     const request = new Request(input, init);
     const token = await resolver.resolve(request.signal);
     const headers = new Headers(request.headers);
-    headers.set("Authorization", `Bearer ${token}`);
+    try {
+      headers.set("Authorization", `Bearer ${token}`);
+    } catch {
+      // The Headers error quotes the value, so it must not surface.
+      throw new TypeError("bearerTokenCommand returned a token that is not a valid header value");
+    }
     // Composed runtime fetches accept Request despite the SDK's narrower type.
     return innerFetch(new Request(request, { headers }));
   };
@@ -1571,8 +1576,6 @@ export class McpServerManager {
     // Resolve secret commands only for this connection attempt, without
     // mutating the persisted configuration.
     const literalHeaders = isBuiltInAgentPlugin(definition, "headers");
-    const hasCommandHeader = !literalHeaders && Object.values(definition.headers ?? {})
-      .some(value => value.startsWith("!") && !value.startsWith("!!"));
     const oauthEnabled = supportsOAuth(definition);
     let headers: Record<string, string>;
     if (literalHeaders) {
@@ -1611,11 +1614,12 @@ export class McpServerManager {
       }
     }
 
-    if (hasCommandHeader || commandBearer) {
+    for (const [name, value] of Object.entries(headers)) {
       try {
-        new Headers(headers);
+        new Headers({ [name]: value });
       } catch {
-        throw new Error(`Failed to resolve MCP server "${serverName}" HTTP command secret: command returned an invalid header value`);
+        // The Headers error quotes the value, which is often a secret.
+        throw new Error(`MCP server "${serverName}" HTTP header "${name}" has an invalid name or value`);
       }
     }
 

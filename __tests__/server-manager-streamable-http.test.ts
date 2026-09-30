@@ -342,4 +342,64 @@ describe("McpServerManager StreamableHTTP transport", () => {
       await manager.close("post-only").catch(() => {});
     }
   });
+
+  it("keeps a malformed bearerTokenCommand token out of connection errors", async () => {
+    const url = await listenForAuthorization();
+    const manager = new McpServerManager();
+
+    const error = await manager.connect("remote", {
+      url,
+      auth: "bearer",
+      bearerToken: `!node -e "process.stdout.write('fake-s3cr3t\\\\nfake-t41l')"`,
+    }).then(() => undefined, (failure: unknown) => failure);
+
+    const reported = errorChain(error);
+    expect(reported).toContain("bearerTokenCommand returned a token that is not a valid header value");
+    expect(reported).not.toMatch(/s3cr3t|t41l/);
+    await manager.closeAll();
+  });
+
+  it("keeps malformed configured bearer tokens and header values out of connection errors", async () => {
+    const url = await listenForAuthorization();
+    const previous = process.env.MCP_TEST_MALFORMED_TOKEN;
+    process.env.MCP_TEST_MALFORMED_TOKEN = "fake-s3cr3t\nfake-t41l";
+    const manager = new McpServerManager();
+    try {
+      const bearer = await manager.connect("bearer", {
+        url,
+        auth: "bearer",
+        bearerToken: "${MCP_TEST_MALFORMED_TOKEN}",
+      }).then(() => undefined, (failure: unknown) => failure);
+      const header = await manager.connect("header", {
+        url,
+        headers: { "X-Api-Key": "fake-s3cr3t\nfake-t41l" },
+      }).then(() => undefined, (failure: unknown) => failure);
+
+      expect(errorChain(bearer)).toContain('MCP server "bearer" HTTP header "Authorization" has an invalid name or value');
+      expect(errorChain(header)).toContain('MCP server "header" HTTP header "X-Api-Key" has an invalid name or value');
+      expect(errorChain(bearer) + errorChain(header)).not.toMatch(/s3cr3t|t41l/);
+    } finally {
+      if (previous === undefined) delete process.env.MCP_TEST_MALFORMED_TOKEN;
+      else process.env.MCP_TEST_MALFORMED_TOKEN = previous;
+      await manager.closeAll();
+    }
+  });
 });
+
+async function listenForAuthorization(): Promise<string> {
+  const server = http.createServer((_req, res) => res.writeHead(401).end("Unauthorized"));
+  servers.push(server);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+  return `http://127.0.0.1:${address.port}/mcp`;
+}
+
+/** Every message in an error's cause chain, which notices and logs are built from. */
+function errorChain(error: unknown): string {
+  const messages: string[] = [];
+  for (let current = error; current !== undefined; current = current instanceof Error ? current.cause : undefined) {
+    messages.push(current instanceof Error ? current.message : String(current));
+  }
+  return messages.join("\n");
+}
