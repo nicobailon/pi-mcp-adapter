@@ -419,7 +419,7 @@ async function runKey(argv, log, error, stdin) {
 
 const DOCTOR_CONNECT_TIMEOUT_MS = 15_000;
 
-// Error text can echo configured secrets (child stderr, HTTP error bodies) and URL credentials.
+// A second layer behind describeConnectError: messages can still name configured values.
 // Values under 4 characters are flags such as DEBUG=1, and redacting them would garble the text.
 function redactDoctorMessage(text, definition, utils) {
   const configured = [definition.bearerToken, definition.oauth?.clientSecret, ...Object.values(definition.headers ?? {}), ...Object.values(definition.env ?? {})];
@@ -437,9 +437,46 @@ function redactDoctorMessage(text, definition, utils) {
     .flatMap((value) => [value, ...value.split(/\s+/)])
     .filter((value) => value.length >= 4)
     .sort((left, right) => right.length - left.length);
-  let redacted = text.replace(/\b([a-z][a-z\d+.-]*:\/\/)(?:[^\s/?#@]*@)?([^\s?#]*)(?:[?#]\S*)?/gi, "$1$2");
+  let redacted = text;
   for (const secret of secrets) redacted = redacted.replaceAll(secret, "***");
   return redacted;
+}
+
+// Doctor prints only facts the adapter composes, never server-originated text such as HTTP
+// response bodies or child stderr: those can carry secrets that no configured value reveals.
+function describeConnectError(err, definition, url) {
+  if (!definition.url) {
+    // server-manager appends the child's stderr as `${message} (${stderr})`, keeping the original as cause.
+    const base = err.cause instanceof Error && err.message.startsWith(`${err.cause.message} (`) ? err.cause : err;
+    const message = typeof base.code === "number" ? `server returned JSON-RPC error ${base.code}` : base.message;
+    return definition.command ? `${message} — run the command directly to see its output` : message;
+  }
+  // Adapter-composed failures of secret commands and CA files, thrown before any response.
+  if (/^(Failed to resolve MCP server|HTTP request headers command|MCP caFile|Missing environment variable in MCP caFile)/.test(err.message)) {
+    return err.message;
+  }
+  let status;
+  const codes = new Set();
+  const pending = [err];
+  const seen = new Set();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (typeof current !== "object" || current === null || seen.has(current)) continue;
+    seen.add(current);
+    if (typeof current.status === "number") status ??= current.status;
+    status ??= /\(HTTP (\d{3})\)/.exec(current.message ?? "")?.[1];
+    if (typeof current.code === "string" && /^E[A-Z]+$/.test(current.code)) codes.add(current.code);
+    pending.push(current.cause, current.data?.cause, ...(current instanceof AggregateError ? current.errors : []));
+  }
+  const parts = [...(status ? [`HTTP ${status}`] : []), ...codes];
+  // server-manager appends the probe classification to the original message, keeping it as cause.
+  const suffix = err.cause instanceof Error && err.message.startsWith(err.cause.message) ? err.message.slice(err.cause.message.length) : "";
+  if (suffix.startsWith(" — probe: ")) parts.push(suffix.slice(3));
+  if (codes.has("ECONNREFUSED") && ["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname)) {
+    const configured = definition.url.replace(/[?#].*$/s, "").replace(/^([a-z][a-z\d+.-]*:\/\/)[^/]*@/i, "$1");
+    parts.push(`Nothing is listening at ${configured}. Start the app or local process that serves this MCP server.`);
+  }
+  return parts.length > 0 ? parts.join(" — ") : "connection failed";
 }
 
 async function runDoctor(argv, log, error) {
@@ -487,14 +524,14 @@ async function runDoctor(argv, log, error) {
   serverManager.setDefaultRequestTimeoutMs(effective.settings?.requestTimeoutMs);
   serverManager.setAuthStorageOptions(authOptions);
 
-  const check = async (name, definition) => {
+  const check = async (name, definition, signal) => {
     const block = blockedServers.get(name);
     if (block) return { state: "blocked", message: trust.describeProjectServerBlock(block.reason) };
     if (definition.disabled === true) return { state: "disabled" };
     const needsSignIn = { state: "needs-auth", message: `sign-in required: run /mcp-auth ${name} in Pi` };
     let anonymous = false;
+    let url;
     if (definition.url) {
-      let url;
       try {
         url = utils.resolveServerUrl(definition);
       } catch {
@@ -505,7 +542,8 @@ async function runDoctor(argv, log, error) {
       if (authFlow.supportsOAuth(definition)) {
         const stored = auth.inspectAuthForUrl(name, url, authOptions);
         if (stored.status === "unavailable") return { state: "failed", message: stored.message };
-        if (stored.status === "absent") {
+        // A record without tokens is an unfinished sign-in.
+        if (stored.status === "absent" || !(stored.entry.tokens?.accessToken || stored.entry.tokens?.refreshToken)) {
           if (definition.auth === "oauth") return needsSignIn;
           anonymous = true;
         }
@@ -513,22 +551,32 @@ async function runDoctor(argv, log, error) {
     }
     // Anonymous attempts get no OAuth provider, and debug stderr would bypass redaction.
     const connectDefinition = { ...definition, debug: false, ...(anonymous ? { oauth: false } : {}) };
-    const signal = AbortSignal.timeout(DOCTOR_CONNECT_TIMEOUT_MS);
     try {
       const connection = await serverManager.connect(name, connectDefinition, signal);
       return connection.status === "needs-auth" ? needsSignIn : { state: "ok", tools: connection.tools.length };
     } catch (err) {
-      if (signal.aborted) return { state: "failed", message: `no response within ${DOCTOR_CONNECT_TIMEOUT_MS / 1000}s` };
       if (anonymous && [err, err?.cause].some(manager.isUnauthorizedHttpError)) return needsSignIn;
-      return { state: "failed", message: utils.formatTerminalError(err) };
+      return { state: "failed", message: describeConnectError(err, definition, url) };
     }
   };
 
   let results;
   try {
     results = await Promise.all(Object.entries(effective.mcpServers).map(async ([name, definition]) => {
-      const result = await check(name, definition)
-        .catch((err) => ({ state: "failed", message: utils.formatTerminalError(err) }));
+      // The deadline covers the whole check, including server-manager's follow-up probe.
+      const controller = new AbortController();
+      let timer;
+      const timedOut = new Promise((resolve) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          resolve({ state: "failed", message: `no response within ${DOCTOR_CONNECT_TIMEOUT_MS / 1000}s` });
+        }, DOCTOR_CONNECT_TIMEOUT_MS);
+      });
+      const result = await Promise.race([
+        check(name, definition, controller.signal).catch((err) => ({ state: "failed", message: utils.formatTerminalError(err) })),
+        timedOut,
+      ]);
+      clearTimeout(timer);
       return {
         name,
         state: result.state,

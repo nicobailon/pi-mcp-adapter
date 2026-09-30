@@ -547,11 +547,15 @@ describe("cli doctor", () => {
     const url = await listen(() => {});
     await new Promise((done) => servers.pop()!.close(done));
 
-    const result = await doctor([], setup({ mcpServers: { local: { url, env: { DEBUG: "1" } } } }));
+    const pathSecretUrl = url.replace("/mcp", "/${DOCTOR_PATH_SECRET}/mcp");
+    const context = setup({ mcpServers: { local: { url, env: { DEBUG: "1" } }, pathSecret: { url: pathSecretUrl } } });
+    const result = await doctor([], context, { DOCTOR_PATH_SECRET: "path-secret-value" });
 
     expect(result.code).toBe(1);
     expect(result.stdout).toContain("local: failed");
     expect(result.stdout).toContain(`Nothing is listening at ${url}`);
+    expect(result.stdout).toContain(`Nothing is listening at ${pathSecretUrl}`);
+    expect(result.stdout).not.toContain("path-secret-value");
   });
 
   it("reports OAuth servers without a sign-in and never starts an OAuth flow", async () => {
@@ -571,6 +575,28 @@ describe("cli doctor", () => {
     expect(result.stdout).toContain("implicit: needs-auth — sign-in required: run /mcp-auth implicit in Pi");
     expect(paths.length).toBeGreaterThan(0);
     expect(paths.every((path) => path === "/mcp")).toBe(true);
+  });
+
+  it("treats a stored OAuth record without tokens as a missing sign-in", async () => {
+    const paths: string[] = [];
+    const url = await listen((request, response) => {
+      paths.push(request.url ?? "");
+      response.writeHead(401, { "WWW-Authenticate": `Bearer resource_metadata="${new URL("/.well-known/oauth-protected-resource", url)}"` });
+      response.end();
+    });
+    const context = setup({ settings: { oauthCredentialStore: "encrypted-file" }, mcpServers: { explicit: { url, auth: "oauth" } } });
+    const env = { PI_MCP_ADAPTER_OAUTH_FILE_KEY: Buffer.alloc(32, 7).toString("base64") };
+    const seeded = spawnSync(process.execPath, ["--input-type=module", "--eval", [
+      `const { saveAuthEntry } = await import(${JSON.stringify(pathToFileURL(resolve("dist/mcp-auth.js")).href)});`,
+      `saveAuthEntry("explicit", { clientInfo: { clientId: "doctor" } }, ${JSON.stringify(url)}, { credentialStore: "encrypted-file" });`,
+    ].join("\n")], { env: { ...process.env, HOME: context.home, PI_CODING_AGENT_DIR: context.agentDir, ...env }, encoding: "utf-8" });
+    expect(seeded.status, seeded.stderr).toBe(0);
+
+    const result = await doctor([], context, env);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("explicit: needs-auth");
+    expect(paths).toEqual([]);
   });
 
   it("never runs a server from an untrusted project or an unapproved project server", async () => {
@@ -600,6 +626,7 @@ describe("cli doctor", () => {
         headers: { url: `${url}?key=query-secret-value`, headers: { "X-Api-Key": "Bearer header-secret-value" } },
         bearer: { url, auth: "bearer", bearerToken: "token-secret-value" },
         stdio: { command: process.execPath, args: ["-e", "console.error(process.env.CHILD_SECRET); process.exit(1)"], env: { CHILD_SECRET: "s3cr3t" }, debug: true },
+        computed: { command: process.execPath, args: ["-e", "console.error('leaked-' + 6 * 7 + '-value'); process.exit(1)"] },
       },
     });
 
@@ -607,8 +634,8 @@ describe("cli doctor", () => {
 
     expect(result.code).toBe(1);
     const report = JSON.parse(result.stdout) as Array<{ name: string; state: string; tools: number | null; message: string | null }>;
-    expect(report.map(({ name, state }) => [name, state])).toEqual([["headers", "failed"], ["bearer", "failed"], ["stdio", "failed"]]);
-    for (const secret of ["header-secret-value", "token-secret-value", "s3cr3t", "query-secret-value"]) {
+    expect(report.map(({ name, state }) => [name, state])).toEqual([["headers", "failed"], ["bearer", "failed"], ["stdio", "failed"], ["computed", "failed"]]);
+    for (const secret of ["header-secret-value", "token-secret-value", "s3cr3t", "query-secret-value", "leaked-42-value"]) {
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
     }
