@@ -314,9 +314,11 @@ The SDK automatically discovers OAuth endpoints from the MCP server. If discover
 }
 ```
 
-### "Dynamic client registration not supported"
+### "Dynamic client registration not supported" or "Dynamic Client Registration rejected (HTTP 403)"
 
-Some servers require pre-registered clients. Obtain a client ID from your OAuth provider and add it to the config.
+Some servers only accept pre-registered clients. Obtain a client ID from your OAuth provider and set `oauth.clientId` (and `oauth.clientSecret` if the provider issued one).
+
+Figma's remote server (`https://mcp.figma.com/mcp`) only accepts clients Figma has approved, and Pi isn't one yet. Use the Figma desktop app's local server instead: run `/mcp-adapter setup` and add Figma (desktop).
 
 ### Callback server already in use
 
