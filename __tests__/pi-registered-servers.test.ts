@@ -183,6 +183,21 @@ describe("servers registered with pi.registerMcpServer()", () => {
       .toBe(JSON.stringify({ url: "https://adapter.test/mcp", directTools: false }));
   });
 
+  it("rejects an adapter registration of a name Pi registered during load", async () => {
+    mocks.initializeMcp.mockResolvedValue(createState());
+    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
+    const { api, handlers, ctx } = createPi([{ name: "shared", config: { url: "https://registered.test/mcp" } }]);
+    mcpAdapter(api);
+
+    expect(() => registerMcpServer({ pi: api, name: "shared", definition: { url: "https://adapter.test/mcp" } }))
+      .toThrow('MCP server "shared" is already registered');
+    await handlers.get("session_start")?.({}, ctx);
+    await settle();
+
+    expect((await callThroughMcp(api, ctx, "shared")).content[0].text)
+      .toBe(JSON.stringify({ url: "https://registered.test/mcp", directTools: false }));
+  });
+
   it("replaces a re-registered server and disposes an unregistered one", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);

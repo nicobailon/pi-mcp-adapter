@@ -392,6 +392,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
+  // Registrations from Pi's `pi.registerMcpServer()` by name, with their config JSON;
+  // `registration` is null when the server was skipped or overridden.
+  const piServers = new Map<string, { config: string; registration: McpServerRegistration | null }>();
 
   // Mirrors init's per-server lifecycle registration so runtime servers get
   // idle cleanup and keep-alive health recovery like configured servers.
@@ -837,7 +840,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       persisted: false,
     };
   };
-  runtimeRegistrars.set(pi, registerRuntimeServer);
+  // A Pi registration the adapter hasn't applied yet, such as one made during load, came first.
+  const registerAdapterServer = (name: string, definition: ServerEntry): McpServerRegistration => {
+    if (piSupportsMcp(pi) && !piServers.has(name) && pi.getMcpServers().some((server) => server.name === name)) {
+      throw new Error(`MCP server "${name}" is already registered`);
+    }
+    return registerRuntimeServer(name, definition);
+  };
+  runtimeRegistrars.set(pi, registerAdapterServer);
   runtimeSnapshotters.set(pi, getRuntimeServerSnapshot);
   pi.events.on(MCP_RUNTIME_REGISTER_EVENT, (rawRequest: unknown) => {
     if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
@@ -848,7 +858,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       return;
     }
     try {
-      request.result = { ok: true, registration: registerRuntimeServer(request.name, request.definition) };
+      request.result = { ok: true, registration: registerAdapterServer(request.name, request.definition) };
     } catch (error) {
       request.result = { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
     }
@@ -900,11 +910,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     })();
   });
 
-  // Servers other extensions register with Pi's `pi.registerMcpServer()`, by name. `config` is the
-  // registration's JSON, to tell a re-registration from an unchanged one; `registration` is null
-  // when the server was skipped or overridden.
-  const piServers = new Map<string, { config: string; registration: McpServerRegistration | null }>();
-
   async function applyPiMcpServers(servers: RegisteredMcpServer[], ctx: ExtensionContext): Promise<void> {
     const next = new Map(servers.map((server) => [server.name, JSON.stringify(server.config)]));
     const disposals: Promise<void>[] = [];
@@ -944,8 +949,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   if (piSupportsMcp(pi)) {
-    // Handling this event tells Pi the adapter connects registered servers. The event carries every
-    // registered server; before session_start, registrations are read there instead.
+    // Registered in the factory so Pi sees a handler; session_start reads earlier registrations.
     pi.on("mcp_servers_change", async (event, ctx) => {
       if (sessionCtx) await applyPiMcpServers(event.servers, ctx);
     });
@@ -1236,7 +1240,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     // start initialization before session_start decides whether to defer it.
     sessionCtx = ctx;
     if (piSupportsMcp(pi)) {
-      // Check skipped and overridden registrations again against this session's config.
+      // Retry overridden registrations; the name's holder may be gone.
       for (const [name, applied] of piServers) if (!applied.registration) piServers.delete(name);
       await applyPiMcpServers(pi.getMcpServers(), ctx);
       if (generation !== lifecycleGeneration || !owner.isActive()) return;
