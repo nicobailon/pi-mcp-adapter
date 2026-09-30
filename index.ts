@@ -846,7 +846,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (piSupportsMcp(pi) && !piServers.has(name) && pi.getMcpServers().some((server) => server.name === name)) {
       throw new Error(`MCP server "${name}" is already registered`);
     }
-    return registerRuntimeServer(name, definition);
+    const registration = registerRuntimeServer(name, definition);
+    return {
+      dispose: async (): Promise<void> => {
+        await registration.dispose();
+        // A Pi registration this one overrode takes the freed name, unless a configured server holds it.
+        const activeState = state;
+        const ctx = sessionCtx;
+        if (!activeState || !ctx || piServers.get(name)?.registration !== null) return;
+        if (Object.hasOwn(activeState.config.mcpServers, name)) return;
+        piServers.delete(name);
+        await callReentrant(() => applyPiMcpServers(activeState, ctx));
+      },
+    };
   };
   runtimeRegistrars.set(pi, registerAdapterServer);
   runtimeSnapshotters.set(pi, getRuntimeServerSnapshot);

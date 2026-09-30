@@ -189,6 +189,22 @@ describe("servers registered with pi.registerMcpServer()", () => {
       .toBe(JSON.stringify({ url: "https://adapter.test/mcp", directTools: false }));
   });
 
+  it("connects an overridden Pi registration once the adapter registration is disposed", async () => {
+    mocks.initializeMcp.mockResolvedValue(createState());
+    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
+    const { api, handlers, ctx, change } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, ctx);
+    await settle();
+
+    const registration = registerMcpServer({ pi: api, name: "shared", definition: { url: "https://adapter.test/mcp" } });
+    await change([{ name: "shared", config: { url: "https://registered.test/mcp" } }]);
+    await registration.dispose();
+
+    expect((await callThroughMcp(api, ctx, "shared")).content[0].text)
+      .toBe(JSON.stringify({ url: "https://registered.test/mcp", directTools: false }));
+  });
+
   it("rejects an adapter registration of a name Pi registered during load", async () => {
     mocks.initializeMcp.mockResolvedValue(createState());
     const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
