@@ -33,7 +33,7 @@ The adapter reads standard MCP files automatically. No extra setup needed if you
 | You already have... | What happens |
 |---------------------|--------------|
 | `.mcp.json` or `~/.config/mcp/mcp.json` | Pi uses it immediately. Use `.mcp.json` for project/team sharing and `~/.config/mcp/mcp.json` for all projects. |
-| Servers added with `pi mcp add` (`~/.pi/agent/mcp.json`, `.pi/mcp.json`) | On Pi 0.99 and later, the adapter uses them and replaces Pi's built-in MCP extension. Pi then warns at startup that the built-in was not loaded; see [Pi's built-in MCP](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp) to turn it off. |
+| Servers added with `pi mcp add` (`~/.pi/agent/mcp.json`, `.pi/mcp.json`) | On Pi 0.99 and later, the adapter uses them and replaces Pi's built-in MCP extension, which Pi reports at startup; see [Pi's built-in MCP](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp). |
 | Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp-adapter setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
 | Nothing configured yet | Run `/mcp-adapter setup`, choose project `.mcp.json` or global `~/.config/mcp/mcp.json`, then scaffold a minimal config, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
 
