@@ -592,23 +592,27 @@ async function runDoctor(argv, log, error) {
     };
   }));
 
-  if (json) {
-    log(JSON.stringify(results, null, 2));
-  } else {
-    if (results.length === 0) log("No MCP servers configured.");
-    for (const result of results) {
-      const tools = result.tools === null ? "" : `, ${result.tools} tool${result.tools === 1 ? "" : "s"}`;
-      log(`${utils.sanitizeTerminalText(result.name)}: ${result.state}${tools}${result.message ? ` — ${result.message}` : ""}`);
+  // Report first: closing waits for timed-out attempts to settle and can fail.
+  let closed = true;
+  try {
+    if (json) {
+      log(JSON.stringify(results, null, 2));
+    } else {
+      if (results.length === 0) log("No MCP servers configured.");
+      for (const result of results) {
+        const tools = result.tools === null ? "" : `, ${result.tools} tool${result.tools === 1 ? "" : "s"}`;
+        log(`${utils.sanitizeTerminalText(result.name)}: ${result.state}${tools}${result.message ? ` — ${result.message}` : ""}`);
+      }
+    }
+  } finally {
+    try {
+      await serverManager.closeAll();
+    } catch (err) {
+      closed = false;
+      error(`Some MCP connections did not close cleanly: ${utils.formatTerminalError(err)}`);
     }
   }
-  // Report first: closing waits for timed-out attempts to settle and can fail.
-  try {
-    await serverManager.closeAll();
-  } catch (err) {
-    error(`Some MCP connections did not close cleanly: ${utils.formatTerminalError(err)}`);
-    return 1;
-  }
-  return results.some((result) => result.state === "failed" || result.state === "needs-auth") ? 1 : 0;
+  return !closed || results.some((result) => result.state === "failed" || result.state === "needs-auth") ? 1 : 0;
 }
 
 export async function main(argv = process.argv.slice(2), log = console.log, error = console.error, stdin = process.stdin) {
