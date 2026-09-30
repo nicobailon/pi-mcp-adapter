@@ -293,6 +293,9 @@ describe("commands onboarding", () => {
     expect((await callbacks.addKnownServer(figma, "global")).ignoredBecause)
       .toBe(`${projectConfig} also defines figma and takes precedence`);
 
+    writeFileSync(projectConfig, JSON.stringify({ mcpServers: { figma: { ...figma.entry, disabled: true } } }));
+    expect((await callbacks.addKnownServer(figma, "global")).ignoredBecause).toBe(`${projectConfig} disables figma`);
+
     process.env.PI_MCP_CONFIG_MODE = "exclusive";
     try {
       expect((await callbacks.addKnownServer(figma, "global")).ignoredBecause)

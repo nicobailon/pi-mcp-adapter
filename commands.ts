@@ -659,14 +659,15 @@ export async function openMcpSetup(
     addKnownServer: async (preset: KnownServerPreset, target: SharedConfigTarget) => {
       const path = writeSharedServerEntry(getSharedConfigPath(target, ctx.cwd), preset.id, preset.entry);
       configChanged = true;
-      // Merging is per field, so the entry is in effect when every preset field survives it.
+      // Merging is per field, so the entry is in effect when every preset field survives it and nothing disables it.
       const loaded = loadMcpConfigWithSources(configOverridePath, ctx.cwd);
       const active = loaded.config.mcpServers[preset.id];
+      const overridingSource = loaded.projectServers.get(preset.id)?.path ?? "another config file";
       const ignoredBecause = !active
         ? `the current config mode doesn't read ${path}`
         : Object.entries(preset.entry).some(([field, value]) => !isDeepStrictEqual(active[field as keyof typeof active], value))
-          ? `${loaded.projectServers.get(preset.id)?.path ?? "another config file"} also defines ${preset.id} and takes precedence`
-          : undefined;
+          ? `${overridingSource} also defines ${preset.id} and takes precedence`
+          : isServerDisabled(active) ? `${overridingSource} disables ${preset.id}` : undefined;
       const result = { path, serverName: preset.name, ...(ignoredBecause ? { ignoredBecause } : {}) };
       if (!preset.desktopApp) return result;
       return { ...result, reachable: await isLocalServerReachable(preset.entry.url!) };
