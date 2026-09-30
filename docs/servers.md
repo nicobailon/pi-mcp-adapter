@@ -48,7 +48,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `bearerTokenStore` | Set to `true` to read a static bearer token from the adapter-owned OS credential store when `auth` is `"bearer"` and no `bearerToken` or `bearerTokenEnv` is configured. Stored records are keyed only by the server name, bind to the resolved server URL, and are never named by config. Store a token with `pi-mcp-adapter token set <server>`, which reads it from a masked prompt or stdin pipe and never from an argument. `/mcp-adapter token status <server>` and `/mcp-adapter token remove <server>` manage non-secret state inside Pi; `/mcp-adapter token set` stays disabled until Pi exposes masked secret input. |
 | `lifecycle` | `"lazy"` (default), `"eager"`, `"keep-alive"`, or `"lazy-keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
-| `requestTimeoutMs` | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used). For a tool call, the timeout restarts whenever the tool reports progress |
+| `requestTimeoutMs` | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used). For a tool call, the timeout restarts whenever the tool reports progress; task-augmented calls instead apply it to each task request |
 | `protocolVersion` | `"legacy"` (default), `"auto"`, or `"2026-07-28"`; modern negotiation is opt-in |
 | `tasks` | MCP Tasks extension support on 2026-07-28 connections (default: true; set `false` to opt out); see [Task-augmented tool calls](#task-augmented-tool-calls) |
 | `exposeResources` | Expose MCP resources as tools (default: true) |
