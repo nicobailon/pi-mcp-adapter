@@ -1162,7 +1162,7 @@ function readPiMcpConfig(path: string): PiMcpConfigFile | null {
 }
 
 /** Returns why the entry is skipped when Pi would reject it or the adapter can't run it. */
-function translatePiMcpServer(name: string, value: unknown): { entry: ServerEntry; ignored: string[] } | string {
+export function translatePiMcpServer(name: string, value: unknown): { entry: ServerEntry; ignored: string[] } | string {
   if (!/^[A-Za-z0-9_-]+$/.test(name)) return 'invalid server name (use letters, digits, "_" and "-")';
   if (!isRecord(value)) return "must be an object";
   const { type, command, args, env, cwd, url, headers, oauth, exposure, toolExposure, enabled, timeout, auth, description, ...unknown } = value;

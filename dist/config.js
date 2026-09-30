@@ -990,7 +990,7 @@ function readPiMcpConfig(path) {
     return file;
 }
 /** Returns why the entry is skipped when Pi would reject it or the adapter can't run it. */
-function translatePiMcpServer(name, value) {
+export function translatePiMcpServer(name, value) {
     if (!/^[A-Za-z0-9_-]+$/.test(name))
         return 'invalid server name (use letters, digits, "_" and "-")';
     if (!isRecord(value))

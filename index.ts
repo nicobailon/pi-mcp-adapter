@@ -1,4 +1,4 @@
-import { withFileMutationQueue, type AgentToolResult, type AgentToolUpdateCallback, type ExtensionAPI, type ExtensionContext, type ToolInfo } from "@earendil-works/pi-coding-agent";
+import { withFileMutationQueue, type AgentToolResult, type AgentToolUpdateCallback, type ExtensionAPI, type ExtensionContext, type RegisteredMcpServer, type ToolInfo } from "@earendil-works/pi-coding-agent";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -7,7 +7,7 @@ import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type Mcp
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
+import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectServer, excludeProjectServersAtLoadTime, hasProjectServerDefinitions } from "./project-server-trust.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -900,6 +900,57 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     })();
   });
 
+  // Servers other extensions register with Pi's `pi.registerMcpServer()`, by name. `config` is the
+  // registration's JSON, to tell a re-registration from an unchanged one; `registration` is null
+  // when the server was skipped or overridden.
+  const piServers = new Map<string, { config: string; registration: McpServerRegistration | null }>();
+
+  async function applyPiMcpServers(servers: RegisteredMcpServer[], ctx: ExtensionContext): Promise<void> {
+    const next = new Map(servers.map((server) => [server.name, JSON.stringify(server.config)]));
+    const disposals: Promise<void>[] = [];
+    for (const [name, applied] of piServers) {
+      if (next.get(name) === applied.config) continue;
+      piServers.delete(name);
+      // Removes the server synchronously, so a re-registration below can take the name.
+      if (applied.registration) disposals.push(applied.registration.dispose());
+    }
+    const report = (message: string) => ctx.hasUI ? ctx.ui.notify(message, "warning") : console.warn(`MCP: ${message}`);
+    for (const { name, config, extensionPath } of servers) {
+      if (piServers.has(name)) continue;
+      const label = `MCP server "${name}" registered by ${extensionPath}`;
+      const translated = translatePiMcpServer(name, config);
+      let registration: McpServerRegistration | null = null;
+      if (typeof translated === "string") {
+        report(`${label} is not connected: ${translated}.`);
+      } else if (runtimeServers.has(name)) {
+        report(`${label} is overridden by the server registered earlier with pi-mcp-adapter's registerMcpServer().`);
+      } else if (Object.hasOwn((state?.config ?? earlyConfig).mcpServers, name)) {
+        report(`${label} is overridden by the configured server of the same name.`);
+      } else {
+        // Runtime servers are proxy-only, so exposure settings that map to direct tools don't apply.
+        const { directTools, ...entry } = translated.entry;
+        const ignored = [
+          ...translated.ignored,
+          ...(Array.isArray(directTools)
+            ? directTools.map((tool) => `toolExposure ${JSON.stringify(tool)}: direct`)
+            : directTools !== undefined ? [`exposure: ${config.exposure}`] : []),
+        ];
+        if (ignored.length > 0) report(`${label}: ignored settings ${ignored.join(", ")}.`);
+        registration = registerRuntimeServer(name, entry);
+      }
+      piServers.set(name, { config: JSON.stringify(config), registration });
+    }
+    await Promise.all(disposals);
+  }
+
+  if (piSupportsMcp(pi)) {
+    // Handling this event tells Pi the adapter connects registered servers. The event carries every
+    // registered server; before session_start, registrations are read there instead.
+    pi.on("mcp_servers_change", async (event, ctx) => {
+      if (sessionCtx) await applyPiMcpServers(event.servers, ctx);
+    });
+  }
+
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
 
   pi.registerFlag("mcp-config", {
@@ -1184,6 +1235,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     // Recorded only after previous-session cleanup, so a runtime tool call cannot
     // start initialization before session_start decides whether to defer it.
     sessionCtx = ctx;
+    if (piSupportsMcp(pi)) {
+      // Check skipped and overridden registrations again against this session's config.
+      for (const [name, applied] of piServers) if (!applied.registration) piServers.delete(name);
+      await applyPiMcpServers(pi.getMcpServers(), ctx);
+      if (generation !== lifecycleGeneration || !owner.isActive()) return;
+    }
     if (state) return;
 
     if (!initPromise) {

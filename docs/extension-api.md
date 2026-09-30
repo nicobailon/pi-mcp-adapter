@@ -64,7 +64,19 @@ A Pi package can ship MCP servers for the installed adapter without requiring a 
 
 ## Runtime registration from other extensions
 
-An extension can register MCP servers with the installed adapter at runtime, for example a plugin host that discovers plugins after load:
+On Pi 0.99 and later, an extension can add a server with Pi's own API, and the adapter connects it:
+
+```ts
+export default function plugin(pi) {
+  pi.registerMcpServer("acme__docs", { url: "https://mcp.example.com/mcp" });
+}
+```
+
+The config uses the format of Pi's `mcp.json` and is translated the same way as that file (see [configuration](configuration.md#file-layout)); a server the adapter can't run, such as an SSE server, is not connected and is reported. Registrations made while extensions load connect with the session; registering or unregistering later applies right away. Registering a name again replaces the server, and `pi.unregisterMcpServer(name)` disconnects it.
+
+These servers are proxy-tool-only, like the adapter's own runtime registrations below. Of Pi's exposure settings only `"exposure": "hidden"` and `"enabled": false` apply, both as `disabled: true`; `direct` and `deferred` exposure are ignored and reported. A config entry with the same name wins, and so does an earlier registration through the adapter's event below; the other registration is reported as overridden.
+
+The adapter's own registration event still works on every supported Pi version, for example for a plugin host that discovers plugins after load:
 
 ```ts
 const MCP_RUNTIME_REGISTER_EVENT = "pi-mcp-adapter:runtime-register:v1";
