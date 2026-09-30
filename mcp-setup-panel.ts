@@ -540,7 +540,7 @@ class McpSetupPanelView implements Component {
               : "Servers here load in every project on this machine.",
           ),
           { text: "" },
-          ...this.prose(width, "Known servers and starter configs are written to the selected file."),
+          ...this.prose(width, "Known servers and starter configs are written to the selected file. Desktop app servers always go to the global file."),
           { text: "" },
           this.muted(state.sharedConfigTarget === action.target ? "Selected." : "Press enter to write new servers here."),
         ];
@@ -552,7 +552,8 @@ class McpSetupPanelView implements Component {
           ...this.heading(preset.name),
           ...this.prose(width, preset.summary),
           ...(preset.desktopApp ? [{ text: "" }, ...this.prose(width, preset.desktopApp.enableSteps)] : []),
-          ...this.writePreview(() => this.callbacks.previewKnownServer(preset, state.sharedConfigTarget), width, errors),
+          ...(preset.desktopApp ? [{ text: "" }, ...this.prose(width, "Always added to the global config because it depends on an app installed on this machine.")] : []),
+          ...this.writePreview(() => this.callbacks.previewKnownServer(preset, preset.desktopApp ? "global" : state.sharedConfigTarget), width, errors),
         ];
       }
       case "add-repoprompt": {
@@ -943,7 +944,7 @@ export class McpSetupPanel {
     if (action.id === "add-known-server" && action.preset) {
       const preset = action.preset;
       await this.runBusy(async () => {
-        const result = await this.callbacks.addKnownServer(preset, this.sharedConfigTarget);
+        const result = await this.callbacks.addKnownServer(preset, preset.desktopApp ? "global" : this.sharedConfigTarget);
         this.callbacks.markSetupCompleted();
         let status = "";
         if (preset.desktopApp && result.reachable !== undefined) {

@@ -125,6 +125,10 @@ function networkFailureCodes(error: unknown, wanted: readonly string[], seen = n
     codes.push(error.code);
   }
   if ("cause" in error) codes.push(...networkFailureCodes(error.cause, wanted, seen));
+  // SdkError keeps its cause under data, e.g. a refused connection during protocolVersion "auto" negotiation.
+  if (error instanceof SdkError && typeof error.data === "object" && error.data !== null && "cause" in error.data) {
+    codes.push(...networkFailureCodes(error.data.cause, wanted, seen));
+  }
   if (error instanceof AggregateError) {
     for (const nested of error.errors) codes.push(...networkFailureCodes(nested, wanted, seen));
   }

@@ -304,14 +304,14 @@ describe("mcp-setup-panel custom keybindings", () => {
     panel.dispose();
   });
 
-  it("tells the user whether an added desktop app server is reachable", async () => {
+  it("adds desktop app servers to the global config and says whether they are reachable", async () => {
     const figma = KNOWN_SERVER_PRESETS.find(({ id }) => id === "figma")!;
     for (const [reachable, message] of [
       [true, "A server is answering at http://127.0.0.1:3845/mcp."],
       [false, "Nothing is answering at http://127.0.0.1:3845/mcp yet. To enable it, open a Design file in Figma, switch to Dev Mode (Shift+D), and click 'Enable desktop MCP server' in the inspect panel."],
     ] as const) {
       const callbacks = createSetupCallbacks();
-      callbacks.addKnownServer = async (preset) => ({ path: "/tmp/x", serverName: preset.name, reachable });
+      callbacks.addKnownServer = vi.fn(async (preset) => ({ path: "/tmp/x", serverName: preset.name, reachable }));
       const panel = createMcpSetupPanel(
         { ...createEmptyDiscovery(), knownServerPresets: [figma] },
         callbacks,
@@ -323,6 +323,7 @@ describe("mcp-setup-panel custom keybindings", () => {
       moveSetupCursorTo(panel, "Figma (desktop)");
       panel.handleInput(ENTER);
       await vi.waitFor(() => expect(stripAnsi(panel.render(400).join("\n"))).toContain(`Added Figma (desktop) to /tmp/x. ${message}`));
+      expect(callbacks.addKnownServer).toHaveBeenCalledWith(figma, "global");
       panel.dispose();
     }
   });
