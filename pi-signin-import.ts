@@ -129,10 +129,13 @@ export async function offerPiSignInImports(
       signal ? { signal } : undefined,
     );
     if (signal?.aborted) return;
-    markPiSignInImportAsked(candidate.serverName, candidate.url);
-    if (choice !== IMPORT_CHOICE) continue;
+    if (choice !== IMPORT_CHOICE) {
+      markPiSignInImportAsked(candidate.serverName, candidate.url);
+      continue;
+    }
     try {
       importPiSignIn(candidate, authStorageOptions);
+      markPiSignInImportAsked(candidate.serverName, candidate.url);
       ctx.ui.notify(`Imported Pi's sign-in for ${name}.`, "info");
     } catch (error) {
       const message = sanitizeTerminalText(error instanceof Error ? error.message : String(error));

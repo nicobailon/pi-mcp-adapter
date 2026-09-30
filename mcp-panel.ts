@@ -861,19 +861,14 @@ class McpPanel {
     if (server) this.authenticateServer(server);
   }
 
-  private importPiSignIns(importPiSignIns: () => string[]): void {
-    let imported: string[];
-    try {
-      imported = importPiSignIns();
-    } catch (error) {
-      const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
-      this.authNotice = `Failed to import sign-ins from Pi: ${message}`;
-      return;
-    }
-    this.piSignInsImported = true;
-    this.authNotice = imported.length > 0
-      ? `Imported sign-ins from Pi for ${imported.map(sanitizeDisplayText).join(", ")}. Reconnecting...`
-      : "No sign-ins from Pi left to import.";
+  private importPiSignIns(importPiSignIns: NonNullable<McpPanelCallbacks["importPiSignIns"]>): void {
+    const { imported, failed } = importPiSignIns();
+    this.piSignInsImported = failed.length === 0;
+    const notices = [
+      ...(imported.length > 0 ? [`Imported sign-ins from Pi for ${imported.map(sanitizeDisplayText).join(", ")}. Reconnecting...`] : []),
+      ...failed.map(({ server, error }) => `Failed to import the sign-in from Pi for ${sanitizeDisplayText(server)}: ${sanitizeDisplayText(error)}`),
+    ];
+    this.authNotice = notices.length > 0 ? notices.join(" ") : "No sign-ins from Pi left to import.";
     for (const server of this.servers) {
       if (imported.includes(server.name)) this.reconnectServer(server);
     }

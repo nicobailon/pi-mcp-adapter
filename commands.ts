@@ -797,10 +797,19 @@ export async function openMcpPanel(
   let configChanged = false;
   const authStorageOptions = state.authStorageOptions ?? {};
   if (findPiSignInImports(config, authStorageOptions).length > 0) {
-    callbacks.importPiSignIns = () => findPiSignInImports(config, authStorageOptions).map((candidate) => {
-      importPiSignIn(candidate, authStorageOptions);
-      return candidate.serverName;
-    });
+    callbacks.importPiSignIns = () => {
+      const imported: string[] = [];
+      const failed: { server: string; error: string }[] = [];
+      for (const candidate of findPiSignInImports(config, authStorageOptions)) {
+        try {
+          importPiSignIn(candidate, authStorageOptions);
+          imported.push(candidate.serverName);
+        } catch (error) {
+          failed.push({ server: candidate.serverName, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      return { imported, failed };
+    };
   }
 
   await new Promise<void>((resolve) => {
