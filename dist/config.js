@@ -10,7 +10,7 @@ import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPl
 import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
 import { validateJevSettings } from "./jev-client.js";
-import { formatServerNamespace, getServerPrefix, isServerDisabled } from "./types.js";
+import { formatServerNamespace, isServerDisabled } from "./types.js";
 import { parseJsonWithComments, stripUtf8Bom, toStringRecord } from "./utils.js";
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [
@@ -1058,16 +1058,15 @@ function translatePiMcpServer(name, value) {
         entry.directTools = "search";
     if (timeout !== undefined)
         entry.requestTimeoutMs = Math.round(timeout * 1000);
-    // excludeTools also matches prefixed names, so `srv_x` would hide tool `x` of server `srv`, and
-    // treats `*` and `?` as wildcards; such hidden entries have no exact equivalent.
-    const prefixes = ["server", "short", "mcp"].map((mode) => `${getServerPrefix(name, mode)}_`);
+    // excludeTools matches a superset of Pi's hidden entries (prefixed names, aliases, `?` as a
+    // wildcard), so it never exposes a tool Pi hides.
     const directTools = [];
     const excludeTools = [];
     for (const [tool, rawValue] of Object.entries(toolExposure ?? {})) {
         const toolValue = rawValue === "codemode-deferred" ? "codemode" : rawValue;
         if (toolValue === serverExposure)
             continue;
-        if (toolValue === "hidden" && !/[*?]/.test(tool) && !prefixes.some((prefix) => tool.startsWith(prefix)))
+        if (toolValue === "hidden")
             excludeTools.push(tool);
         else if (toolValue === "direct" && !tool.includes("*") && serverExposure === "codemode")
             directTools.push(tool);

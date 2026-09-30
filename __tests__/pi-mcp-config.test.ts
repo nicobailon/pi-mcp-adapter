@@ -153,9 +153,7 @@ describe("Pi mcp.json config sources", () => {
         kept: { command: "kept" },
       },
     });
-    // `tuned_x` is tool `x`'s prefixed name, and excludeTools would hide `x` through it.
-    const toolExposure = { "read_*": "codemode", tuned_x: "hidden", "write_*": "hidden" };
-    writeJson(piProject, { mcpServers: { tuned: { command: "tuned", exposure: "direct", toolExposure, lifecycle: "eager" } } });
+    writeJson(piProject, { mcpServers: { tuned: { command: "tuned", exposure: "direct", toolExposure: { "read_*": "codemode" }, lifecycle: "eager" } } });
     const { getLegacyMcpMigrationNotices, loadMcpConfig } = await loadConfigModule();
 
     const config = loadMcpConfig(undefined, cwd);
@@ -166,8 +164,21 @@ describe("Pi mcp.json config sources", () => {
     expect(config.settings).toBeUndefined();
     expect(getLegacyMcpMigrationNotices(cwd)).toEqual([
       `${piGlobal}: pi-mcp-adapter does not read settings, imports in this file; move them into ${join(home, ".pi", "agent", "mcp-adapter.json")}. Skipped "legacy" (legacy SSE transport is not supported; use the streamable HTTP URL); "provider" (auth.provider is not supported yet).`,
-      `${piProject}: Ignored settings (details in /mcp-adapter): "tuned": lifecycle, toolExposure "read_*": codemode, toolExposure "tuned_x": hidden, toolExposure "write_*": hidden.`,
+      `${piProject}: Ignored settings (details in /mcp-adapter): "tuned": lifecycle, toolExposure "read_*": codemode.`,
     ]);
+  });
+
+  it("never exposes a tool Pi hides", async () => {
+    // `tuned_x` is also the prefixed name of tool `x`, and `?` is literal in Pi but a wildcard here.
+    const toolExposure = { tuned_x: "hidden", "write_*": "hidden", "what?": "hidden" };
+    writeJson(piGlobal, { mcpServers: { tuned: { command: "tuned", exposure: "direct", toolExposure } } });
+    const { loadMcpConfig } = await loadConfigModule();
+    const { isToolAllowed } = await import("../types.ts");
+
+    const { includeTools, excludeTools } = loadMcpConfig(undefined, cwd).mcpServers.tuned!;
+    const allowed = (tool: string) => isToolAllowed(tool, "tuned", "server", includeTools, excludeTools);
+    expect(["tuned_x", "write_file", "what?"].filter(allowed)).toEqual([]);
+    expect(allowed("read_file")).toBe(true);
   });
 
   it("lists untranslated settings in the server's /mcp-adapter detail", async () => {

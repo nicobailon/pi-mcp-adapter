@@ -10,7 +10,7 @@ import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPl
 import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.ts";
 import { validateJevSettings } from "./jev-client.ts";
-import { formatServerNamespace, getServerPrefix, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type OAuthConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
+import { formatServerNamespace, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type OAuthConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
 import { parseJsonWithComments, stripUtf8Bom, toStringRecord } from "./utils.ts";
 
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
@@ -1212,15 +1212,14 @@ function translatePiMcpServer(name: string, value: unknown): { entry: ServerEntr
   if (serverExposure === "deferred") entry.directTools = "search";
   if (timeout !== undefined) entry.requestTimeoutMs = Math.round(timeout * 1000);
 
-  // excludeTools also matches prefixed names, so `srv_x` would hide tool `x` of server `srv`, and
-  // treats `*` and `?` as wildcards; such hidden entries have no exact equivalent.
-  const prefixes = (["server", "short", "mcp"] as const).map((mode) => `${getServerPrefix(name, mode)}_`);
+  // excludeTools matches a superset of Pi's hidden entries (prefixed names, aliases, `?` as a
+  // wildcard), so it never exposes a tool Pi hides.
   const directTools: string[] = [];
   const excludeTools: string[] = [];
   for (const [tool, rawValue] of Object.entries(toolExposure ?? {})) {
     const toolValue = rawValue === "codemode-deferred" ? "codemode" : rawValue;
     if (toolValue === serverExposure) continue;
-    if (toolValue === "hidden" && !/[*?]/.test(tool) && !prefixes.some((prefix) => tool.startsWith(prefix))) excludeTools.push(tool);
+    if (toolValue === "hidden") excludeTools.push(tool);
     else if (toolValue === "direct" && !tool.includes("*") && serverExposure === "codemode") directTools.push(tool);
     else ignored.push(`toolExposure ${JSON.stringify(tool)}: ${toolValue}`);
   }
