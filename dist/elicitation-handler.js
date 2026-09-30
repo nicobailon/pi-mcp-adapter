@@ -1,0 +1,379 @@
+import { DEFAULT_REQUEST_TIMEOUT_MSEC, ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode, } from "@modelcontextprotocol/client";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
+import open from "open";
+import { abortable, throwIfAborted } from "./abort.js";
+import { combineAbortSignals } from "./runtime-owner.js";
+const promptPauses = new WeakMap();
+export function registerElicitationHandler(client, options) {
+    const state = { open: 0, deadlines: new Set() };
+    promptPauses.set(client, state);
+    client.setRequestHandler("elicitation/create", request => whilePromptOpen(state, () => handleElicitationRequest(options, request)));
+}
+async function whilePromptOpen(state, run) {
+    if (state.open++ === 0)
+        for (const deadline of state.deadlines)
+            deadline.pause();
+    try {
+        return await run();
+    }
+    finally {
+        if (--state.open === 0)
+            for (const deadline of state.deadlines)
+                deadline.resume();
+    }
+}
+// setTimeout fires immediately for delays above this.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+/**
+ * Calls a tool with the request timeout counting only time the user is not
+ * answering an elicitation prompt from the same server. The SDK's own timer
+ * cannot be paused, so it is pushed out of the way and the deadline aborts the
+ * request with the same timeout error the SDK would raise. A client without an
+ * elicitation handler cannot prompt, so it keeps the SDK's timer.
+ */
+export async function callToolPausingForElicitation(client, params, options) {
+    const state = promptPauses.get(client);
+    if (!state)
+        return client.callTool(params, options);
+    const timeout = Math.min(options?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC, MAX_TIMER_MS);
+    const expired = new AbortController();
+    let remaining = timeout;
+    let startedAt = 0;
+    let timer;
+    const deadline = {
+        pause() {
+            if (timer === undefined)
+                return;
+            clearTimeout(timer);
+            timer = undefined;
+            remaining -= Date.now() - startedAt;
+        },
+        resume() {
+            startedAt = Date.now();
+            timer = setTimeout(() => expired.abort(new SdkError(SdkErrorCode.RequestTimeout, "Request timed out", { timeout })), Math.max(remaining, 0));
+        },
+    };
+    state.deadlines.add(deadline);
+    if (state.open === 0)
+        deadline.resume();
+    try {
+        return await client.callTool(params, {
+            ...options,
+            timeout: MAX_TIMER_MS,
+            signal: combineAbortSignals(options?.signal, expired.signal) ?? expired.signal,
+        });
+    }
+    finally {
+        state.deadlines.delete(deadline);
+        deadline.pause();
+    }
+}
+export async function handleElicitationRequest(options, request, signal) {
+    throwIfAborted(signal);
+    return request.params.mode === "url"
+        ? handleUrlElicitation(options, request.params, signal)
+        : handleFormElicitation(options, request.params, signal);
+}
+export async function handleFormElicitation(options, params, signal) {
+    const properties = Object.entries(params.requestedSchema.properties);
+    const decision = await abortable(options.ui.select(`MCP Input Request\nServer: ${options.serverName}\n\n${params.message}`, ["Continue", "Decline"]), signal);
+    if (decision === undefined)
+        return { action: "cancel" };
+    if (decision === "Decline")
+        return { action: "decline" };
+    if (properties.length === 0)
+        return { action: "accept", content: {} };
+    const values = {};
+    for (const [name, schema] of properties) {
+        const value = await collectValidField(options.ui, params, name, schema, undefined, signal);
+        if (value.status === "cancelled")
+            return { action: "cancel" };
+        values[name] = value.value;
+    }
+    while (true) {
+        const content = coerceAndValidateFormValues(params, values);
+        const action = await abortable(options.ui.select(formatReview(options.serverName, properties, content), ["Submit", "Edit", "Decline"]), signal);
+        if (action === undefined)
+            return { action: "cancel" };
+        if (action === "Decline")
+            return { action: "decline" };
+        if (action === "Submit")
+            return { action: "accept", content };
+        const labels = properties.map(([name, schema]) => `${schema.title ?? humanizeName(name)} (${name})`);
+        const selected = await abortable(options.ui.select("Choose a field to edit", labels), signal);
+        if (selected === undefined)
+            return { action: "cancel" };
+        const property = properties[labels.indexOf(selected)];
+        if (!property)
+            continue;
+        const [name, schema] = property;
+        const value = await collectValidField(options.ui, params, name, schema, values[name], signal);
+        if (value.status === "cancelled")
+            return { action: "cancel" };
+        values[name] = value.value;
+    }
+}
+async function collectValidField(ui, params, name, schema, current, signal) {
+    const required = params.requestedSchema.required?.includes(name) === true;
+    while (true) {
+        const result = await collectField(ui, params, name, schema, current, signal);
+        if (result.status === "cancelled")
+            return result;
+        try {
+            coerceAndValidateFormValues({
+                ...params,
+                requestedSchema: {
+                    type: "object",
+                    properties: { [name]: schema },
+                    ...(required ? { required: [name] } : {}),
+                },
+            }, { [name]: result.value });
+            return result;
+        }
+        catch (error) {
+            ui.notify(error instanceof Error ? error.message : String(error), "error");
+            current = result.value;
+        }
+    }
+}
+async function collectField(ui, params, name, schema, current, signal) {
+    const required = params.requestedSchema.required?.includes(name) === true;
+    const title = [schema.title ?? humanizeName(name), required ? "(required)" : "", schema.description]
+        .filter(Boolean)
+        .join(" ");
+    if (schema.type === "string" && ("enum" in schema || "oneOf" in schema)) {
+        const choices = "oneOf" in schema
+            ? schema.oneOf.map(option => ({ value: option.const, display: formatChoice(option.const, option.title) }))
+            : schema.enum.map((value, index) => ({
+                value,
+                display: formatChoice(value, "enumNames" in schema ? schema.enumNames?.[index] : undefined),
+            }));
+        const displays = uniqueLabels(choices.map(choice => choice.display));
+        const actions = [...displays];
+        const useDefault = schema.default === undefined ? undefined : uniqueAction("Use default", actions);
+        if (useDefault)
+            actions.push(useDefault);
+        const omit = required ? undefined : uniqueAction("Omit", actions);
+        if (omit)
+            actions.push(omit);
+        const action = await abortable(ui.select(title, actions), signal);
+        if (action === undefined)
+            return { status: "cancelled" };
+        if (action === useDefault)
+            return { status: "collected", value: schema.default };
+        if (action === omit)
+            return { status: "collected", value: undefined };
+        return { status: "collected", value: choices[displays.indexOf(action)]?.value };
+    }
+    if (schema.type === "boolean") {
+        const actions = ["Yes", "No"];
+        if (schema.default !== undefined)
+            actions.push("Use default");
+        if (!required)
+            actions.push("Omit");
+        const action = await abortable(ui.select(title, actions), signal);
+        if (action === undefined)
+            return { status: "cancelled" };
+        if (action === "Use default")
+            return { status: "collected", value: schema.default };
+        if (action === "Omit")
+            return { status: "collected", value: undefined };
+        return { status: "collected", value: action === "Yes" };
+    }
+    if (schema.type === "array") {
+        const actions = ["Choose values"];
+        if (schema.default !== undefined)
+            actions.push("Use default");
+        if (!required)
+            actions.push("Omit");
+        const action = await abortable(ui.select(title, actions), signal);
+        if (action === undefined)
+            return { status: "cancelled" };
+        if (action === "Use default")
+            return { status: "collected", value: schema.default };
+        if (action === "Omit")
+            return { status: "collected", value: undefined };
+        const choices = extractMultiSelectOptions(schema);
+        const selected = new Set(Array.isArray(current) ? current : []);
+        while (true) {
+            const displays = uniqueLabels(choices.map(choice => selected.has(choice.value) ? `✓ ${choice.display}` : choice.display));
+            const done = uniqueAction("Done", displays);
+            const picked = await abortable(ui.select(title, [...displays, done]), signal);
+            if (picked === undefined)
+                return { status: "cancelled" };
+            if (picked === done)
+                return { status: "collected", value: [...selected] };
+            const choice = choices[displays.indexOf(picked)];
+            if (!choice)
+                continue;
+            if (selected.has(choice.value))
+                selected.delete(choice.value);
+            else
+                selected.add(choice.value);
+        }
+    }
+    const actions = ["Enter value"];
+    if (schema.default !== undefined)
+        actions.push("Use default");
+    if (!required)
+        actions.push("Omit");
+    const action = await abortable(ui.select(title, actions), signal);
+    if (action === undefined)
+        return { status: "cancelled" };
+    if (action === "Use default")
+        return { status: "collected", value: schema.default };
+    if (action === "Omit")
+        return { status: "collected", value: undefined };
+    const entered = await abortable(ui.input(title, current === undefined ? undefined : String(current)), signal);
+    return entered === undefined ? { status: "cancelled" } : { status: "collected", value: entered };
+}
+export function coerceAndValidateFormValues(params, values) {
+    const output = {};
+    const required = new Set(params.requestedSchema.required ?? []);
+    for (const [name, schema] of Object.entries(params.requestedSchema.properties)) {
+        const value = values[name];
+        if (value === undefined) {
+            if (required.has(name))
+                throw new Error(`Missing required elicitation field: ${name}`);
+            continue;
+        }
+        if (schema.type === "string") {
+            const stringValue = String(value);
+            const limits = schema;
+            if (limits.minLength !== undefined && stringValue.length < limits.minLength) {
+                throw new Error(`Elicitation field ${name} is shorter than minimum length ${limits.minLength}`);
+            }
+            if (limits.maxLength !== undefined && stringValue.length > limits.maxLength) {
+                throw new Error(`Elicitation field ${name} is longer than maximum length ${limits.maxLength}`);
+            }
+            if ("enum" in schema && !schema.enum.includes(stringValue)) {
+                throw new Error(`Elicitation field ${name} is not an allowed value`);
+            }
+            if ("oneOf" in schema && !schema.oneOf.some(option => option.const === stringValue)) {
+                throw new Error(`Elicitation field ${name} is not an allowed value`);
+            }
+            output[name] = stringValue;
+            continue;
+        }
+        if (schema.type === "number" || schema.type === "integer") {
+            if (typeof value === "string" && value.trim() === "") {
+                throw new Error(`Elicitation field ${name} must be a number`);
+            }
+            const numberValue = typeof value === "number" ? value : Number(value);
+            if (!Number.isFinite(numberValue))
+                throw new Error(`Elicitation field ${name} must be a number`);
+            if (schema.type === "integer" && !Number.isInteger(numberValue)) {
+                throw new Error(`Elicitation field ${name} must be an integer`);
+            }
+            if (schema.minimum !== undefined && numberValue < schema.minimum) {
+                throw new Error(`Elicitation field ${name} is below minimum ${schema.minimum}`);
+            }
+            if (schema.maximum !== undefined && numberValue > schema.maximum) {
+                throw new Error(`Elicitation field ${name} is above maximum ${schema.maximum}`);
+            }
+            output[name] = numberValue;
+            continue;
+        }
+        if (schema.type === "boolean") {
+            output[name] = typeof value === "boolean" ? value : value === "true";
+            continue;
+        }
+        if (schema.type === "array") {
+            if (!Array.isArray(value))
+                throw new Error(`Elicitation field ${name} must be a list`);
+            const allowed = new Set(extractMultiSelectOptions(schema).map(option => option.value));
+            const arrayValue = value.map(String);
+            if (schema.minItems !== undefined && arrayValue.length < schema.minItems) {
+                throw new Error(`Elicitation field ${name} has fewer than ${schema.minItems} selections`);
+            }
+            if (schema.maxItems !== undefined && arrayValue.length > schema.maxItems) {
+                throw new Error(`Elicitation field ${name} has more than ${schema.maxItems} selections`);
+            }
+            if (arrayValue.some(item => !allowed.has(item))) {
+                throw new Error(`Elicitation field ${name} contains an invalid selection`);
+            }
+            output[name] = arrayValue;
+        }
+    }
+    const validation = new AjvJsonSchemaValidator()
+        .getValidator(params.requestedSchema)(output);
+    if (!validation.valid) {
+        throw new Error(`Invalid elicitation response: ${validation.errorMessage}`);
+    }
+    return output;
+}
+function formatChoice(value, title) {
+    return title && title !== value ? `${title} (${value})` : value;
+}
+function uniqueLabels(labels) {
+    const used = new Set();
+    return labels.map(label => {
+        let unique = label;
+        while (used.has(unique))
+            unique += "…";
+        used.add(unique);
+        return unique;
+    });
+}
+function uniqueAction(label, choices) {
+    let unique = label;
+    while (choices.includes(unique))
+        unique += "…";
+    return unique;
+}
+function extractMultiSelectOptions(schema) {
+    const items = schema.items;
+    return items.anyOf
+        ? items.anyOf.map(option => ({ value: option.const, display: formatChoice(option.const, option.title) }))
+        : (items.enum ?? []).map(value => ({ value, display: value }));
+}
+function formatReview(serverName, properties, content) {
+    const rows = properties.map(([name, schema]) => `${schema.title ?? humanizeName(name)}: ${content[name] === undefined ? "(omitted)" : String(content[name])}`);
+    return [`Review input for ${serverName}`, "", ...rows].join("\n");
+}
+export async function handleUrlElicitation(options, params, signal) {
+    throwIfAborted(signal);
+    if (!options.allowUrl)
+        throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation is not supported");
+    let parsed;
+    try {
+        parsed = new URL(params.url);
+    }
+    catch {
+        throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation supplied an invalid URL");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation only supports HTTP and HTTPS URLs");
+    }
+    const decision = await abortable(options.ui.select([
+        "MCP Browser Request",
+        `Server: ${options.serverName}`,
+        "",
+        params.message,
+        "",
+        `Host: ${parsed.host}`,
+        `Full URL: ${params.url}`,
+        "",
+        "Open this URL in your browser?",
+    ].join("\n"), ["Open", "Decline"]), signal);
+    if (decision === undefined)
+        return { action: "cancel" };
+    if (decision === "Decline")
+        return { action: "decline" };
+    try {
+        await abortable(open(params.url), signal);
+    }
+    catch (error) {
+        throwIfAborted(signal);
+        options.ui.notify(`Could not open MCP elicitation URL: ${error instanceof Error ? error.message : String(error)}`, "error");
+        return { action: "cancel" };
+    }
+    throwIfAborted(signal);
+    options.onUrlAccepted?.(params.elicitationId);
+    options.ui.notify("Opened browser for MCP elicitation.", "info");
+    return { action: "accept" };
+}
+function humanizeName(name) {
+    return name.replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, char => char.toUpperCase());
+}
+//# sourceMappingURL=elicitation-handler.js.map

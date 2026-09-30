@@ -74,6 +74,10 @@ function printHelp(log = console.log) {
   log("  pi-mcp-adapter init --dry-run");
   log("  pi-mcp-adapter init --discover-host-configs  Opt in to host config fallback discovery");
   log("");
+  log("Check configured servers (exits 1 when an enabled server fails):");
+  log("  pi-mcp-adapter doctor         Connect each enabled server and report its state and tool count");
+  log("  pi-mcp-adapter doctor --json  Print the same report as a JSON array");
+  log("");
   log("Bearer token storage (servers configured with auth: \"bearer\" and bearerTokenStore: true):");
   log("  pi-mcp-adapter token set <server>     Store a token read from stdin (masked prompt or pipe; never argv)");
   log("  pi-mcp-adapter token status <server>  Report whether a stored token matches the configured URL");
@@ -413,6 +417,135 @@ async function runKey(argv, log, error, stdin) {
   return 0;
 }
 
+const DOCTOR_CONNECT_TIMEOUT_MS = 15_000;
+
+// Error text can echo configured secrets (child stderr, HTTP error bodies) and URLs
+// with credentials, so strip URL userinfo, queries, and fragments, then configured
+// header, env, and bearer values. Pieces under 8 characters are left alone so short
+// non-secret values such as "1" or "true" don't garble the message.
+function redactDoctorMessage(text, definition, utils) {
+  const configured = [definition.bearerToken, ...Object.values(definition.headers ?? {}), ...Object.values(definition.env ?? {})];
+  if (definition.bearerTokenEnv) configured.push(process.env[definition.bearerTokenEnv]);
+  const secrets = configured
+    .filter((value) => typeof value === "string")
+    .flatMap((value) => [value, utils.interpolateEnvVars(value)])
+    .flatMap((value) => [value, ...value.split(/\s+/)])
+    .filter((value) => value.length >= 8)
+    .sort((left, right) => right.length - left.length);
+  let redacted = text.replace(/\b([a-z][a-z\d+.-]*:\/\/)(?:[^\s/?#@]*@)?([^\s?#]*)(?:[?#]\S*)?/gi, "$1$2");
+  for (const secret of secrets) redacted = redacted.replaceAll(secret, "***");
+  return redacted;
+}
+
+async function runDoctor(argv, log, error) {
+  const json = argv[0] === "--json";
+  if (argv.length > (json ? 1 : 0)) {
+    error("Usage: pi-mcp-adapter doctor [--json]");
+    return 1;
+  }
+  let config, trust, manager, auth, authFlow, utils, agentDir;
+  try {
+    [config, trust, manager, auth, authFlow, utils, agentDir] = await Promise.all([
+      import("./dist/config.js"),
+      import("./dist/project-server-trust.js"),
+      import("./dist/server-manager.js"),
+      import("./dist/mcp-auth.js"),
+      import("./dist/mcp-auth-flow.js"),
+      import("./dist/utils.js"),
+      import("./dist/agent-dir.js"),
+    ]);
+  } catch (err) {
+    error("Unable to load doctor command modules.");
+    error(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+
+  const cwd = process.cwd();
+  const loaded = config.loadMcpConfigWithSources(undefined, cwd);
+  let projectTrusted = false;
+  if (loaded.projectServers.size > 0) {
+    try {
+      // Pi is a peer dependency and may not resolve from where this CLI is installed.
+      const { ProjectTrustStore } = await import("@earendil-works/pi-coding-agent");
+      projectTrusted = new ProjectTrustStore(agentDir.getAgentDir()).get(cwd) === true;
+    } catch (err) {
+      error(`Could not read Pi's project trust, so project servers are treated as untrusted: ${utils.formatTerminalError(err)}`);
+    }
+  }
+  const { config: effective, blockedServers } = await trust.applyProjectServerTrust(loaded, {
+    cwd,
+    hasUI: false,
+    isProjectTrusted: () => projectTrusted,
+  });
+  const authOptions = auth.getAuthStorageOptions(effective.settings?.oauthDir, cwd, effective.settings?.oauthCredentialStore);
+  const serverManager = new manager.McpServerManager(cwd);
+  serverManager.setDefaultRequestTimeoutMs(effective.settings?.requestTimeoutMs);
+  serverManager.setAuthStorageOptions(authOptions);
+
+  const check = async (name, definition) => {
+    const block = blockedServers.get(name);
+    if (block) return { state: "blocked", message: trust.describeProjectServerBlock(block.reason) };
+    if (definition.disabled === true) return { state: "disabled" };
+    const needsSignIn = { state: "needs-auth", message: `sign-in required: run /mcp-auth ${name} in Pi` };
+    let connectDefinition = definition;
+    if (definition.url) {
+      let url;
+      try {
+        url = utils.resolveServerUrl(definition);
+      } catch {
+        const missing = typeof definition.url === "string" ? utils.getMissingEnvVars(definition.url) : [];
+        return { state: "failed", message: missing.length > 0 ? `URL uses unset environment variables: ${missing.join(", ")}` : "URL is invalid" };
+      }
+      // Sign-in needs a browser, so report it from stored credentials instead of starting OAuth.
+      if (authFlow.supportsOAuth(definition) && definition.oauth?.grantType !== "client_credentials") {
+        const stored = auth.inspectAuthForUrl(name, url, authOptions);
+        if (stored.status === "unavailable") return { state: "failed", message: stored.message };
+        if (stored.status === "absent") {
+          if (definition.auth === "oauth") return needsSignIn;
+          // Implicit OAuth: try anonymously, without a provider that could register an OAuth client.
+          connectDefinition = { ...definition, oauth: false };
+        }
+      }
+    }
+    const signal = AbortSignal.timeout(DOCTOR_CONNECT_TIMEOUT_MS);
+    try {
+      const connection = await serverManager.connect(name, connectDefinition, signal);
+      return connection.status === "needs-auth" ? needsSignIn : { state: "ok", tools: connection.tools.length };
+    } catch (err) {
+      if (signal.aborted) return { state: "failed", message: `no response within ${DOCTOR_CONNECT_TIMEOUT_MS / 1000}s` };
+      if (connectDefinition !== definition && [err, err?.cause].some(manager.isUnauthorizedHttpError)) return needsSignIn;
+      return { state: "failed", message: utils.formatTerminalError(err) };
+    }
+  };
+
+  let results;
+  try {
+    results = await Promise.all(Object.entries(effective.mcpServers).map(async ([name, definition]) => {
+      const result = await check(name, definition)
+        .catch((err) => ({ state: "failed", message: utils.formatTerminalError(err) }));
+      return {
+        name,
+        state: result.state,
+        tools: result.tools ?? null,
+        message: result.message ? utils.sanitizeTerminalText(redactDoctorMessage(result.message, definition, utils)) : null,
+      };
+    }));
+  } finally {
+    await serverManager.closeAll();
+  }
+
+  if (json) {
+    log(JSON.stringify(results, null, 2));
+  } else {
+    if (results.length === 0) log("No MCP servers configured.");
+    for (const result of results) {
+      const tools = result.tools === null ? "" : `, ${result.tools} tool${result.tools === 1 ? "" : "s"}`;
+      log(`${utils.sanitizeTerminalText(result.name)}: ${result.state}${tools}${result.message ? ` — ${result.message}` : ""}`);
+    }
+  }
+  return results.some((result) => result.state === "failed" || result.state === "needs-auth") ? 1 : 0;
+}
+
 export async function main(argv = process.argv.slice(2), log = console.log, error = console.error, stdin = process.stdin) {
   const [command, ...rest] = argv;
 
@@ -427,6 +560,10 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
 
   if (command === "key") {
     return runKey(rest, log, error, stdin);
+  }
+
+  if (command === "doctor") {
+    return runDoctor(rest, log, error);
   }
 
   if (command === "install") {

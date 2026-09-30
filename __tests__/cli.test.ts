@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { dirname, join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -498,5 +501,132 @@ describe("cli System One key helper", () => {
     expect(await main(["key", "remove", "systemone"], line => logs.push(line), () => {}, keyStdin(""))).toBe(0);
     expect(logs.join("\n")).toContain("TYPESAFE_API_KEY is present and overrides");
     expect(logs.join("\n")).not.toContain("environment-secret");
+  });
+});
+
+describe("cli doctor", () => {
+  const cliPath = resolve("cli.js");
+  const fixtureUrl = pathToFileURL(resolve("__tests__/fixtures/tools-only-server.mjs")).href;
+  const servers: Server[] = [];
+
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((server) => new Promise((done) => server.close(done))));
+  });
+
+  function setup(adapterConfig: unknown, projectConfig?: unknown) {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-home-"));
+    const project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-doctor-project-")));
+    const agentDir = join(home, ".pi", "agent");
+    writeJson(join(agentDir, "mcp-adapter.json"), adapterConfig);
+    if (projectConfig) writeJson(join(project, ".mcp.json"), projectConfig);
+    return { home, project, agentDir };
+  }
+
+  function doctor(args: string[], { home, project, agentDir }: ReturnType<typeof setup>, env: NodeJS.ProcessEnv = {}) {
+    const { PI_PACKAGE_DIR: _packageDir, ...inherited } = process.env;
+    return new Promise<{ code: number | null; stdout: string; stderr: string }>((done, fail) => {
+      execFile(process.execPath, [cliPath, "doctor", ...args], {
+        cwd: project,
+        env: { ...inherited, HOME: home, PI_CODING_AGENT_DIR: agentDir, ...env },
+        timeout: 30_000,
+      }, (error, stdout, stderr) => {
+        if (error && typeof error.code !== "number") fail(error);
+        else done({ code: error ? error.code as number : 0, stdout, stderr });
+      });
+    });
+  }
+
+  async function listen(handler: (request: IncomingMessage, response: ServerResponse) => void): Promise<string> {
+    const server = createServer(handler);
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
+  }
+
+  it("exits 1 and explains a refused local server", async () => {
+    const url = await listen(() => {});
+    await new Promise((done) => servers.pop()!.close(done));
+
+    const result = await doctor([], setup({ mcpServers: { local: { url } } }));
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("local: failed");
+    expect(result.stdout).toContain(`Nothing is listening at ${url}`);
+  });
+
+  it("reports OAuth servers without a sign-in and never starts an OAuth flow", async () => {
+    const paths: string[] = [];
+    const url = await listen((request, response) => {
+      paths.push(request.url ?? "");
+      response.writeHead(401, { "WWW-Authenticate": `Bearer resource_metadata="${new URL("/.well-known/oauth-protected-resource", url)}"` });
+      response.end();
+    });
+
+    const result = await doctor([], setup({ mcpServers: { explicit: { url, auth: "oauth" }, implicit: { url } } }));
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("explicit: needs-auth — sign-in required: run /mcp-auth explicit in Pi");
+    expect(result.stdout).toContain("implicit: needs-auth — sign-in required: run /mcp-auth implicit in Pi");
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths.every((path) => path === "/mcp")).toBe(true);
+  });
+
+  it("never runs a server from an untrusted project or an unapproved project server", async () => {
+    const marker = join(tmpdir(), `pi-mcp-doctor-ran-${process.pid}-${Date.now()}`);
+    const projectServer = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`] };
+    const context = setup({ mcpServers: {} }, { mcpServers: { project: projectServer } });
+
+    const untrusted = await doctor([], context);
+    expect(untrusted.code).toBe(0);
+    expect(untrusted.stdout).toContain("project: blocked — blocked by project trust");
+
+    writeJson(join(context.agentDir, "trust.json"), { [context.project]: true });
+    const unapproved = await doctor([], context);
+    expect(unapproved.code).toBe(0);
+    expect(unapproved.stdout).toContain("project: blocked — blocked: project server approval required");
+
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("prints JSON without configured header, token, env, or URL query values", async () => {
+    const url = await listen((request, response) => {
+      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.end(`rejected ${request.headers.authorization ?? request.headers["x-api-key"]}`);
+    });
+    const context = setup({
+      mcpServers: {
+        headers: { url: `${url}?key=query-secret-value`, headers: { "X-Api-Key": "Bearer header-secret-value" } },
+        bearer: { url, auth: "bearer", bearerToken: "token-secret-value" },
+        stdio: { command: process.execPath, args: ["-e", "console.error(process.env.CHILD_SECRET); process.exit(1)"], env: { CHILD_SECRET: "env-secret-value" } },
+      },
+    });
+
+    const result = await doctor(["--json"], context);
+
+    expect(result.code).toBe(1);
+    const report = JSON.parse(result.stdout) as Array<{ name: string; state: string; tools: number | null; message: string | null }>;
+    expect(report.map(({ name, state }) => [name, state])).toEqual([["headers", "failed"], ["bearer", "failed"], ["stdio", "failed"]]);
+    for (const secret of ["header-secret-value", "token-secret-value", "env-secret-value", "query-secret-value"]) {
+      expect(result.stdout).not.toContain(secret);
+      expect(result.stderr).not.toContain(secret);
+    }
+  });
+
+  it("reports tool counts and leaves no server process running after exit", async () => {
+    const pidFile = join(tmpdir(), `pi-mcp-doctor-pid-${process.pid}-${Date.now()}`);
+    const context = setup({
+      mcpServers: {
+        tools: { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); import(${JSON.stringify(fixtureUrl)})`] },
+        off: { command: process.execPath, args: ["-e", "process.exit(1)"], disabled: true },
+      },
+    });
+
+    const result = await doctor([], context);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("tools: ok, 1 tool");
+    expect(result.stdout).toContain("off: disabled");
+    const pid = Number(readFileSync(pidFile, "utf-8"));
+    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
   });
 });

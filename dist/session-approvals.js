@@ -1,0 +1,140 @@
+import { createHash } from "node:crypto";
+import { logger } from "./logger.js";
+import { stableStringify } from "./utils.js";
+export const MCP_APPROVAL_CUSTOM_TYPE = "mcp-approval-v1";
+const TOOL_APPROVAL_KEYS = [
+    "version",
+    "kind",
+    "decision",
+    "serverName",
+    "originalToolName",
+    "definitionHash",
+    "argsHash",
+];
+const IFRAME_APPROVAL_KEYS = ["version", "kind", "decision", "serverName"];
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+export function computeToolArgumentsHash(args) {
+    return createHash("sha256").update(stableStringify(args ?? {})).digest("hex");
+}
+export function computeToolDefinitionHash(toolMeta) {
+    return createHash("sha256").update(stableStringify({
+        originalName: toolMeta.originalName,
+        inputSchema: toolMeta.inputSchema ?? null,
+        resourceUri: toolMeta.resourceUri ?? null,
+        uiResourceUri: toolMeta.uiResourceUri ?? null,
+    })).digest("hex");
+}
+export function makeToolApprovalKey(serverName, originalToolName, definitionHash, argsHash) {
+    return `${serverName}\u0000${originalToolName}\u0000${definitionHash}\u0000${argsHash}`;
+}
+export function getToolApprovalIdentity(serverName, toolMeta, args) {
+    const definitionHash = computeToolDefinitionHash(toolMeta);
+    const argsHash = computeToolArgumentsHash(args);
+    return {
+        definitionHash,
+        argsHash,
+        cacheKey: makeToolApprovalKey(serverName, toolMeta.originalName, definitionHash, argsHash),
+    };
+}
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hasExactKeys(value, keys) {
+    const actualKeys = Object.keys(value);
+    return actualKeys.length === keys.length && keys.every(key => Object.hasOwn(value, key));
+}
+function isNonEmptyString(value) {
+    return typeof value === "string" && value.length > 0;
+}
+function isSha256(value) {
+    return typeof value === "string" && SHA256_HEX.test(value);
+}
+function isSessionApprovalEntry(value) {
+    if (!isRecord(value) || value.version !== 1 || !isNonEmptyString(value.serverName))
+        return false;
+    if (value.kind === "tool") {
+        return hasExactKeys(value, TOOL_APPROVAL_KEYS)
+            && value.decision === "allow_for_session"
+            && isNonEmptyString(value.originalToolName)
+            && isSha256(value.definitionHash)
+            && isSha256(value.argsHash);
+    }
+    if (value.kind === "iframe") {
+        return hasExactKeys(value, IFRAME_APPROVAL_KEYS)
+            && (value.decision === "allow" || value.decision === "deny");
+    }
+    return false;
+}
+function isApprovalCustomEntry(entry) {
+    return isRecord(entry)
+        && entry.type === "custom"
+        && entry.customType === MCP_APPROVAL_CUSTOM_TYPE;
+}
+export function createSessionApprovalWriter(appendEntry, canAppend = undefined) {
+    return (record) => {
+        if (canAppend && !canAppend())
+            return;
+        try {
+            appendEntry(MCP_APPROVAL_CUSTOM_TYPE, record);
+        }
+        catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            logger.debug(`MCP: failed to persist session approval: ${detail}`);
+        }
+    };
+}
+export function rememberToolApproval(state, serverName, toolMeta, args) {
+    const { definitionHash, argsHash, cacheKey } = getToolApprovalIdentity(serverName, toolMeta, args);
+    const approvedToolCalls = state.approvedToolCalls ??= new Map();
+    if (approvedToolCalls.has(cacheKey))
+        return;
+    approvedToolCalls.set(cacheKey, true);
+    const record = {
+        version: 1,
+        kind: "tool",
+        decision: "allow_for_session",
+        serverName,
+        originalToolName: toolMeta.originalName,
+        definitionHash,
+        argsHash,
+    };
+    try {
+        state.persistSessionApproval?.(record);
+    }
+    catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        logger.debug(`MCP: session approval persistence callback failed: ${detail}`);
+    }
+}
+/** Bind broad consent to this configured server, not a replacement with the same name. */
+export function getServerApprovalIdentity(state, serverName) {
+    if (!Object.hasOwn(state.config.mcpServers, serverName))
+        return undefined;
+    const definition = state.config.mcpServers[serverName];
+    if (!definition)
+        return undefined;
+    return {
+        definition,
+        hash: createHash("sha256").update(stableStringify(definition)).digest("hex"),
+    };
+}
+export function restoreSessionApprovalState(state, branchEntries) {
+    const approvedToolCalls = state.approvedToolCalls ??= new Map();
+    approvedToolCalls.clear();
+    // Replace the map so an approval dialog opened on the old branch cannot grant
+    // server-wide authority after navigation, resume, or session replacement.
+    state.approvedServers = new Map();
+    state.consentManager.clear();
+    for (const entry of branchEntries) {
+        if (!isApprovalCustomEntry(entry))
+            continue;
+        if (!isSessionApprovalEntry(entry.data))
+            continue;
+        if (entry.data.kind === "tool") {
+            approvedToolCalls.set(makeToolApprovalKey(entry.data.serverName, entry.data.originalToolName, entry.data.definitionHash, entry.data.argsHash), true);
+            continue;
+        }
+        state.consentManager.restoreDecision(entry.data.serverName, entry.data.decision === "allow");
+    }
+}
+//# sourceMappingURL=session-approvals.js.map

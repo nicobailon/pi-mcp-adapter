@@ -19,6 +19,10 @@
     "jev-contracts.ts",
     "jev-key-store.ts",
     "jev-client.ts",
-    "types.ts"
+    "types.ts",
+    "mcp-auth.ts",
+    "mcp-auth-flow.ts",
+    "project-server-trust.ts",
+    "server-manager.ts"
   ]
 }

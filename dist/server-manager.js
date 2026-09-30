@@ -1,0 +1,1760 @@
+import { mkdirSync, statSync } from "node:fs";
+import { BlockList, isIP } from "node:net";
+import { isDeepStrictEqual } from "node:util";
+import { Client, SdkError, SdkErrorCode, SdkHttpError, SseError, SSEClientTransport, StreamableHTTPClientTransport, UnauthorizedError, RegistrationRejectedError, } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { UnixSocketClientTransport } from "./unix-socket-transport.js";
+import { probeMcpEndpoint } from "./mcp-probe.js";
+import { isServerDisabled, SERVER_STREAM_RESULT_PATCH_METHOD, serverStreamResultPatchNotificationSchema, } from "./types.js";
+import { resolveNpxBinary } from "./npx-resolver.js";
+import { createJsonSchemaValidator } from "./json-schema-validator.js";
+import { logger } from "./logger.js";
+import { RESOURCE_MIME_TYPE } from "./ui-app-bridge-helpers.js";
+import { isBuiltInAgentPlugin } from "./agent-plugin-provenance.js";
+import { McpOAuthProvider } from "./mcp-oauth-provider.js";
+import { explainRegistrationRejection, extractOAuthConfig, supportsOAuth } from "./mcp-auth-flow.js";
+import { captureOAuthAuthority, inspectAuthForUrl, invalidateAuthEntryCache, } from "./mcp-auth.js";
+import { getBearerTokenForUrl } from "./mcp-bearer-store.js";
+import { handleSamplingRequest, registerSamplingHandler } from "./sampling-handler.js";
+import { handleElicitationRequest, handleUrlElicitation, registerElicitationHandler, } from "./elicitation-handler.js";
+import { attachTaskSession } from "./mcp-tasks.js";
+import { interpolateEnvVars, expandHomePath, resolveBearerToken, resolveCommandSecretsRecord, resolveConfigPath, resolveServerUrl, } from "./utils.js";
+import { abortable, throwIfAborted } from "./abort.js";
+import { combineAbortSignals } from "./runtime-owner.js";
+import { createMcpTraceWriter, isMcpTraceEnabled, traceTransportKind, wrapTransportWithMcpTrace, } from "./mcp-trace.js";
+import { createOAuthFetch, resolveOAuthHeaders } from "./mcp-auth-fetch.js";
+import { createRequestHeadersCommandFetch } from "./request-headers-command.js";
+import { createCaFetch, validateCaFile } from "./http-ca.js";
+import { BearerCommandResolver } from "./bearer-command-resolver.js";
+const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
+const MAX_CAPTURED_STDERR_LINES = 3;
+const abortCleanupPromises = new WeakMap();
+function isLiteralLocalAddress(url) {
+    const hostname = new URL(url).hostname.replace(/^\[|\]$/g, "");
+    const family = isIP(hostname);
+    if (!family)
+        return false;
+    const local = new BlockList();
+    local.addSubnet("10.0.0.0", 8);
+    local.addSubnet("172.16.0.0", 12);
+    local.addSubnet("192.168.0.0", 16);
+    local.addSubnet("169.254.0.0", 16);
+    local.addSubnet("fc00::", 7, "ipv6");
+    local.addSubnet("fe80::", 10, "ipv6");
+    return local.check(hostname, family === 6 ? "ipv6" : "ipv4");
+}
+function isLoopbackUrl(url) {
+    return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname);
+}
+const LOCAL_NETWORK_FAILURE_CODES = ["EHOSTUNREACH", "ENETUNREACH", "EACCES"];
+function networkFailureCodes(error, wanted, seen = new Set()) {
+    if (typeof error !== "object" || error === null || seen.has(error))
+        return [];
+    seen.add(error);
+    const codes = [];
+    if ("code" in error && typeof error.code === "string" && wanted.includes(error.code)) {
+        codes.push(error.code);
+    }
+    if ("cause" in error)
+        codes.push(...networkFailureCodes(error.cause, wanted, seen));
+    // SdkError keeps its cause under data, e.g. a refused connection during protocolVersion "auto" negotiation.
+    if (error instanceof SdkError && typeof error.data === "object" && error.data !== null && "cause" in error.data) {
+        codes.push(...networkFailureCodes(error.data.cause, wanted, seen));
+    }
+    if (error instanceof AggregateError) {
+        for (const nested of error.errors)
+            codes.push(...networkFailureCodes(nested, wanted, seen));
+    }
+    return [...new Set(codes)];
+}
+export function isUnauthorizedHttpError(error) {
+    return error instanceof UnauthorizedError
+        || (error instanceof SdkHttpError && error.status === 401)
+        // Some pinned-SDK transport paths emit this plain Error when bearer
+        // request headers are used without an OAuth authProvider.
+        || (error instanceof Error && /^Error POSTing to endpoint \(HTTP 401\):/.test(error.message));
+}
+function shouldFallbackToSse(error, definition) {
+    if (definition.protocolVersion === "2026-07-28")
+        return false;
+    return error instanceof SdkHttpError && [404, 405, 406, 415].includes(error.status);
+}
+function resolveVersionNegotiation(definition) {
+    switch (definition.protocolVersion) {
+        case undefined:
+        case "legacy":
+            return undefined;
+        case "auto":
+            return { mode: "auto" };
+        case "2026-07-28":
+            return { mode: { pin: "2026-07-28" } };
+        default:
+            throw new Error(`Invalid MCP protocolVersion: ${String(definition.protocolVersion)}`);
+    }
+}
+function boundedStderrChunk(chunk) {
+    if (Buffer.isBuffer(chunk)) {
+        const start = Math.max(0, chunk.byteLength - MAX_CAPTURED_STDERR_BYTES);
+        return Buffer.from(chunk.subarray(start));
+    }
+    // Limit string conversion before encoding; Buffer.from(largeString) would
+    // otherwise allocate the entire stderr event before applying the cap.
+    const suffix = chunk.length > MAX_CAPTURED_STDERR_BYTES
+        ? chunk.slice(-MAX_CAPTURED_STDERR_BYTES)
+        : chunk;
+    const bytes = Buffer.from(suffix, "utf8");
+    return bytes.byteLength > MAX_CAPTURED_STDERR_BYTES
+        ? Buffer.from(bytes.subarray(bytes.byteLength - MAX_CAPTURED_STDERR_BYTES))
+        : bytes;
+}
+function appendStderrTail(tail, chunk) {
+    const bytes = boundedStderrChunk(chunk);
+    if (bytes.length === 0)
+        return tail;
+    if (tail.length === 0)
+        return bytes;
+    const combined = Buffer.concat([tail, bytes]);
+    return combined.length > MAX_CAPTURED_STDERR_BYTES
+        ? Buffer.from(combined.subarray(combined.length - MAX_CAPTURED_STDERR_BYTES))
+        : combined;
+}
+const KEEP_ALIVE_REFRESH_TIMEOUT_MS = 5_000;
+const LISTEN_RETRY_DELAY_MS = 5_000;
+const RECENT_RESOURCE_TTL_MS = 10 * 60_000;
+const MAX_RESOURCE_SUBSCRIPTIONS = 32;
+export function isTransientHttpConnectError(error) {
+    let current = error;
+    while (current instanceof Error) {
+        if (current instanceof SdkHttpError && current.status === 503)
+            return true;
+        current = current.cause;
+    }
+    return false;
+}
+/** Wrap a FetchLike so each request re-resolves the bearer token via the resolver. */
+function createBearerCommandFetch(resolver, delegate) {
+    const innerFetch = delegate
+        ? (input, init) => delegate(input, init)
+        : (input, init) => globalThis.fetch(input, init);
+    return async (input, init) => {
+        const request = new Request(input, init);
+        const token = await resolver.resolve(request.signal);
+        const headers = new Headers(request.headers);
+        headers.set("Authorization", `Bearer ${token}`);
+        // Composed runtime fetches accept Request despite the SDK's narrower type.
+        return innerFetch(new Request(request, { headers }));
+    };
+}
+export class McpServerManager {
+    defaultCwd;
+    connections = new Map();
+    connectPromises = new Map();
+    connectOAuthAuthorities = new Map();
+    reconnectPromises = new Map();
+    reconnectOAuthAuthorities = new Map();
+    reconnectAttempts = new Map();
+    uiStreamListeners = new Map();
+    samplingConfig;
+    metadataListChangedListener;
+    listenStateChangedListener;
+    resourceUpdatedListeners = new Map();
+    pendingMetadataPublications = new Map();
+    elicitationConfig;
+    authStorageOptions = {};
+    oauthRuntime;
+    acceptedUrlElicitations = new Map();
+    defaultRequestTimeoutMs;
+    runtimeSignal;
+    closePromises = new Map();
+    closeGenerations = new Map();
+    connectAttempts = new Map();
+    traceSettings;
+    traceWriter;
+    stopped = false;
+    /** Default cwd for stdio servers without an explicit config `cwd`. */
+    constructor(defaultCwd) {
+        this.defaultCwd = defaultCwd;
+    }
+    setSamplingConfig(config) {
+        this.samplingConfig = config;
+    }
+    setMetadataListChangedListener(listener) {
+        this.metadataListChangedListener = listener;
+    }
+    setListenStateChangedListener(listener) {
+        this.listenStateChangedListener = listener;
+    }
+    publishMetadataChanged(name, expectedConnection, reason) {
+        const current = this.connections.get(name);
+        if (current !== expectedConnection || current.status !== "connected")
+            return false;
+        try {
+            this.metadataListChangedListener?.(name, reason);
+            this.pendingMetadataPublications.delete(name);
+            return true;
+        }
+        catch (error) {
+            this.pendingMetadataPublications.set(name, { connection: expectedConnection, reason });
+            const message = error instanceof Error ? error.message : String(error);
+            logger.debug(`MCP: metadata publication failed for ${name}; queued for retry: ${message}`);
+            return false;
+        }
+    }
+    setElicitationConfig(config) {
+        this.elicitationConfig = config;
+    }
+    setRuntimeSignal(signal) {
+        this.runtimeSignal = signal;
+    }
+    setDefaultRequestTimeoutMs(timeoutMs) {
+        this.defaultRequestTimeoutMs = normalizeRequestTimeoutMs(timeoutMs);
+    }
+    setTraceConfig(settings) {
+        this.traceSettings = settings;
+    }
+    setAuthStorageOptions(options) {
+        this.authStorageOptions = options;
+    }
+    setOAuthRuntime(runtime) {
+        this.oauthRuntime = runtime;
+    }
+    getRequestOptions(name, signal) {
+        const connection = this.connections.get(name);
+        return this.buildRequestOptions(connection?.definition, signal);
+    }
+    getResolvedRequestTimeoutMs(definition) {
+        if (definition?.requestTimeoutMs !== undefined) {
+            return normalizeRequestTimeoutMs(definition.requestTimeoutMs);
+        }
+        return this.defaultRequestTimeoutMs;
+    }
+    buildRequestOptions(definition, signal) {
+        const timeout = this.getResolvedRequestTimeoutMs(definition);
+        const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
+        if (!ownedSignal && timeout === undefined) {
+            return undefined;
+        }
+        return {
+            ...(ownedSignal ? { signal: ownedSignal } : {}),
+            ...(timeout !== undefined ? { timeout } : {}),
+        };
+    }
+    arbitrateConnectionAttempt(name, oauthAuthority, promises, authorities, attempts) {
+        const existingPromise = promises.get(name);
+        if (!existingPromise)
+            return undefined;
+        const existingAuthority = authorities.get(name);
+        let reusable = oauthAuthority === undefined && existingAuthority === undefined;
+        if (oauthAuthority && existingAuthority) {
+            try {
+                existingAuthority();
+                reusable = true;
+            }
+            catch {
+                reusable = false;
+            }
+        }
+        if (reusable)
+            return existingPromise;
+        const replacedAttempt = attempts.get(name);
+        replacedAttempt?.abort(new Error(`MCP connection ${name} was replaced`));
+        if (attempts.get(name) === replacedAttempt)
+            attempts.delete(name);
+        if (promises.get(name) === existingPromise)
+            promises.delete(name);
+        if (authorities.get(name) === existingAuthority)
+            authorities.delete(name);
+        return undefined;
+    }
+    async connect(name, definition, signal) {
+        validateCaFile(definition);
+        if (isServerDisabled(definition))
+            throw new Error(`MCP server "${name}" is disabled`);
+        if (this.stopped)
+            throw new Error("MCP server manager is closed");
+        const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
+        throwIfAborted(ownedSignal);
+        const oauthAuthority = definition.url && supportsOAuth(definition)
+            ? captureOAuthAuthority(name, false)
+            : undefined;
+        const closing = this.closePromises.get(name);
+        if (closing)
+            await abortable(closing, ownedSignal);
+        throwIfAborted(ownedSignal);
+        // Dedupe concurrent connection attempts.
+        const existingConnect = this.arbitrateConnectionAttempt(name, oauthAuthority, this.connectPromises, this.connectOAuthAuthorities, this.connectAttempts);
+        if (existingConnect)
+            return abortable(existingConnect, ownedSignal);
+        const existing = this.connections.get(name);
+        if (existing?.status === "connected") {
+            existing.lastUsedAt = Date.now();
+            return existing;
+        }
+        // A needs-auth route can be retried through either public path. Share an
+        // authority-compatible reconnect candidate instead of creating a second
+        // owner for the same server.
+        const existingReconnect = this.arbitrateConnectionAttempt(name, oauthAuthority, this.reconnectPromises, this.reconnectOAuthAuthorities, this.reconnectAttempts);
+        if (existingReconnect)
+            return abortable(existingReconnect, ownedSignal);
+        const credentialsInvalidated = existing?.status === "needs-auth"
+            && existing.credentialsInvalidated === true;
+        const generation = this.closeGenerations.get(name) ?? 0;
+        const attemptController = new AbortController();
+        const attemptSignal = combineAbortSignals(ownedSignal, attemptController.signal);
+        const connectionAttempt = this.createConnection(name, definition, attemptSignal, ownedSignal, credentialsInvalidated, oauthAuthority, attemptController);
+        const promise = definition.url
+            ? connectionAttempt.catch(async (error) => { throw await this.enrichHttpConnectionError(definition, error); })
+            : connectionAttempt;
+        this.connectPromises.set(name, promise);
+        if (oauthAuthority)
+            this.connectOAuthAuthorities.set(name, oauthAuthority);
+        this.connectAttempts.set(name, attemptController);
+        try {
+            const connection = await promise;
+            if (attemptController.signal.aborted || (this.closeGenerations.get(name) ?? 0) !== generation) {
+                await this.disposeConnection(connection);
+                throwIfAborted(attemptSignal);
+                throw new Error(`MCP connection for ${name} was closed while connecting`);
+            }
+            this.connections.set(name, connection);
+            this.watchListenSubscription(name, connection, connection.listenSubscription);
+            if ([...this.resourceUpdatedListeners.values()].some(registration => registration.serverName === name)) {
+                void this.ensureListen(name, connection);
+            }
+            return connection;
+        }
+        finally {
+            if (this.connectPromises.get(name) === promise)
+                this.connectPromises.delete(name);
+            if (this.connectOAuthAuthorities.get(name) === oauthAuthority) {
+                this.connectOAuthAuthorities.delete(name);
+            }
+            if (this.connectAttempts.get(name) === attemptController)
+                this.connectAttempts.delete(name);
+        }
+    }
+    /**
+     * Reconnect a server whose connection was proven stale (e.g. by a 404
+     * "session no longer exists" response). Single-flight per server name —
+     * concurrent callers that raced to the same failure share one reconnect —
+     * and identity-guarded: `staleConnection` is only torn down if it is
+     * still the manager's current connection for `name`. If a concurrent
+     * reconnect (or an unrelated connect()) already replaced it with a fresh
+     * connection, that fresh connection is returned untouched.
+     */
+    async reconnect(name, definition, staleConnection, signal) {
+        validateCaFile(definition);
+        if (isServerDisabled(definition))
+            throw new Error(`MCP server "${name}" is disabled`);
+        if (this.stopped)
+            throw new Error("MCP server manager is closed");
+        const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
+        throwIfAborted(ownedSignal);
+        const oauthAuthority = definition.url && supportsOAuth(definition)
+            ? captureOAuthAuthority(name, false)
+            : undefined;
+        // connect() and reconnect() are interchangeable retry entry points for a
+        // published needs-auth route. They must not create competing OAuth owners.
+        const existingConnect = this.arbitrateConnectionAttempt(name, oauthAuthority, this.connectPromises, this.connectOAuthAuthorities, this.connectAttempts);
+        if (existingConnect)
+            return abortable(existingConnect, ownedSignal);
+        const inFlight = this.arbitrateConnectionAttempt(name, oauthAuthority, this.reconnectPromises, this.reconnectOAuthAuthorities, this.reconnectAttempts);
+        if (inFlight)
+            return abortable(inFlight, ownedSignal);
+        const attemptController = new AbortController();
+        const attemptSignal = combineAbortSignals(ownedSignal, attemptController.signal);
+        const promise = this.doReconnect(name, definition, staleConnection, attemptSignal, oauthAuthority, attemptController)
+            .catch(error => {
+            if (attemptController.signal.aborted && !this.containsCleanupFailure(error)) {
+                throw new Error(`MCP connection for ${name} was closed while reconnecting`, { cause: error });
+            }
+            throw error;
+        })
+            .finally(() => {
+            if (this.reconnectPromises.get(name) === promise) {
+                this.reconnectPromises.delete(name);
+            }
+            if (this.reconnectAttempts.get(name) === attemptController) {
+                this.reconnectAttempts.delete(name);
+            }
+            if (this.reconnectOAuthAuthorities.get(name) === oauthAuthority) {
+                this.reconnectOAuthAuthorities.delete(name);
+            }
+        });
+        this.reconnectPromises.set(name, promise);
+        if (oauthAuthority)
+            this.reconnectOAuthAuthorities.set(name, oauthAuthority);
+        this.reconnectAttempts.set(name, attemptController);
+        return abortable(promise, ownedSignal);
+    }
+    /**
+     * Fetch the authoritative tool catalog for a connection that still appears
+     * connected. The SDK response cache is explicitly bypassed so this request
+     * also proves the remote Streamable HTTP session is usable. Results are
+     * identity-guarded: a late response from a replaced connection is ignored.
+     */
+    async refreshTools(name, expectedConnection, signal) {
+        if (this.stopped)
+            throw new Error("MCP server manager is closed");
+        const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
+        throwIfAborted(ownedSignal);
+        const current = this.connections.get(name);
+        if (current !== expectedConnection || current.status !== "connected") {
+            return "superseded";
+        }
+        await this.ensureListen(name, expectedConnection);
+        const requestOptions = this.buildRequestOptions(expectedConnection.definition, signal);
+        const timeout = Math.min(requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS, KEEP_ALIVE_REFRESH_TIMEOUT_MS);
+        const healthOptions = {
+            ...requestOptions,
+            timeout,
+        };
+        if (!expectedConnection.client.getServerCapabilities?.()?.tools) {
+            await expectedConnection.client.ping(healthOptions);
+            throwIfAborted(ownedSignal);
+            if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {
+                return "superseded";
+            }
+            this.retryPendingMetadataPublication(name, expectedConnection);
+            return "unchanged";
+        }
+        const toolsRevision = expectedConnection.toolsRevision ?? 0;
+        const refreshSignal = combineAbortSignals(healthOptions.signal, AbortSignal.timeout(timeout));
+        let toolResult;
+        try {
+            toolResult = await this.fetchAllTools(expectedConnection.client, {
+                ...healthOptions,
+                ...(refreshSignal ? { signal: refreshSignal } : {}),
+                cacheMode: "refresh",
+            });
+        }
+        catch (error) {
+            throwIfAborted(ownedSignal);
+            if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {
+                return "superseded";
+            }
+            if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) {
+                return "refresh-timeout";
+            }
+            throw error;
+        }
+        throwIfAborted(ownedSignal);
+        if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {
+            return "superseded";
+        }
+        if ((expectedConnection.toolsRevision ?? 0) !== toolsRevision) {
+            return "superseded";
+        }
+        if (isDeepStrictEqual(expectedConnection.tools, toolResult.tools) &&
+            isDeepStrictEqual(expectedConnection.toolListHints, toolResult.hints)) {
+            this.retryPendingMetadataPublication(name, expectedConnection);
+            return "unchanged";
+        }
+        const previousTools = expectedConnection.tools;
+        const previousToolListHints = expectedConnection.toolListHints;
+        expectedConnection.tools = toolResult.tools;
+        expectedConnection.toolListHints = toolResult.hints;
+        expectedConnection.toolsRevision = toolsRevision + 1;
+        try {
+            await this.metadataListChangedListener?.(name, "keep-alive-refresh");
+            this.pendingMetadataPublications.delete(name);
+        }
+        catch (error) {
+            if (this.connections.get(name) === expectedConnection &&
+                expectedConnection.tools === toolResult.tools &&
+                expectedConnection.toolListHints === toolResult.hints) {
+                expectedConnection.tools = previousTools;
+                expectedConnection.toolListHints = previousToolListHints;
+                expectedConnection.toolsRevision = toolsRevision;
+            }
+            throw error;
+        }
+        return "updated";
+    }
+    retryPendingMetadataPublication(name, connection) {
+        const pendingPublication = this.pendingMetadataPublications.get(name);
+        if (pendingPublication?.connection !== connection)
+            return;
+        this.metadataListChangedListener?.(name, pendingPublication.reason);
+        if (this.pendingMetadataPublications.get(name) === pendingPublication) {
+            this.pendingMetadataPublications.delete(name);
+        }
+    }
+    setListenState(name, connection, state) {
+        if (connection.listenState === state)
+            return;
+        connection.listenState = state;
+        if (this.connections.get(name) === connection) {
+            try {
+                this.listenStateChangedListener?.(name, state);
+            }
+            catch {
+                // Status consumers must not interrupt listen lifecycle recovery.
+            }
+        }
+    }
+    catalogListenFilter(connection) {
+        const capabilities = connection.client.getServerCapabilities?.();
+        return {
+            ...(capabilities?.tools?.listChanged ? { toolsListChanged: true } : {}),
+            ...(capabilities?.prompts?.listChanged ? { promptsListChanged: true } : {}),
+            ...(capabilities?.resources?.listChanged ? { resourcesListChanged: true } : {}),
+        };
+    }
+    currentListenFilter(name, connection) {
+        const now = Date.now();
+        const recent = connection.recentResourceUris;
+        if (recent) {
+            for (const [uri, touchedAt] of recent) {
+                if (now - touchedAt > RECENT_RESOURCE_TTL_MS)
+                    recent.delete(uri);
+            }
+        }
+        const openResourceUris = [...new Set([...this.resourceUpdatedListeners.values()]
+                .filter(registration => registration.serverName === name)
+                .map(registration => registration.uri))].slice(-MAX_RESOURCE_SUBSCRIPTIONS);
+        const openSet = new Set(openResourceUris);
+        const recentSlots = MAX_RESOURCE_SUBSCRIPTIONS - openResourceUris.length;
+        const recentResourceUris = recentSlots > 0
+            ? [...(recent?.keys() ?? [])].filter(uri => !openSet.has(uri)).slice(-recentSlots)
+            : [];
+        const resourceSubscriptions = [...openResourceUris, ...recentResourceUris];
+        return {
+            ...this.catalogListenFilter(connection),
+            ...(resourceSubscriptions.length > 0 ? { resourceSubscriptions } : {}),
+        };
+    }
+    watchListenSubscription(name, connection, subscription) {
+        if (!subscription)
+            return;
+        void subscription.closed.then(cause => {
+            if (this.stopped ||
+                this.connections.get(name) !== connection ||
+                connection.status !== "connected" ||
+                connection.listenSubscription !== subscription)
+                return;
+            if (cause === "remote") {
+                const staleUris = connection.listenFilter?.resourceSubscriptions ?? [];
+                if (staleUris.length > 0)
+                    connection.resourceReadRefreshUris = new Set(staleUris);
+                connection.listenCatalogStale = true;
+                connection.listenRetryAfter = Date.now();
+                this.setListenState(name, connection, "dropped");
+            }
+            else if (cause === "graceful" || connection.listenState !== "re-establishing") {
+                connection.listenStopped = true;
+                this.setListenState(name, connection, "not-listening");
+            }
+        });
+    }
+    /** Quietly repairs a modern catalog listen at an existing activity boundary. */
+    async ensureListen(name, expectedConnection) {
+        if (this.stopped ||
+            this.connections.get(name) !== expectedConnection ||
+            expectedConnection.status !== "connected" ||
+            expectedConnection.listenStopped ||
+            expectedConnection.client.getProtocolEra?.() !== "modern")
+            return;
+        const filter = this.currentListenFilter(name, expectedConnection);
+        if (Object.keys(filter).length === 0) {
+            this.setListenState(name, expectedConnection, "not-listening");
+            return;
+        }
+        if (expectedConnection.listenPromise) {
+            await expectedConnection.listenPromise;
+            return this.ensureListen(name, expectedConnection);
+        }
+        if ((expectedConnection.listenRetryAfter ?? 0) > Date.now())
+            return;
+        const sameFilter = isDeepStrictEqual(expectedConnection.listenFilter, filter);
+        if (expectedConnection.listenState === "active" && sameFilter) {
+            if (!expectedConnection.listenCatalogStale)
+                return;
+            const attempt = (async () => {
+                this.setListenState(name, expectedConnection, "re-establishing");
+                const confirmed = await this.reconcileCatalogAfterListen(name, expectedConnection, this.buildRequestOptions(expectedConnection.definition));
+                if (!confirmed)
+                    expectedConnection.listenRetryAfter = Date.now() + LISTEN_RETRY_DELAY_MS;
+                this.setListenState(name, expectedConnection, "active");
+            })().finally(() => {
+                if (expectedConnection.listenPromise === attempt)
+                    delete expectedConnection.listenPromise;
+            });
+            expectedConnection.listenPromise = attempt;
+            return attempt;
+        }
+        const attempt = (async () => {
+            const recoverDroppedListen = expectedConnection.listenState === "dropped";
+            this.setListenState(name, expectedConnection, "re-establishing");
+            const previous = expectedConnection.listenSubscription;
+            if (previous)
+                await previous.close().catch(() => { });
+            if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected")
+                return;
+            try {
+                const requestOptions = this.buildRequestOptions(expectedConnection.definition);
+                const subscription = await expectedConnection.client.listen(filter, {
+                    ...requestOptions,
+                    timeout: Math.min(requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS, KEEP_ALIVE_REFRESH_TIMEOUT_MS),
+                });
+                if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected") {
+                    await subscription.close().catch(() => { });
+                    return;
+                }
+                expectedConnection.listenSubscription = subscription;
+                expectedConnection.listenFilter = filter;
+                delete expectedConnection.listenStopped;
+                delete expectedConnection.listenRetryAfter;
+                this.watchListenSubscription(name, expectedConnection, subscription);
+                const confirmed = recoverDroppedListen
+                    ? await this.reconcileCatalogAfterListen(name, expectedConnection, requestOptions)
+                    : true;
+                if (!confirmed)
+                    expectedConnection.listenRetryAfter = Date.now() + LISTEN_RETRY_DELAY_MS;
+                this.setListenState(name, expectedConnection, "active");
+            }
+            catch (error) {
+                if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected")
+                    return;
+                if (expectedConnection.listenSubscription)
+                    await expectedConnection.listenSubscription.close().catch(() => { });
+                expectedConnection.listenRetryAfter = Date.now() + LISTEN_RETRY_DELAY_MS;
+                this.setListenState(name, expectedConnection, "dropped");
+                logger.debug(`MCP: catalog listen repair failed for ${name}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        })().finally(() => {
+            if (expectedConnection.listenPromise === attempt)
+                delete expectedConnection.listenPromise;
+        });
+        expectedConnection.listenPromise = attempt;
+        return attempt;
+    }
+    async reconcileCatalogAfterListen(name, expectedConnection, requestOptions) {
+        const timeout = Math.min(requestOptions?.timeout ?? KEEP_ALIVE_REFRESH_TIMEOUT_MS, KEEP_ALIVE_REFRESH_TIMEOUT_MS);
+        const refreshSignal = combineAbortSignals(requestOptions?.signal, AbortSignal.timeout(timeout));
+        const refreshOptions = {
+            ...requestOptions,
+            timeout,
+            cacheMode: "refresh",
+            ...(refreshSignal ? { signal: refreshSignal } : {}),
+        };
+        const [toolResult, resources, promptResult] = await Promise.allSettled([
+            this.fetchAllTools(expectedConnection.client, refreshOptions),
+            this.fetchAllResources(expectedConnection.client, refreshOptions, true),
+            this.fetchAllPrompts(expectedConnection.client, refreshOptions),
+        ]);
+        if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected")
+            return false;
+        const nextTools = toolResult.status === "fulfilled" ? toolResult.value : undefined;
+        const nextResources = resources.status === "fulfilled" ? resources.value : undefined;
+        const nextPrompts = promptResult.status === "fulfilled" && !promptResult.value.failed ? promptResult.value : undefined;
+        const confirmed = nextTools !== undefined && nextResources !== undefined && nextPrompts !== undefined;
+        const changed = (nextTools !== undefined && (!isDeepStrictEqual(expectedConnection.tools, nextTools.tools) ||
+            !isDeepStrictEqual(expectedConnection.toolListHints, nextTools.hints))) ||
+            (nextResources !== undefined && (!isDeepStrictEqual(expectedConnection.resources, nextResources.resources) ||
+                expectedConnection.resourceDiscoveryFailed !== nextResources.failed)) ||
+            (nextPrompts !== undefined && (!isDeepStrictEqual(expectedConnection.prompts, nextPrompts.prompts) ||
+                expectedConnection.promptDiscoveryFailed !== false));
+        if (!changed) {
+            this.retryPendingMetadataPublication(name, expectedConnection);
+            if (confirmed)
+                delete expectedConnection.listenCatalogStale;
+            else
+                expectedConnection.listenCatalogStale = true;
+            return confirmed;
+        }
+        if (nextTools !== undefined) {
+            expectedConnection.tools = nextTools.tools;
+            expectedConnection.toolListHints = nextTools.hints;
+            expectedConnection.toolsRevision = (expectedConnection.toolsRevision ?? 0) + 1;
+        }
+        if (nextResources !== undefined) {
+            expectedConnection.resources = nextResources.resources;
+            expectedConnection.resourceDiscoveryFailed = nextResources.failed;
+        }
+        if (nextPrompts !== undefined) {
+            expectedConnection.prompts = nextPrompts.prompts;
+            expectedConnection.promptDiscoveryFailed = false;
+        }
+        if (confirmed)
+            delete expectedConnection.listenCatalogStale;
+        else
+            expectedConnection.listenCatalogStale = true;
+        this.metadataListChangedListener?.(name, "listen-recovered");
+        this.pendingMetadataPublications.delete(name);
+        return confirmed;
+    }
+    async prepareResourceUse(name, uri, expectedConnection) {
+        if (this.connections.get(name) !== expectedConnection || expectedConnection.status !== "connected")
+            return false;
+        const refreshRead = expectedConnection.listenState === "dropped" ||
+            expectedConnection.listenState === "re-establishing" ||
+            expectedConnection.resourceReadRefreshUris?.has(uri) === true;
+        const recent = expectedConnection.recentResourceUris ?? new Map();
+        recent.delete(uri);
+        recent.set(uri, Date.now());
+        while (recent.size > MAX_RESOURCE_SUBSCRIPTIONS) {
+            const oldest = recent.keys().next().value;
+            if (oldest === undefined)
+                break;
+            recent.delete(oldest);
+        }
+        expectedConnection.recentResourceUris = recent;
+        await this.ensureListen(name, expectedConnection);
+        expectedConnection.resourceReadRefreshUris?.delete(uri);
+        return refreshRead;
+    }
+    registerResourceUpdatedListener(token, serverName, uri, listener) {
+        this.removeResourceUpdatedListener(token);
+        this.resourceUpdatedListeners.set(token, { serverName, uri, listener });
+        const connection = this.connections.get(serverName);
+        if (!connection || connection.status !== "connected")
+            return;
+        void this.prepareResourceUse(serverName, uri, connection);
+    }
+    removeResourceUpdatedListener(token) {
+        this.resourceUpdatedListeners.delete(token);
+    }
+    async doReconnect(name, definition, staleConnection, signal, oauthAuthority, attemptOwner) {
+        throwIfAborted(signal);
+        const current = this.connections.get(name);
+        // Never tear down a connection we didn't prove stale: if the map no
+        // longer holds the connection we were asked to replace, someone else
+        // already reconnected (or connected) first.
+        if (current !== staleConnection) {
+            return current ?? this.connect(name, definition, signal);
+        }
+        // Build the replacement privately. The current route remains usable until
+        // the candidate has completed its handshake and metadata discovery. A
+        // failed candidate therefore cannot remove or close the last good route.
+        const generation = this.closeGenerations.get(name) ?? 0;
+        const credentialsInvalidated = staleConnection.status === "needs-auth"
+            && staleConnection.credentialsInvalidated === true;
+        const candidateAttempt = this.createConnection(name, definition, signal, signal, credentialsInvalidated, oauthAuthority, attemptOwner);
+        const fresh = definition.url
+            ? await candidateAttempt.catch(async (error) => { throw await this.enrichHttpConnectionError(definition, error); })
+            : await candidateAttempt;
+        // An explicit close or a concurrent replacement supersedes this candidate.
+        // Dispose only the candidate we own; never close whichever route is now
+        // registered under the shared server name.
+        if (signal?.aborted
+            || this.reconnectAttempts.get(name) !== attemptOwner
+            || (this.closeGenerations.get(name) ?? 0) !== generation) {
+            await this.disposeConnection(fresh);
+            throwIfAborted(signal);
+            throw new Error(`MCP connection for ${name} was closed while reconnecting`);
+        }
+        const routeAtPublish = this.connections.get(name);
+        if (routeAtPublish !== staleConnection) {
+            await this.disposeConnection(fresh);
+            return routeAtPublish ?? this.connect(name, definition, signal);
+        }
+        fresh.inFlight = Math.max(fresh.inFlight, staleConnection.inFlight);
+        this.connections.set(name, fresh);
+        this.watchListenSubscription(name, fresh, fresh.listenSubscription);
+        if ([...this.resourceUpdatedListeners.values()].some(registration => registration.serverName === name)) {
+            void this.ensureListen(name, fresh);
+        }
+        // Publish first so calls route to the fresh image while the exact displaced
+        // child is terminated and reaped. Late close callbacks are identity-guarded.
+        staleConnection.status = "closed";
+        try {
+            await this.disposeConnection(staleConnection);
+        }
+        catch (error) {
+            const failures = error instanceof AggregateError ? error.errors : [error];
+            const details = failures
+                .map(failure => failure instanceof Error ? failure.message : String(failure))
+                .join("; ");
+            logger.debug(`MCP: stale connection cleanup failed for ${name}: ${details}`);
+        }
+        // Publication is not permission to return a route that close() disposed
+        // while stale cleanup was pending.
+        if ((this.closeGenerations.get(name) ?? 0) !== generation
+            || this.connections.get(name) !== fresh
+            || fresh.status === "closed") {
+            throw new Error(`MCP connection for ${name} was closed while reconnecting`);
+        }
+        return fresh;
+    }
+    async createConnection(name, definition, signal, requestSignal, credentialsInvalidated = false, oauthAuthority, attemptOwner) {
+        throwIfAborted(signal);
+        const tracingEnabled = isMcpTraceEnabled(definition, this.traceSettings);
+        const traceWriter = tracingEnabled
+            ? (this.traceWriter ??= createMcpTraceWriter(this.defaultCwd, this.traceSettings ?? {}))
+            : undefined;
+        const traceObserver = traceWriter
+            ? { record: event => traceWriter.write(event) }
+            : undefined;
+        let client;
+        let transport;
+        let clientConnected = false;
+        let invalidated = credentialsInvalidated;
+        let transportAlreadyTraced = false;
+        let stderrTail = Buffer.alloc(0);
+        const configuredTransports = [definition.command, definition.url, definition.socket]
+            .filter(value => typeof value === "string" && value.length > 0);
+        if (configuredTransports.length !== 1) {
+            throw new Error(`Server ${name} must configure exactly one of command, url, or socket`);
+        }
+        const requestOptions = this.buildRequestOptions(definition, requestSignal);
+        if (definition.command) {
+            client = this.createClient(name, definition);
+            let command = resolveConfigPath(definition.command) ?? definition.command;
+            const literalArgs = isBuiltInAgentPlugin(definition, "args");
+            const literalCwd = isBuiltInAgentPlugin(definition, "cwd");
+            let args = literalArgs
+                ? [...(definition.args ?? [])]
+                : (definition.args ?? []).map((argument) => expandHomePath(interpolateEnvVars(argument)) ?? argument);
+            const cwd = (literalCwd ? expandHomePath(definition.cwd) : resolveConfigPath(definition.cwd)) ?? this.defaultCwd;
+            if (definition.pluginDataDir)
+                mkdirSync(definition.pluginDataDir, { recursive: true });
+            if (cwd !== undefined) {
+                const cwdStats = statSync(cwd, { throwIfNoEntry: false });
+                if (!cwdStats)
+                    throw new Error(`MCP server "${name}" configured cwd does not exist: "${cwd}"`);
+                if (!cwdStats.isDirectory())
+                    throw new Error(`MCP server "${name}" configured cwd is not a directory: "${cwd}"`);
+            }
+            if (command === "npx" || command === "npm") {
+                const resolved = await resolveNpxBinary(command, args, signal);
+                if (resolved) {
+                    command = resolved.isJs ? "node" : resolved.binPath;
+                    args = resolved.isJs ? [resolved.binPath, ...resolved.extraArgs] : resolved.extraArgs;
+                    logger.debug(`${name} resolved to ${resolved.binPath} (skipping npm parent)`);
+                }
+            }
+            throwIfAborted(signal);
+            const stdioTransport = new StdioClientTransport({
+                command,
+                args,
+                env: resolveEnv(definition.env, name, isBuiltInAgentPlugin(definition, "env") || definition.literalEnv === true, definition.inheritEnv !== false),
+                ...(cwd !== undefined ? { cwd } : {}),
+                stderr: definition.debug ? "inherit" : "pipe",
+            });
+            // Keep non-debug child diagnostics available for connection failures without
+            // retaining an unbounded stream or changing the existing debug behavior.
+            if (stdioTransport.stderr) {
+                stdioTransport.stderr.on("data", (chunk) => {
+                    stderrTail = appendStderrTail(stderrTail, chunk);
+                });
+            }
+            transport = stdioTransport;
+        }
+        else if (definition.url) {
+            const httpConnection = await this.connectHttpClient(definition, name, requestOptions, signal, traceObserver, invalidated, oauthAuthority, attemptOwner);
+            client = httpConnection.client;
+            transport = httpConnection.transport;
+            invalidated = httpConnection.credentialsInvalidated;
+            if (httpConnection.status === "needs-auth") {
+                return {
+                    client,
+                    transport,
+                    definition,
+                    tools: [],
+                    resources: [],
+                    prompts: [],
+                    lastUsedAt: Date.now(),
+                    inFlight: 0,
+                    status: "needs-auth",
+                    listenState: "disconnected",
+                    credentialsInvalidated: invalidated,
+                };
+            }
+            clientConnected = true;
+            transportAlreadyTraced = traceObserver !== undefined;
+        }
+        else {
+            client = this.createClient(name, definition);
+            transport = new UnixSocketClientTransport(resolveConfigPath(definition.socket));
+        }
+        if (traceObserver && !transportAlreadyTraced) {
+            const traceTransportKindValue = traceTransportKind(definition, transport);
+            transport = wrapTransportWithMcpTrace(transport, name, traceTransportKindValue, traceObserver);
+        }
+        try {
+            throwIfAborted(signal);
+            if (!clientConnected) {
+                await this.connectClientWithAbort(client, transport, requestOptions, signal);
+            }
+            this.attachAdapterNotificationHandlers(name, client);
+            const instructions = client.getInstructions?.();
+            const protocolEra = client.getProtocolEra?.();
+            const autoOpenedSubscription = client.autoOpenedSubscription;
+            const connection = {
+                client,
+                transport,
+                definition,
+                tools: [],
+                toolsRevision: 0,
+                resources: [],
+                prompts: [],
+                ...(instructions !== undefined ? { instructions } : {}),
+                lastUsedAt: Date.now(),
+                inFlight: 0,
+                status: "connected",
+                listenState: protocolEra === "modern"
+                    ? autoOpenedSubscription
+                        ? "active"
+                        : "not-listening"
+                    : "legacy",
+                ...(autoOpenedSubscription ? {
+                    listenSubscription: autoOpenedSubscription,
+                } : {}),
+            };
+            if (autoOpenedSubscription)
+                connection.listenFilter = this.catalogListenFilter(connection);
+            // Reflect the SDK's own close signal in connection status, guarded by
+            // identity so a stale connection's late close can never clobber a fresh
+            // connection. The SDK client owns the transport callbacks.
+            client.onclose = () => {
+                if (connection.status === "closed")
+                    return;
+                connection.status = "closed";
+                if (this.connections.get(name) !== connection)
+                    return;
+                this.metadataListChangedListener?.(name, "remote-close");
+            };
+            // Discover tools, resources, and prompts. Resource and prompt listing is
+            // optional: only servers advertising the capability are queried.
+            const [toolResult, resources, promptResult] = await Promise.all([
+                this.fetchAllTools(client, requestOptions),
+                this.fetchAllResources(client, requestOptions),
+                this.fetchAllPrompts(client, requestOptions),
+            ]);
+            if (connection.status !== "connected") {
+                throw new Error(`MCP connection for ${name} closed during metadata discovery`);
+            }
+            connection.tools = toolResult.tools;
+            connection.toolListHints = toolResult.hints;
+            connection.resources = resources.resources;
+            connection.resourceDiscoveryFailed = resources.failed;
+            connection.prompts = promptResult.prompts;
+            connection.promptDiscoveryFailed = promptResult.failed;
+            if (definition.tasks !== false) {
+                try {
+                    const attachment = await attachTaskSession({
+                        client,
+                        serverName: name,
+                        definition,
+                        transport,
+                        requestTimeoutMs: this.getResolvedRequestTimeoutMs(definition),
+                        clientInfo: { name: `pi-mcp-${name}`, version: "1.0.0" },
+                        clientCapabilities: this.buildClientCapabilities(),
+                        ...(this.elicitationConfig
+                            ? {
+                                onElicitation: (request, signal) => handleElicitationRequest({
+                                    ...this.elicitationConfig,
+                                    serverName: name,
+                                    onUrlAccepted: elicitationId => this.rememberUrlElicitation(name, elicitationId),
+                                }, request, signal),
+                            }
+                            : {}),
+                        ...(this.samplingConfig
+                            ? {
+                                onSampling: (request, signal) => handleSamplingRequest({
+                                    ...this.samplingConfig,
+                                    serverName: name,
+                                    // Cancelling the task should also stop the local sampling run.
+                                    getSignal: () => combineAbortSignals(this.samplingConfig.getSignal(), signal),
+                                }, request),
+                            }
+                            : {}),
+                    });
+                    if (attachment && connection.status === "connected") {
+                        connection.taskSession = attachment.session;
+                        connection.taskChannel = attachment.channel;
+                    }
+                    else if (attachment) {
+                        attachment.channel.rejectAll("MCP connection closed");
+                        await attachment.session.close().catch(() => { });
+                    }
+                }
+                catch (error) {
+                    logger.debug(`Task session attach failed for ${name}: ${String(error)}`);
+                }
+            }
+            return connection;
+        }
+        catch (error) {
+            // If connectClientWithAbort closed the transport, await that exact close.
+            // Otherwise the SDK client owns its transport and performs cleanup once.
+            const abortCleanup = abortCleanupPromises.get(transport);
+            const abortCleanupFailed = error instanceof AggregateError && error.message === "MCP connection abort cleanup failed";
+            const cleanupResults = abortCleanupFailed
+                ? []
+                : await Promise.allSettled([
+                    abortCleanup ?? Promise.resolve().then(() => client.close()),
+                ]);
+            const cleanupFailures = cleanupResults.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+            let reportedError = error;
+            if (cleanupFailures.length > 0) {
+                reportedError = new AggregateError([error, ...cleanupFailures], "MCP connection setup failed");
+            }
+            // A cleanup failure remains a setup failure rather than being hidden
+            // behind needs-auth.
+            if (isUnauthorizedHttpError(error) && supportsOAuth(definition) && cleanupFailures.length === 0) {
+                if (!invalidated) {
+                    invalidateAuthEntryCache(name);
+                    invalidated = true;
+                }
+                return {
+                    client,
+                    transport,
+                    definition,
+                    tools: [],
+                    resources: [],
+                    prompts: [],
+                    lastUsedAt: Date.now(),
+                    inFlight: 0,
+                    status: "needs-auth",
+                    listenState: "disconnected",
+                    credentialsInvalidated: invalidated,
+                };
+            }
+            if (stderrTail.length > 0) {
+                const stderrText = stderrTail.toString("utf8").trim();
+                const lines = stderrText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+                if (lines.length > 0) {
+                    const baseMessage = reportedError instanceof Error ? reportedError.message : String(reportedError);
+                    const detail = lines.slice(-MAX_CAPTURED_STDERR_LINES).join(" — ");
+                    throw new Error(`${baseMessage} (${detail})`, { cause: reportedError });
+                }
+            }
+            throw reportedError;
+        }
+    }
+    async enrichHttpConnectionError(definition, error) {
+        // The transport's OAuth provider can register a client during connect, bypassing startAuth.
+        if (error instanceof RegistrationRejectedError)
+            return explainRegistrationRejection(error, resolveServerUrl(definition));
+        const originalMessage = error instanceof Error ? error.message : String(error);
+        if (networkFailureCodes(error, ["ECONNREFUSED"]).length > 0 && isLoopbackUrl(resolveServerUrl(definition))) {
+            const url = new URL(resolveServerUrl(definition));
+            return new Error(`${originalMessage} — Nothing is listening at ${url.origin}${url.pathname}. Start the app or local process that serves this MCP server.`, { cause: error });
+        }
+        if (process.platform === "darwin") {
+            const codes = networkFailureCodes(error, LOCAL_NETWORK_FAILURE_CODES);
+            if (codes.length > 0 && isLiteralLocalAddress(resolveServerUrl(definition))) {
+                return new Error(`${originalMessage} — ${codes.join(", ")} — macOS Local Network Privacy may be blocking access. Check System Settings > Privacy & Security > Local Network for the app hosting Pi; enable access if listed and restart it. Try launching Pi from Terminal.app or SSH. Routing or firewall problems can also cause this error.`, { cause: error });
+            }
+        }
+        if (isTransientHttpConnectError(error)) {
+            return new Error(`${originalMessage} — endpoint is temporarily unavailable (HTTP 503)`, { cause: error });
+        }
+        try {
+            const probe = await probeMcpEndpoint(resolveServerUrl(definition));
+            return new Error(`${originalMessage} — probe: ${probe.classification}`, { cause: error });
+        }
+        catch {
+            return error instanceof Error ? error : new Error(originalMessage);
+        }
+    }
+    async connectClientWithAbort(client, transport, requestOptions, signal) {
+        throwIfAborted(signal);
+        let abortCleanup;
+        const closeTransport = () => {
+            abortCleanup = Promise.resolve().then(() => transport.close());
+            abortCleanupPromises.set(transport, abortCleanup);
+        };
+        signal?.addEventListener("abort", closeTransport, { once: true });
+        try {
+            await abortable(client.connect(transport, requestOptions), signal);
+            await abortCleanup;
+        }
+        catch (error) {
+            if (abortCleanup) {
+                try {
+                    await abortCleanup;
+                }
+                catch (cleanupError) {
+                    throw new AggregateError([error, cleanupError], "MCP connection abort cleanup failed");
+                }
+            }
+            throw error;
+        }
+        finally {
+            signal?.removeEventListener("abort", closeTransport);
+        }
+    }
+    buildClientCapabilities() {
+        return {
+            extensions: {
+                "io.modelcontextprotocol/ui": {
+                    mimeTypes: [RESOURCE_MIME_TYPE],
+                },
+            },
+            ...(this.samplingConfig ? { sampling: {} } : {}),
+            ...(this.elicitationConfig
+                ? {
+                    elicitation: {
+                        form: {},
+                        ...(this.elicitationConfig.allowUrl ? { url: {} } : {}),
+                    },
+                }
+                : {}),
+        };
+    }
+    createClient(serverName, definition) {
+        const capabilities = this.buildClientCapabilities();
+        const versionNegotiation = resolveVersionNegotiation(definition);
+        let client;
+        client = new Client({ name: `pi-mcp-${serverName}`, version: "1.0.0" }, {
+            jsonSchemaValidator: createJsonSchemaValidator(),
+            ...(versionNegotiation ? { versionNegotiation } : {}),
+            ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
+            listChanged: {
+                tools: {
+                    onChanged: (error, tools) => {
+                        this.handleToolsListChanged(serverName, client, error, tools);
+                    },
+                },
+                resources: {
+                    onChanged: (error, resources) => {
+                        this.handleResourcesListChanged(serverName, client, error, resources);
+                    },
+                },
+                prompts: {
+                    onChanged: (error, prompts) => {
+                        this.handlePromptsListChanged(serverName, client, error, prompts);
+                    },
+                },
+            },
+        });
+        if (this.samplingConfig) {
+            registerSamplingHandler(client, { ...this.samplingConfig, serverName });
+        }
+        if (this.elicitationConfig) {
+            registerElicitationHandler(client, {
+                ...this.elicitationConfig,
+                serverName,
+                onUrlAccepted: elicitationId => this.rememberUrlElicitation(serverName, elicitationId),
+            });
+            if (this.elicitationConfig.allowUrl) {
+                client.setNotificationHandler("notifications/elicitation/complete", notification => {
+                    if (this.runtimeSignal?.aborted)
+                        return;
+                    const accepted = this.acceptedUrlElicitations.get(serverName);
+                    if (!accepted?.delete(notification.params.elicitationId))
+                        return;
+                    this.elicitationConfig?.ui.notify(`MCP browser interaction for ${serverName} completed. You can retry the tool now.`, "info");
+                });
+            }
+        }
+        return client;
+    }
+    handleToolsListChanged(serverName, client, error, tools) {
+        if (error) {
+            logger.debug(`MCP: tools/list_changed refresh failed for ${serverName}: ${error.message}`);
+            return;
+        }
+        if (!tools)
+            return;
+        const connection = this.connections.get(serverName);
+        if (!connection || connection.client !== client || connection.status !== "connected")
+            return;
+        connection.tools = tools;
+        connection.toolsRevision = (connection.toolsRevision ?? 0) + 1;
+        this.publishMetadataChanged(serverName, connection, "tools-list-changed");
+    }
+    handlePromptsListChanged(serverName, client, error, prompts) {
+        if (error) {
+            logger.debug(`MCP: prompts/list_changed refresh failed for ${serverName}: ${error.message}`);
+            return;
+        }
+        if (!prompts)
+            return;
+        const connection = this.connections.get(serverName);
+        if (!connection || connection.client !== client || connection.status !== "connected")
+            return;
+        connection.prompts = prompts;
+        connection.promptDiscoveryFailed = false;
+        this.publishMetadataChanged(serverName, connection, "prompts-list-changed");
+    }
+    handleResourcesListChanged(serverName, client, error, resources) {
+        if (error) {
+            logger.debug(`MCP: resources/list_changed refresh failed for ${serverName}: ${error.message}`);
+            return;
+        }
+        if (!resources)
+            return;
+        const connection = this.connections.get(serverName);
+        if (!connection || connection.client !== client || connection.status !== "connected")
+            return;
+        connection.resources = resources;
+        connection.resourceDiscoveryFailed = false;
+        this.publishMetadataChanged(serverName, connection, "resources-list-changed");
+    }
+    async handleUrlElicitationRequired(serverName, error) {
+        if (this.runtimeSignal?.aborted || !this.elicitationConfig?.allowUrl)
+            return "cancel";
+        for (const params of error.elicitations) {
+            const result = await handleUrlElicitation({
+                ...this.elicitationConfig,
+                serverName,
+                onUrlAccepted: elicitationId => this.rememberUrlElicitation(serverName, elicitationId),
+            }, params);
+            if (result.action !== "accept")
+                return result.action;
+        }
+        return "accept";
+    }
+    rememberUrlElicitation(serverName, elicitationId) {
+        if (this.runtimeSignal?.aborted)
+            return;
+        let accepted = this.acceptedUrlElicitations.get(serverName);
+        if (!accepted) {
+            accepted = new Set();
+            this.acceptedUrlElicitations.set(serverName, accepted);
+        }
+        accepted.add(elicitationId);
+    }
+    async connectHttpClient(definition, serverName, requestOptions, signal, traceObserver, credentialsInvalidated = false, oauthAuthority, attemptOwner) {
+        throwIfAborted(signal);
+        const serverUrl = resolveServerUrl(definition);
+        const url = new URL(serverUrl);
+        // Resolve secret commands only for this connection attempt, without
+        // mutating the persisted configuration.
+        const literalHeaders = isBuiltInAgentPlugin(definition, "headers");
+        const hasCommandHeader = !literalHeaders && Object.values(definition.headers ?? {})
+            .some(value => value.startsWith("!") && !value.startsWith("!!"));
+        const oauthEnabled = supportsOAuth(definition);
+        let headers;
+        if (literalHeaders) {
+            headers = { ...definition.headers };
+        }
+        else if (oauthEnabled) {
+            headers = Object.fromEntries(resolveOAuthHeaders(definition.headers));
+        }
+        else {
+            headers = resolveCommandSecretsRecord(definition.headers, key => `MCP server "${serverName}" HTTP header "${key}"`) ?? {};
+        }
+        // Resolve bearer auth before creating requestInit so every attempted
+        // transport receives the same headers.
+        const commandBearer = definition.bearerToken?.startsWith("!") && !definition.bearerToken.startsWith("!!")
+            ? definition.bearerToken
+            : undefined;
+        // Command-backed bearers resolve eagerly, then refresh through a TTL cache.
+        let bearerCommandResolver;
+        if (definition.auth === "bearer") {
+            if (commandBearer) {
+                bearerCommandResolver = new BearerCommandResolver(commandBearer, `MCP server "${serverName}" HTTP bearer token`);
+                // Eager resolve so a broken command surfaces at connect time, not at
+                // the first tool call.
+                await bearerCommandResolver.resolve(signal);
+            }
+            else {
+                const token = resolveBearerToken(definition)
+                    ?? (definition.bearerToken === undefined && definition.bearerTokenEnv === undefined && definition.bearerTokenStore === true
+                        ? getBearerTokenForUrl(serverName, serverUrl)
+                        : undefined);
+                if (token)
+                    headers["Authorization"] = `Bearer ${token}`;
+            }
+        }
+        if (hasCommandHeader || commandBearer) {
+            try {
+                new Headers(headers);
+            }
+            catch {
+                throw new Error(`Failed to resolve MCP server "${serverName}" HTTP command secret: command returned an invalid header value`);
+            }
+        }
+        // Do not give origin-bound headers to SDK requestInit: it reuses those
+        // defaults for discovered OAuth endpoints, including other origins.
+        const requestInit = !oauthEnabled && Object.keys(headers).length > 0 ? { headers } : undefined;
+        const serviceHeaders = oauthEnabled ? new Headers(headers) : new Headers();
+        let caFetch = createCaFetch(definition);
+        try {
+            const createAuthProvider = () => {
+                const currentConnectAttempt = this.connectAttempts.get(serverName);
+                const currentReconnectAttempt = this.reconnectAttempts.get(serverName);
+                if ((currentConnectAttempt && currentConnectAttempt !== attemptOwner)
+                    || (currentReconnectAttempt && currentReconnectAttempt !== attemptOwner)) {
+                    throw new Error(`MCP connection for ${serverName} was replaced while connecting`);
+                }
+                if (!oauthAuthority)
+                    throw new Error(`Missing OAuth authority for ${serverName}`);
+                const provider = new McpOAuthProvider(serverName, serverUrl, extractOAuthConfig(definition), { onRedirect: async () => { } }, this.authStorageOptions, this.oauthRuntime?.signal, undefined, oauthAuthority);
+                provider.setAuthFetch(createOAuthFetch(serverUrl, () => serviceHeaders, combineAbortSignals(this.oauthRuntime?.signal, signal), {
+                    ...(caFetch ? { delegate: caFetch.fetch } : {}),
+                }));
+                return provider;
+            };
+            // Explicit OAuth checks secure storage immediately. Implicit OAuth keeps
+            // anonymous servers provider-free unless URL-bound credentials are already
+            // stored, so an unavailable credential store does not break anonymous use.
+            let implicitStoredAuth;
+            if (definition.auth === undefined && supportsOAuth(definition)) {
+                try {
+                    implicitStoredAuth = inspectAuthForUrl(serverName, serverUrl, this.authStorageOptions);
+                }
+                catch {
+                    // Implicit preflight is opportunistic; malformed records must not block
+                    // an otherwise anonymous-capable server from connecting.
+                }
+            }
+            const hasImplicitStoredTokens = implicitStoredAuth?.status === "present"
+                && implicitStoredAuth.entry.tokens !== undefined;
+            if (hasImplicitStoredTokens)
+                invalidateAuthEntryCache(serverName);
+            let authState = supportsOAuth(definition)
+                ? definition.auth === undefined
+                    ? hasImplicitStoredTokens
+                        ? { status: "implicit-stored", provider: createAuthProvider() }
+                        : { status: "implicit-deferred" }
+                    : { status: "explicit", provider: createAuthProvider() }
+                : { status: "disabled" };
+            const commandFetch = definition.requestHeadersCommand
+                ? createRequestHeadersCommandFetch(definition.requestHeadersCommand, caFetch?.fetch)
+                : caFetch?.fetch;
+            // requestHeadersCommand stays last in the header chain.
+            const bearerFetch = bearerCommandResolver
+                ? createBearerCommandFetch(bearerCommandResolver, commandFetch)
+                : commandFetch;
+            const requestFetch = oauthEnabled
+                ? createOAuthFetch(serverUrl, () => serviceHeaders, this.oauthRuntime?.signal, {
+                    // MCP streams outlive individual auth requests; retain SDK request deadlines.
+                    timeout: false,
+                    ...(bearerFetch ? { delegate: bearerFetch } : {}),
+                })
+                : bearerFetch;
+            const attempt = async (kind) => {
+                const authProvider = "provider" in authState ? authState.provider : undefined;
+                let sseFetchFailure;
+                const sseFailureCodes = kind !== "sse" ? []
+                    : isLoopbackUrl(serverUrl) ? ["ECONNREFUSED"]
+                        : process.platform === "darwin" && isLiteralLocalAddress(serverUrl) ? LOCAL_NETWORK_FAILURE_CODES
+                            : [];
+                const transportFetch = sseFailureCodes.length > 0
+                    ? async (input, init) => {
+                        try {
+                            return await (requestFetch ?? globalThis.fetch)(input, init);
+                        }
+                        catch (error) {
+                            // EventSource discards the fetch cause before the SDK creates SseError.
+                            if (networkFailureCodes(error, sseFailureCodes).length > 0)
+                                sseFetchFailure = error;
+                            throw error;
+                        }
+                    }
+                    : requestFetch;
+                const transportOptions = {
+                    ...(requestInit !== undefined ? { requestInit } : {}),
+                    ...(transportFetch !== undefined ? { fetch: transportFetch } : {}),
+                    ...(authProvider !== undefined ? { authProvider } : {}),
+                    ...(authProvider !== undefined
+                        && definition.oauth !== false
+                        && definition.oauth?.skipIssuerMetadataValidation === true
+                        ? { skipIssuerMetadataValidation: true }
+                        : {}),
+                };
+                const baseTransport = kind === "streamable-http"
+                    ? new StreamableHTTPClientTransport(url, transportOptions)
+                    : new SSEClientTransport(url, transportOptions);
+                const transport = traceObserver
+                    ? wrapTransportWithMcpTrace(baseTransport, serverName, kind, traceObserver)
+                    : baseTransport;
+                const client = this.createClient(serverName, definition);
+                try {
+                    await this.connectClientWithAbort(client, transport, requestOptions, signal);
+                    return { status: "connected", client, transport };
+                }
+                catch (error) {
+                    if (error instanceof SseError && sseFetchFailure !== undefined) {
+                        error = new AggregateError([error, sseFetchFailure], error.message);
+                    }
+                    const abortCleanupFailed = error instanceof AggregateError
+                        && error.message === "MCP connection abort cleanup failed";
+                    if (!abortCleanupFailed) {
+                        try {
+                            await (abortCleanupPromises.get(transport) ?? client.close());
+                        }
+                        catch (cleanupError) {
+                            throw new AggregateError([error, cleanupError], "MCP HTTP connection cleanup failed");
+                        }
+                    }
+                    return { status: "failed", client, transport, error };
+                }
+            };
+            // Connect the real client once. Retry Streamable HTTP only for an implicit
+            // OAuth challenge; use SSE only for definitive endpoint incompatibility.
+            // Agent Plugins set httpTransport, and their declared transport is used without fallback.
+            let kind = definition.httpTransport ?? "streamable-http";
+            let invalidated = credentialsInvalidated;
+            for (;;) {
+                const result = await attempt(kind);
+                if (result.status === "connected") {
+                    const ownedCa = caFetch;
+                    if (ownedCa) {
+                        const close = result.transport.close.bind(result.transport);
+                        const onclose = result.transport.onclose;
+                        result.transport.onclose = () => {
+                            void ownedCa.close().catch(error => {
+                                logger.debug(`MCP: CA dispatcher cleanup failed for ${serverName}: ${String(error)}`);
+                            });
+                            onclose?.();
+                        };
+                        result.transport.close = async () => {
+                            try {
+                                await close();
+                            }
+                            finally {
+                                await ownedCa.close();
+                            }
+                        };
+                        caFetch = undefined;
+                    }
+                    return { ...result, credentialsInvalidated: invalidated };
+                }
+                if (result.error instanceof AggregateError
+                    && result.error.message === "MCP connection abort cleanup failed") {
+                    throw result.error;
+                }
+                if (signal?.aborted)
+                    throwIfAborted(signal);
+                if (authState.status === "implicit-deferred" && isUnauthorizedHttpError(result.error)) {
+                    authState = { status: "implicit-challenged", provider: createAuthProvider() };
+                    continue;
+                }
+                if (isUnauthorizedHttpError(result.error)) {
+                    if (supportsOAuth(definition)) {
+                        if (!invalidated) {
+                            invalidateAuthEntryCache(serverName);
+                            invalidated = true;
+                        }
+                        return {
+                            client: result.client,
+                            transport: result.transport,
+                            status: "needs-auth",
+                            credentialsInvalidated: invalidated,
+                        };
+                    }
+                    throw result.error;
+                }
+                if (definition.httpTransport === undefined && kind === "streamable-http" && shouldFallbackToSse(result.error, definition)) {
+                    kind = "sse";
+                    continue;
+                }
+                throw result.error;
+            }
+        }
+        finally {
+            await caFetch?.close();
+        }
+    }
+    async fetchAllTools(client, requestOptions) {
+        const allTools = [];
+        let cursor;
+        let hints;
+        let firstPage = true;
+        do {
+            const result = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
+            if (firstPage) {
+                const ttlMs = typeof result.ttlMs === "number" && Number.isSafeInteger(result.ttlMs) && result.ttlMs >= 0
+                    ? result.ttlMs
+                    : undefined;
+                const cacheScope = result.cacheScope === "public" || result.cacheScope === "private"
+                    ? result.cacheScope
+                    : undefined;
+                if (ttlMs !== undefined || cacheScope !== undefined) {
+                    hints = {
+                        ...(ttlMs !== undefined ? { ttlMs } : {}),
+                        ...(cacheScope !== undefined ? { cacheScope } : {}),
+                    };
+                }
+                firstPage = false;
+            }
+            allTools.push(...(result.tools ?? []));
+            cursor = result.nextCursor;
+        } while (cursor);
+        return { tools: allTools, ...(hints !== undefined ? { hints } : {}) };
+    }
+    async fetchAllPrompts(client, requestOptions) {
+        const capabilities = client.getServerCapabilities?.();
+        if (!capabilities?.prompts)
+            return { prompts: [], failed: false };
+        try {
+            const prompts = [];
+            let cursor;
+            do {
+                const result = await client.listPrompts(cursor ? { cursor } : undefined, requestOptions);
+                prompts.push(...(result.prompts ?? []));
+                cursor = result.nextCursor;
+            } while (cursor);
+            return { prompts, failed: false };
+        }
+        catch (error) {
+            if (requestOptions?.signal?.aborted)
+                throwIfAborted(requestOptions.signal);
+            if (isUnauthorizedHttpError(error))
+                throw error;
+            const message = error instanceof Error ? error.message : String(error);
+            logger.debug(`MCP: prompts/list failed: ${message}`);
+            return { prompts: [], failed: true };
+        }
+    }
+    async fetchAllResources(client, requestOptions, strict = false) {
+        const capabilities = client.getServerCapabilities?.();
+        if (!capabilities?.resources)
+            return { resources: [], failed: false };
+        try {
+            const allResources = [];
+            let cursor;
+            do {
+                const result = await client.listResources(cursor ? { cursor } : undefined, requestOptions);
+                allResources.push(...(result.resources ?? []));
+                cursor = result.nextCursor;
+            } while (cursor);
+            return { resources: allResources, failed: false };
+        }
+        catch (error) {
+            if (requestOptions?.signal?.aborted) {
+                throwIfAborted(requestOptions.signal);
+            }
+            if (isUnauthorizedHttpError(error))
+                throw error;
+            if (strict)
+                throw error;
+            // The server advertises resources but the listing failed
+            return { resources: [], failed: true };
+        }
+    }
+    attachAdapterNotificationHandlers(serverName, client) {
+        client.setNotificationHandler("notifications/resources/updated", notification => {
+            const uri = notification.params.uri;
+            const connection = this.connections.get(serverName);
+            if (!connection || connection.client !== client || connection.status !== "connected")
+                return;
+            for (const registration of this.resourceUpdatedListeners.values()) {
+                if (registration.serverName === serverName && registration.uri === uri) {
+                    try {
+                        registration.listener(serverName, uri);
+                    }
+                    catch {
+                        // One UI listener must not block resource invalidation for others.
+                    }
+                }
+            }
+        });
+        client.setNotificationHandler(SERVER_STREAM_RESULT_PATCH_METHOD, { params: serverStreamResultPatchNotificationSchema.shape.params }, params => {
+            const listener = this.uiStreamListeners.get(params.streamToken);
+            if (!listener)
+                return;
+            listener(serverName, params);
+        });
+    }
+    registerUiStreamListener(streamToken, listener) {
+        this.uiStreamListeners.set(streamToken, listener);
+    }
+    removeUiStreamListener(streamToken) {
+        this.uiStreamListeners.delete(streamToken);
+    }
+    async getPrompt(name, promptName, args, signal) {
+        const connection = this.connections.get(name);
+        if (!connection || connection.status !== "connected") {
+            throw new Error(`Server "${name}" is not connected`);
+        }
+        try {
+            this.touch(name);
+            this.incrementInFlight(name);
+            await this.ensureListen(name, connection);
+            return await connection.client.getPrompt({ name: promptName, ...(args ? { arguments: args } : {}) }, this.getRequestOptions(name, signal));
+        }
+        finally {
+            this.decrementInFlight(name);
+            this.touch(name);
+        }
+    }
+    async readResource(name, uri, signal) {
+        if (isServerDisabled(this.connections.get(name)?.definition)) {
+            throw new Error(`MCP server "${name}" is disabled`);
+        }
+        const connection = this.connections.get(name);
+        if (!connection || connection.status !== "connected") {
+            throw new Error(`Server "${name}" is not connected`);
+        }
+        try {
+            this.touch(name);
+            this.incrementInFlight(name);
+            const refreshRead = await this.prepareResourceUse(name, uri, connection);
+            const requestOptions = this.getRequestOptions(name, signal);
+            return await connection.client.readResource({ uri }, refreshRead ? { ...requestOptions, cacheMode: "refresh" } : requestOptions);
+        }
+        finally {
+            this.decrementInFlight(name);
+            this.touch(name);
+        }
+    }
+    async close(name) {
+        this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
+        this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
+        this.reconnectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
+        this.pendingMetadataPublications.delete(name);
+        const pendingReconnect = this.reconnectPromises.get(name);
+        const connection = this.connections.get(name);
+        if (!connection) {
+            const pendingClose = this.closePromises.get(name);
+            if (pendingClose) {
+                await pendingClose;
+                return;
+            }
+            const pendingConnect = this.connectPromises.get(name);
+            for (const pending of [pendingConnect, pendingReconnect]) {
+                if (!pending)
+                    continue;
+                try {
+                    await pending;
+                }
+                catch (error) {
+                    if (this.containsCleanupFailure(error))
+                        throw error;
+                }
+            }
+            return;
+        }
+        // Delete before awaiting SDK cleanup so a replacement cannot be removed by
+        // an old close operation finishing later.
+        connection.status = "closed";
+        this.connections.delete(name);
+        this.acceptedUrlElicitations.delete(name);
+        const closing = this.disposeConnection(connection).finally(() => {
+            if (this.closePromises.get(name) === closing)
+                this.closePromises.delete(name);
+        });
+        this.closePromises.set(name, closing);
+        await closing;
+        if (pendingReconnect) {
+            try {
+                await pendingReconnect;
+            }
+            catch (error) {
+                if (this.containsCleanupFailure(error))
+                    throw error;
+            }
+        }
+    }
+    async disposeConnection(connection) {
+        const results = await Promise.allSettled([
+            // Release ext-tasks state first so its SDK adapter detaches before close.
+            Promise.resolve().then(async () => {
+                connection.taskChannel?.rejectAll("MCP connection closed");
+                await connection.taskSession?.close();
+            }).catch(() => { }),
+            // Only client.close() is needed; the client owns the transport and will close it internally.
+            Promise.resolve().then(() => connection.client.close()),
+            this.traceWriter?.flush() ?? Promise.resolve(),
+        ]);
+        const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+        if (failures.length > 0)
+            throw new AggregateError(failures, "MCP connection cleanup failed");
+    }
+    async closeAll() {
+        this.stopped = true;
+        const names = new Set([
+            ...this.connections.keys(),
+            ...this.connectPromises.keys(),
+            ...this.reconnectPromises.keys(),
+        ]);
+        for (const name of names) {
+            this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
+            this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
+            this.reconnectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
+        }
+        const pendingConnects = [...this.connectPromises.values(), ...this.reconnectPromises.values()];
+        const currentNames = [...this.connections.keys()];
+        const pendingResults = await Promise.allSettled(pendingConnects);
+        const results = await Promise.allSettled(currentNames.map(name => this.close(name)));
+        // A connect that resolved during the first close snapshot is still fenced;
+        // close any handle that was already inserted before its attempt settled.
+        const lateNames = [...this.connections.keys()];
+        const lateResults = await Promise.allSettled(lateNames.map(name => this.close(name)));
+        const failures = [...pendingResults, ...results, ...lateResults]
+            .flatMap(result => result.status === "rejected" ? [result.reason] : [])
+            .filter(error => this.containsCleanupFailure(error));
+        this.uiStreamListeners.clear();
+        this.resourceUpdatedListeners.clear();
+        this.acceptedUrlElicitations.clear();
+        this.pendingMetadataPublications.clear();
+        this.samplingConfig = undefined;
+        this.elicitationConfig = undefined;
+        await this.traceWriter?.flush();
+        if (failures.length > 0)
+            throw new AggregateError(failures, "MCP manager cleanup failed");
+    }
+    containsCleanupFailure(error) {
+        const pending = [error];
+        const seen = new Set();
+        while (pending.length > 0) {
+            const current = pending.pop();
+            if (!(current instanceof Error) || seen.has(current))
+                continue;
+            seen.add(current);
+            if (current instanceof AggregateError) {
+                if (/cleanup failed|setup failed/.test(current.message))
+                    return true;
+                pending.push(...current.errors);
+            }
+            if (current.cause !== undefined)
+                pending.push(current.cause);
+        }
+        return false;
+    }
+    isConnecting(name) {
+        return this.connectPromises.has(name);
+    }
+    getConnection(name) {
+        return this.connections.get(name);
+    }
+    getAllConnections() {
+        return new Map(this.connections);
+    }
+    touch(name) {
+        const connection = this.connections.get(name);
+        if (connection) {
+            connection.lastUsedAt = Date.now();
+        }
+    }
+    incrementInFlight(name) {
+        const connection = this.connections.get(name);
+        if (connection) {
+            connection.inFlight = (connection.inFlight ?? 0) + 1;
+        }
+    }
+    decrementInFlight(name) {
+        const connection = this.connections.get(name);
+        if (connection && connection.inFlight) {
+            connection.inFlight--;
+        }
+    }
+    isIdle(name, timeoutMs) {
+        const connection = this.connections.get(name);
+        if (!connection || connection.status !== "connected")
+            return false;
+        if (connection.inFlight > 0)
+            return false;
+        return (Date.now() - connection.lastUsedAt) > timeoutMs;
+    }
+}
+/**
+ * Resolve environment variables with interpolation.
+ */
+function resolveEnv(env, serverName, literalEnv = false, inheritEnv = true) {
+    const resolved = {};
+    if (inheritEnv) {
+        for (const [key, value] of Object.entries(process.env)) {
+            if (value !== undefined)
+                resolved[key] = value;
+        }
+    }
+    if (literalEnv)
+        return env ? { ...resolved, ...env } : resolved;
+    const overrides = resolveCommandSecretsRecord(env, key => `MCP server "${serverName}" stdio env "${key}"`);
+    return overrides ? { ...resolved, ...overrides } : resolved;
+}
+function normalizeRequestTimeoutMs(timeoutMs) {
+    return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? timeoutMs
+        : undefined;
+}
+//# sourceMappingURL=server-manager.js.map

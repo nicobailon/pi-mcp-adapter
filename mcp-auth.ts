@@ -567,8 +567,10 @@ function shouldAttemptLinuxKeyringRecovery(error: unknown): boolean {
 function runLinuxKeyringRecoveryOperation(operation: KeyringRecoveryOperation, account: string, payload?: string): KeyringRecoveryResponse {
   const keyctl = process.env[KEYRING_RECOVERY_KEYCTL_ENV]?.trim() || 'keyctl';
   const node = process.env[KEYRING_RECOVERY_NODE_ENV]?.trim() || 'node';
+  // Compiled into dist/ for the CLI, where the helper sits one level up.
+  const adjacentHelper = new URL('./mcp-keyring-helper.cjs', import.meta.url);
   const helper = process.env[KEYRING_RECOVERY_HELPER_ENV]?.trim()
-    || fileURLToPath(new URL('./mcp-keyring-helper.cjs', import.meta.url));
+    || fileURLToPath(existsSync(adjacentHelper) ? adjacentHelper : new URL('../mcp-keyring-helper.cjs', import.meta.url));
   const request = JSON.stringify({ operation, service: AUTH_SECRET_SERVICE, account, payload });
   const result = spawnSync(keyctl, ['session', '-', node, helper], {
     input: `${request}\n`,

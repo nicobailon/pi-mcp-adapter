@@ -138,6 +138,27 @@ test("token CLI avoids package-local TypeScript imports under node_modules", asy
   }
 });
 
+test("doctor CLI loads built server modules from the packed package", async () => {
+  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "pi-mcp-doctor-cli-"));
+  try {
+    await extractPackedPackage(fixtureRoot);
+    const agentDir = path.join(fixtureRoot, "agent");
+    await mkdir(agentDir);
+    await writeFile(path.join(agentDir, "mcp-adapter.json"), JSON.stringify({
+      mcpServers: { local: { url: "http://127.0.0.1:9/mcp" } },
+    }));
+    const result = spawnSync(process.execPath, ["node_modules/pi-mcp-adapter/cli.js", "doctor", "--json"], {
+      cwd: fixtureRoot,
+      env: { ...process.env, HOME: fixtureRoot, PI_CODING_AGENT_DIR: agentDir, PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory" },
+      encoding: "utf8"
+    });
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    assert.deepEqual(JSON.parse(result.stdout).map(({ name, state }) => [name, state]), [["local", "failed"]]);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test("System One key CLI loads built secure-store modules from the packed package", async () => {
   const fixtureRoot = await mkdtemp(path.join(tmpdir(), "pi-mcp-key-cli-"));
   try {

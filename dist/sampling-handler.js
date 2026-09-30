@@ -1,0 +1,203 @@
+import { truncateAtWord } from "./utils.js";
+import { throwIfAborted } from "./abort.js";
+export function registerSamplingHandler(client, options) {
+    client.setRequestHandler("sampling/createMessage", request => {
+        return handleSamplingRequest(options, request);
+    });
+}
+export async function handleSamplingRequest(options, request) {
+    const params = request.params;
+    const signal = options.getSignal();
+    throwIfAborted(signal);
+    if ("task" in params && params.task) {
+        throw new Error("MCP sampling tasks are not supported");
+    }
+    if (params.includeContext && params.includeContext !== "none") {
+        throw new Error("MCP sampling context inclusion is not supported");
+    }
+    if (params.tools?.length) {
+        throw new Error("MCP sampling tool use is not supported");
+    }
+    if (params.toolChoice) {
+        throw new Error("MCP sampling tool choice is not supported");
+    }
+    if (params.stopSequences?.length) {
+        throw new Error("MCP sampling stop sequences are not supported");
+    }
+    const messages = params.messages.map(convertSamplingMessage);
+    const model = resolveSamplingModel(options, params.modelPreferences);
+    throwIfAborted(signal);
+    await confirmSampling(options, "Approve MCP sampling request", formatRequestApproval(options.serverName, `${model.provider}/${model.id}`, params.systemPrompt, messages));
+    throwIfAborted(signal);
+    const result = await options.modelRegistry.complete(model, {
+        ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
+        messages,
+    }, {
+        maxTokens: params.maxTokens,
+        ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+        ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
+        ...(signal ? { signal } : {}),
+    });
+    const converted = convertAssistantResult(result);
+    throwIfAborted(signal);
+    await confirmSampling(options, "Return MCP sampling response", formatResponseApproval(options.serverName, converted));
+    return converted;
+}
+function formatRequestApproval(serverName, modelName, systemPrompt, messages) {
+    const lines = [`${serverName} wants to sample ${messages.length} message${messages.length === 1 ? "" : "s"} with ${modelName}.`];
+    if (systemPrompt) {
+        lines.push(`System: ${truncateAtWord(systemPrompt, 400)}`);
+    }
+    for (const [index, message] of messages.entries()) {
+        lines.push(`${index + 1}. ${message.role}: ${truncateAtWord(messageText(message), 400)}`);
+    }
+    return lines.join("\n\n");
+}
+function formatResponseApproval(serverName, response) {
+    const text = response.content.type === "text" ? response.content.text : `[${response.content.type} content]`;
+    return `${serverName} will receive this response from ${response.model}:\n\n${truncateAtWord(text, 1000)}`;
+}
+function messageText(message) {
+    if (typeof message.content === "string")
+        return message.content;
+    return message.content.map((block) => {
+        if (block.type === "text")
+            return block.text;
+        if (block.type === "image")
+            return `[image: ${block.mimeType}]`;
+        if (block.type === "thinking")
+            return "[thinking]";
+        if (block.type === "toolCall")
+            return `[tool call: ${block.name}]`;
+        return "[content]";
+    }).join("\n");
+}
+function resolveSamplingModel(options, modelPreferences) {
+    const candidates = [];
+    const availableModels = options.modelRegistry.getAvailable();
+    for (const hint of modelPreferences?.hints ?? []) {
+        const normalizedHint = hint.name?.trim().toLowerCase();
+        if (!normalizedHint)
+            continue;
+        for (const model of availableModels) {
+            const searchableNames = [`${model.provider}/${model.id}`, model.id, model.name];
+            if (searchableNames.some((name) => name.toLowerCase().includes(normalizedHint))) {
+                addSamplingCandidate(candidates, model);
+            }
+        }
+    }
+    const currentModel = options.getCurrentModel();
+    if (currentModel)
+        addSamplingCandidate(candidates, currentModel);
+    for (const model of availableModels) {
+        addSamplingCandidate(candidates, model);
+    }
+    const signal = options.getSignal();
+    throwIfAborted(signal);
+    const model = candidates[0];
+    if (model)
+        return model;
+    throw new Error("No Pi model is available for MCP sampling");
+}
+function addSamplingCandidate(candidates, model) {
+    if (!candidates.some((candidate) => candidate.provider === model.provider && candidate.id === model.id)) {
+        candidates.push(model);
+    }
+}
+async function confirmSampling(options, title, message) {
+    if (options.autoApprove)
+        return;
+    if (!options.ui) {
+        throw new Error("MCP sampling requires interactive approval. Set settings.samplingAutoApprove to true to allow it without UI.");
+    }
+    const approved = await options.ui.confirm(title, message);
+    if (!approved) {
+        throw new Error("MCP sampling request was declined");
+    }
+}
+function convertSamplingMessage(message) {
+    const blocks = Array.isArray(message.content) ? message.content : [message.content];
+    if (message.role === "user") {
+        return {
+            role: "user",
+            content: blocks.map(convertUserContent),
+            timestamp: Date.now(),
+        };
+    }
+    return {
+        role: "assistant",
+        content: blocks.map(convertAssistantContent),
+        api: "mcp-sampling",
+        provider: "mcp",
+        model: "sampling-request",
+        usage: zeroUsage(),
+        stopReason: "stop",
+        timestamp: Date.now(),
+    };
+}
+function convertUserContent(block) {
+    if (block.type === "text") {
+        return { type: "text", text: block.text };
+    }
+    throw new Error(`MCP sampling ${block.type} content is not supported`);
+}
+function convertAssistantContent(block) {
+    if (block.type === "text") {
+        return { type: "text", text: block.text };
+    }
+    throw new Error(`MCP sampling assistant ${block.type} content is not supported`);
+}
+function convertAssistantResult(message) {
+    if (message.stopReason === "error") {
+        throw new Error(message.errorMessage ?? "MCP sampling model call failed");
+    }
+    if (message.stopReason === "aborted") {
+        throw new Error(message.errorMessage ?? "MCP sampling model call was aborted");
+    }
+    const text = message.content
+        .map((block) => {
+        if (block.type === "text")
+            return block.text;
+        if (block.type === "thinking")
+            return undefined;
+        throw new Error(`MCP sampling result ${block.type} content is not supported`);
+    })
+        .filter((value) => value !== undefined)
+        .join("\n\n")
+        .trim();
+    if (!text) {
+        throw new Error("MCP sampling result did not contain text content");
+    }
+    return {
+        role: "assistant",
+        content: { type: "text", text },
+        model: `${message.provider}/${message.model}`,
+        stopReason: mapStopReason(message.stopReason),
+    };
+}
+function mapStopReason(reason) {
+    if (reason === "stop")
+        return "endTurn";
+    if (reason === "length")
+        return "maxTokens";
+    if (reason === "toolUse")
+        return "toolUse";
+    return reason;
+}
+function zeroUsage() {
+    return {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0,
+        },
+    };
+}
+//# sourceMappingURL=sampling-handler.js.map

@@ -83,6 +83,12 @@ Servers defined or changed by project-scoped MCP files (`.mcp.json`, `.pi/mcp-ad
 
 In print, JSON, and RPC sessions, an unapproved project server is skipped. To intentionally allow project servers in trusted headless sessions, set `"projectServers": "allow"` in the **user-global** `settings` object. The default is `"ask"`; project files cannot change this policy. Explicit config files, programmatic configuration, global/import/plugin servers, and runtime registrations retain their existing behavior. Project servers are always excluded from extension-load initialization and are admitted only after `session_start` supplies Pi's trust context.
 
+## Check servers from a shell
+
+`pi-mcp-adapter doctor` loads the same config a session in the current directory would, connects each enabled server, and prints one line per server: its name, state (`ok`, `failed`, `needs-auth`, `blocked`, or `disabled`), tool count, and the error or a hint. `pi-mcp-adapter doctor --json` prints the same report as a JSON array of `{ name, state, tools, message }`. It exits 1 when an enabled server fails or needs a sign-in and 0 otherwise; blocked and disabled servers don't count as failures, so it works as a CI check.
+
+Doctor never starts something a session wouldn't. Project servers follow the trust and approval rules above as a non-interactive session: they run only when Pi trusts the project and the server is approved (or `projectServers` is `"allow"`). If Pi itself can't be loaded from where the CLI is installed, the project is treated as untrusted and doctor says so. Doctor never opens a browser or starts OAuth: servers without a stored sign-in are reported as `needs-auth`, and you sign in with `/mcp-auth <server>` in Pi. Each server gets 15 seconds to connect, and every connection and server process is closed before doctor exits. Output never includes header, token, or env values, or URL query strings.
+
 ## Lifecycle Modes
 
 - **`lazy`** (default) — Don't connect at startup. Connect on first tool call. Disconnect after idle timeout. Cached metadata keeps search/list working without connections.
