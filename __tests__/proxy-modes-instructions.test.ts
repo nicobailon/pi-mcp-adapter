@@ -71,7 +71,7 @@ describe("proxy instructions", () => {
   });
 
   it("shows the configured description under the listing header", () => {
-    const listed = executeList(createState({ description: "Skill library", instructions: SHORT_INSTRUCTIONS }), "demo");
+    const listed = executeList(createState({ description: "Skill\n  library", instructions: SHORT_INSTRUCTIONS }), "demo");
     const empty = executeList(createState({ description: "Skill library", connected: true, noTools: true }), "demo");
 
     expect(listed.content[0].text).toMatch(/^demo \(1 tools.*\):\nDescription: Skill library\n\n- demo_read_skill/);

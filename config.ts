@@ -1293,7 +1293,7 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
     mappedServers[name] = mapped as ServerEntry;
   }
 
-  return mappedServers;
+  return toServerEntries(mappedServers);
 }
 
 function serializeRawConfig(raw: Record<string, unknown>): string {

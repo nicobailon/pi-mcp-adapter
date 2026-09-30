@@ -1025,7 +1025,7 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     }
   }
   // No instructions fallback here: the instructions preview below already starts with that line.
-  const description = definition.description?.trim();
+  const description = definition.description?.replace(/\s+/g, " ").trim();
   const descriptionText = description ? `\nDescription: ${description}` : "";
 
   if (toolNames.length === 0) {

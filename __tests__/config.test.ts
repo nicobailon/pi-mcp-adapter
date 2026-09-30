@@ -2348,4 +2348,21 @@ describe("server description", () => {
     warning.mockRestore();
     rmSync(root, { recursive: true, force: true });
   });
+
+  it("drops a non-string description from an imported host config", async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-description-import-")));
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("PI_PACKAGE_DIR", "");
+    vi.stubEnv("PI_CODING_AGENT_DIR", "");
+    vi.stubEnv("PI_MCP_CONFIG_MODE", "merge");
+    vi.resetModules();
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { imports: ["cursor"], mcpServers: {} });
+    writeJson(join(home, ".cursor", "mcp.json"), { mcpServers: { cursor: { command: "cursor-server", description: 42 } } });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, home).mcpServers.cursor).toEqual({ command: "cursor-server" });
+    warning.mockRestore();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
 });

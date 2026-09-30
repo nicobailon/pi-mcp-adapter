@@ -1116,7 +1116,7 @@ function extractServers(config, kind) {
         delete mapped.env_http_headers;
         mappedServers[name] = mapped;
     }
-    return mappedServers;
+    return toServerEntries(mappedServers);
 }
 function serializeRawConfig(raw) {
     return `${JSON.stringify(raw, null, 2)}\n`;
