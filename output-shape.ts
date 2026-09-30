@@ -24,6 +24,11 @@ export interface ObservedOutput {
   shape: OutputShape;
   /** outputShapeKey of the tool definition the shape was learned against; other definitions do not see it. */
   toolKey: string;
+  /**
+   * True once any observation merged into the shape was made under a private tool listing, which is tied to one
+   * authorization context. Such a shape is used in this session only and never saved.
+   */
+  private: boolean;
 }
 
 const MAX_DEPTH = 6;
@@ -47,13 +52,16 @@ const SHAPE_TYPES = new Set(["null", "boolean", "number", "string", "object", "a
  */
 export function observedOutputRecorder(state: McpExtensionState, serverName: string, toolName: string): (result: Record<string, unknown>) => void {
   const tool = findTool(state, serverName, toolName);
-  return result => recordObservedOutput(state, serverName, tool, result);
+  const listingIsPrivate = () => state.manager.getConnection(serverName)?.toolListHints?.cacheScope === "private";
+  const privateAtStart = listingIsPrivate();
+  return result => recordObservedOutput(state, serverName, tool, privateAtStart || listingIsPrivate(), result);
 }
 
 function recordObservedOutput(
   state: McpExtensionState,
   serverName: string,
   tool: ToolMetadata | undefined,
+  observedPrivately: boolean,
   result: Record<string, unknown>,
 ): void {
   if (!tool || tool.outputSchema !== undefined) return;
@@ -71,10 +79,11 @@ function recordObservedOutput(
     source: observed.source,
     shape: fitShape(mergeable ? mergeShapes(previous.shape, shape) : shape),
     toolKey,
+    private: observedPrivately || (mergeable && previous.private),
   };
   byTool.set(toolName, next);
   // Saving only changed shapes keeps cache writes to a tool's first calls; sessions without mcpScript never write.
-  if (state.scriptTool === true && JSON.stringify(next) !== JSON.stringify(previous)) {
+  if (state.scriptTool === true && !next.private && JSON.stringify(next) !== JSON.stringify(previous)) {
     try {
       saveObservedOutput(serverName, definition, toolName, toolKey, { source: next.source, shape: next.shape });
     } catch (error) {
@@ -98,7 +107,7 @@ export function seedObservedOutputs(state: McpExtensionState, serverName: string
     const { source, shape } = value as { source?: unknown; shape?: unknown };
     if (source !== "structuredContent" && source !== "jsonText") continue;
     const parsed = readSavedShape(shape, 0);
-    if (parsed && !isUnknown(parsed)) byTool.set(toolName, { source, shape: fitShape(parsed), toolKey });
+    if (parsed && !isUnknown(parsed)) byTool.set(toolName, { source, shape: fitShape(parsed), toolKey, private: false });
   }
 }
 

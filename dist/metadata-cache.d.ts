@@ -18,7 +18,7 @@ export declare function outputShapeKey(tool: {
  * and tool. The entry comes from the same read the write replaces, so newer metadata from other Pi processes is kept.
  */
 export declare function saveObservedOutput(serverName: string, definition: ServerEntry, toolName: string, toolKey: string, output: NonNullable<ServerCacheEntry["outputShapes"]>[string]): void;
-/** Output shapes to carry into a rewritten cache entry: same config, and only tools whose definition kept its shape key. */
+/** Output shapes to carry into a rewritten cache entry: same config, not private, and only tools whose definition kept its shape key. */
 export declare function keepOutputShapes(previous: ServerCacheEntry | undefined, configHash: string, tools: CachedTool[]): ServerCacheEntry["outputShapes"];
 export declare function isServerCacheValid(entry: ServerCacheEntry, definition: ServerEntry, maxAgeMs?: number, environment?: NodeJS.ProcessEnv): boolean;
 export declare function parseDirectToolSelectors(selectors: string[]): {

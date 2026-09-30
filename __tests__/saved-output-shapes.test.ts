@@ -11,8 +11,8 @@ const tool = { name: "list", description: "List things", inputSchema: { type: "o
 const result = { content: [], structuredContent: { id: "secret-id", title: "Private title" } };
 const describeText = (state: any) => executeDescribe(state, "demo_list").content[0]!.text;
 
-function sessionState(tools: object[], scriptTool: boolean) {
-  const connection = { status: "connected", tools, resources: [], client: { callTool: vi.fn(async () => result) } };
+function sessionState(tools: object[], scriptTool: boolean, toolListHints?: { cacheScope: "private" }) {
+  const connection = { status: "connected", tools, toolListHints, resources: [], client: { callTool: vi.fn(async () => result) } };
   return {
     config: { mcpServers: { demo: definition } },
     manager: {
@@ -83,6 +83,40 @@ describe("saved output shapes", () => {
     reconnect(state, [changedTool]);
     expect(describeText(state)).not.toContain("Observed output");
     expect(loadMetadataCache()!.servers.demo!.outputShapes).toBeUndefined();
+  });
+
+  it("keeps no shapes from a private tool listing for other sessions", async () => {
+    const noSavedShape = () => expect(loadMetadataCache()!.servers.demo!.outputShapes).toBeUndefined();
+    // The cached entry is public, as another session with a public listing would write it.
+    const privateSession = sessionState([tool], true, { cacheScope: "private" });
+    await executeCall(privateSession, "demo_list", {});
+    noSavedShape();
+
+    // The private shape stays private after the listing turns public, even when a new field changes it.
+    privateSession.manager.getConnection("demo").toolListHints = undefined;
+    privateSession.manager.getConnection("demo").client.callTool.mockResolvedValueOnce({
+      content: [], structuredContent: { ...result.structuredContent, owner: "Private owner" },
+    });
+    await executeCall(privateSession, "demo_list", {});
+    noSavedShape();
+
+    // A listing that turns private while the call runs counts as private.
+    const flipping = sessionState([tool], true);
+    const connection = flipping.manager.getConnection("demo");
+    connection.client.callTool.mockImplementationOnce(async () => {
+      connection.toolListHints = { cacheScope: "private" };
+      return result;
+    });
+    await executeCall(flipping, "demo_list", {});
+    noSavedShape();
+
+    // A shape saved while the listing was public is not handed on once the listing is private.
+    await executeCall(sessionState([tool], true), "demo_list", {});
+    expect(loadMetadataCache()!.servers.demo!.outputShapes).toBeDefined();
+    saveMetadataCache({ version: 1, servers: { demo: { ...loadMetadataCache()!.servers.demo!, cacheScope: "private" } } });
+    const other = sessionState([tool], true);
+    updateMetadataCache(other, "demo");
+    expect(describeText(other)).not.toContain("Observed output");
   });
 
   it("ignores a malformed saved shape instead of failing startup", async () => {

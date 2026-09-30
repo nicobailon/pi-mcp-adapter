@@ -114,9 +114,9 @@ export function saveObservedOutput(serverName, definition, toolName, toolKey, ou
         return { ...servers, [serverName]: { ...entry, outputShapes: { ...entry.outputShapes, [toolName]: output } } };
     });
 }
-/** Output shapes to carry into a rewritten cache entry: same config, and only tools whose definition kept its shape key. */
+/** Output shapes to carry into a rewritten cache entry: same config, not private, and only tools whose definition kept its shape key. */
 export function keepOutputShapes(previous, configHash, tools) {
-    if (!previous?.outputShapes || previous.configHash !== configHash)
+    if (!previous?.outputShapes || previous.configHash !== configHash || previous.cacheScope === "private")
         return undefined;
     const kept = Object.entries(previous.outputShapes).filter(([toolName]) => {
         const before = previous.tools?.find(tool => tool.name === toolName);
