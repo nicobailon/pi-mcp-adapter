@@ -105,7 +105,7 @@ function scriptScopeMessage(code: string, path: string, server: unknown, retry: 
   if (code === "server_not_found") return `Server "${String(server)}" not found. Use the server from a tools.search hit.`;
   if (code !== "ambiguous_tool") return undefined;
   return typeof server === "string"
-    ? `Tool "${path}" matches multiple tools on server "${server}". Use an exact path from tools.search({ query: "", server: "${server}" }).`
+    ? `Tool "${path}" matches multiple tools on server "${server}". Use an exact path from tools.search({ query: "", server: ${JSON.stringify(server)} }).`
     : `Tool "${path}" matches multiple servers. Pass the server from tools.search: ${retry}.`;
 }
 
