@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Connecting to Figma (desktop) while its server is off now says nothing is listening on `127.0.0.1:3845` instead of a bare `fetch failed`.
 - `/mcp-adapter setup` adds Figma (desktop) to the global config instead of writing `.mcp.json` into whatever project you opened setup from.
-- `/mcp-adapter setup` warns when a server you add won't be used, because another config file already defines it or the current config mode doesn't read the file it was written to.
+- `/mcp-adapter setup` warns when a server you add won't be used, because another config file already defines or disables it, or the current config mode doesn't read the file it was written to.
 
 ## [4.0.0] - 2026-09-30
 
