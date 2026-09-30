@@ -19,7 +19,7 @@ import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supports
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
-import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords } from "./search-ranking.ts";
+import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, type RankedToolMatch } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { semanticSearch, type SemanticSearchBackend, type SemanticSearchEvaluator } from "./semantic-search.ts";
@@ -722,26 +722,29 @@ function formatToolHints(toolMeta: ToolMetadata): string {
   return hints.join(", ");
 }
 
-export function executeDescribe(state: McpExtensionState, toolName: string, serverOverride?: string): ProxyToolResult {
-  let serverName: string | undefined;
-  let toolMeta: ToolMetadata | undefined;
-  let disabledMatch: string | undefined;
-  let failedMatch: string | undefined;
-
+/** The tool describe targets, or the error both mcp({ describe }) and mcpScript's tools.describe report. */
+export function resolveDescribeTarget(
+  state: McpExtensionState,
+  toolName: string,
+  serverOverride?: string,
+): { server: string; tool: ToolMetadata } | { error: ProxyToolResult } {
   if (serverOverride) {
     if (!state.config.mcpServers[serverOverride]) {
       return {
-        content: [{ type: "text" as const, text: `Server "${serverOverride}" not found. Use mcp({}) to see available servers.` }],
-        details: { mode: "describe", error: "server_not_found", server: serverOverride, requestedTool: toolName },
+        error: {
+          content: [{ type: "text" as const, text: `Server "${serverOverride}" not found. Use mcp({}) to see available servers.` }],
+          details: { mode: "describe", error: "server_not_found", server: serverOverride, requestedTool: toolName },
+        },
       };
     }
     const match = getServerScopedToolMatch(state.toolMetadata.get(serverOverride), toolName);
-    if (match === "ambiguous") return ambiguousServerToolResult("describe", toolName, serverOverride);
-    if (isServerDisabled(state.config.mcpServers[serverOverride])) return disabledResult(state, "describe", serverOverride);
-    if (isServerInActiveFailureBackoff(state, serverOverride)) return serverBackoffResult(state, "describe", serverOverride);
-    serverName = serverOverride;
-    toolMeta = match?.tool;
+    if (match === "ambiguous") return { error: ambiguousServerToolResult("describe", toolName, serverOverride) };
+    if (isServerDisabled(state.config.mcpServers[serverOverride])) return { error: disabledResult(state, "describe", serverOverride) };
+    if (isServerInActiveFailureBackoff(state, serverOverride)) return { error: serverBackoffResult(state, "describe", serverOverride) };
+    if (match) return { server: serverOverride, tool: match.tool };
   } else {
+    let disabledMatch: string | undefined;
+    let failedMatch: string | undefined;
     const matches: Array<{ server: string; tool: ToolMetadata; precedence: number }> = [];
     for (const [server, metadata] of state.toolMetadata.entries()) {
       const candidates = getServerScopedToolCandidates(metadata, toolName);
@@ -759,27 +762,31 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
     if (matches.length > 0) {
       const precedence = Math.min(...matches.map(match => match.precedence));
       const bestMatches = matches.filter(match => match.precedence === precedence);
-      if (bestMatches.length > 1) return ambiguousToolResult("describe", toolName);
-      serverName = bestMatches[0]!.server;
-      toolMeta = bestMatches[0]!.tool;
+      if (bestMatches.length > 1) return { error: ambiguousToolResult("describe", toolName) };
+      return { server: bestMatches[0]!.server, tool: bestMatches[0]!.tool };
     }
+    if (disabledMatch) return { error: disabledResult(state, "describe", disabledMatch) };
+    if (failedMatch) return { error: serverBackoffResult(state, "describe", failedMatch) };
   }
 
-  if (!serverName || !toolMeta) {
-    if (disabledMatch) return disabledResult(state, "describe", disabledMatch);
-    if (failedMatch) return serverBackoffResult(state, "describe", failedMatch);
-    const suggestions = rankSuggestions(state, toolName, 5, serverOverride);
-    const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
-    const scopeText = serverOverride ? ` on server "${serverOverride}"` : "";
-    const searchHint = serverOverride
-      ? `mcp({ search: "...", server: "${serverOverride}" })`
-      : `mcp({ search: "..." })`;
-    return {
+  const suggestions = rankSuggestions(state, toolName, 5, serverOverride);
+  const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
+  const scopeText = serverOverride ? ` on server "${serverOverride}"` : "";
+  const searchHint = serverOverride
+    ? `mcp({ search: "...", server: "${serverOverride}" })`
+    : `mcp({ search: "..." })`;
+  return {
+    error: {
       content: [{ type: "text" as const, text: `Tool "${toolName}" not found${scopeText}. Use ${searchHint} to search.${suggestionText}` }],
       details: { mode: "describe", error: "tool_not_found", server: serverOverride, requestedTool: toolName, suggestions },
-    };
-  }
+    },
+  };
+}
 
+export function executeDescribe(state: McpExtensionState, toolName: string, serverOverride?: string): ProxyToolResult {
+  const target = resolveDescribeTarget(state, toolName, serverOverride);
+  if ("error" in target) return target.error;
+  const { server: serverName, tool: toolMeta } = target;
   const approvalMarker = isToolCallApprovalRequired(state.config, serverName, toolMeta, state.toolMetadata)
     ? " (requires approval)"
     : "";
@@ -885,81 +892,67 @@ function renderSearchResults(
   };
 }
 
-export function executeSearch(
-  state: McpExtensionState,
-  query: string,
-  regex?: boolean,
-  server?: string,
-  includeSchemas?: boolean,
-  limit = 12,
-  offset = 0,
-  searchMode: "lexical" | "semantic" = "lexical",
-  signal?: AbortSignal,
-  semanticEvaluator?: SemanticSearchEvaluator,
-): ProxyToolResult | Promise<ProxyToolResult> {
-  const showSchemas = includeSchemas !== false;
-  if ((searchMode as string) !== "lexical" && (searchMode as string) !== "semantic") {
-    return {
-      content: [{ type: "text" as const, text: "Search mode must be lexical or semantic." }],
-      details: { mode: "search", error: "invalid_search_mode", query },
-    };
+export interface ToolSearchInput {
+  query: string;
+  regex?: boolean | undefined;
+  server?: string | undefined;
+  searchMode?: unknown;
+  signal?: AbortSignal | undefined;
+  semanticEvaluator?: SemanticSearchEvaluator | undefined;
+  observedSources?: readonly string[];
+}
+
+/** Ranked matches, unpaginated; each surface pages and renders them its own way. */
+export type ToolSearchOutcome =
+  | { matches: RankedToolMatch[]; backend?: SemanticSearchBackend }
+  | { error: ProxyToolResult };
+
+/** The one search core behind both mcp({ search }) and mcpScript's tools.search. */
+export function findTools(state: McpExtensionState, input: ToolSearchInput): ToolSearchOutcome | Promise<ToolSearchOutcome> {
+  const { query, regex, server, searchMode = "lexical" } = input;
+  const failure = (text: string, details: Record<string, unknown>): ToolSearchOutcome => ({
+    error: { content: [{ type: "text" as const, text }], details: { mode: "search", ...details } },
+  });
+  if (searchMode !== "lexical" && searchMode !== "semantic") {
+    return failure("Search mode must be lexical or semantic.", { error: "invalid_search_mode", query });
   }
-  if (server && isServerDisabled(state.config.mcpServers[server])) return disabledResult(state, "search", server);
-  if (server && isServerInActiveFailureBackoff(state, server)) return serverBackoffResult(state, "search", server);
+  if (server && isServerDisabled(state.config.mcpServers[server])) return { error: disabledResult(state, "search", server) };
+  if (server && isServerInActiveFailureBackoff(state, server)) return { error: serverBackoffResult(state, "search", server) };
   if (searchMode === "semantic" && regex) {
-    return {
-      content: [{ type: "text" as const, text: "Semantic search cannot be combined with regex search." }],
-      details: { mode: "search", error: "invalid_search_mode", query },
-    };
+    return failure("Semantic search cannot be combined with regex search.", { error: "invalid_search_mode", query });
   }
   if (searchMode === "semantic") {
-    return semanticSearch(state, query, server, signal, semanticEvaluator).then(result => {
-      if (!result.ok) {
-        return {
-          content: [{ type: "text" as const, text: `Semantic search failed: ${result.error.message}` }],
-          details: { mode: "search", error: result.error.code, message: result.error.message, query },
-        };
-      }
-      return renderSearchResults(state, query, server, showSchemas, limit, offset, result.matches, result.backend);
-    });
+    return semanticSearch(state, query, server, input.signal, input.semanticEvaluator, input.observedSources).then(result => result.ok
+      ? { matches: result.matches, backend: result.backend }
+      : failure(`Semantic search failed: ${result.error.message}`, { error: result.error.code, message: result.error.message, query }));
   }
 
-  let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;
   if (regex) {
+    if (query.length > MAX_REGEX_SEARCH_QUERY_LENGTH) {
+      return failure(
+        `Regex query is too long; maximum length is ${MAX_REGEX_SEARCH_QUERY_LENGTH} characters.`,
+        { error: "query_too_long", query, maxLength: MAX_REGEX_SEARCH_QUERY_LENGTH },
+      );
+    }
     let pattern: RegExp;
     try {
-      if (query.length > MAX_REGEX_SEARCH_QUERY_LENGTH) {
-        return {
-          content: [{ type: "text" as const, text: `Regex query is too long; maximum length is ${MAX_REGEX_SEARCH_QUERY_LENGTH} characters.` }],
-          details: { mode: "search", error: "query_too_long", query, maxLength: MAX_REGEX_SEARCH_QUERY_LENGTH },
-        };
-      }
       pattern = new RegExp(query, "i");
-      let safety;
-      try {
-        const { checkSync } = require("recheck") as typeof import("recheck");
-        safety = checkSync(query, "i", REGEX_SAFETY_CHECK_PARAMS);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: "text" as const, text: "Regex query rejected because safety analysis failed." }],
-          details: { mode: "search", error: "unsafe_pattern", query, reason },
-        };
-      }
-      if (safety.status !== "safe") {
-        return {
-          content: [{ type: "text" as const, text: `Regex query rejected as unsafe (${safety.status}).` }],
-          details: { mode: "search", error: "unsafe_pattern", query, safetyStatus: safety.status },
-        };
-      }
     } catch {
-      return {
-        content: [{ type: "text" as const, text: `Invalid regex: ${query}` }],
-        details: { mode: "search", error: "invalid_pattern", query },
-      };
+      return failure(`Invalid regex: ${query}`, { error: "invalid_pattern", query });
+    }
+    let safety;
+    try {
+      const { checkSync } = require("recheck") as typeof import("recheck");
+      safety = checkSync(query, "i", REGEX_SAFETY_CHECK_PARAMS);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return failure("Regex query rejected because safety analysis failed.", { error: "unsafe_pattern", query, reason });
+    }
+    if (safety.status !== "safe") {
+      return failure(`Regex query rejected as unsafe (${safety.status}).`, { error: "unsafe_pattern", query, safetyStatus: safety.status });
     }
 
-    matches = [];
+    const matches: RankedToolMatch[] = [];
     const globalPrefix = state.config.settings?.toolPrefix ?? "server";
     for (const [serverName, metadata] of state.toolMetadata.entries()) {
       const definition = state.config.mcpServers[serverName];
@@ -972,21 +965,37 @@ export function executeSearch(
         if (matched) matches.push({ server: serverName, tool, score: 0 });
       }
     }
-  } else if (query.trim().length === 0) {
-    if (!server) {
-      return {
-        content: [{ type: "text" as const, text: "Search query cannot be empty" }],
-        details: { mode: "search", error: "empty_query" },
-      };
-    }
-    matches = (state.toolMetadata.get(server) ?? [])
-      .map(tool => ({ server, tool, score: 0 }))
-      .sort((a, b) => a.tool.name.localeCompare(b.tool.name));
-  } else {
-    matches = rankToolMatches(state, query, server);
+    return { matches };
   }
 
-  return renderSearchResults(state, query, server, showSchemas, limit, offset, matches);
+  if (query.trim().length === 0) {
+    if (!server) return failure("Search query cannot be empty", { error: "empty_query" });
+    return {
+      matches: (state.toolMetadata.get(server) ?? [])
+        .map(tool => ({ server, tool, score: 0 }))
+        .sort((a, b) => a.tool.name.localeCompare(b.tool.name)),
+    };
+  }
+  return { matches: rankToolMatches(state, query, server) };
+}
+
+export function executeSearch(
+  state: McpExtensionState,
+  query: string,
+  regex?: boolean,
+  server?: string,
+  includeSchemas?: boolean,
+  limit = 12,
+  offset = 0,
+  searchMode: "lexical" | "semantic" = "lexical",
+  signal?: AbortSignal,
+  semanticEvaluator?: SemanticSearchEvaluator,
+): ProxyToolResult | Promise<ProxyToolResult> {
+  const render = (outcome: ToolSearchOutcome): ProxyToolResult => "error" in outcome
+    ? outcome.error
+    : renderSearchResults(state, query, server, includeSchemas !== false, limit, offset, outcome.matches, outcome.backend);
+  const outcome = findTools(state, { query, regex, server, searchMode, signal, semanticEvaluator });
+  return outcome instanceof Promise ? outcome.then(render) : render(outcome);
 }
 
 export function executeList(state: McpExtensionState, server: string): ProxyToolResult {

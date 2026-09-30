@@ -782,7 +782,28 @@ return result.data;
 
 For tool calls, successful `result.data` is the raw MCP `CallToolResult`, not the domain payload; resource reads return text. Use `result.data.structuredContent` when present. Otherwise most JSON APIs return their payload as text, so parse `result.data.content[0].text`. If neither shape is understood, return the envelope for inspection instead of coercing it to an empty collection.
 
-See the bundled `mcp-scripting` skill for the complete workflow guide. The API is `await tools.search({ query, server?, limit?, offset? })`, `await tools.describe({ path })`, `tools.call(path, args)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each operation, its path or query, outcome, and duration. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds; each script runs in a worker thread that is terminated at the deadline, including for infinite loops.
+#### Composable tool search
+
+In `mcpScript`, search, describe, and call are separate steps, and plain JavaScript joins them. There is no query language to learn: a script filters, sorts, or combines search results with ordinary code, then describes or calls the tools it picked. None of this adds to the model's context until a script runs.
+
+```js
+const found = await tools.search({ query: "issue", server: "github", limit: 50 });
+if (found.error) return found.error;
+
+const readOnly = [];
+for (const hit of found.items) {
+  const details = await tools.describe({ path: hit.path, server: hit.server });
+  if (details.annotations?.readOnlyHint) readOnly.push(hit.path);
+}
+return readOnly;
+```
+
+- `tools.search` runs the same search as `mcp({ search })`: ranked words by default, `regex: true` for a pattern, or `searchMode: "semantic"` for Jev. An empty `query` with a `server` lists that server's tools. Results come one page at a time (`limit` defaults to 12); follow `nextOffset` for the rest.
+- Every hit carries its `server`. Pass it on with `tools.describe({ path, server })` and `tools.call(path, args, { server })`, so the script reaches the tool it found even when two servers expose the same name, as with `toolPrefix: "none"`.
+- A search that cannot run returns `items: []` with `error: { code, message }`, using the same codes as `mcp({ search })`, such as `empty_query`, `server_disabled`, `server_backoff`, and `invalid_pattern`.
+- Annotations are the server's own hints, not guarantees. Script searches never activate `directTools: "search"` tools, and every call still goes through the normal approval gate.
+
+See the bundled `mcp-scripting` skill for the complete workflow guide. The API is `await tools.search({ query, server?, regex?, searchMode?, limit?, offset? })`, `await tools.describe({ path, server? })`, `tools.call(path, args, { server }?)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each operation, its path or query, outcome, and duration. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds; each script runs in a worker thread that is terminated at the deadline, including for infinite loops.
 
 Successful intermediate results reach the script without presentation truncation, details summaries, or output-guard spill files. Each script has a fixed **16 MiB cumulative UTF-8 JSON transfer budget** for successful intermediate data, shared by sequential and parallel calls. A result that cannot fit returns `{ ok: false, error: { code: "intermediate_result_too_large", message } }` and a failed call trace; rejected bytes do not consume the budget, and the script can continue. Request less data or start a new script; there is no configuration option for this cap. Resource calls retain their text-result semantics. Only script-selected output (`emit`, captured console, and `return`) reaches the final output guard; ordinary MCP calls remain guarded as before.
 
@@ -1031,7 +1052,7 @@ Prefer `.mcp.json` for project-local shared MCP config and `~/.config/mcp/mcp.js
 
 MCP proxy and direct-tool results use compact self-rendered rows by default. Collapsed success output shows the call title, a bounded one-line input preview when arguments exist, and the first result line, with a `Ctrl+O to expand` hint when more text is hidden. The full result remains available when expanded and is still returned unchanged to the model. Set `settings.toolResultRendering` to `"boxed"` to restore the legacy boxed Pi row, or set `settings.collapsedResultLines` to `2` or `3` when you want more collapsed text.
 
-Search includes both MCP tools and Pi tools (from extensions). Pi tools appear first with `[pi tool]` prefix. Space-separated words are ranked by weighted matches across name, server, description, and any configured `searchKeywords`, then returned one page at a time (`limit` defaults to 12). Use `details.nextOffset` for the next page. Regex search is still available with `regex: true`, but regex results are paginated without ranking.
+Search covers MCP tools only. Space-separated words are ranked by weighted matches across name, server, description, and any configured `searchKeywords`, then returned one page at a time (`limit` defaults to 12). Use `details.nextOffset` for the next page. Regex search is still available with `regex: true`, but regex results are paginated without ranking.
 
 Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_library_id` finds `context7_resolve-library-id`. When `describe` or `tool` cannot resolve a name, the result includes top suggestions so the agent can correct a typo or missing prefix in the same turn.
 

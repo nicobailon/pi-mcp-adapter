@@ -19,10 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `settings.scriptSkill: "model"` adds the `mcp-scripting` skill's path to the `mcpScript` description so the model reads it before writing a script. The default, `"manual"`, keeps the skill to `/skill:mcp-scripting`.
 - With `mcpScript` on, observed output shapes are saved in `mcp-cache.json`, so a later session can script a tool without calling it first to see its fields. A saved shape holds field names and types only, and is used only while the tool's description and input schema stay the same; it is dropped when they or the server's config change.
 - When an `mcpScript` run throws, times out, or returns `[]`, `{}`, `null`, `""`, or nothing, the result ends with the output shapes seen from the tools it called, so a wrong field guess can be fixed without a separate call to look at the data.
+- `tools.describe` and `tools.call` in `mcpScript` take the `server` a search hit returned: `tools.describe({ path, server })` and `tools.call(path, args, { server })`. Before, a script could not reach a tool whose name two servers share, as with `toolPrefix: "none"`: describe returned the first server's tool and call failed as ambiguous. The README has a new "Composable tool search" section on search, filter, describe, and call in one script.
 
 ### Changed
 
 - The `mcp-scripting` skill is about half its former length; `jev.evaluate` details moved to `references/jev.md`.
+- `tools.search` in `mcpScript` now runs the same search code as `mcp({ search })`. In scripts, an empty query with a `server` lists that server's tools, and a search that cannot run returns `error: { code, message }` beside `items: []`, with the same codes as `mcp({ search })`, instead of a bare empty result. `tools.describe` reports `ambiguous_tool`, `server_disabled`, and `server_backoff` like `mcp({ describe })` instead of picking the first match or saying the tool was not found.
 - The `mcpScript` description now says that a tool call's `data` is the raw MCP result and how to read JSON from it.
 - With `mcpScript` on, MCP tool results of 8 KiB or more end with a one-line hint to use it when passing them to another call, so models stop retyping large results by hand.
 - Observed output shapes write a wide object that appears more than once as a named type, so a GitHub-style issue list shape is about 40% shorter with every field still listed.
@@ -30,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `regex: true` in `mcpScript`'s `tools.search` was ignored: scripts got ranked word matches, and an invalid pattern returned no error. It now runs the same checked regex search as `mcp({ search })`.
 - MCP servers from a Pi package installed from a URL with a port or a user other than `git`, such as `ssh://git@gitlab.example.com:2235/acme/tools.git`, now load. The adapter looked for the package under `gitlab.example.com:2235/...`, but Pi installs it under the bare hostname, so the package was skipped without a warning. Thanks to [@shura-v](https://github.com/shura-v) for [#746](https://github.com/nicobailon/pi-mcp-adapter/pull/746).
 - MCP servers from a Pi package installed at a ref that contains a slash, such as `https://gitlab.example.com/acme/tools.git@release/v2`, now load. The adapter cut the ref only at the last `@`, so it looked for `acme/tools.git@release/v2` instead of `acme/tools`.
 - The `mcp` tool description mentions `mcpScript` only when it is registered. Before, it pointed to `mcpScript` even with `settings.scriptMode` set to `false`.
