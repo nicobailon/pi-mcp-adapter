@@ -63,10 +63,7 @@ function piSupportsMcp(pi: ExtensionAPI): boolean {
   return typeof pi.registerMcpServer === "function";
 }
 
-/**
- * The CallToolResult a deferred tool's output schema declares, which codemode scripts receive: the
- * model-facing (output-guarded) content, the server's structuredContent, and isError on any failure.
- */
+/** The CallToolResult codemode scripts get from a deferred tool: its output-guarded content, the server's structuredContent, and isError on any failure. */
 function toCallToolResult(result: AgentToolResult<Record<string, unknown>>): AgentToolResult<Record<string, unknown>> {
   return {
     ...result,
@@ -389,8 +386,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // directTools: "search" — registered inactive, activated by mcp({ search }) or a successful mcp({ tool }) call.
   const lazyDirectTools = new Set<string>();
   const searchActivatedTools = new Set<string>();
-  // On Pi 0.99+ search-mode tools are Pi deferred tools: Pi's tool_search finds them and Pi owns
-  // their activation. Pi can't unregister tools, so removal re-registers the last definition hidden.
+  // On Pi 0.99+ search-mode tools are Pi deferred tools, whose activation Pi owns.
   const deferSearchTools = piSupportsMcp(pi);
   const deferredToolDefinitions = new Map<string, Record<string, unknown>>();
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
@@ -435,8 +431,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     });
   }
 
-  // The fields Pi's built-in MCP registers its tools with (extensions/mcp/tools.js), for a
-  // search-mode tool on Pi 0.99+; undefined otherwise.
+  // The fields Pi's built-in MCP registers its tools with (extensions/mcp/tools.js).
   function deferredToolFields(spec: DirectToolSpec, config: McpConfig, cache: MetadataCache | null): Record<string, unknown> | undefined {
     if (!deferSearchTools || !spec.lazy) return undefined;
     const serverCache = cache?.servers[spec.serverName];
@@ -444,7 +439,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const description = config.mcpServers[spec.serverName]?.description?.trim();
     const instructions = serverCache?.instructions;
     const { title: _title, ...annotations } = tool?.annotations ?? {};
-    const outputSchema = tool?.outputSchema && typeof tool.outputSchema === "object" ? tool.outputSchema : undefined;
     return {
       exposure: "deferred",
       namespace: {
@@ -453,13 +447,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         ...(instructions ? { instructions } : {}),
       },
       ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
-      // A CallToolResult with the tool's own output schema as structuredContent, which codemode
-      // scripts receive (see toCallToolResult).
+      // Pi's createMcpResultSchema shape, which codemode renders as CallToolResult<T>.
       outputSchema: {
         type: "object",
         properties: {
           content: { type: "array", items: { type: "object" } },
-          ...(outputSchema ? { structuredContent: outputSchema } : {}),
+          ...(tool?.outputSchema !== undefined ? { structuredContent: tool.outputSchema } : {}),
           isError: { type: "boolean" },
           _meta: { type: "object" },
         },
@@ -478,28 +471,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function registerDirectTool(spec: DirectToolSpec, config: McpConfig, deferred: Record<string, unknown> | undefined): void {
     finalizationRegistrations?.add(spec.prefixedName);
-    async function execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Record<string, unknown>>> {
-      let executor: ReturnType<(typeof import("./direct-tools.ts"))["createDirectToolExecutor"]>;
-      let guard: RuntimeGuard | undefined;
-      try {
-        const targetState = await ensureSessionRuntime(ctx);
-        if (!targetState) throw new Error("MCP not initialized");
-        guard = captureRuntimeGuard(targetState);
-        const executionGuard = guard;
-        const { createDirectToolExecutor } = await loadForRuntime(loadDirectExecution, executionGuard);
-        executor = createDirectToolExecutor(() => executionGuard.state, () => initPromise, spec, deferred !== undefined);
-      } catch (error) {
-        if (guard && (isRuntimeGuardStale(guard) || (guard.owner && isOwnerAbortError(error, guard.owner)))) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: "text" as const, text: `MCP initialization failed for ${spec.serverName}: ${message}` }],
-          details: { error: "init_failed", server: spec.serverName, message },
-        };
-      }
-      if (!guard) throw new Error("MCP runtime guard unavailable");
-      assertRuntimeGuard(guard);
-      return executor(toolCallId, params, signal, onUpdate, ctx);
-    }
     const definition = {
       name: spec.prefixedName,
       label: `MCP: ${spec.originalName}`,
@@ -510,13 +481,36 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         ? { prepareArguments: (args: unknown) => prepareDirectToolArguments(spec.inputSchema, args) }
         : {}),
       ...deferred,
-      execute: deferred
-        ? async (...args: Parameters<typeof execute>) => toCallToolResult(await execute(...args))
-        : execute,
+      async execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Record<string, unknown>>> {
+        let executor: ReturnType<(typeof import("./direct-tools.ts"))["createDirectToolExecutor"]>;
+        let guard: RuntimeGuard | undefined;
+        try {
+          const targetState = await ensureSessionRuntime(ctx);
+          if (!targetState) throw new Error("MCP not initialized");
+          guard = captureRuntimeGuard(targetState);
+          const executionGuard = guard;
+          const { createDirectToolExecutor } = await loadForRuntime(loadDirectExecution, executionGuard);
+          executor = createDirectToolExecutor(() => executionGuard.state, () => initPromise, spec, deferred !== undefined);
+        } catch (error) {
+          if (guard && (isRuntimeGuardStale(guard) || (guard.owner && isOwnerAbortError(error, guard.owner)))) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text" as const, text: `MCP initialization failed for ${spec.serverName}: ${message}` }],
+            details: { error: "init_failed", server: spec.serverName, message },
+          };
+        }
+        if (!guard) throw new Error("MCP runtime guard unavailable");
+        assertRuntimeGuard(guard);
+        return executor(toolCallId, params, signal, onUpdate, ctx);
+      },
       renderShell: toolRenderShell,
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName, toolRenderOptions),
       renderResult: renderMcpToolResult,
     };
+    if (deferred) {
+      const run = definition.execute;
+      definition.execute = async (...args) => toCallToolResult(await run(...args));
+    }
     callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)(definition));
     if (deferred) deferredToolDefinitions.set(spec.prefixedName, definition);
     else deferredToolDefinitions.delete(spec.prefixedName);

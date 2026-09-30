@@ -4435,7 +4435,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(activeTools()).not.toContain("team-docs_find");
     });
 
-    it("never changes the declared tools when a lazy search-mode server connects", async () => {
+    it("declares none of the tools a lazy search-mode server registers when it connects", async () => {
       const { api, activeTools, proxyTool } = await bootPi099([]);
       api.setActiveTools.mockClear();
       mocks.resolveDirectTools.mockReturnValue([lazySpec("alpha"), lazySpec("beta")]);

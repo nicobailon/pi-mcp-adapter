@@ -130,7 +130,7 @@ export function createDirectToolExecutor(
   getState: () => McpExtensionState | null,
   getInitPromise: () => Promise<McpExtensionState> | null,
   spec: DirectToolSpec,
-  // Deferred tools (Pi 0.99+) pass the server's structuredContent on to their CallToolResult.
+  // Deferred tools (Pi 0.99+) keep the server's structuredContent.
   structured = false,
 ): DirectToolExecute {
   const structuredContentOf = (result: ClientCallToolResult) => structured && result.structuredContent !== undefined
