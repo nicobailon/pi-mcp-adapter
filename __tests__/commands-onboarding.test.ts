@@ -291,10 +291,10 @@ describe("commands onboarding", () => {
     const projectConfig = join(process.cwd(), ".mcp.json");
     writeFileSync(projectConfig, JSON.stringify({ mcpServers: { figma: { url: "https://mcp.figma.com/mcp" } } }));
     expect((await callbacks.addKnownServer(figma, "global")).ignoredBecause)
-      .toBe(`${projectConfig} also defines figma and takes precedence`);
+      .toBe("another config file also defines figma and takes precedence");
 
     writeFileSync(projectConfig, JSON.stringify({ mcpServers: { figma: { ...figma.entry, disabled: true } } }));
-    expect((await callbacks.addKnownServer(figma, "global")).ignoredBecause).toBe(`${projectConfig} disables figma`);
+    expect((await callbacks.addKnownServer(figma, "global")).ignoredBecause).toBe("another config file disables figma");
 
     process.env.PI_MCP_CONFIG_MODE = "exclusive";
     try {
