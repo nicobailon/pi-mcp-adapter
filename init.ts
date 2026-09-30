@@ -606,12 +606,16 @@ export function updateMetadataCache(
 
   const tools = serializeTools(connection.tools);
   let resources = definition.exposeResources === false ? [] : serializeResources(connection.resources);
+  const sessionEntry = state.sessionMetadata?.get(serverName);
   const prompts = connection.promptDiscoveryFailed
-    ? existingEntry?.configHash === configHash ? existingEntry.prompts : undefined
+    ? sessionEntry?.configHash === configHash
+      ? sessionEntry.prompts
+      : existingEntry?.configHash === configHash && isServerCacheValid(existingEntry, definition)
+        ? existingEntry.prompts
+        : undefined
     : serializePrompts(connection.prompts ?? []);
 
   if (definition.exposeResources !== false && connection.resourceDiscoveryFailed === true) {
-    const sessionEntry = state.sessionMetadata?.get(serverName);
     if (sessionEntry?.configHash === configHash) {
       resources = sessionEntry.resources ?? [];
     } else if (existingEntry?.resources?.length && isServerCacheValid(existingEntry, definition)) {

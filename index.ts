@@ -617,7 +617,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const definition = config.mcpServers[serverName];
       if (!definition || isServerDisabled(definition)) continue;
       if (entry.configHash !== computeServerHash(definition)) continue;
-      const { ttlMs: _diskTtl, ...sessionEntry } = entry;
+      const { ttlMs: _sessionTtl, cacheScope: _sessionScope, ...sessionEntry } = entry;
       servers[serverName] = { ...sessionEntry, cachedAt: Date.now() };
     }
     return { version: 1, servers };

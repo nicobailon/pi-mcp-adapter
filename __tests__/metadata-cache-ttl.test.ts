@@ -59,6 +59,14 @@ describe("metadata cache ttl hints", () => {
     expect(isServerCacheValid(entry(server, 6 * DAY_MS, 14 * DAY_MS), server)).toBe(true);
   });
 
+  it("does not reuse private entries from the persistent cache", () => {
+    const server = definition();
+    const fresh = entry(server, 0, 5_000);
+
+    expect(isServerCacheValid({ ...fresh, cacheScope: "private" }, server)).toBe(false);
+    expect(isServerCacheValid({ ...fresh, cacheScope: "public" }, server)).toBe(true);
+  });
+
   it("keeps list hints at the result and cache-entry levels, not on tools", async () => {
     const manager = new McpServerManager();
     const result = await (manager as any).fetchAllTools({

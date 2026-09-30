@@ -137,6 +137,9 @@ export function isServerCacheValid(entry, definition, maxAgeMs = CACHE_MAX_AGE_M
         return false;
     if (!entry.cachedAt || typeof entry.cachedAt !== "number")
         return false;
+    // The persistent cache is not partitioned by authorization context.
+    if (entry.cacheScope === "private")
+        return false;
     const declaredTtlMs = entry.ttlMs;
     if (typeof declaredTtlMs === "number" && Number.isSafeInteger(declaredTtlMs) && declaredTtlMs >= 0) {
         if (declaredTtlMs === 0)
