@@ -229,7 +229,7 @@ function createState() {
   } as any;
 }
 
-function createPi(options: { unregisterTool?: false | ((name: string) => boolean); commands?: Array<Record<string, unknown>> } = {}) {
+function createPi(options: { unregisterTool?: false | ((name: string) => boolean) } = {}) {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let activeTools = ["bash", "mcp", "demo_search"];
   const unregisterTool =
@@ -248,7 +248,6 @@ function createPi(options: { unregisterTool?: false | ((name: string) => boolean
       }),
       events: { on: vi.fn(), emit: vi.fn() },
       getAllTools: vi.fn(() => []),
-      getCommands: vi.fn(() => options.commands ?? []),
       getActiveTools: vi.fn(() => activeTools),
       setActiveTools: vi.fn((nextActiveTools: string[]) => {
         activeTools = nextActiveTools;
@@ -437,14 +436,14 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
-  it("always registers mcp-adapter and adds the mcp alias at session start without built-in MCP", async () => {
+  it("registers /mcp and /mcp-adapter during load", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
     const { api, handlers } = await loadAdapter();
 
     let commandNames = api.registerCommand.mock.calls.map((call: any[]) => call[0]);
     expect(commandNames.filter((name: string) => name === "mcp-adapter")).toHaveLength(1);
-    expect(commandNames.filter((name: string) => name === "mcp")).toHaveLength(0);
+    expect(commandNames.filter((name: string) => name === "mcp")).toHaveLength(1);
     expect(commandNames.filter((name: string) => name === "mcp-auth")).toHaveLength(1);
 
     await handlers.get("session_start")?.({}, { hasUI: false, cwd: "/project" });
@@ -2693,7 +2692,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.getLegacyMcpMigrationNotices.mockReturnValue([notice]);
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { api, handlers } = await loadAdapter({ commands: [{ name: "mcp", sourceInfo: { path: "/adapter.ts" } }] });
+    const { api, handlers } = await loadAdapter();
     const ui = { notify: vi.fn() };
 
     await handlers.get("session_start")?.({}, { hasUI: true, ui, cwd: "/project" });
@@ -2704,23 +2703,6 @@ describe("mcpAdapter session lifecycle", () => {
 
     await registeredTool(api, "mcp").execute("status", {});
     expect(mocks.executeStatus).toHaveBeenCalledWith(expect.objectContaining({ migrationNotices: [notice] }));
-  });
-
-  it("limits legacy config checks to adapter-only keys when Pi's built-in MCP command is detected", async () => {
-    mocks.getLegacyMcpMigrationNotices.mockReturnValue([]);
-    const state = createState();
-    mocks.initializeMcp.mockResolvedValue(state);
-    const { api, handlers } = await loadAdapter({ commands: [
-      { name: "mcp", sourceInfo: { path: "/adapter.ts" } },
-      { name: "mcp:1", sourceInfo: { path: "builtin:mcp" } },
-    ] });
-    const ui = { notify: vi.fn() };
-
-    await handlers.get("session_start")?.({}, { hasUI: true, ui, cwd: "/project" });
-    expect(mocks.getLegacyMcpMigrationNotices).toHaveBeenCalledWith("/project", undefined, true);
-    const registeredNames = api.registerCommand.mock.calls.map(([name]: any[]) => name);
-    expect(registeredNames).toContain("mcp-adapter");
-    expect(registeredNames).not.toContain("mcp");
   });
 
   it("uses status notifications instead of ambient panels in memory-config mode", async () => {

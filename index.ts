@@ -58,12 +58,6 @@ const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_FAILURE_MESSAGE_MAX_CHARS = 1_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
 
-function hasBuiltInMcpCommand(pi: ExtensionAPI): boolean {
-  if (typeof pi.getCommands !== "function") return false;
-  return pi.getCommands().some((command) => /^mcp(?::\d+)?$/.test(command.name)
-    && command.sourceInfo.path === "builtin:mcp");
-}
-
 /** Pi 0.99+ has its own MCP config; on Pi 0.84–0.87, `mcp.json` is an old adapter config. */
 function piSupportsMcp(pi: ExtensionAPI): boolean {
   return typeof pi.registerMcpServer === "function";
@@ -388,7 +382,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let directToolsFrozen = false;
   let largeDirectToolsAdvisoryDelivered = false;
   let sessionMigrationNotices: string[] = [];
-  let mcpAliasRegistered = false;
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
@@ -1221,14 +1214,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   pi.on("session_start", async (_event, ctx) => {
     sessionCtx = null;
-    const builtInMcpDetected = hasBuiltInMcpCommand(pi);
-    if (!builtInMcpDetected && !mcpAliasRegistered) {
-      registerMcpCommand("mcp");
-      mcpAliasRegistered = true;
-    }
     sessionMigrationNotices = programmaticConfig
       ? []
-      : getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath, builtInMcpDetected);
+      : getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath);
     if (ctx.hasUI) {
       for (const notice of sessionMigrationNotices) ctx.ui.notify(notice, "warning");
     }
@@ -1627,6 +1615,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     },
   });
   registerMcpCommand("mcp-adapter");
+  // Registering /mcp during load makes Pi 0.99+ leave out its replaceable built-in MCP extension.
+  registerMcpCommand("mcp");
 
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",

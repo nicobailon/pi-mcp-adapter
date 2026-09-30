@@ -4,7 +4,7 @@ Where the adapter reads MCP servers from, which file wins, how project servers a
 
 ## Setup panel
 
-**Interactive configuration:** Run `/mcp-adapter` to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. `/mcp` is also available as an alias when Pi's built-in MCP extension is not installed. You can reconnect servers, toggle tools between direct and proxy, and enable or disable servers (`ctrl+d`) from the same overlay. For OAuth, press Enter on a server that needs auth or `ctrl+a` on any OAuth server, or `ctrl+p` to [import sign-ins from Pi's built-in MCP](auth.md#import-a-sign-in-from-pis-built-in-mcp) when there are any. The Save action defaults to `ctrl+s` and can be remapped with the `mcp.panel.save` keybinding.
+**Interactive configuration:** Run `/mcp-adapter` (or `/mcp`) to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. You can reconnect servers, toggle tools between direct and proxy, and enable or disable servers (`ctrl+d`) from the same overlay. For OAuth, press Enter on a server that needs auth or `ctrl+a` on any OAuth server, or `ctrl+p` to [import sign-ins from Pi's built-in MCP](auth.md#import-a-sign-in-from-pis-built-in-mcp) when there are any. The Save action defaults to `ctrl+s` and can be remapped with the `mcp.panel.save` keybinding.
 
 **Guided first-run setup:** Run `/mcp-adapter setup` to choose the normal write target for new shared servers — project `.mcp.json` or global `~/.config/mcp/mcp.json` — inspect detected shared MCP files, adopt compatibility imports from other hosts, open discovered config paths, preview exact before/after file diffs for writes, scaffold a minimal selected config, add a curated known server (DeepWiki, Context7, Notion, GitHub, Chrome DevTools, or Figma (desktop) when the Figma app is installed), or quick-add RepoPrompt into a standard/shared MCP file.
 
@@ -58,6 +58,14 @@ A server in `.pi/mcp.json` replaces the same-named server from `<Pi agent dir>/m
 
 On Pi 0.84 to 0.87, the adapter does not read either file. If you used one with this adapter, rename it to `mcp-adapter.json` (merge the files if the target exists).
 
+### Pi's built-in MCP
+
+On Pi 0.99 and later, the adapter replaces Pi's built-in MCP extension in sessions. Both register `/mcp`, and Pi leaves the built-in out when another extension does, so `/mcp` opens the adapter and only the adapter connects the servers in Pi's `mcp.json` files.
+
+Pi reports this as a warning that the built-in `mcp` extension was not loaded, at every startup and `/reload` (on stderr outside interactive mode). To stop it, turn the built-in off under Built-in extensions in `pi config`, or add `"-builtin:mcp"` to `extensions` in Pi's `settings.json`.
+
+Pi's shell commands `pi mcp add`, `list`, `login`, and `logout` still use Pi's own files. Servers added with `pi mcp add` are read as described above. Sign-ins made with `pi mcp login` stay in Pi's `mcp-auth.json`: the adapter can [import them](auth.md#import-a-sign-in-from-pis-built-in-mcp), but later sign-ins and sign-outs on either side are not shared.
+
 Host-specific configs are detected and shown by `/mcp-adapter setup` and `pi-mcp-adapter init`, but they are compatibility inputs rather than normal setup paths and are not loaded automatically. The normal `/mcp-adapter` panel does not scan host-specific files when `settings.hostConfigDiscovery` is `"off"`. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `pi-mcp-adapter init --discover-host-configs`. The default is `"off"`; `"prompt"` is available for integrations that want detection without activation. Host configs are lower precedence than every normal config source, and `/mcp-adapter setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
 
 ## Precedence
@@ -82,7 +90,7 @@ Within the selected root, `.mcp.json` and `<configDir>/mcp-adapter.json` load fr
 
 ## Project Config
 
-Prefer `.mcp.json` for project-local shared MCP config and `~/.config/mcp/mcp.json` for user-global shared MCP config. Use `.pi/mcp-adapter.json` for adapter-specific project overrides. Pi `mcp.json` files are not adapter inputs; project files override user-global sources.
+Prefer `.mcp.json` for project-local shared MCP config and `~/.config/mcp/mcp.json` for user-global shared MCP config. Use `.pi/mcp-adapter.json` for adapter-specific project overrides. Project files override user-global sources.
 
 ## Import Existing Configs
 
