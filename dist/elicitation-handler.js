@@ -30,11 +30,16 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
  * cannot be paused, so it is pushed out of the way and the deadline aborts the
  * request with the same timeout error the SDK would raise. A client without an
  * elicitation handler cannot prompt, so it keeps the SDK's timer.
+ *
+ * Every call requests progress, and each progress notification restarts the
+ * timeout, as in Pi's built-in MCP. The SDK only sends a progress token when
+ * `onprogress` is set, so a caller without one gets a no-op handler.
  */
 export async function callToolPausingForElicitation(client, params, options) {
+    const onprogress = options?.onprogress ?? (() => { });
     const state = promptPauses.get(client);
     if (!state)
-        return client.callTool(params, options);
+        return client.callTool(params, { ...options, onprogress, resetTimeoutOnProgress: true });
     const timeout = Math.min(options?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC, MAX_TIMER_MS);
     const expired = new AbortController();
     let remaining = timeout;
@@ -61,6 +66,14 @@ export async function callToolPausingForElicitation(client, params, options) {
             ...options,
             timeout: MAX_TIMER_MS,
             signal: combineAbortSignals(options?.signal, expired.signal) ?? expired.signal,
+            onprogress: progress => {
+                const running = timer !== undefined;
+                deadline.pause();
+                remaining = timeout;
+                if (running)
+                    deadline.resume();
+                onprogress(progress);
+            },
         });
     }
     finally {

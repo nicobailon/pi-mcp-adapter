@@ -17,6 +17,10 @@ export declare function registerElicitationHandler(client: Client, options: Elic
  * cannot be paused, so it is pushed out of the way and the deadline aborts the
  * request with the same timeout error the SDK would raise. A client without an
  * elicitation handler cannot prompt, so it keeps the SDK's timer.
+ *
+ * Every call requests progress, and each progress notification restarts the
+ * timeout, as in Pi's built-in MCP. The SDK only sends a progress token when
+ * `onprogress` is set, so a caller without one gets a no-op handler.
  */
 export declare function callToolPausingForElicitation(client: Client, params: Parameters<Client["callTool"]>[0], options?: RequestOptions): ReturnType<Client["callTool"]>;
 export declare function handleElicitationRequest(options: ElicitationHandlerOptions, request: ElicitRequest, signal?: AbortSignal): Promise<ElicitResult>;
