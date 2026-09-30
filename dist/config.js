@@ -65,6 +65,20 @@ export const KNOWN_SERVER_PRESETS = [
         summary: "Inspect and automate a local Chrome browser.",
         entry: { command: "npx", args: ["-y", "chrome-devtools-mcp@1.6.0"] },
     },
+    {
+        id: "figma",
+        name: "Figma (desktop)",
+        summary: "Read designs through the Figma desktop app. Needs a Dev or Full seat on a paid Figma plan.",
+        entry: { url: "http://127.0.0.1:3845/mcp", protocolVersion: "auto" },
+        desktopApp: {
+            paths: [
+                "/Applications/Figma.app",
+                join(homedir(), "Applications", "Figma.app"),
+                join(homedir(), "AppData", "Local", "Figma", "Figma.exe"),
+            ],
+            enableSteps: "To enable it, open a Design file in Figma, switch to Dev Mode (Shift+D), and click 'Enable desktop MCP server' in the inspect panel.",
+        },
+    },
 ];
 const IMPORT_PATHS = {
     cursor: [join(homedir(), ".cursor", "mcp.json")],
@@ -247,6 +261,7 @@ export function getMcpDiscoverySummary(overridePath, cwd = process.cwd(), option
         ...summaryWithoutRepoPrompt,
         fingerprint,
         repoPrompt: detectRepoPrompt(summaryWithoutRepoPrompt, cwd),
+        knownServerPresets: KNOWN_SERVER_PRESETS.filter(({ desktopApp }) => !desktopApp || desktopApp.paths.some((path) => existsSync(path))),
     };
 }
 export function cloneMcpConfig(config) {

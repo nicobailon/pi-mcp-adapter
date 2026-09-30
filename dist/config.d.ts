@@ -5,6 +5,11 @@ export interface KnownServerPreset {
     name: string;
     summary: string;
     entry: ServerEntry;
+    /** Offered only when one of these app paths exists; the local server is probed after adding. */
+    desktopApp?: {
+        paths: readonly string[];
+        enableSteps: string;
+    };
 }
 export declare const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[];
 interface ConfigSourceSpec {
@@ -71,6 +76,7 @@ export interface McpDiscoverySummary {
     totalServerCount: number;
     fingerprint: string;
     repoPrompt: RepoPromptDiscovery;
+    knownServerPresets: readonly KnownServerPreset[];
 }
 export interface McpStandardConfigSummary {
     sources: ConfigDiscoverySource[];
