@@ -900,7 +900,7 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
 {
   "mcpServers": {
     "figma": {
-      "url": "http://localhost:3845/mcp",
+      "url": "http://127.0.0.1:3845/mcp",
       "directTools": true,
       "excludeTools": ["read_figjam", "figma_get_code_connect_map"]
     }
@@ -909,6 +909,8 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
 ```
 
 `includeTools` and `excludeTools` filter direct tools, proxy search/list/describe, and the `/mcp-adapter` panel view.
+
+**Figma:** Figma's remote server, `https://mcp.figma.com/mcp`, only accepts approved clients, and Pi isn't approved yet. Use the Figma desktop app's local server instead: run `/mcp-adapter setup` and add Figma (desktop). It needs a Dev or Full seat on a paid Figma plan; to turn it on, open a Design file, switch to Dev Mode (Shift+D), and click "Enable desktop MCP server" in the inspect panel.
 
 Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`. If 75+ direct tools resolve, the adapter prints an advisory but still registers the tools you configured. Set `settings.warnOnLargeDirectTools` to `false` to suppress this advisory.
 

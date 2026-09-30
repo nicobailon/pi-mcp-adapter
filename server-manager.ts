@@ -110,17 +110,22 @@ function isLiteralLocalAddress(url: string): boolean {
   return local.check(hostname, family === 6 ? "ipv6" : "ipv4");
 }
 
-function localNetworkFailureCodes(error: unknown, seen = new Set<object>()): string[] {
+function isLoopbackUrl(url: string): boolean {
+  return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname);
+}
+
+const LOCAL_NETWORK_FAILURE_CODES = ["EHOSTUNREACH", "ENETUNREACH", "EACCES"];
+
+function networkFailureCodes(error: unknown, wanted: readonly string[], seen = new Set<object>()): string[] {
   if (typeof error !== "object" || error === null || seen.has(error)) return [];
   seen.add(error);
   const codes: string[] = [];
-  if ("code" in error && typeof error.code === "string"
-    && ["EHOSTUNREACH", "ENETUNREACH", "EACCES"].includes(error.code)) {
+  if ("code" in error && typeof error.code === "string" && wanted.includes(error.code)) {
     codes.push(error.code);
   }
-  if ("cause" in error) codes.push(...localNetworkFailureCodes(error.cause, seen));
+  if ("cause" in error) codes.push(...networkFailureCodes(error.cause, wanted, seen));
   if (error instanceof AggregateError) {
-    for (const nested of error.errors) codes.push(...localNetworkFailureCodes(nested, seen));
+    for (const nested of error.errors) codes.push(...networkFailureCodes(nested, wanted, seen));
   }
   return [...new Set(codes)];
 }
@@ -1288,8 +1293,12 @@ export class McpServerManager {
 
   private async enrichHttpConnectionError(definition: ServerDefinition, error: unknown): Promise<Error> {
     const originalMessage = error instanceof Error ? error.message : String(error);
+    if (networkFailureCodes(error, ["ECONNREFUSED"]).length > 0 && isLoopbackUrl(resolveServerUrl(definition)!)) {
+      const url = new URL(resolveServerUrl(definition)!);
+      return new Error(`${originalMessage} — Nothing is listening at ${url.origin}${url.pathname}. Start the app or local process that serves this MCP server.`, { cause: error });
+    }
     if (process.platform === "darwin") {
-      const codes = localNetworkFailureCodes(error);
+      const codes = networkFailureCodes(error, LOCAL_NETWORK_FAILURE_CODES);
       if (codes.length > 0 && isLiteralLocalAddress(resolveServerUrl(definition)!)) {
         return new Error(`${originalMessage} — ${codes.join(", ")} — macOS Local Network Privacy may be blocking access. Check System Settings > Privacy & Security > Local Network for the app hosting Pi; enable access if listed and restart it. Try launching Pi from Terminal.app or SSH. Routing or firewall problems can also cause this error.`, { cause: error });
       }
@@ -1628,13 +1637,17 @@ export class McpServerManager {
     > => {
       const authProvider = "provider" in authState ? authState.provider : undefined;
       let sseFetchFailure: unknown;
-      const transportFetch: FetchLike | undefined = kind === "sse" && process.platform === "darwin" && isLiteralLocalAddress(serverUrl)
+      const sseFailureCodes = kind !== "sse" ? []
+        : isLoopbackUrl(serverUrl) ? ["ECONNREFUSED"]
+        : process.platform === "darwin" && isLiteralLocalAddress(serverUrl) ? LOCAL_NETWORK_FAILURE_CODES
+        : [];
+      const transportFetch: FetchLike | undefined = sseFailureCodes.length > 0
         ? async (input, init) => {
           try {
             return await (requestFetch ?? globalThis.fetch)(input, init);
           } catch (error) {
             // EventSource discards the fetch cause before the SDK creates SseError.
-            if (localNetworkFailureCodes(error).length > 0) sseFetchFailure = error;
+            if (networkFailureCodes(error, sseFailureCodes).length > 0) sseFetchFailure = error;
             throw error;
           }
         }

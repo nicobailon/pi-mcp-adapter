@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `settings.scriptSkill: "model"` adds the `mcp-scripting` skill's path to the `mcpScript` description so the model reads it before writing a script. The default, `"manual"`, keeps the skill to `/skill:mcp-scripting`.
 - With `mcpScript` on, observed output shapes are saved in `mcp-cache.json`, so a later session can script a tool without calling it first to see its fields. A saved shape holds field names and types only, and is used only while the tool's description and input schema stay the same; it is dropped when they or the server's config change.
 - When an `mcpScript` run throws, times out, or returns `[]`, `{}`, `null`, `""`, or nothing, the result ends with the output shapes seen from the tools it called, so a wrong field guess can be fixed without a separate call to look at the data.
+- `/mcp-adapter setup` offers Figma (desktop) when the Figma app is installed. It adds the app's local server at `http://127.0.0.1:3845/mcp` and, if nothing answers there yet, says how to turn it on in Figma. Figma's remote server only accepts approved clients, and Pi isn't one yet.
 
 ### Changed
 
@@ -27,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `mcpScript` on, MCP tool results of 8 KiB or more end with a one-line hint to use it when passing them to another call, so models stop retyping large results by hand.
 - Observed output shapes write a wide object that appears more than once as a named type, so a GitHub-style issue list shape is about 40% shorter with every field still listed.
 - The `mcp-scripting` skill now says to write the real script first, check the first item's fields before a loop that writes, and fix the script from the fields listed when it fails or finds nothing.
+- When a server rejects Pi's OAuth client registration, the error now says what to do: for Figma's remote server, use the desktop app's server through `/mcp-adapter setup`; for other servers, set `oauth.clientId` if the provider gave you one. Before, it only said `Dynamic Client Registration rejected (HTTP 403): Forbidden`.
+- When nothing is listening at a `localhost`, `127.0.0.1`, or `[::1]` server URL, the error now says `Nothing is listening at <url>. Start the app or local process that serves this MCP server.` after the original connection error.
 
 ### Fixed
 

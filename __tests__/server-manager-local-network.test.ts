@@ -1,3 +1,4 @@
+import { createServer, type AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SseError } from "@modelcontextprotocol/client";
 import { McpServerManager } from "../server-manager.ts";
@@ -107,4 +108,18 @@ describe("macOS LAN connection diagnostics", () => {
     expect(error.message).not.toContain("Local Network Privacy");
     expect(error.message).toContain("fetch failed");
   });
+});
+
+it.each(["streamable-http", "sse"] as const)("says nothing is listening when a loopback %s server refuses the connection", async (httpTransport) => {
+  const server = createServer();
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  await new Promise(resolve => server.close(resolve));
+  const manager = new McpServerManager();
+  try {
+    await expect(manager.connect("local", { url: `http://127.0.0.1:${port}/mcp`, oauth: false, httpTransport }))
+      .rejects.toThrow(/fetch failed.* — Nothing is listening at http:\/\/127\.0\.0\.1:\d+\/mcp\. Start the app or local process that serves this MCP server\.$/);
+  } finally {
+    await manager.closeAll();
+  }
 });
