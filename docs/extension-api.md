@@ -72,7 +72,7 @@ export default function plugin(pi) {
 }
 ```
 
-The config uses the format of Pi's `mcp.json` and is translated the same way as that file (see [configuration](configuration.md#file-layout)); a server the adapter can't run, such as an SSE server, is not connected and is reported. Registrations made while extensions load connect with the session; registering or unregistering later applies right away. Registering a name again replaces the server, and `pi.unregisterMcpServer(name)` disconnects it.
+The config uses the format of Pi's `mcp.json` and is translated the same way as that file (see [configuration](configuration.md#file-layout)); a server the adapter can't run, such as an SSE server, is not connected and is reported. Registrations made while extensions load connect with the session; registering or unregistering later applies right away. Registering a name again with a different config replaces the server (the same config keeps the existing connection, as in Pi's built-in MCP), and `pi.unregisterMcpServer(name)` disconnects it.
 
 These servers are proxy-tool-only, like the adapter's own runtime registrations below. Of Pi's exposure settings only `"exposure": "hidden"` and `"enabled": false` apply, both as `disabled: true`; `direct` and `deferred` exposure are ignored and reported. A config entry with the same name wins, and so does an earlier registration through the adapter's event below; the other registration is reported as overridden.
 
