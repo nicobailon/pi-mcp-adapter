@@ -1,9 +1,10 @@
 import http from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { loadMcpConfig } from "../config.ts";
 import { getFailureMessage, initializeMcp } from "../init.ts";
 import { executeCall, executeConnect } from "../proxy-modes.ts";
 import { McpServerManager } from "../server-manager.ts";
@@ -151,6 +152,28 @@ describe("auth.provider servers", () => {
     expect(state.manager.getConnection("api")).toBeUndefined();
     expect(getFailureMessage(state, "api")).toContain("auth.provider isn't available here");
     expect(seen.some(request => request.method === "POST")).toBe(false);
+  });
+
+  it("loads an env-interpolated URL and checks the resolved URL when connecting", async () => {
+    const { url, seen } = await listen(mcpHandler);
+    vi.stubEnv("PORT", new URL(url).port);
+    vi.stubEnv("PI_MCP_CONFIG_MODE", "merge");
+    const agentDir = join(root, "home", ".pi", "agent");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, "mcp-adapter.json"), JSON.stringify({
+      mcpServers: {
+        local: { url: "http://127.0.0.1:${PORT}/mcp", auth: { provider: "github" } },
+        remote: { url: "http://example.com:${PORT}/mcp", auth: { provider: "github" } },
+      },
+    }));
+    const { mcpServers } = loadMcpConfig(undefined, root);
+    const manager = new McpServerManager();
+    manager.setProviderToken(async () => "token");
+
+    expect((await manager.connect("local", mcpServers.local!)).status).toBe("connected");
+    expect(seen.every(request => request.authorization === "Bearer token")).toBe(true);
+    await expect(manager.connect("remote", mcpServers.remote!)).rejects.toThrow("auth.provider requires an https URL");
+    await manager.closeAll();
   });
 
   it("refuses redirects and never sends the token to the redirect target", async () => {

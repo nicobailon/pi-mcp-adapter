@@ -11,7 +11,7 @@ import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.ts";
 import { validateJevSettings } from "./jev-client.ts";
 import { formatServerNamespace, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type OAuthConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
-import { parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.ts";
+import { getMissingEnvVars, parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.ts";
 
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [
@@ -1349,6 +1349,8 @@ function toServerEntries(servers: unknown): Record<string, ServerEntry> {
       const provider = isRecord(auth) ? auth.provider : undefined;
       const error = typeof provider !== "string" || !provider ? "auth.provider must be a provider name"
         : typeof entry.url !== "string" ? "auth.provider requires a url"
+        // A URL with env references is checked once resolved, when it connects.
+        : getMissingEnvVars(entry.url, {}).length > 0 ? undefined
         : providerAuthUrlError(entry.url);
       if (error) {
         console.warn(`Ignoring MCP server "${name}": ${error}`);
