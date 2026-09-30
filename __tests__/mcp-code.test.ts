@@ -251,10 +251,10 @@ describe("runMcpScript", () => {
     }
   });
 
-  it("searches the script-visible tool catalog with pagination and server filtering", async () => {
+  it("searches the script-visible tool catalog with pagination, server filtering, listing, and regex", async () => {
     const result = await runMcpScript(
       state,
-      'return { first: await tools.search({ query: "fixture", limit: 1 }), second: await tools.search({ query: "fixture", limit: 1, offset: 1, server: "fixture" }), empty: await tools.search({ query: "" }) };',
+      'const paths = (page) => page.items.map((item) => item.path); return { first: await tools.search({ query: "fixture", limit: 1 }), second: await tools.search({ query: "fixture", limit: 1, offset: 1, server: "fixture" }), empty: await tools.search({ query: "" }), listed: paths(await tools.search({ query: "", server: "fixture" })), regex: paths(await tools.search({ query: "^fixture_.a", regex: true })), invalidRegex: (await tools.search({ query: "[", regex: true })).error.code };',
     );
 
     expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
@@ -270,7 +270,34 @@ describe("runMcpScript", () => {
         hasMore: true,
         nextOffset: 2,
       },
-      empty: { items: [], total: 0, hasMore: false, nextOffset: null },
+      empty: { items: [], total: 0, hasMore: false, nextOffset: null, error: { code: "empty_query", message: "Search query cannot be empty" } },
+      listed: ["fixture_echo", "fixture_fail", "fixture_hang"],
+      regex: ["fixture_fail", "fixture_hang"],
+      invalidRegex: "invalid_pattern",
+    });
+  });
+
+  it("describes and calls a tool name shared by two servers using the server search returned", async () => {
+    const sharedState = {
+      ...state,
+      config: { settings: { toolPrefix: "none" }, mcpServers: { fixture: definition, other: definition } },
+      toolMetadata: new Map([
+        ["fixture", [{ name: "echo", originalName: "echo", description: "Echo a value" }]],
+        ["other", [{ name: "echo", originalName: "echo", description: "Other echo" }]],
+      ]),
+    } as unknown as McpExtensionState;
+
+    const result = await runMcpScript(
+      sharedState,
+      'const hits = (await tools.search({ query: "echo" })).items; const hit = hits.find((item) => item.server === "fixture"); return { servers: hits.map((item) => item.server).sort(), unscoped: (await tools.call("echo", { value: "unscoped" })).error, unknownServer: (await tools.describe({ path: "echo", server: "missing" })).error.message, described: (await tools.describe({ path: hit.path, server: hit.server })).description, called: (await tools.call(hit.path, { value: "scoped" }, { server: hit.server })).data.structuredContent };',
+    );
+
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
+      servers: ["fixture", "other"],
+      unscoped: { code: "ambiguous_tool", message: expect.stringContaining("tools.call(path, args, { server })") },
+      unknownServer: 'Server "missing" not found. Use the server from a tools.search hit.',
+      described: "Echo a value",
+      called: { echoed: "scoped" },
     });
   });
 
@@ -378,8 +405,8 @@ describe("runMcpScript", () => {
       describe: {
         path: "fixture_echo",
         error: {
-          code: "tool_not_found",
-          message: "Tool not found: fixture_echo",
+          code: "server_backoff",
+          message: expect.stringContaining('Server "fixture" not available'),
           suggestions: [],
         },
       },

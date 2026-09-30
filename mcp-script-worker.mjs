@@ -129,11 +129,15 @@ const PRELUDE_SOURCE = `(function (bridge) {
     get(_target, property) {
       if (property === "search") return (input) => request("search", { input });
       if (property === "describe") return (input) => request("describe", { input });
-      if (property === "call") return (path, args) => {
+      if (property === "call") return (path, args, options) => {
         if (typeof path !== "string" || path.trim() === "") {
           return Promise.resolve({ ok: false, error: { code: "invalid_tool_path", message: "tools.call(path, args) requires a non-empty tool path." } });
         }
-        return request("call", { path, args });
+        const server = options?.server;
+        if (server !== undefined && (typeof server !== "string" || server.trim() === "")) {
+          return Promise.resolve({ ok: false, error: { code: "invalid_tool_server", message: "tools.call(path, args, { server }) requires a non-empty server name." } });
+        }
+        return request("call", server === undefined ? { path, args } : { path, args, server });
       };
       if (typeof property !== "string" || reserved.has(property)) return undefined;
       return (args) => request("call", { path: property, args });
