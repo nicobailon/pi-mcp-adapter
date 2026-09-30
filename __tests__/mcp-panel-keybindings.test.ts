@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createMcpPanel } from "../mcp-panel.ts";
 import { createMcpSetupPanel, type SetupPanelCallbacks } from "../mcp-setup-panel.ts";
 import { createPanelKeys } from "../panel-keys.ts";
-import type { McpDiscoverySummary } from "../config.ts";
+import { KNOWN_SERVER_PRESETS, type McpDiscoverySummary } from "../config.ts";
 import type { McpConfig, McpPanelCallbacks } from "../types.ts";
 
 const CTRL_P = "\x10";
@@ -72,6 +72,7 @@ function createEmptyDiscovery(): McpDiscoverySummary {
     conflicts: [],
     fingerprint: "test",
     repoPrompt: { configured: false },
+    knownServerPresets: KNOWN_SERVER_PRESETS,
   };
 }
 
@@ -294,6 +295,29 @@ describe("mcp-setup-panel custom keybindings", () => {
 
     expect(callbacks.addKnownServer).toHaveBeenCalledWith(expect.objectContaining({ id: "deepwiki" }), "global");
     panel.dispose();
+  });
+
+  it("tells the user whether an added desktop app server is reachable", async () => {
+    const figma = KNOWN_SERVER_PRESETS.find(({ id }) => id === "figma")!;
+    for (const [reachable, message] of [
+      [true, "Figma (desktop) is ready."],
+      [false, "Figma (desktop) isn't reachable yet. To enable it, open a Design file in Figma, switch to Dev Mode (Shift+D), and click 'Enable desktop MCP server' in the inspect panel."],
+    ] as const) {
+      const callbacks = createSetupCallbacks();
+      callbacks.addKnownServer = async (preset) => ({ path: "/tmp/x", serverName: preset.name, reachable });
+      const panel = createMcpSetupPanel(
+        { ...createEmptyDiscovery(), knownServerPresets: [figma] },
+        callbacks,
+        { mode: "setup", onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false } },
+        { requestRender: () => {} },
+        () => {},
+      );
+
+      for (let i = 0; i < 5; i += 1) panel.handleInput(DOWN);
+      panel.handleInput(ENTER);
+      await vi.waitFor(() => expect(stripAnsi(panel.render(400).join("\n"))).toContain(`Added Figma (desktop) to /tmp/x. ${message}`));
+      panel.dispose();
+    }
   });
 
   it("keeps setup previews usable at mobile width", () => {

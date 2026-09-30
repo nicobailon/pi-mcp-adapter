@@ -31,6 +31,8 @@ export interface KnownServerPreset {
   name: string;
   summary: string;
   entry: ServerEntry;
+  /** Offered only when one of these app paths exists; the local server is probed after adding. */
+  desktopApp?: { paths: readonly string[]; enableSteps: string };
 }
 
 export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
@@ -73,6 +75,20 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
     name: "Chrome DevTools",
     summary: "Inspect and automate a local Chrome browser.",
     entry: { command: "npx", args: ["-y", "chrome-devtools-mcp@1.6.0"] },
+  },
+  {
+    id: "figma",
+    name: "Figma (desktop)",
+    summary: "Read designs through the Figma desktop app. Needs a Dev or Full seat on a paid Figma plan.",
+    entry: { url: "http://127.0.0.1:3845/mcp", protocolVersion: "auto" },
+    desktopApp: {
+      paths: [
+        "/Applications/Figma.app",
+        join(homedir(), "Applications", "Figma.app"),
+        join(homedir(), "AppData", "Local", "Figma", "Figma.exe"),
+      ],
+      enableSteps: "To enable it, open a Design file in Figma, switch to Dev Mode (Shift+D), and click 'Enable desktop MCP server' in the inspect panel.",
+    },
   },
 ];
 
@@ -162,6 +178,7 @@ export interface McpDiscoverySummary {
   totalServerCount: number;
   fingerprint: string;
   repoPrompt: RepoPromptDiscovery;
+  knownServerPresets: readonly KnownServerPreset[];
 }
 
 export interface McpStandardConfigSummary {
@@ -360,6 +377,7 @@ export function getMcpDiscoverySummary(
     ...summaryWithoutRepoPrompt,
     fingerprint,
     repoPrompt: detectRepoPrompt(summaryWithoutRepoPrompt, cwd),
+    knownServerPresets: KNOWN_SERVER_PRESETS.filter(({ desktopApp }) => !desktopApp || desktopApp.paths.some((path) => existsSync(path))),
   };
 }
 
@@ -1531,7 +1549,7 @@ function buildRepoPromptEntry(executablePath: string): ServerEntry {
   };
 }
 
-function detectRepoPrompt(summary: Omit<McpDiscoverySummary, "fingerprint" | "repoPrompt">, cwd = process.cwd()): RepoPromptDiscovery {
+function detectRepoPrompt(summary: Omit<McpDiscoverySummary, "fingerprint" | "repoPrompt" | "knownServerPresets">, cwd = process.cwd()): RepoPromptDiscovery {
   for (const source of summary.sources) {
     if (source.kind !== "shared" || source.serverCount === 0) continue;
     const config = readValidatedConfig(source.path, `MCP config from ${source.path}`);

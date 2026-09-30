@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createConnection } from "node:net";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { OverlayHandle } from "@earendil-works/pi-tui";
 import type { McpExtensionState } from "./state.ts";
@@ -587,6 +588,21 @@ function buildSharedConfigNoticeLines(configOverridePath: string | undefined, cw
   };
 }
 
+// Any accepted TCP connection counts as reachable; failures resolve false so the add still succeeds.
+function isLocalServerReachable(url: string, timeoutMs = 1_500): Promise<boolean> {
+  const { hostname, port } = new URL(url);
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: hostname, port: Number(port) });
+    const finish = (reachable: boolean) => {
+      socket.destroy();
+      resolve(reachable);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
 export async function openMcpSetup(
   state: McpExtensionState,
   pi: ExtensionAPI,
@@ -641,7 +657,8 @@ export async function openMcpSetup(
     addKnownServer: async (preset: KnownServerPreset, target: SharedConfigTarget) => {
       const path = writeSharedServerEntry(getSharedConfigPath(target, ctx.cwd), preset.id, preset.entry);
       configChanged = true;
-      return { path, serverName: preset.name };
+      if (!preset.desktopApp) return { path, serverName: preset.name };
+      return { path, serverName: preset.name, reachable: await isLocalServerReachable(preset.entry.url!) };
     },
     openPath: async (targetPath: string) => {
       await openPath(pi, targetPath);

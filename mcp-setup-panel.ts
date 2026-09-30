@@ -4,7 +4,7 @@ import { createMcpPanelTheme, McpPanelFrame, type McpPanelTheme } from "./mcp-pa
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import type { ImportKind } from "./types.ts";
 import { getConfigDirName } from "./agent-dir.ts";
-import { KNOWN_SERVER_PRESETS, type ConfigWritePreview, type KnownServerPreset, type McpDiscoverySummary, type SharedConfigTarget } from "./config.ts";
+import type { ConfigWritePreview, KnownServerPreset, McpDiscoverySummary, SharedConfigTarget } from "./config.ts";
 import type { McpOnboardingState } from "./onboarding-state.ts";
 
 const MIN_PANEL_WIDTH = 24;
@@ -38,7 +38,7 @@ export interface SetupPanelCallbacks {
   adoptImports: (imports: ImportKind[]) => Promise<{ added: ImportKind[]; path: string }>;
   scaffoldConfig: (target: SharedConfigTarget) => Promise<{ path: string }>;
   addRepoPrompt: (target: SharedConfigTarget) => Promise<{ path: string; serverName: string }>;
-  addKnownServer: (preset: KnownServerPreset, target: SharedConfigTarget) => Promise<{ path: string; serverName: string }>;
+  addKnownServer: (preset: KnownServerPreset, target: SharedConfigTarget) => Promise<{ path: string; serverName: string; reachable?: boolean }>;
   openPath: (path: string) => Promise<void>;
   markSetupCompleted: () => void;
 }
@@ -371,7 +371,7 @@ class McpSetupPanelView implements Component {
         return this.formatWritePreview(
           `${preset.name} write preview`,
           this.callbacks.previewKnownServer(preset, state.sharedConfigTarget),
-          [preset.summary, `Target: ${this.sharedTargetLabel(state)}`],
+          [preset.summary, ...(preset.desktopApp ? [preset.desktopApp.enableSteps] : []), `Target: ${this.sharedTargetLabel(state)}`],
           previewW,
         );
       }
@@ -498,7 +498,7 @@ export class McpSetupPanel {
     if (this.getDetectedPaths().length > 0) {
       actions.push({ id: "open-paths", label: "Open detected config paths" });
     }
-    for (const preset of KNOWN_SERVER_PRESETS) {
+    for (const preset of this.discovery.knownServerPresets) {
       actions.push({ id: "add-known-server", label: preset.name, preset });
     }
     if (!this.discovery.repoPrompt.configured && this.discovery.repoPrompt.executablePath && this.discovery.repoPrompt.targetPath && this.discovery.repoPrompt.entry && this.discovery.repoPrompt.serverName) {
@@ -670,7 +670,14 @@ export class McpSetupPanel {
       await this.runBusy(async () => {
         const result = await this.callbacks.addKnownServer(preset, this.sharedConfigTarget);
         this.callbacks.markSetupCompleted();
-        this.notice = { text: `Added ${result.serverName} to ${result.path}. Pi will reload after this panel closes.`, tone: "success" };
+        let status = "";
+        if (preset.desktopApp && result.reachable !== undefined) {
+          status = result.reachable ? ` ${preset.name} is ready.` : ` ${preset.name} isn't reachable yet. ${preset.desktopApp.enableSteps}`;
+        }
+        this.notice = {
+          text: `Added ${result.serverName} to ${result.path}.${status} Pi will reload after this panel closes.`,
+          tone: result.reachable === false ? "warning" : "success",
+        };
       });
       return;
     }

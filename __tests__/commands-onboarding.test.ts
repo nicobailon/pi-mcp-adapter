@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -252,6 +253,37 @@ describe("commands onboarding", () => {
         demo: { command: "demo" },
       },
     });
+  });
+
+  async function openSetupInFreshHome(installFigma: boolean) {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-commands-figma-home-"));
+    process.env.HOME = home;
+    process.chdir(mkdtempSync(join(tmpdir(), "pi-mcp-commands-figma-project-")));
+    if (installFigma) mkdirSync(join(home, "Applications", "Figma.app"), { recursive: true });
+    const { openMcpSetup } = await import("../commands.ts");
+    await openMcpSetup({ config: { mcpServers: {} } } as any, {} as any, { hasUI: true, mode: "tui", ui: createUi(), cwd: process.cwd() } as any);
+    const [discovery, callbacks] = mocks.createMcpSetupPanel.mock.lastCall!;
+    return { home, callbacks, figma: discovery.knownServerPresets.find(({ id }: { id: string }) => id === "figma") };
+  }
+
+  it.skipIf(existsSync("/Applications/Figma.app"))("does not offer Figma (desktop) when the Figma app is not installed", async () => {
+    expect((await openSetupInFreshHome(false)).figma).toBeUndefined();
+  });
+
+  it("offers Figma (desktop) when installed and reports whether its local server is reachable after adding", async () => {
+    const { home, callbacks, figma } = await openSetupInFreshHome(true);
+    await callbacks.addKnownServer(figma, "global");
+    expect(JSON.parse(readFileSync(join(home, ".config", "mcp", "mcp.json"), "utf-8"))).toEqual({
+      mcpServers: { figma: { url: "http://127.0.0.1:3845/mcp", protocolVersion: "auto" } },
+    });
+
+    const server = createServer((socket) => socket.end());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`;
+    const localFigma = { ...figma, entry: { ...figma.entry, url } };
+    expect((await callbacks.addKnownServer(localFigma, "global")).reachable).toBe(true);
+    await new Promise((resolve) => server.close(resolve));
+    expect((await callbacks.addKnownServer(localFigma, "global")).reachable).toBe(false);
   });
 
   it("writes RepoPrompt setup choices to the selected global shared config", async () => {

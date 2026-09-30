@@ -1,7 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 import { createMcpSetupPanel, type SetupPanelCallbacks } from "../mcp-setup-panel.ts";
-import type { McpDiscoverySummary } from "../config.ts";
+import { KNOWN_SERVER_PRESETS, type McpDiscoverySummary } from "../config.ts";
 import { createTheme } from "./helpers/panel-theme.ts";
 
 function createDiscovery(): McpDiscoverySummary {
@@ -19,6 +19,7 @@ function createDiscovery(): McpDiscoverySummary {
     totalServerCount: 0,
     fingerprint: "test",
     repoPrompt: { configured: false },
+    knownServerPresets: KNOWN_SERVER_PRESETS,
   };
 }
 
