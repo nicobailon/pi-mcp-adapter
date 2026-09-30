@@ -115,7 +115,7 @@ export interface SetupPanelCallbacks {
   adoptImports: (imports: ImportKind[]) => Promise<{ added: ImportKind[]; path: string }>;
   scaffoldConfig: (target: SharedConfigTarget) => Promise<{ path: string }>;
   addRepoPrompt: (target: SharedConfigTarget) => Promise<{ path: string; serverName: string }>;
-  addKnownServer: (preset: KnownServerPreset, target: SharedConfigTarget) => Promise<{ path: string; serverName: string; reachable?: boolean }>;
+  addKnownServer: (preset: KnownServerPreset, target: SharedConfigTarget) => Promise<{ path: string; serverName: string; reachable?: boolean; ignoredBecause?: string }>;
   openPath: (path: string) => Promise<void>;
   markSetupCompleted: () => void;
 }
@@ -947,14 +947,16 @@ export class McpSetupPanel {
         const result = await this.callbacks.addKnownServer(preset, preset.desktopApp ? "global" : this.sharedConfigTarget);
         this.callbacks.markSetupCompleted();
         let status = "";
-        if (preset.desktopApp && result.reachable !== undefined) {
+        if (result.ignoredBecause) {
+          status = ` Pi won't use it: ${result.ignoredBecause}.`;
+        } else if (preset.desktopApp && result.reachable !== undefined) {
           status = result.reachable
             ? ` A server is answering at ${preset.entry.url}.`
             : ` Nothing is answering at ${preset.entry.url} yet. ${preset.desktopApp.enableSteps}`;
         }
         this.notice = {
           text: `Added ${result.serverName} to ${result.path}.${status} Pi will reload after this panel closes.`,
-          tone: result.reachable === false ? "warning" : "success",
+          tone: result.ignoredBecause || result.reachable === false ? "warning" : "success",
         };
       });
       return;

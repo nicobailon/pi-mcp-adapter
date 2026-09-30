@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
+import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { OverlayHandle } from "@earendil-works/pi-tui";
 import type { McpExtensionState } from "./state.ts";
@@ -12,6 +13,7 @@ import {
   type KnownServerPreset,
   type SharedConfigTarget,
   getServerProvenance,
+  loadMcpConfigWithSources,
   previewCompatibilityImports,
   previewSharedServerEntry,
   previewStarterSharedConfig,
@@ -657,8 +659,17 @@ export async function openMcpSetup(
     addKnownServer: async (preset: KnownServerPreset, target: SharedConfigTarget) => {
       const path = writeSharedServerEntry(getSharedConfigPath(target, ctx.cwd), preset.id, preset.entry);
       configChanged = true;
-      if (!preset.desktopApp) return { path, serverName: preset.name };
-      return { path, serverName: preset.name, reachable: await isLocalServerReachable(preset.entry.url!) };
+      // Merging is per field, so the entry is in effect when every preset field survives it.
+      const loaded = loadMcpConfigWithSources(configOverridePath, ctx.cwd);
+      const active = loaded.config.mcpServers[preset.id];
+      const ignoredBecause = !active
+        ? `the current config mode doesn't read ${path}`
+        : Object.entries(preset.entry).some(([field, value]) => !isDeepStrictEqual(active[field as keyof typeof active], value))
+          ? `${loaded.projectServers.get(preset.id)?.path ?? "another config file"} also defines ${preset.id} and takes precedence`
+          : undefined;
+      const result = { path, serverName: preset.name, ...(ignoredBecause ? { ignoredBecause } : {}) };
+      if (!preset.desktopApp) return result;
+      return { ...result, reachable: await isLocalServerReachable(preset.entry.url!) };
     },
     openPath: async (targetPath: string) => {
       await openPath(pi, targetPath);

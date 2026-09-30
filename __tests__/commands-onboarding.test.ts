@@ -272,7 +272,7 @@ describe("commands onboarding", () => {
 
   it("offers Figma (desktop) when installed and reports whether its local server is reachable after adding", async () => {
     const { home, callbacks, figma } = await openSetupInFreshHome(true);
-    await callbacks.addKnownServer(figma, "global");
+    expect((await callbacks.addKnownServer(figma, "global")).ignoredBecause).toBeUndefined();
     expect(JSON.parse(readFileSync(join(home, ".config", "mcp", "mcp.json"), "utf-8"))).toEqual({
       mcpServers: { figma: { url: "http://127.0.0.1:3845/mcp", protocolVersion: "auto" } },
     });
@@ -284,6 +284,22 @@ describe("commands onboarding", () => {
     expect((await callbacks.addKnownServer(localFigma, "global")).reachable).toBe(true);
     await new Promise((resolve) => server.close(resolve));
     expect((await callbacks.addKnownServer(localFigma, "global")).reachable).toBe(false);
+  });
+
+  it("says when an added server won't be used", async () => {
+    const { home, callbacks, figma } = await openSetupInFreshHome(true);
+    const projectConfig = join(process.cwd(), ".mcp.json");
+    writeFileSync(projectConfig, JSON.stringify({ mcpServers: { figma: { url: "https://mcp.figma.com/mcp" } } }));
+    expect((await callbacks.addKnownServer(figma, "global")).ignoredBecause)
+      .toBe(`${projectConfig} also defines figma and takes precedence`);
+
+    process.env.PI_MCP_CONFIG_MODE = "exclusive";
+    try {
+      expect((await callbacks.addKnownServer(figma, "global")).ignoredBecause)
+        .toBe(`the current config mode doesn't read ${join(home, ".config", "mcp", "mcp.json")}`);
+    } finally {
+      delete process.env.PI_MCP_CONFIG_MODE;
+    }
   });
 
   it("writes RepoPrompt setup choices to the selected global shared config", async () => {
