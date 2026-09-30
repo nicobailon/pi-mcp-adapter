@@ -392,8 +392,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
-  // Registrations from Pi's `pi.registerMcpServer()` by name, with their config JSON;
-  // `registration` is null when the server was skipped or overridden.
+  // Every server registered with Pi's `pi.registerMcpServer()`, and the ones applied to the
+  // session by name, with their config JSON; `registration` is null when skipped or overridden.
+  let piRegistered: RegisteredMcpServer[] = [];
   const piServers = new Map<string, { config: string; registration: McpServerRegistration | null }>();
 
   // Mirrors init's per-server lifecycle registration so runtime servers get
@@ -910,8 +911,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     })();
   });
 
-  async function applyPiMcpServers(servers: RegisteredMcpServer[], ctx: ExtensionContext): Promise<void> {
-    const next = new Map(servers.map((server) => [server.name, JSON.stringify(server.config)]));
+  // Compares registrations with the active session's config, so it runs only once state exists.
+  function applyPiMcpServers(activeState: McpExtensionState, ctx: ExtensionContext): Promise<void> {
+    const next = new Map(piRegistered.map((server) => [server.name, JSON.stringify(server.config)]));
     const disposals: Promise<void>[] = [];
     for (const [name, applied] of piServers) {
       if (next.get(name) === applied.config) continue;
@@ -920,17 +922,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (applied.registration) disposals.push(applied.registration.dispose());
     }
     const report = (message: string) => ctx.hasUI ? ctx.ui.notify(message, "warning") : console.warn(`MCP: ${message}`);
-    for (const { name, config, extensionPath } of servers) {
+    const configured = activeState.config.mcpServers;
+    for (const { name, config, extensionPath } of piRegistered) {
       if (piServers.has(name)) continue;
       const label = `MCP server "${name}" registered by ${extensionPath}`;
       const translated = translatePiMcpServer(name, config);
       let registration: McpServerRegistration | null = null;
       if (typeof translated === "string") {
         report(`${label} is not connected: ${translated}.`);
+      } else if (Object.hasOwn(configured, name) && configured[name] !== runtimeServers.get(name)?.entry) {
+        report(`${label} is overridden by the configured server of the same name.`);
       } else if (runtimeServers.has(name)) {
         report(`${label} is overridden by the server registered earlier with pi-mcp-adapter's registerMcpServer().`);
-      } else if (Object.hasOwn((state?.config ?? earlyConfig).mcpServers, name)) {
-        report(`${label} is overridden by the configured server of the same name.`);
       } else {
         // Runtime servers are proxy-only, so exposure settings that map to direct tools don't apply.
         const { directTools, ...entry } = translated.entry;
@@ -945,13 +948,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
       piServers.set(name, { config: JSON.stringify(config), registration });
     }
-    await Promise.all(disposals);
+    return Promise.all(disposals).then(() => undefined);
   }
 
   if (piSupportsMcp(pi)) {
     // Registered in the factory so Pi sees a handler; session_start reads earlier registrations.
     pi.on("mcp_servers_change", async (event, ctx) => {
-      if (sessionCtx) await applyPiMcpServers(event.servers, ctx);
+      piRegistered = event.servers;
+      if (state) await applyPiMcpServers(state, ctx);
     });
   }
 
@@ -1047,6 +1051,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         // Re-read after asynchronous startup so navigation during initialization
         // cannot restore a stale branch.
         callReentrant(() => restoreCurrentSessionApprovals(nextState));
+        // Pi registrations are compared with each session's config again, below.
+        for (const { registration } of piServers.values()) void registration?.dispose();
+        piServers.clear();
         for (const [name, { entry }] of runtimeServers) {
           guard();
           if (Object.hasOwn(nextState.config.mcpServers, name)) {
@@ -1057,6 +1064,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           guard();
           callReentrant(() => attachRuntimeServerLifecycle(nextState, name, entry));
         }
+        guard();
+        void callReentrant(() => applyPiMcpServers(nextState, ctx));
         guard();
         nextState.onToolMetadataUpdated = (_serverName, _reason) => {
           if (state !== nextState || !owner.isActive()) return;
@@ -1221,6 +1230,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     initPromise = null;
     initStartedPromise = null;
     clearRetainedInitFailure();
+    // Registrations made while extensions loaded; initialization applies them.
+    if (piSupportsMcp(pi)) piRegistered = pi.getMcpServers();
 
     // Abort synchronously before awaiting cleanup so old callbacks and startup
     // work cannot resume into a stale ExtensionContext.
@@ -1239,12 +1250,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     // Recorded only after previous-session cleanup, so a runtime tool call cannot
     // start initialization before session_start decides whether to defer it.
     sessionCtx = ctx;
-    if (piSupportsMcp(pi)) {
-      // Retry overridden registrations; the name's holder may be gone.
-      for (const [name, applied] of piServers) if (!applied.registration) piServers.delete(name);
-      await applyPiMcpServers(pi.getMcpServers(), ctx);
-      if (generation !== lifecycleGeneration || !owner.isActive()) return;
-    }
     if (state) return;
 
     if (!initPromise) {

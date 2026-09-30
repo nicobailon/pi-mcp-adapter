@@ -146,22 +146,28 @@ describe("servers registered with pi.registerMcpServer()", () => {
     );
   });
 
-  it("keeps a configured server of the same name and reports the registration as overridden", async () => {
-    mocks.loadMcpConfig.mockReturnValue({ mcpServers: { shared: { url: "https://configured.test/mcp" } } });
-    mocks.initializeMcp.mockResolvedValue(createState({ shared: { url: "https://configured.test/mcp" } }));
+  it("keeps a configured server of the same name until a later session's config drops it", async () => {
+    // The startup config leaves out project servers; the session's config has the approved .pi/mcp.json entry.
+    mocks.initializeMcp
+      .mockResolvedValueOnce(createState({ shared: { url: "https://project.test/mcp" } }))
+      .mockResolvedValueOnce(createState());
     const { default: mcpAdapter } = await import("../index.ts");
     const { api, handlers, ctx, notify } = createPi([{ name: "shared", config: { url: "https://registered.test/mcp" } }]);
     mcpAdapter(api);
 
     await handlers.get("session_start")?.({}, ctx);
     await settle();
-
     expect(notify).toHaveBeenCalledWith(
       'MCP server "shared" registered by /ext/plugin.ts is overridden by the configured server of the same name.',
       "warning",
     );
     expect((await callThroughMcp(api, ctx, "shared")).content[0].text)
-      .toBe(JSON.stringify({ url: "https://configured.test/mcp" }));
+      .toBe(JSON.stringify({ url: "https://project.test/mcp" }));
+
+    await handlers.get("session_start")?.({}, ctx);
+    await settle();
+    expect((await callThroughMcp(api, ctx, "shared")).content[0].text)
+      .toBe(JSON.stringify({ url: "https://registered.test/mcp", directTools: false }));
   });
 
   it("keeps an earlier adapter registration of the same name", async () => {
