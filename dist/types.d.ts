@@ -625,6 +625,8 @@ export interface McpPanelCallbacks {
     getConnectionStatus: (serverName: string) => "connected" | "idle" | "failed" | "needs-auth" | "blocked" | "disabled";
     getFailureMessage?: (serverName: string) => string | null;
     refreshCacheAfterReconnect: (serverName: string) => ServerCacheEntry | null;
+    /** Present when Pi's built-in MCP has sign-ins the adapter can import; returns the imported server names. */
+    importPiSignIns?: () => string[];
 }
 export interface McpPanelResult {
     changes: Map<string, true | string[] | false>;

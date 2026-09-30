@@ -7,7 +7,7 @@ import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type Mcp
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
+import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectServer, excludeProjectServersAtLoadTime, hasProjectServerDefinitions } from "./project-server-trust.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -1247,6 +1247,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
 
     if (generation !== lifecycleGeneration || !owner.isActive()) return;
+    // Before any connection, so an imported sign-in is used from the first connect.
+    if (ctx.hasUI && !programmaticConfig && piSupportsMcp(pi) && existsSync(getPiMcpAuthPath())) {
+      try {
+        const { offerPiSignInImports } = await import("./pi-signin-import.ts");
+        await offerPiSignInImports(ctx, earlyConfig, owner.signal);
+      } catch (error) {
+        console.error(`MCP: could not offer Pi sign-in import: ${formatTerminalError(error)}`);
+      }
+      if (generation !== lifecycleGeneration || !owner.isActive()) return;
+    }
     // Recorded only after previous-session cleanup, so a runtime tool call cannot
     // start initialization before session_start decides whether to defer it.
     sessionCtx = ctx;

@@ -134,6 +134,19 @@ This will:
 6. Complete the OAuth flow
 7. Store tokens securely
 
+### Import a sign-in from Pi's built-in MCP
+
+On Pi 0.99 and later, Pi's built-in MCP stores its OAuth sign-ins in `~/.pi/agent/mcp-auth.json` (under `PI_CODING_AGENT_DIR` when set). When a configured OAuth server has no adapter sign-in yet and its URL exactly matches a server URL in that file, an interactive session asks once per server and URL, at session start before any server connects:
+
+- **Import sign-in** copies Pi's tokens and client registration into the adapter's credential store, bound to that URL. Pi's in-progress sign-in state (PKCE verifier and state) is never copied.
+- **Sign in again** changes nothing; run `/mcp-auth <server>` when you need the server.
+
+If the server rotates refresh tokens, the adapter's first refresh uses up the refresh token Pi also holds, which can sign Pi's shell `pi mcp` commands out of that server. Sign in there again if that happens.
+
+To import later, or for project servers, which the startup prompt doesn't cover, open `/mcp-adapter` and press `ctrl+p` (**import sign-ins from Pi**). It imports every eligible server without asking again, then reconnects them. The action only appears when there is something to import.
+
+Pi's file is only read, never changed or deleted. Nothing is imported in non-interactive sessions, when `settings.oauthCredentialStore` is `"encrypted-file"`, or for servers with `client_credentials`. A URL that differs in any way from Pi's key, such as another path, is never offered. Malformed files and entries are skipped.
+
 ### Remote/headless authentication
 
 If Pi is running on a remote server, `/mcp-auth <server>` shows a clickable authorization URL first. Open it in your local browser and approve access, then select **Yes** in Pi to open the callback input. The browser may fail to load the loopback callback page because `127.0.0.1` refers to your workstation; copy the full URL from its address bar and paste it into Pi. The authorization screen closes automatically instead when the browser can reach Pi's callback directly.

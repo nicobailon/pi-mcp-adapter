@@ -206,6 +206,11 @@ export function getPiMcpGlobalConfigPath(): string {
   return getAgentPath(PI_MCP_CONFIG_NAME);
 }
 
+/** @internal Pi's built-in MCP stores OAuth sign-ins here, keyed by `String(new URL(serverUrl))`. */
+export function getPiMcpAuthPath(): string {
+  return getAgentPath("mcp-auth.json");
+}
+
 export function getGenericGlobalConfigPath(): string {
   return GENERIC_GLOBAL_CONFIG_PATH;
 }
@@ -227,6 +232,11 @@ let piMcpConfigEnabled = false;
 /** @internal Set once by the extension on Pi 0.99+, so every loader in the process agrees. */
 export function setPiMcpConfigEnabled(enabled: boolean): void {
   piMcpConfigEnabled = enabled;
+}
+
+/** @internal Whether the adapter runs on Pi 0.99+ with discovered config, which also gates importing Pi's sign-ins. */
+export function isPiMcpConfigEnabled(): boolean {
+  return piMcpConfigEnabled;
 }
 
 /**

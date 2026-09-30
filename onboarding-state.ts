@@ -7,6 +7,8 @@ export interface McpOnboardingState {
   sharedConfigHintShown: boolean;
   setupCompleted: boolean;
   lastDiscoveryFingerprint?: string;
+  /** Servers already asked whether to import Pi's sign-in, by name and normalized URL. */
+  piSignInImportsAsked?: { server: string; url: string }[];
 }
 
 const DEFAULT_STATE: McpOnboardingState = {
@@ -32,6 +34,12 @@ export function loadOnboardingState(): McpOnboardingState {
       setupCompleted: raw.setupCompleted === true,
       ...(typeof raw.lastDiscoveryFingerprint === "string"
         ? { lastDiscoveryFingerprint: raw.lastDiscoveryFingerprint }
+        : {}),
+      ...(Array.isArray(raw.piSignInImportsAsked)
+        ? {
+            piSignInImportsAsked: raw.piSignInImportsAsked.filter((entry): entry is { server: string; url: string } =>
+              typeof entry?.server === "string" && typeof entry.url === "string"),
+          }
         : {}),
     };
   } catch {
@@ -73,4 +81,11 @@ export function markSetupCompleted(fingerprint?: string): McpOnboardingState {
       ...(lastDiscoveryFingerprint !== undefined ? { lastDiscoveryFingerprint } : {}),
     };
   });
+}
+
+export function markPiSignInImportAsked(server: string, url: string): McpOnboardingState {
+  return updateOnboardingState((state) => ({
+    ...state,
+    piSignInImportsAsked: [...(state.piSignInImportsAsked ?? []), { server, url }],
+  }));
 }

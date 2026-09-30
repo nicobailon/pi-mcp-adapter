@@ -109,6 +109,8 @@ If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`,
 
 In interactive sessions, you can also authenticate from `/mcp-adapter` with `ctrl+a` or Enter on a server that needs auth. `/mcp-auth` without a server only opens a picker in the interactive UI. For gateway authorization and manual callback completion, see [Remote/headless authentication](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/auth.md#remoteheadless-authentication).
 
+On Pi 0.99 and later, servers you already signed in to with Pi's built-in MCP can reuse that sign-in: the adapter asks once per server, and `/mcp-adapter` offers `ctrl+p` to import them. See [Import a sign-in from Pi's built-in MCP](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/auth.md#import-a-sign-in-from-pis-built-in-mcp).
+
 ## How It Works
 
 - One `mcp` tool in context (~200 tokens) instead of hundreds
