@@ -252,6 +252,7 @@ describe("mcp setup panel theme and component rendering", () => {
     expect(lastDiffLine(before)).toBe(false);
     expect(stripAnsi(before.join("\n"))).toContain("↓ ");
     expect(stripAnsi(before.at(-2)!)).toContain("pgup/pgdn scroll");
+    expect(stripAnsi(panel.render(40).at(-2)!)).toContain("pgup/pgdn scroll");
 
     for (let presses = 0; presses < 5 && !lastDiffLine(panel.render(width)); presses += 1) panel.handleInput("\x1b[6~");
     const after = panel.render(width);

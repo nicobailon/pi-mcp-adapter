@@ -352,7 +352,8 @@ class McpSetupPanelView implements Component {
   private renderFooter(state: McpSetupPanelViewState, width: number, detailsOverflow: boolean): string {
     const busy = "Working…";
     const hintsWidth = state.busy ? width - visibleWidth(busy) - 2 : width;
-    const keyHints = `${this.keyHints(state.screen)}${detailsOverflow ? " · pgup/pgdn scroll" : ""}`;
+    // Scroll keys lead so narrow footers cut the other hints, not the only way to reach hidden details.
+    const keyHints = `${detailsOverflow ? "pgup/pgdn scroll · " : ""}${this.keyHints(state.screen)}`;
     const hints = fitText(keyHints, Math.max(0, hintsWidth));
     if (!state.busy) return this.theme.hint(hints);
     const gap = Math.max(2, width - visibleWidth(hints) - visibleWidth(busy));
