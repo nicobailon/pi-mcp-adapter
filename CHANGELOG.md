@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mcpScript` is now off by default. To keep it, set `settings.scriptMode` to `true` in `mcp-adapter.json`. Its bundled skill, the `mcp` description's pointer to it, and the large-result hint below follow the same setting.
 - `observedOutput.target` from `tools.describe` is now the full expression that reads the JSON, such as `(await tools.call("github_list_issues", args)).data.structuredContent`, instead of `data.structuredContent`. Claude read `content` off the `{ ok, data }` envelope when given the short form.
 - `observedOutput` from `tools.describe` no longer has `calls`, and `describe` no longer says how many calls a shape came from, because saved shapes can come from earlier sessions.
+- `tools.describe` in `mcpScript` now returns `error: { code, message }` where it used to return a tool: `ambiguous_tool` when the path matches tools on more than one server, and `server_disabled` or `server_backoff` when only a disabled or backed-off server has it, the same as `mcp({ describe })`. Before, it returned the first server's tool for an ambiguous path, which could describe the wrong tool. Pass the `server` from the search hit: `tools.describe({ path, server })`.
 
 ### Added
 
@@ -19,12 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `settings.scriptSkill: "model"` adds the `mcp-scripting` skill's path to the `mcpScript` description so the model reads it before writing a script. The default, `"manual"`, keeps the skill to `/skill:mcp-scripting`.
 - With `mcpScript` on, observed output shapes are saved in `mcp-cache.json`, so a later session can script a tool without calling it first to see its fields. A saved shape holds field names and types only, and is used only while the tool's description and input schema stay the same; it is dropped when they or the server's config change.
 - When an `mcpScript` run throws, times out, or returns `[]`, `{}`, `null`, `""`, or nothing, the result ends with the output shapes seen from the tools it called, so a wrong field guess can be fixed without a separate call to look at the data.
-- `tools.describe` and `tools.call` in `mcpScript` take the `server` a search hit returned: `tools.describe({ path, server })` and `tools.call(path, args, { server })`. Before, a script could not reach a tool whose name two servers share, as with `toolPrefix: "none"`: describe returned the first server's tool and call failed as ambiguous. The README has a new "Composable tool search" section on search, filter, describe, and call in one script.
+- `tools.describe` and `tools.call` in `mcpScript` take the `server` a search hit returned: `tools.describe({ path, server })` and `tools.call(path, args, { server })`. Before, when two servers shared a tool name, as with `toolPrefix: "none"`, the path search returned could not be used as is: describe returned the first server's tool and call failed as ambiguous, so the script had to build a server-prefixed alias itself. The README has a new "Composable tool search" section on search, filter, describe, and call in one script.
 
 ### Changed
 
 - The `mcp-scripting` skill is about half its former length; `jev.evaluate` details moved to `references/jev.md`.
-- `tools.search` in `mcpScript` now runs the same search code as `mcp({ search })`. In scripts, an empty query with a `server` lists that server's tools, and a search that cannot run returns `error: { code, message }` beside `items: []`, with the same codes as `mcp({ search })`, instead of a bare empty result. `tools.describe` reports `ambiguous_tool`, `server_disabled`, and `server_backoff` like `mcp({ describe })` instead of picking the first match or saying the tool was not found.
+- `tools.search` in `mcpScript` now runs the same search code as `mcp({ search })`. In scripts, an empty query with a `server` lists that server's tools, and a search that cannot run returns `error: { code, message }` beside `items: []`, with the same codes as `mcp({ search })`, instead of a bare empty result.
 - The `mcpScript` description now says that a tool call's `data` is the raw MCP result and how to read JSON from it.
 - With `mcpScript` on, MCP tool results of 8 KiB or more end with a one-line hint to use it when passing them to another call, so models stop retyping large results by hand.
 - Observed output shapes write a wide object that appears more than once as a named type, so a GitHub-style issue list shape is about 40% shorter with every field still listed.
