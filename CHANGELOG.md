@@ -109,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- New `pi-mcp-adapter/host-managed` entry point for apps that embed Pi and manage their own MCP connections. The app supplies the connections, records each approved call before it is sent, sees the raw result first, and decides when the adapter starts and stops. The adapter never retries a call or reconnects, and never reads config, OAuth, or keyring state. See [Host-managed embedding](README.md#host-managed-embedding). Thanks to [@LeonEthan](https://github.com/LeonEthan) for the design in [issue #716](https://github.com/nicobailon/pi-mcp-adapter/issues/716).
+- New `pi-mcp-adapter/host-managed` entry point for apps that embed Pi and manage their own MCP connections. The app supplies the connections, records each approved call before it is sent, sees the raw result first, and decides when the adapter starts and stops. The adapter never retries a call or reconnects, and never reads config, OAuth, or keyring state. See [Host-managed embedding](docs/extension-api.md#host-managed-embedding). Thanks to [@LeonEthan](https://github.com/LeonEthan) for the design in [issue #716](https://github.com/nicobailon/pi-mcp-adapter/issues/716).
 
 ### Changed
 
