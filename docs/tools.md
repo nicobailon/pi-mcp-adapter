@@ -223,6 +223,8 @@ pi.events.on(MCP_TOOL_APPROVAL_REQUEST_EVENT, (request: McpToolApprovalRequest) 
 
 The request includes `serverName`, `originalToolName`, `prefixedToolName`, `args`, `origin`, and optional `signal`. The first synchronous claim wins. Brokered approval runs for every resolved MCP call reaching the approval gate, including calls matching session grants restored from the active branch, regardless of `approveTools` configuration, across proxy, direct, `mcpScript`, resource, and iframe origins. `allow_once` permits only the current call; `allow_for_session` updates the same session-scoped approval cache and persistence path as the built-in dialog; `deny` blocks the current MCP call even if cached, without revoking its grant. Only `abstain` or no claim consults the cache, then the configured approval/UI fallback above if no matching grant exists. With no broker listener, fallback behavior is unchanged.
 
+Pi's `tool_call` hooks see a call to `mcp` or `mcpScript` as one call with its arguments. They don't see the MCP tools that call runs, so permission extensions that want each MCP call should use the broker event above. `approveTools` applies to every MCP call, whether it comes from `mcp`, `mcpScript`, or a direct tool. If another extension also asks before `mcp` or `mcpScript` runs, one action can show two prompts.
+
 ## Output Guard
 
 Oversized MCP tool/resource results are guarded by default so a single huge response can't blow up the model context window or the session file:
