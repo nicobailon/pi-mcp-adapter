@@ -71,7 +71,7 @@ describe("AbortSignal propagation", () => {
     expect(result.details.error).toBe("aborted");
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: { "pi-mcp-adapter/toolCallId": "call-1" } },
-      { signal: controller.signal },
+      { signal: controller.signal, onprogress: expect.any(Function), resetTimeoutOnProgress: true },
     );
     expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
   });
@@ -109,7 +109,7 @@ describe("AbortSignal propagation", () => {
     const result = await executeCall(state, "my-server_get", {});
 
     expect(result.details).toMatchObject({ server: "my-server", tool: "get" });
-    expect(hyphenCallTool).toHaveBeenCalledWith({ name: "get", arguments: {}, _meta: undefined }, undefined);
+    expect(hyphenCallTool).toHaveBeenCalledWith({ name: "get", arguments: {}, _meta: undefined }, { onprogress: expect.any(Function), resetTimeoutOnProgress: true });
     expect(underscoreCallTool).not.toHaveBeenCalled();
   });
 
@@ -125,7 +125,7 @@ describe("AbortSignal propagation", () => {
     const result = await inFlight;
     expect(result.content[0].text).toContain("Failed to call tool: user cancelled");
     expect(result.details.error).toBe("aborted");
-    expect(callTool).toHaveBeenCalledWith({ name: "slow", arguments: {}, _meta: undefined }, { signal: controller.signal });
+    expect(callTool).toHaveBeenCalledWith({ name: "slow", arguments: {}, _meta: undefined }, { signal: controller.signal, onprogress: expect.any(Function), resetTimeoutOnProgress: true });
     expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
   });
 

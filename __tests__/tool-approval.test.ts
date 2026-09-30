@@ -394,7 +394,7 @@ describe("tool approval", () => {
 
       expect(callTool).toHaveBeenCalledWith(
         expect.objectContaining({ name: "search-records", arguments: expected }),
-        undefined,
+        { onprogress: expect.any(Function), resetTimeoutOnProgress: true },
       );
     }
   });

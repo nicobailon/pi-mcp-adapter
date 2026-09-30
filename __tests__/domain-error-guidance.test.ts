@@ -108,7 +108,7 @@ describe("server-returned domain errors", () => {
     expect(callTool).toHaveBeenNthCalledWith(
       2,
       { name: "second", arguments: { second: "two" } },
-      undefined,
+      { onprogress: expect.any(Function), resetTimeoutOnProgress: true },
     );
   });
 });

@@ -82,7 +82,7 @@ describe("tool call id forwarding", () => {
 
     expect(callTool).toHaveBeenCalledWith(
       { name: "search", arguments: { q: "hello" }, _meta: { "pi-mcp-adapter/toolCallId": "toolu_02def" } },
-      undefined,
+      { onprogress: expect.any(Function), resetTimeoutOnProgress: true },
     );
   });
 

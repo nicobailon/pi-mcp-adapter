@@ -770,7 +770,7 @@ describe("UiServer", () => {
       expect(mockClient.callTool).toHaveBeenCalledWith({
         name: "some_tool",
         arguments: { arg1: "value1" },
-      }, requestOptions);
+      }, { ...requestOptions, onprogress: expect.any(Function), resetTimeoutOnProgress: true });
     });
 
     it("routes headless tool calls through the task session", async () => {
@@ -879,7 +879,7 @@ describe("UiServer", () => {
       expect(mockClient.callTool).toHaveBeenCalledWith({
         name: "some_tool",
         arguments: { body: 'He said "hi"' },
-      }, undefined);
+      }, { onprogress: expect.any(Function), resetTimeoutOnProgress: true });
     });
 
     it("rejects invalid app tool arguments as a boundary error", async () => {
@@ -934,7 +934,7 @@ describe("UiServer", () => {
       });
 
       expect(call.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "app result" }] } });
-      expect(callTool).toHaveBeenCalledWith({ name: "app_only", arguments: { value: 1 } }, undefined);
+      expect(callTool).toHaveBeenCalledWith({ name: "app_only", arguments: { value: 1 } }, { onprogress: expect.any(Function), resetTimeoutOnProgress: true });
       expect(message.body).toEqual({ ok: true, result: {} });
       expect(handle.getSessionMessages().intents).toEqual([]);
       expect(onMessage).not.toHaveBeenCalled();

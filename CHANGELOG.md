@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The README is now a short overview. The full reference moved into `docs/`: configuration, server options, authentication (formerly `OAUTH.md`), using MCP tools, scripting, prompts and MCP UI, and the extension API.
+- A tool call's timeout (`requestTimeoutMs`, or the MCP SDK default of 60 seconds) now restarts whenever the tool reports progress, as in Pi's built-in MCP, so a long tool that keeps reporting progress no longer times out. Tool calls always ask the server for progress, with or without a UI.
 
 ### Fixed
 

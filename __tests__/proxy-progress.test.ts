@@ -85,17 +85,6 @@ describe("request-local progress bridging", () => {
     await Promise.all([first, second]);
   });
 
-  it("does not attach onprogress when no UI is available", async () => {
-    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "done" }] }));
-    const state = connectedState({ callTool });
-
-    await executeCall(state, "demo_long", {});
-
-    const options = callTool.mock.calls[0][1] as Record<string, unknown> | undefined;
-    expect(options).toEqual({ timeout: 5_000 });
-    expect(Object.hasOwn(options ?? {}, "onprogress")).toBe(false);
-  });
-
   it("preserves the manager request options alongside the progress bridge", async () => {
     const notify = vi.fn();
     let capturedOptions: { signal?: AbortSignal; onprogress?: unknown } | undefined;

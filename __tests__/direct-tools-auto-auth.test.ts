@@ -110,7 +110,7 @@ describe("direct tools auto auth", () => {
       name: "namespace.tool",
       arguments: { q: "hello" },
       _meta: { "pi-mcp-adapter/toolCallId": "id" },
-    }, { timeout: 4321 });
+    }, { timeout: 4321, onprogress: expect.any(Function), resetTimeoutOnProgress: true });
     expect(result.content[0].text).toContain("ok");
   });
 
@@ -154,7 +154,7 @@ describe("direct tools auto auth", () => {
     const result = await inFlight;
 
     expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
-    expect(connection.client.callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: { "pi-mcp-adapter/toolCallId": "id" } }, requestOptions);
+    expect(connection.client.callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: { "pi-mcp-adapter/toolCallId": "id" } }, { ...requestOptions, onprogress: expect.any(Function), resetTimeoutOnProgress: true });
     expect(result.details).toMatchObject({ error: "aborted", server: "demo" });
     expect(result.content[0].text).toContain("request aborted");
   });

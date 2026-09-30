@@ -519,7 +519,7 @@ describe("proxy auto auth", () => {
     const result = await inFlight;
 
     expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
-    expect(connection.client.callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: undefined }, requestOptions);
+    expect(connection.client.callTool).toHaveBeenCalledWith({ name: "search", arguments: {}, _meta: undefined }, { ...requestOptions, onprogress: expect.any(Function), resetTimeoutOnProgress: true });
     expect(result.details).toMatchObject({ error: "aborted", message: "request aborted" });
     expect(result.content[0].text).toContain("request aborted");
   });
@@ -743,8 +743,8 @@ describe("proxy auto auth", () => {
     expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000 });
     expect(client.listResources).toHaveBeenCalledTimes(1);
     expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000 });
-    expect(client.callTool).toHaveBeenNthCalledWith(1, { name: "search", arguments: { q: "one" }, _meta: undefined }, { timeout: 5000 });
-    expect(client.callTool).toHaveBeenNthCalledWith(2, { name: "search", arguments: { q: "two" }, _meta: undefined }, { timeout: 5000 });
+    expect(client.callTool).toHaveBeenNthCalledWith(1, { name: "search", arguments: { q: "one" }, _meta: undefined }, { timeout: 5000, onprogress: expect.any(Function), resetTimeoutOnProgress: true });
+    expect(client.callTool).toHaveBeenNthCalledWith(2, { name: "search", arguments: { q: "two" }, _meta: undefined }, { timeout: 5000, onprogress: expect.any(Function), resetTimeoutOnProgress: true });
     expect(first.content[0].text).toContain("ok");
     expect(second.content[0].text).toContain("ok");
   });
