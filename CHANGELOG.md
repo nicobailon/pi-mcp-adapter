@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- On Pi 0.99 and later, the adapter replaces Pi's built-in MCP extension in sessions: `/mcp` opens the adapter, and the built-in no longer connects servers. Pi warns at startup that the built-in was not loaded until you turn it off in `pi config`. Shell `pi mcp` commands still use Pi's own files. See [Pi's built-in MCP](docs/configuration.md#pis-built-in-mcp).
+- On Pi 0.99 and later, the adapter replaces Pi's built-in MCP extension in sessions, except when a host supplies its own config through `createMcpAdapter()`: `/mcp` opens the adapter, and the built-in no longer connects servers. Pi warns at startup that the built-in was not loaded until you turn it off in `pi config`. Shell `pi mcp` commands still use Pi's own files. See [Pi's built-in MCP](docs/configuration.md#pis-built-in-mcp).
 
 ### Added
 

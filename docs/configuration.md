@@ -60,7 +60,7 @@ On Pi 0.84 to 0.87, the adapter does not read either file. If you used one with 
 
 ### Pi's built-in MCP
 
-On Pi 0.99 and later, the adapter replaces Pi's built-in MCP extension in sessions. Both register `/mcp`, and Pi leaves the built-in out when another extension does, so `/mcp` opens the adapter and only the adapter connects the servers in Pi's `mcp.json` files.
+On Pi 0.99 and later, the adapter replaces Pi's built-in MCP extension in sessions, except when a host supplies its own config through [`createMcpAdapter()`](extension-api.md#sdk-configuration). Both register `/mcp`, and Pi leaves the built-in out when another extension does, so `/mcp` opens the adapter and only the adapter connects the servers in Pi's `mcp.json` files.
 
 Pi reports this as a warning that the built-in `mcp` extension was not loaded, at every startup and `/reload` (on stderr outside interactive mode). To stop it, turn the built-in off under Built-in extensions in `pi config`, or add `"-builtin:mcp"` to `extensions` in Pi's `settings.json`.
 

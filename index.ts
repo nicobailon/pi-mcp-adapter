@@ -1615,8 +1615,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     },
   });
   registerMcpCommand("mcp-adapter");
-  // Registering /mcp during load makes Pi 0.99+ leave out its replaceable built-in MCP extension.
-  registerMcpCommand("mcp");
+  // /mcp at load replaces Pi 0.99+'s built-in MCP; a supplied config doesn't read Pi's files, so it keeps the built-in.
+  if (!programmaticConfig || !piSupportsMcp(pi)) registerMcpCommand("mcp");
 
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",
