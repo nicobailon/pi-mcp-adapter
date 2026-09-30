@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getFailureMessage, initializeMcp } from "../init.ts";
-import { executeConnect } from "../proxy-modes.ts";
+import { executeCall, executeConnect } from "../proxy-modes.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 
@@ -62,7 +62,9 @@ async function mcpHandler(req: http.IncomingMessage, res: http.ServerResponse): 
   }
   const result = message.method === "initialize"
     ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "provider", version: "1.0.0" } }
-    : { tools: [] };
+    : message.method === "tools/call"
+      ? { content: [{ type: "text", text: "ok" }] }
+      : { tools: [{ name: "echo", inputSchema: { type: "object" } }] };
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
 }
 
@@ -115,6 +117,19 @@ describe("auth.provider servers", () => {
     expect(result.content[0]).toMatchObject({ text: hint });
     // No MCP request, and no OAuth discovery or authorization, even with autoAuth on.
     expect(seen).toEqual([]);
+  });
+
+  it("reports needs sign-in when the token disappears from an established connection", async () => {
+    const { url } = await listen(mcpHandler);
+    let token: string | undefined = "token";
+    const state = await boot(url, { getApiKeyForProvider: async () => token });
+    expect(state.manager.getConnection("api")?.status).toBe("connected");
+
+    token = undefined;
+    const result = await executeCall(state, "echo", {}, "api");
+
+    expect(result.content[0]).toMatchObject({ text: 'MCP server "api" needs sign-in. Run /login github, then /mcp-adapter reconnect api.' });
+    expect(state.manager.getConnection("api")?.status).toBe("needs-auth");
   });
 
   it("keeps a malformed token out of errors and notices", async () => {

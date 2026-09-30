@@ -96,11 +96,12 @@ export async function withSessionRecovery(deps, serverName, fn) {
     }
     catch (err) {
         const definition = deps.config.mcpServers[serverName];
-        if (definition && supportsOAuth(definition)
-            && (err instanceof UnauthorizedError || (err instanceof SdkHttpError && err.status === 401))) {
+        const unauthorized = err instanceof UnauthorizedError || (err instanceof SdkHttpError && err.status === 401);
+        if (definition && supportsOAuth(definition) && unauthorized) {
             invalidateAuthEntryCache(serverName);
         }
-        if (!isTerminatedSession(err, hadSessionId)) {
+        // A provider token rejected or gone reconnects, which ends in needs-auth when Pi has no token.
+        if (!isTerminatedSession(err, hadSessionId) && !(unauthorized && typeof definition?.auth === "object")) {
             throw err;
         }
         // Re-read the live definition rather than reusing the stale
