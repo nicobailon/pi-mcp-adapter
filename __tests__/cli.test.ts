@@ -543,6 +543,25 @@ describe("cli doctor", () => {
     return `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
   }
 
+  it.skipIf(process.platform === "win32")("checks Pi's own mcp.json only when Pi 0.99+ is on PATH", async () => {
+    const url = await listen(() => {});
+    await new Promise((done) => servers.pop()!.close(done));
+    const context = setup({ mcpServers: {} });
+    writeJson(join(context.agentDir, "mcp.json"), { mcpServers: { fromPi: { url } } });
+    const fakePi = (version: string) => {
+      const bin = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-bin-"));
+      writeFileSync(join(bin, "pi"), `#!/bin/sh\necho ${version}\n`, { mode: 0o755 });
+      return { PATH: `${bin}:${process.env.PATH}` };
+    };
+
+    const current = await doctor([], context, fakePi("0.99.2"));
+    expect(current.stdout).toContain("fromPi: failed");
+
+    const old = await doctor([], context, fakePi("0.87.0"));
+    expect(old.stdout).not.toContain("fromPi");
+    expect(old.stderr).toContain("Pi's own mcp.json files were not checked");
+  });
+
   it("exits 1 and explains a refused local server", async () => {
     const url = await listen(() => {});
     await new Promise((done) => servers.pop()!.close(done));

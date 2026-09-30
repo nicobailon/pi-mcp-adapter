@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import stripJsonComments from "strip-json-comments";
 
@@ -503,6 +504,14 @@ async function runDoctor(argv, log, error) {
   }
 
   const cwd = process.cwd();
+  // Pi 0.99+ owns ~/.pi/agent/mcp.json and .pi/mcp.json; older Pi used those names for adapter config.
+  const piVersion = spawnSync("pi", ["--version"], { encoding: "utf8", timeout: 5_000, shell: process.platform === "win32" }).stdout ?? "";
+  const [major, minor] = piVersion.trim().split(".").map(Number);
+  const piSupportsMcp = major > 0 || minor >= 99;
+  config.setPiMcpConfigEnabled(piSupportsMcp);
+  if (!piSupportsMcp && [config.getPiMcpGlobalConfigPath(), config.getProjectPiMcpConfigPath(cwd)].some((file) => fs.existsSync(file))) {
+    error("Pi 0.99 or later wasn't found on PATH, so Pi's own mcp.json files were not checked.");
+  }
   const loaded = config.loadMcpConfigWithSources(undefined, cwd);
   let projectTrusted = false;
   if (loaded.projectServers.size > 0) {
