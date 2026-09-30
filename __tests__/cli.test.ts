@@ -562,10 +562,12 @@ describe("cli doctor", () => {
       response.end();
     });
 
-    const result = await doctor([], setup({ mcpServers: { explicit: { url, auth: "oauth" }, implicit: { url } } }));
+    const clientCredentials = { url, auth: "oauth", oauth: { grantType: "client_credentials", clientId: "doctor", clientSecret: "doctor-secret" } };
+    const result = await doctor([], setup({ mcpServers: { explicit: { url, auth: "oauth" }, implicit: { url }, clientCredentials } }));
 
     expect(result.code).toBe(1);
     expect(result.stdout).toContain("explicit: needs-auth — sign-in required: run /mcp-auth explicit in Pi");
+    expect(result.stdout).toContain("clientCredentials: needs-auth");
     expect(result.stdout).toContain("implicit: needs-auth — sign-in required: run /mcp-auth implicit in Pi");
     expect(paths.length).toBeGreaterThan(0);
     expect(paths.every((path) => path === "/mcp")).toBe(true);
@@ -597,7 +599,7 @@ describe("cli doctor", () => {
       mcpServers: {
         headers: { url: `${url}?key=query-secret-value`, headers: { "X-Api-Key": "Bearer header-secret-value" } },
         bearer: { url, auth: "bearer", bearerToken: "token-secret-value" },
-        stdio: { command: process.execPath, args: ["-e", "console.error(process.env.CHILD_SECRET); process.exit(1)"], env: { CHILD_SECRET: "env-secret-value" } },
+        stdio: { command: process.execPath, args: ["-e", "console.error(process.env.CHILD_SECRET); process.exit(1)"], env: { CHILD_SECRET: "s3cr3t" }, debug: true },
       },
     });
 
@@ -606,7 +608,7 @@ describe("cli doctor", () => {
     expect(result.code).toBe(1);
     const report = JSON.parse(result.stdout) as Array<{ name: string; state: string; tools: number | null; message: string | null }>;
     expect(report.map(({ name, state }) => [name, state])).toEqual([["headers", "failed"], ["bearer", "failed"], ["stdio", "failed"]]);
-    for (const secret of ["header-secret-value", "token-secret-value", "env-secret-value", "query-secret-value"]) {
+    for (const secret of ["header-secret-value", "token-secret-value", "s3cr3t", "query-secret-value"]) {
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
     }

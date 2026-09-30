@@ -419,18 +419,15 @@ async function runKey(argv, log, error, stdin) {
 
 const DOCTOR_CONNECT_TIMEOUT_MS = 15_000;
 
-// Error text can echo configured secrets (child stderr, HTTP error bodies) and URLs
-// with credentials, so strip URL userinfo, queries, and fragments, then configured
-// header, env, and bearer values. Pieces under 8 characters are left alone so short
-// non-secret values such as "1" or "true" don't garble the message.
+// Error text can echo configured secrets (child stderr, HTTP error bodies) and URL credentials.
 function redactDoctorMessage(text, definition, utils) {
-  const configured = [definition.bearerToken, ...Object.values(definition.headers ?? {}), ...Object.values(definition.env ?? {})];
+  const configured = [definition.bearerToken, definition.oauth?.clientSecret, ...Object.values(definition.headers ?? {}), ...Object.values(definition.env ?? {})];
   if (definition.bearerTokenEnv) configured.push(process.env[definition.bearerTokenEnv]);
   const secrets = configured
     .filter((value) => typeof value === "string")
     .flatMap((value) => [value, utils.interpolateEnvVars(value)])
     .flatMap((value) => [value, ...value.split(/\s+/)])
-    .filter((value) => value.length >= 8)
+    .filter(Boolean)
     .sort((left, right) => right.length - left.length);
   let redacted = text.replace(/\b([a-z][a-z\d+.-]*:\/\/)(?:[^\s/?#@]*@)?([^\s?#]*)(?:[?#]\S*)?/gi, "$1$2");
   for (const secret of secrets) redacted = redacted.replaceAll(secret, "***");
@@ -487,7 +484,7 @@ async function runDoctor(argv, log, error) {
     if (block) return { state: "blocked", message: trust.describeProjectServerBlock(block.reason) };
     if (definition.disabled === true) return { state: "disabled" };
     const needsSignIn = { state: "needs-auth", message: `sign-in required: run /mcp-auth ${name} in Pi` };
-    let connectDefinition = definition;
+    let anonymous = false;
     if (definition.url) {
       let url;
       try {
@@ -496,24 +493,25 @@ async function runDoctor(argv, log, error) {
         const missing = typeof definition.url === "string" ? utils.getMissingEnvVars(definition.url) : [];
         return { state: "failed", message: missing.length > 0 ? `URL uses unset environment variables: ${missing.join(", ")}` : "URL is invalid" };
       }
-      // Sign-in needs a browser, so report it from stored credentials instead of starting OAuth.
-      if (authFlow.supportsOAuth(definition) && definition.oauth?.grantType !== "client_credentials") {
+      // Report a missing sign-in from stored credentials instead of starting OAuth.
+      if (authFlow.supportsOAuth(definition)) {
         const stored = auth.inspectAuthForUrl(name, url, authOptions);
         if (stored.status === "unavailable") return { state: "failed", message: stored.message };
         if (stored.status === "absent") {
           if (definition.auth === "oauth") return needsSignIn;
-          // Implicit OAuth: try anonymously, without a provider that could register an OAuth client.
-          connectDefinition = { ...definition, oauth: false };
+          anonymous = true;
         }
       }
     }
+    // Anonymous attempts get no OAuth provider, and debug stderr would bypass redaction.
+    const connectDefinition = { ...definition, debug: false, ...(anonymous ? { oauth: false } : {}) };
     const signal = AbortSignal.timeout(DOCTOR_CONNECT_TIMEOUT_MS);
     try {
       const connection = await serverManager.connect(name, connectDefinition, signal);
       return connection.status === "needs-auth" ? needsSignIn : { state: "ok", tools: connection.tools.length };
     } catch (err) {
       if (signal.aborted) return { state: "failed", message: `no response within ${DOCTOR_CONNECT_TIMEOUT_MS / 1000}s` };
-      if (connectDefinition !== definition && [err, err?.cause].some(manager.isUnauthorizedHttpError)) return needsSignIn;
+      if (anonymous && [err, err?.cause].some(manager.isUnauthorizedHttpError)) return needsSignIn;
       return { state: "failed", message: utils.formatTerminalError(err) };
     }
   };
