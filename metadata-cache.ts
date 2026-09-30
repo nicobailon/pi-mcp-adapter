@@ -58,27 +58,32 @@ export function loadMetadataCache(): MetadataCache | null {
 }
 
 export function saveMetadataCache(cache: MetadataCache): void {
+  updateMetadataCacheFile(servers => ({ ...servers, ...cache.servers }));
+}
+
+/** Reads the cache file, applies one update, and writes the result; an update returning undefined skips the write. */
+function updateMetadataCacheFile(update: (servers: MetadataCache["servers"]) => MetadataCache["servers"] | undefined): void {
   const cachePath = getMetadataCachePath();
   const dir = dirname(cachePath);
   mkdirSync(dir, { recursive: true });
 
-  let merged: MetadataCache = { version: CACHE_VERSION, servers: {} };
+  let servers: MetadataCache["servers"] = {};
   try {
     if (existsSync(cachePath)) {
       const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as MetadataCache;
       if (existing && existing.version === CACHE_VERSION && existing.servers) {
-        merged.servers = { ...existing.servers };
+        servers = { ...existing.servers };
       }
     }
   } catch {
     // Ignore parse errors and proceed with empty cache
   }
 
-  merged.version = CACHE_VERSION;
-  merged.servers = { ...merged.servers, ...cache.servers };
+  const next = update(servers);
+  if (!next) return;
 
   const tmpPath = `${cachePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, JSON.stringify(merged), "utf-8");
+  writeFileSync(tmpPath, JSON.stringify({ version: CACHE_VERSION, servers: next }), "utf-8");
   renameSync(tmpPath, cachePath);
 }
 
@@ -115,6 +120,49 @@ export function computeServerHash(definition: ServerEntry, environment: NodeJS.P
   };
   const normalized = stableStringify(identity);
   return createHash("sha256").update(normalized).digest("hex");
+}
+
+/**
+ * Identifies the tool definition an output shape was learned against. A shape is only used or saved while
+ * the tool's description and input schema still match, since a change there can mean a different result.
+ */
+export function outputShapeKey(tool: { description?: string; inputSchema?: unknown }): string {
+  return stableStringify({ description: tool.description ?? "", inputSchema: tool.inputSchema ?? null });
+}
+
+/**
+ * Saves one tool's observed output shape into its server's cache entry, if the entry matches the running config
+ * and tool. The entry comes from the same read the write replaces, so newer metadata from other Pi processes is kept.
+ */
+export function saveObservedOutput(
+  serverName: string,
+  definition: ServerEntry,
+  toolName: string,
+  toolKey: string,
+  output: NonNullable<ServerCacheEntry["outputShapes"]>[string],
+): void {
+  const configHash = computeServerHash(definition);
+  updateMetadataCacheFile(servers => {
+    const entry = servers[serverName];
+    const cachedTool = entry?.tools?.find(tool => tool.name === toolName);
+    if (!entry || !cachedTool || entry.configHash !== configHash || outputShapeKey(cachedTool) !== toolKey) return undefined;
+    return { ...servers, [serverName]: { ...entry, outputShapes: { ...entry.outputShapes, [toolName]: output } } };
+  });
+}
+
+/** Output shapes to carry into a rewritten cache entry: same config, and only tools whose definition kept its shape key. */
+export function keepOutputShapes(
+  previous: ServerCacheEntry | undefined,
+  configHash: string,
+  tools: CachedTool[],
+): ServerCacheEntry["outputShapes"] {
+  if (!previous?.outputShapes || previous.configHash !== configHash) return undefined;
+  const kept = Object.entries(previous.outputShapes).filter(([toolName]) => {
+    const before = previous.tools?.find(tool => tool.name === toolName);
+    const after = tools.find(tool => tool.name === toolName);
+    return before !== undefined && after !== undefined && outputShapeKey(before) === outputShapeKey(after);
+  });
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
 }
 
 export function isServerCacheValid(

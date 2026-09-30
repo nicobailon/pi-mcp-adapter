@@ -9,7 +9,7 @@ import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { buildToolMetadata, getToolNames, formatSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
-import { getObservedOutput, recordObservedOutput, renderOutputShape } from "./output-shape.ts";
+import { getObservedOutput, observedOutputRecorder, renderOutputShape } from "./output-shape.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions, scriptPipeHint } from "./mcp-output-guard.ts";
@@ -804,7 +804,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
   const observed = toolMeta.resourceUri ? undefined : getObservedOutput(state, serverName, toolMeta);
   if (observed) {
     const source = observed.source === "structuredContent" ? "structuredContent" : "JSON text result";
-    text += `\n\nObserved output (${source}, from ${observed.calls} call${observed.calls === 1 ? "" : "s"} this session, not a contract):\n${renderOutputShape(observed.shape)}`;
+    text += `\n\nObserved output (${source}, from earlier calls, not a contract):\n${renderOutputShape(observed.shape)}`;
   }
 
   return {
@@ -1636,6 +1636,7 @@ export async function executeCall(
       : null;
 
     const requestMeta = withToolCallIdMeta(uiSession?.requestMeta, toolCallId);
+    const recordOutput = observedOutputRecorder(state, serverName, toolMeta.originalName);
     const result = await withSessionRecovery<ClientCallToolResult>(
       {
         manager: state.manager,
@@ -1662,7 +1663,7 @@ export async function executeCall(
         }, requestOptions), ownedSignal);
       },
     );
-    if (!result.isError) recordObservedOutput(state, serverName, toolMeta.originalName, result as Record<string, unknown>);
+    if (!result.isError) recordOutput(result as Record<string, unknown>);
 
     if (toolMeta.uiResourceUri) {
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);

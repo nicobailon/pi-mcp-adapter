@@ -1,11 +1,14 @@
+import { logger } from "./logger.ts";
+import { outputShapeKey, saveObservedOutput } from "./metadata-cache.ts";
 import type { McpExtensionState } from "./state.ts";
 import { formatPropertyName } from "./ts-shape.ts";
-import type { ToolMetadata } from "./types.ts";
+import type { ServerCacheEntry, ServerDefinition, ToolMetadata } from "./types.ts";
 
 /**
- * Session-only output shapes for tools that declare no outputSchema.
+ * Output shapes for tools that declare no outputSchema.
  * Field names and broad JSON types only, never values; every dimension is
  * bounded because inference runs on arbitrary upstream payloads after each call.
+ * Script sessions also save them in the metadata cache for later sessions.
  */
 export interface OutputShape {
   type?: "null" | "boolean" | "number" | "string" | "object" | "array";
@@ -19,7 +22,8 @@ export interface OutputShape {
 export interface ObservedOutput {
   source: "structuredContent" | "jsonText";
   shape: OutputShape;
-  calls: number;
+  /** outputShapeKey of the tool definition the shape was learned against; other definitions do not see it. */
+  toolKey: string;
 }
 
 const MAX_DEPTH = 6;
@@ -35,37 +39,78 @@ const MAX_SHAPE_CHARS = 4 * 1024;
 const MAX_JSON_TEXT_CHARS = 256 * 1024;
 // Object shapes at least this long that appear more than once are written once as a named type.
 const MIN_ALIAS_CHARS = 80;
+const SHAPE_TYPES = new Set(["null", "boolean", "number", "string", "object", "array"]);
 
-export function recordObservedOutput(
+/**
+ * Looks the tool up when the call starts, so its result is recorded against the definition it was
+ * requested under even if a tools/list_changed refresh replaces that definition mid-call.
+ */
+export function observedOutputRecorder(state: McpExtensionState, serverName: string, toolName: string): (result: Record<string, unknown>) => void {
+  const tool = findTool(state, serverName, toolName);
+  return result => recordObservedOutput(state, serverName, tool, result);
+}
+
+function recordObservedOutput(
   state: McpExtensionState,
   serverName: string,
-  toolName: string,
+  tool: ToolMetadata | undefined,
   result: Record<string, unknown>,
 ): void {
-  if (findTool(state, serverName, toolName)?.outputSchema !== undefined) return;
+  if (!tool || tool.outputSchema !== undefined) return;
+  const toolName = tool.originalName;
   const observed = readResultValue(result);
   if (!observed) return;
   const definition = state.config.mcpServers[serverName];
   if (!definition) return;
   const shape = inferShape(observed.value, 0, { nodes: MAX_NODES_PER_CALL });
-  const observedOutputs = state.observedOutputs ??= new WeakMap();
-  let byTool = observedOutputs.get(definition);
-  if (!byTool) observedOutputs.set(definition, byTool = new Map());
+  const byTool = observedOutputsFor(state, definition);
+  const toolKey = outputShapeKey(tool);
   const previous = byTool.get(toolName);
-  byTool.set(toolName, previous?.source === observed.source
-    ? { source: observed.source, shape: fitShape(mergeShapes(previous.shape, shape)), calls: previous.calls + 1 }
-    : { source: observed.source, shape: fitShape(shape), calls: 1 });
+  const mergeable = previous?.source === observed.source && previous.toolKey === toolKey;
+  const next: ObservedOutput = {
+    source: observed.source,
+    shape: fitShape(mergeable ? mergeShapes(previous.shape, shape) : shape),
+    toolKey,
+  };
+  byTool.set(toolName, next);
+  // Saving only changed shapes keeps cache writes to a tool's first calls; sessions without mcpScript never write.
+  if (state.scriptTool === true && JSON.stringify(next) !== JSON.stringify(previous)) {
+    try {
+      saveObservedOutput(serverName, definition, toolName, toolKey, { source: next.source, shape: next.shape });
+    } catch (error) {
+      // The shape stays in memory for this session; only later sessions miss it.
+      logger.debug(`MCP: failed to save output shape for ${serverName}/${toolName}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+/** Adds shapes from a cache entry, tagged with the entry's own tool definitions, unless this session already has one for that definition. */
+export function seedObservedOutputs(state: McpExtensionState, serverName: string, entry: Pick<ServerCacheEntry, "tools" | "outputShapes">): void {
+  const definition = state.config.mcpServers[serverName];
+  const saved = entry.outputShapes;
+  if (!definition || typeof saved !== "object" || saved === null) return;
+  const byTool = observedOutputsFor(state, definition);
+  for (const [toolName, value] of Object.entries(saved)) {
+    const cachedTool = Array.isArray(entry.tools) ? entry.tools.find(tool => tool?.name === toolName) : undefined;
+    if (!cachedTool || typeof value !== "object" || value === null) continue;
+    const toolKey = outputShapeKey(cachedTool);
+    if (byTool.get(toolName)?.toolKey === toolKey) continue;
+    const { source, shape } = value as { source?: unknown; shape?: unknown };
+    if (source !== "structuredContent" && source !== "jsonText") continue;
+    const parsed = readSavedShape(shape, 0);
+    if (parsed && !isUnknown(parsed)) byTool.set(toolName, { source, shape: fitShape(parsed), toolKey });
+  }
 }
 
 export function getObservedOutput(
   state: McpExtensionState,
   serverName: string,
-  tool: Pick<ToolMetadata, "originalName" | "outputSchema">,
+  tool: Pick<ToolMetadata, "originalName" | "outputSchema" | "description" | "inputSchema">,
 ): ObservedOutput | undefined {
   if (tool.outputSchema !== undefined) return undefined;
   const definition = state.config.mcpServers[serverName];
   const observed = definition && state.observedOutputs?.get(definition)?.get(tool.originalName);
-  return observed && !isUnknown(observed.shape) ? observed : undefined;
+  return observed && observed.toolKey === outputShapeKey(tool) && !isUnknown(observed.shape) ? observed : undefined;
 }
 
 export function renderOutputShape(shape: OutputShape): string {
@@ -126,6 +171,51 @@ function renderShape(
     default:
       return shape.type;
   }
+}
+
+function observedOutputsFor(state: McpExtensionState, definition: ServerDefinition): Map<string, ObservedOutput> {
+  const observedOutputs = state.observedOutputs ??= new WeakMap();
+  let byTool = observedOutputs.get(definition);
+  if (!byTool) observedOutputs.set(definition, byTool = new Map());
+  return byTool;
+}
+
+/** Rebuilds a shape read from the cache file, or returns undefined when any part is not something inferShape writes. */
+function readSavedShape(value: unknown, depth: number): OutputShape | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || depth > MAX_DEPTH) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (raw.anyOf !== undefined) {
+    // Inference writes flat unions only; rejecting nested ones first keeps recursion bounded by MAX_DEPTH.
+    if (!Array.isArray(raw.anyOf) || raw.anyOf.length < 2 || raw.anyOf.length > MAX_UNION
+      || raw.anyOf.some(variant => typeof variant !== "object" || variant === null || "anyOf" in variant)) return undefined;
+    const variants = raw.anyOf.map(variant => readSavedShape(variant, depth));
+    return variants.every(variant => variant?.type !== undefined) ? { anyOf: variants as OutputShape[] } : undefined;
+  }
+  if (raw.type === undefined) return {};
+  if (typeof raw.type !== "string" || !SHAPE_TYPES.has(raw.type)) return undefined;
+  const shape: OutputShape = { type: raw.type as NonNullable<OutputShape["type"]> };
+  for (const key of ["items", "additionalProperties"] as const) {
+    if (raw[key] === undefined) continue;
+    const child = readSavedShape(raw[key], depth + 1);
+    if (!child) return undefined;
+    shape[key] = child;
+  }
+  if (raw.properties !== undefined) {
+    if (typeof raw.properties !== "object" || raw.properties === null || Array.isArray(raw.properties)) return undefined;
+    const entries = Object.entries(raw.properties);
+    if (entries.length > MAX_OBJECT_KEYS) return undefined;
+    const properties: Record<string, OutputShape> = {};
+    for (const [key, child] of entries) {
+      const property = key !== "__proto__" && FIELD_NAME.test(key) ? readSavedShape(child, depth + 1) : undefined;
+      if (!property) return undefined;
+      properties[key] = property;
+    }
+    shape.properties = properties;
+    shape.required = Array.isArray(raw.required)
+      ? raw.required.filter((key): key is string => typeof key === "string" && Object.hasOwn(properties, key))
+      : [];
+  }
+  return shape;
 }
 
 function findTool(state: McpExtensionState, serverName: string, toolName: string): ToolMetadata | undefined {

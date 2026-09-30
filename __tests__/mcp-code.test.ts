@@ -348,7 +348,6 @@ describe("runMcpScript", () => {
     expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
       target: '(await tools.call("fixture_echo", args)).data.structuredContent',
       typeScript: "{ echoed: string; }",
-      calls: 1,
     });
   });
 

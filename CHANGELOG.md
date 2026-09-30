@@ -11,11 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `mcpScript` is now off by default. To keep it, set `settings.scriptMode` to `true` in `mcp-adapter.json`. Its bundled skill, the `mcp` description's pointer to it, and the large-result hint below follow the same setting.
 - `observedOutput.target` from `tools.describe` is now the full expression that reads the JSON, such as `(await tools.call("github_list_issues", args)).data.structuredContent`, instead of `data.structuredContent`. Claude read `content` off the `{ ok, data }` envelope when given the short form.
+- `observedOutput` from `tools.describe` no longer has `calls`, and `describe` no longer says how many calls a shape came from, because saved shapes can come from earlier sessions.
 
 ### Added
 
 - Other extensions can call a configured MCP tool from their own code by emitting `pi-mcp-adapter:runtime-tool-call:v1` on Pi's event bus. The call goes through the same tool resolution and approval as `mcp({ tool })`, and `request.result` is a promise that resolves to `{ ok: true, result }` or `{ ok: false, error }`. Thanks to [@Djarid](https://github.com/Djarid) for [PR #735](https://github.com/nicobailon/pi-mcp-adapter/pull/735).
 - `settings.scriptSkill: "model"` adds the `mcp-scripting` skill's path to the `mcpScript` description so the model reads it before writing a script. The default, `"manual"`, keeps the skill to `/skill:mcp-scripting`.
+- With `mcpScript` on, observed output shapes are saved in `mcp-cache.json`, so a later session can script a tool without calling it first to see its fields. A saved shape holds field names and types only, and is used only while the tool's description and input schema stay the same; it is dropped when they or the server's config change.
 - When an `mcpScript` run throws, times out, or returns `[]`, `{}`, `null`, `""`, or nothing, the result ends with the output shapes seen from the tools it called, so a wrong field guess can be fixed without a separate call to look at the data.
 
 ### Changed

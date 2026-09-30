@@ -12,6 +12,7 @@ import {
   getMetadataCachePath,
   getMissingConfiguredDirectToolServers,
   isServerCacheValid,
+  keepOutputShapes,
   loadMetadataCache,
   reconstructPromptMetadata,
   reconstructToolMetadata,
@@ -43,6 +44,7 @@ import {
   createSessionApprovalWriter,
   restoreSessionApprovalState,
 } from "./session-approvals.ts";
+import { seedObservedOutputs } from "./output-shape.ts";
 export { getFailureAgeSeconds, getFailureMessage } from "./failure-backoff.ts";
 
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
@@ -339,6 +341,7 @@ export async function initializeMcp(
       if (cachedEntry.instructions) {
         serverInstructions.set(name, cachedEntry.instructions);
       }
+      seedObservedOutputs(state, name, cachedEntry);
     }
   }
 
@@ -616,6 +619,7 @@ export function updateMetadataCache(
     }
   }
 
+  const outputShapes = keepOutputShapes(existingEntry, configHash, tools);
   const entry: ServerCacheEntry = {
     configHash,
     tools,
@@ -624,11 +628,13 @@ export function updateMetadataCache(
     ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
     ...(connection.toolListHints?.ttlMs !== undefined ? { ttlMs: connection.toolListHints.ttlMs } : {}),
     ...(connection.toolListHints?.cacheScope !== undefined ? { cacheScope: connection.toolListHints.cacheScope } : {}),
+    ...(outputShapes !== undefined ? { outputShapes } : {}),
     cachedAt: Date.now(),
   };
 
   (state.sessionMetadata ??= new Map()).set(serverName, entry);
   saveMetadataCache({ version: 1, servers: { [serverName]: entry } });
+  seedObservedOutputs(state, serverName, entry);
 }
 
 export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: string, reason: string): void {

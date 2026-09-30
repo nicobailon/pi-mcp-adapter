@@ -600,6 +600,14 @@ export interface ServerCacheEntry {
     /** Server-level hints from the aggregated tools/list result. */
     ttlMs?: ListToolsResult["ttlMs"];
     cacheScope?: ListToolsResult["cacheScope"];
+    /**
+     * Result shapes (field names and types, never values) seen from tools without an outputSchema,
+     * keyed by original tool name. Dropped when the server config or that tool's description or input schema changes.
+     */
+    outputShapes?: Record<string, {
+        source: "structuredContent" | "jsonText";
+        shape: unknown;
+    }>;
     cachedAt: number;
 }
 export interface MetadataCache {

@@ -17,7 +17,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
-import { recordObservedOutput } from "./output-shape.ts";
+import { observedOutputRecorder } from "./output-shape.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 
@@ -312,6 +312,7 @@ export function createDirectToolExecutor(
         : null;
 
       const requestMeta = withToolCallIdMeta(uiSession?.requestMeta, toolCallId);
+      const recordOutput = observedOutputRecorder(state, spec.serverName, spec.originalName);
       const result = await withSessionRecovery<ClientCallToolResult>(
         {
           manager: state.manager,
@@ -339,7 +340,7 @@ export function createDirectToolExecutor(
         },
       );
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
-      if (!result.isError) recordObservedOutput(state, spec.serverName, spec.originalName, result as Record<string, unknown>);
+      if (!result.isError) recordOutput(result as Record<string, unknown>);
 
       if (result.isError) {
         const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal);

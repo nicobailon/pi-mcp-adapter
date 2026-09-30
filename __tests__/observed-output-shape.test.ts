@@ -33,7 +33,7 @@ describe("observed output shapes", () => {
     await executeCall(state, "demo_list", {});
 
     const text = describeText(state);
-    expect(text).toContain("Observed output (structuredContent, from 2 calls this session, not a contract):\n"
+    expect(text).toContain("Observed output (structuredContent, from earlier calls, not a contract):\n"
       + "{ id: string; tags?: string[]; owner?: { name: string; }; count?: number; }");
     expect(text).not.toMatch(/secret-id|alpha|Ada/);
   });
@@ -47,7 +47,7 @@ describe("observed output shapes", () => {
     await execute("call-1", {}, undefined, undefined, {} as any);
 
     const text = describeText(state);
-    expect(text).toContain("Observed output (JSON text result, from 1 call this session, not a contract):\nRecord<string, number>");
+    expect(text).toContain("Observed output (JSON text result, from earlier calls, not a contract):\nRecord<string, number>");
     expect(text).not.toContain("example.com");
   });
 
@@ -67,6 +67,18 @@ describe("observed output shapes", () => {
     await executeCall(state, "demo_list", {});
 
     expect(describeText(state)).not.toContain("Observed output");
+  });
+
+  it("records a result against the tool definition it was called under", async () => {
+    const state = stateWith([]);
+    state.manager.getConnection().client.callTool.mockImplementationOnce(async () => {
+      // A tools/list_changed refresh lands while the call is in flight.
+      state.toolMetadata.set("demo", [{ name: "demo_list", originalName: "list", description: "List things, now paginated" }]);
+      return { content: [], structuredContent: { oldField: 1 } };
+    });
+    await executeCall(state, "demo_list", {});
+
+    expect(describeText(state)).not.toContain("oldField");
   });
 
   it("starts over when the server is replaced under the same name", async () => {

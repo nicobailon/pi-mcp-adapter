@@ -5,6 +5,21 @@ export declare function getMetadataCachePath(): string;
 export declare function loadMetadataCache(): MetadataCache | null;
 export declare function saveMetadataCache(cache: MetadataCache): void;
 export declare function computeServerHash(definition: ServerEntry, environment?: NodeJS.ProcessEnv): string;
+/**
+ * Identifies the tool definition an output shape was learned against. A shape is only used or saved while
+ * the tool's description and input schema still match, since a change there can mean a different result.
+ */
+export declare function outputShapeKey(tool: {
+    description?: string;
+    inputSchema?: unknown;
+}): string;
+/**
+ * Saves one tool's observed output shape into its server's cache entry, if the entry matches the running config
+ * and tool. The entry comes from the same read the write replaces, so newer metadata from other Pi processes is kept.
+ */
+export declare function saveObservedOutput(serverName: string, definition: ServerEntry, toolName: string, toolKey: string, output: NonNullable<ServerCacheEntry["outputShapes"]>[string]): void;
+/** Output shapes to carry into a rewritten cache entry: same config, and only tools whose definition kept its shape key. */
+export declare function keepOutputShapes(previous: ServerCacheEntry | undefined, configHash: string, tools: CachedTool[]): ServerCacheEntry["outputShapes"];
 export declare function isServerCacheValid(entry: ServerCacheEntry, definition: ServerEntry, maxAgeMs?: number, environment?: NodeJS.ProcessEnv): boolean;
 export declare function parseDirectToolSelectors(selectors: string[]): {
     servers: Set<string>;

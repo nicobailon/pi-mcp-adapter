@@ -372,7 +372,6 @@ export async function runMcpScript(
             observedOutput: {
               target: observedTarget(observed, tool.name),
               typeScript: renderOutputShape(observed.shape),
-              calls: observed.calls,
             },
           } : {}),
         };
