@@ -108,7 +108,9 @@ function resolvePackageRoot(source: string, scope: "user" | "project", cwd: stri
     if (isUrl && !URL.canParse(gitSource)) return null;
     const url = isUrl ? new URL(gitSource) : null;
     const value = url ? url.hostname + url.pathname : gitSource.replace(/^git@([^:]+):/, "$1/");
-    const path = value.replace(/@[^/]+$/, "").replace(/\.git$/, "");
+    // Like Pi, a non-empty ref starts at the first "@" after the host, so refs such as "@feature/x" keep their slash.
+    const refStart = value.indexOf("@", value.indexOf("/"));
+    const path = (refStart < 0 || refStart === value.length - 1 ? value : value.slice(0, refStart)).replace(/\.git$/, "");
     return path && !path.startsWith("/") ? resolveContainedPath(join(baseDir, "git"), path) : null;
   }
   return isAbsolute(source) ? resolve(source) : resolve(baseDir, source);

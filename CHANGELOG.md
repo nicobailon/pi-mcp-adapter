@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- MCP servers from a Pi package installed from a URL with a port or a user other than `git`, such as `ssh://git@gitlab.example.com:2235/acme/tools.git`, now load. The adapter looked for the package under `gitlab.example.com:2235/...`, but Pi installs it under the bare hostname, so the package was skipped without a warning.
+- MCP servers from a Pi package installed from a URL with a port or a user other than `git`, such as `ssh://git@gitlab.example.com:2235/acme/tools.git`, now load. The adapter looked for the package under `gitlab.example.com:2235/...`, but Pi installs it under the bare hostname, so the package was skipped without a warning. Thanks to [@shura-v](https://github.com/shura-v) for [#746](https://github.com/nicobailon/pi-mcp-adapter/pull/746).
+- MCP servers from a Pi package installed at a ref that contains a slash, such as `https://gitlab.example.com/acme/tools.git@release/v2`, now load. The adapter cut the ref only at the last `@`, so it looked for `acme/tools.git@release/v2` instead of `acme/tools`.
 - The `mcp` tool description mentions `mcpScript` only when it is registered. Before, it pointed to `mcpScript` even with `settings.scriptMode` set to `false`.
 - Claude no longer calls tools such as `tracker_tracker_list_issues` in `mcpScript`. The `code` parameter said `tools.<prefixedToolName>`, so it added the server prefix to names that already had it; its example is now `tools.call("github_search_issues", args)`, with the name exactly as `mcp` lists it.
 - Observed output shapes in `describe` no longer drop nested fields such as `labels: { name: string }[]` on GitHub-style lists. The size limit was measured on a stored form about 2.5 times longer than the text `describe` shows.

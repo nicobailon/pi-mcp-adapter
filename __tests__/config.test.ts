@@ -393,7 +393,7 @@ describe("config discovery", () => {
     });
   });
 
-  it("loads package URL sources with a port or user from Pi's managed git directory", async () => {
+  it("loads package git sources with a port, user, or ref from Pi's managed git directory", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-package-git-port-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-package-git-port-project-"));
     process.env.HOME = home;
@@ -401,17 +401,28 @@ describe("config discovery", () => {
 
     const gitRoot = join(home, ".pi", "agent", "git", "gitlab.example.com", "acme");
     writeJson(join(home, ".pi", "agent", "settings.json"), {
-      packages: ["ssh://git@gitlab.example.com:2235/acme/port-tools.git", "ssh://deploy@gitlab.example.com/acme/user-tools"],
+      packages: [
+        "ssh://git@gitlab.example.com:2235/acme/port-tools.git",
+        "ssh://deploy@gitlab.example.com/acme/user-tools",
+        "https://gitlab.example.com/acme/ref-tools.git@release/v2",
+        "git:git@gitlab.example.com:acme/scp-tools@feature/x",
+      ],
     });
     writeJson(join(gitRoot, "port-tools", "package.json"), { name: "port-tools", pi: { mcp: "./mcp.json" } });
     writeJson(join(gitRoot, "port-tools", "mcp.json"), { mcpServers: { port: { command: "port" } } });
     writeJson(join(gitRoot, "user-tools", "package.json"), { name: "user-tools", pi: { mcp: "./mcp.json" } });
     writeJson(join(gitRoot, "user-tools", "mcp.json"), { mcpServers: { user: { command: "user" } } });
+    writeJson(join(gitRoot, "ref-tools", "package.json"), { name: "ref-tools", pi: { mcp: "./mcp.json" } });
+    writeJson(join(gitRoot, "ref-tools", "mcp.json"), { mcpServers: { ref: { command: "ref" } } });
+    writeJson(join(gitRoot, "scp-tools", "package.json"), { name: "scp-tools", pi: { mcp: "./mcp.json" } });
+    writeJson(join(gitRoot, "scp-tools", "mcp.json"), { mcpServers: { scp: { command: "scp" } } });
 
     const { loadMcpConfig } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers).toEqual({
       "port-tools__port": { command: "port" },
       "user-tools__user": { command: "user" },
+      "ref-tools__ref": { command: "ref" },
+      "scp-tools__scp": { command: "scp" },
     });
   });
 
