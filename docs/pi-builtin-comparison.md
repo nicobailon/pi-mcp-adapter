@@ -1,0 +1,27 @@
+# Pi's built-in MCP and pi-mcp-adapter
+
+As of Pi 0.99.2. Pi ships its own MCP support ([Pi's MCP docs](https://pi.dev/docs/latest/mcp)). On Pi 0.99 and later, installing the adapter replaces the built-in in sessions; see [Pi's built-in MCP](configuration.md#pis-built-in-mcp). Both read Pi's `mcp.json` files.
+
+| | Pi's built-in MCP | pi-mcp-adapter |
+|---|---|---|
+| OAuth token storage | A JSON file, `~/.pi/agent/mcp-auth.json`, created with mode 0600 ([OAuth](https://pi.dev/docs/latest/mcp#authenticate-with-oauth)) | The OS credential store: macOS Keychain, Windows Credential Manager, or Linux Secret Service. No plaintext fallback; an encrypted file store is opt-in ([Token storage](auth.md#token-storage)) |
+| When servers start | Every enabled server connects in the background when a session starts ([Diagnose connection problems](https://pi.dev/docs/latest/mcp#diagnose-connection-problems)) | On first use by default, and disconnected after 10 idle minutes. `eager` and `keep-alive` servers start with the session ([Lifecycle modes](configuration.md#lifecycle-modes)) |
+| Config files | `~/.pi/agent/mcp.json` and `.pi/mcp.json` ([Configure servers](https://pi.dev/docs/latest/mcp#configure-servers)) | Pi's two files, plus `.mcp.json`, `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, and `mcp-adapter.json` ([File layout](configuration.md#file-layout)) |
+| Configs from other clients | Convert entries by hand ([Migrate configuration](https://pi.dev/docs/latest/mcp#migrate-configuration-from-another-client)) | `imports` reads Cursor, Claude Code, Claude Desktop, OpenCode, VS Code, Windsurf, and Codex configs; `/mcp-adapter setup` and `pi-mcp-adapter init` find them ([Import existing configs](configuration.md#import-existing-configs)) |
+| Add a server from a shell | `pi mcp add` and `pi mcp remove` ([Quick setup](https://pi.dev/docs/latest/mcp#quick-setup)) | No shell command of its own; servers added with `pi mcp add` are read. In a session: `/mcp-adapter setup` or `mcp({ action: "install", url })` ([Install from one URL](servers.md#install-from-one-url)) |
+| Check servers from a shell | `pi mcp list`, exits 1 when a server fails ([Diagnose connection problems](https://pi.dev/docs/latest/mcp#diagnose-connection-problems)) | `pi-mcp-adapter doctor [--json]`, exits 1 when a server fails or needs sign-in, and never starts OAuth ([Check servers from a shell](configuration.md#check-servers-from-a-shell)) |
+| MCP prompts | No | Slash commands `/mcp__<server>__<prompt>` ([MCP prompts](prompts-and-ui.md#mcp-prompts)) |
+| Elicitation (servers asking for input) | No | Forms through Pi dialogs, and URL mode in the TUI ([MCP elicitation](prompts-and-ui.md#mcp-elicitation)) |
+| Sampling (servers asking for a model reply) | No | Text only, with a confirmation prompt ([Settings](configuration.md#settings), [Limitations](../README.md#limitations)) |
+| MCP Tasks | No | Supported when the server advertises the Tasks extension on an MCP 2026-07-28 connection, which needs `protocolVersion: "auto"` or `"2026-07-28"` ([Task-augmented tool calls](servers.md#task-augmented-tool-calls), [Protocol version negotiation](servers.md#protocol-version-negotiation)) |
+| MCP UI | UI resources are left out ([Use resources](https://pi.dev/docs/latest/mcp#use-resources)) | Tool UIs open in a native macOS window or the browser and can call tools ([MCP UI integration](prompts-and-ui.md#mcp-ui-integration)) |
+| Tool approval | Every MCP call goes through Pi's tool pipeline, so permission extensions see each tool and its annotations ([Permissions](https://pi.dev/docs/latest/mcp#permissions)) | `approveTools` asks before matching tools run. Permission extensions see proxy calls as calls to the adapter's proxy tools, and direct tools under their own names ([Tool approval](tools.md#tool-approval)) |
+| Scripts that call many tools | `codemode`, the default exposure ([Control tool exposure](https://pi.dev/docs/latest/mcp#control-tool-exposure)) | `mcpScript`, off by default (`settings.scriptMode`) ([MCP scripting](scripting.md)) |
+| Resources | `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource` tools ([Use resources](https://pi.dev/docs/latest/mcp#use-resources)) | Resources exposed as tools, on by default (`exposeResources`) ([Settings](configuration.md#settings)) |
+| Roots | Sends the session directory as the root | Not declared ([Task-augmented tool calls](servers.md#task-augmented-tool-calls)) |
+| Transports | stdio and streamable HTTP; SSE is rejected ([Configuration rules](https://pi.dev/docs/latest/mcp#configuration-rules)) | stdio and streamable HTTP, with fallback to legacy SSE ([Fields](servers.md#fields)) |
+| Servers from other extensions | `pi.registerMcpServer()` ([Add servers from extensions](https://pi.dev/docs/latest/mcp#add-servers-from-extensions)) | Connects those servers on Pi 0.99 and later, through the proxy only ([Runtime registration](extension-api.md#runtime-registration-from-other-extensions)) |
+
+"No" means Pi 0.99.2's MCP client doesn't handle it: it declares only the `roots` capability and doesn't request prompts.
+
+Sign-ins made with Pi's built-in can be imported into the adapter; see [Import a sign-in from Pi's built-in MCP](auth.md#import-a-sign-in-from-pis-built-in-mcp).

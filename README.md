@@ -130,6 +130,10 @@ On Pi 0.99 and later, servers you already signed in to with Pi's built-in MCP ca
 - Pi still owns one separator row before self-rendered tool output, so compact mode reduces adapter rendering height but cannot promise true zero-gap rows.
 - MCP sampling support is text-only; context inclusion, tools, stop sequences, audio, and image content are rejected with explicit errors.
 
+## Compared with Pi's built-in MCP
+
+Pi 0.99 ships its own MCP support, which the adapter replaces in sessions. [Pi's built-in MCP and pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) compares them feature by feature, as of Pi 0.99.2.
+
 ## Documentation
 
 The full reference lives in `docs/`:
@@ -139,6 +143,7 @@ The full reference lives in `docs/`:
 | [Configuration](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md) | The setup panel, config files and precedence, imports from other hosts, project server trust, lifecycle modes, and every `settings` key. |
 | [Server options](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/servers.md) | Every server field, custom HTTPS trust, macOS local-network access, protocol negotiation, MCP Tasks, stdio environment, rmcp-mux, and URL install. |
 | [Authentication](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/auth.md) | OAuth setup, remote and headless sign-in, token storage, headers, bearer tokens, and secret commands. |
+| [Pi's built-in MCP and pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) | What each one supports, as of Pi 0.99.2. |
 | [Using MCP tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/tools.md) | The `mcp` tool, search and search keywords, direct tools, tool approval, and the output guard. |
 | [MCP scripting](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md) | Jev semantic search, the `mcpScript` tool, and composable tool search. |
 | [Prompts, elicitation, and MCP UI](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/prompts-and-ui.md) | MCP prompts as slash commands, servers asking for input, and interactive MCP UI windows. |
