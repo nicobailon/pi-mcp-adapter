@@ -63,6 +63,21 @@ function piSupportsMcp(pi: ExtensionAPI): boolean {
   return typeof pi.registerMcpServer === "function";
 }
 
+/**
+ * The CallToolResult a deferred tool's output schema declares, which codemode scripts receive: the
+ * model-facing (output-guarded) content, the server's structuredContent, and isError on any failure.
+ */
+function toCallToolResult(result: AgentToolResult<Record<string, unknown>>): AgentToolResult<Record<string, unknown>> {
+  return {
+    ...result,
+    structuredContent: {
+      content: result.content,
+      ...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
+      ...(result.details?.error !== undefined ? { isError: true } : {}),
+    } as unknown as NonNullable<AgentToolResult["structuredContent"]>,
+  };
+}
+
 function hasEnabledServerWithoutValidMetadata(
   config: McpConfig,
   cache: MetadataCache | null,
@@ -374,6 +389,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // directTools: "search" — registered inactive, activated by mcp({ search }) or a successful mcp({ tool }) call.
   const lazyDirectTools = new Set<string>();
   const searchActivatedTools = new Set<string>();
+  // On Pi 0.99+ search-mode tools are Pi deferred tools: Pi's tool_search finds them and Pi owns
+  // their activation. Pi can't unregister tools, so removal re-registers the last definition hidden.
+  const deferSearchTools = piSupportsMcp(pi);
+  const deferredToolDefinitions = new Map<string, Record<string, unknown>>();
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
   const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
   const renderMcpToolResult = createMcpToolResultRenderer(toolRenderOptions);
@@ -416,6 +435,39 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     });
   }
 
+  // The fields Pi's built-in MCP registers its tools with (extensions/mcp/tools.js), for a
+  // search-mode tool on Pi 0.99+; undefined otherwise.
+  function deferredToolFields(spec: DirectToolSpec, config: McpConfig, cache: MetadataCache | null): Record<string, unknown> | undefined {
+    if (!deferSearchTools || !spec.lazy) return undefined;
+    const serverCache = cache?.servers[spec.serverName];
+    const tool = spec.resourceUri ? undefined : serverCache?.tools?.find((candidate) => candidate.name === spec.originalName);
+    const description = config.mcpServers[spec.serverName]?.description?.trim();
+    const instructions = serverCache?.instructions;
+    const { title: _title, ...annotations } = tool?.annotations ?? {};
+    const outputSchema = tool?.outputSchema && typeof tool.outputSchema === "object" ? tool.outputSchema : undefined;
+    return {
+      exposure: "deferred",
+      namespace: {
+        name: `mcp__${spec.serverName.replace(/-/g, "_")}`,
+        ...(description ? { description } : {}),
+        ...(instructions ? { instructions } : {}),
+      },
+      ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
+      // A CallToolResult with the tool's own output schema as structuredContent, which codemode
+      // scripts receive (see toCallToolResult).
+      outputSchema: {
+        type: "object",
+        properties: {
+          content: { type: "array", items: { type: "object" } },
+          ...(outputSchema ? { structuredContent: outputSchema } : {}),
+          isError: { type: "boolean" },
+          _meta: { type: "object" },
+        },
+        required: ["content"],
+      },
+    };
+  }
+
   function forgetReportedDirectToolName(serverName: string | undefined, toolName: string): void {
     if (!serverName) return;
     const reportedNames = reportedDirectToolNamesByServer.get(serverName);
@@ -424,9 +476,31 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (reportedNames.size === 0) reportedDirectToolNamesByServer.delete(serverName);
   }
 
-  function registerDirectTool(spec: DirectToolSpec, config: McpConfig): void {
+  function registerDirectTool(spec: DirectToolSpec, config: McpConfig, deferred: Record<string, unknown> | undefined): void {
     finalizationRegistrations?.add(spec.prefixedName);
-    callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)({
+    async function execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Record<string, unknown>>> {
+      let executor: ReturnType<(typeof import("./direct-tools.ts"))["createDirectToolExecutor"]>;
+      let guard: RuntimeGuard | undefined;
+      try {
+        const targetState = await ensureSessionRuntime(ctx);
+        if (!targetState) throw new Error("MCP not initialized");
+        guard = captureRuntimeGuard(targetState);
+        const executionGuard = guard;
+        const { createDirectToolExecutor } = await loadForRuntime(loadDirectExecution, executionGuard);
+        executor = createDirectToolExecutor(() => executionGuard.state, () => initPromise, spec, deferred !== undefined);
+      } catch (error) {
+        if (guard && (isRuntimeGuardStale(guard) || (guard.owner && isOwnerAbortError(error, guard.owner)))) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text" as const, text: `MCP initialization failed for ${spec.serverName}: ${message}` }],
+          details: { error: "init_failed", server: spec.serverName, message },
+        };
+      }
+      if (!guard) throw new Error("MCP runtime guard unavailable");
+      assertRuntimeGuard(guard);
+      return executor(toolCallId, params, signal, onUpdate, ctx);
+    }
+    const definition = {
       name: spec.prefixedName,
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
@@ -435,39 +509,26 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ...(config.settings?.strictDirectToolArguments === true
         ? { prepareArguments: (args: unknown) => prepareDirectToolArguments(spec.inputSchema, args) }
         : {}),
-      async execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
-        let executor: ReturnType<(typeof import("./direct-tools.ts"))["createDirectToolExecutor"]>;
-        let guard: RuntimeGuard | undefined;
-        try {
-          const targetState = await ensureSessionRuntime(ctx);
-          if (!targetState) throw new Error("MCP not initialized");
-          guard = captureRuntimeGuard(targetState);
-          const executionGuard = guard;
-          const { createDirectToolExecutor } = await loadForRuntime(loadDirectExecution, executionGuard);
-          executor = createDirectToolExecutor(() => executionGuard.state, () => initPromise, spec);
-        } catch (error) {
-          if (guard && (isRuntimeGuardStale(guard) || (guard.owner && isOwnerAbortError(error, guard.owner)))) throw error;
-          const message = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ type: "text" as const, text: `MCP initialization failed for ${spec.serverName}: ${message}` }],
-            details: { error: "init_failed", server: spec.serverName, message },
-          };
-        }
-        if (!guard) throw new Error("MCP runtime guard unavailable");
-        assertRuntimeGuard(guard);
-        return executor(toolCallId, params, signal, onUpdate, ctx);
-      },
+      ...deferred,
+      execute: deferred
+        ? async (...args: Parameters<typeof execute>) => toCallToolResult(await execute(...args))
+        : execute,
       renderShell: toolRenderShell,
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName, toolRenderOptions),
       renderResult: renderMcpToolResult,
-    }));
+    };
+    callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)(definition));
+    if (deferred) deferredToolDefinitions.set(spec.prefixedName, definition);
+    else deferredToolDefinitions.delete(spec.prefixedName);
   }
 
   // Pi registers a tool active. A lazy tool must not stay that way: hold every
   // lazy tool that search has not activated out of the active set. Safe to call
   // repeatedly; a no-op until Pi's action methods are available.
   function holdLazyToolsInactive(): void {
-    if (lazyDirectTools.size === 0) return;
+    // Pi registers deferred tools inactive and owns their activation, including tool_search's and a
+    // resumed branch's; holding them here would switch those off.
+    if (deferSearchTools || lazyDirectTools.size === 0) return;
     const activeTools = getActiveToolsIfReady();
     if (!activeTools) return;
     const next = activeTools.filter((name) => !lazyDirectTools.has(name) || searchActivatedTools.has(name));
@@ -527,6 +588,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const unregisterTool = (pi as ExtensionAPI & { unregisterTool?: (name: string) => boolean }).unregisterTool;
     const unregistered = toolNames.filter((toolName) => callReentrant(() => unregisterTool?.(toolName)) === true);
     const fallbackNames = toolNames.filter((toolName) => !unregistered.includes(toolName));
+    // A deferred tool stays callable from codemode while inactive; only hidden makes it unreachable.
+    for (const toolName of fallbackNames) {
+      const definition = deferredToolDefinitions.get(toolName);
+      if (!definition) continue;
+      deferredToolDefinitions.delete(toolName);
+      callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)({ ...definition, exposure: "hidden" }));
+    }
     const activeTools = getActiveToolsIfReady();
     if (!activeTools) return unregistered;
     const removedFallbackNames = fallbackNames.filter((name) => activeTools.includes(name));
@@ -554,11 +622,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const deactivated: string[] = [];
 
     for (const spec of specs) {
-      const fingerprint = directToolFingerprint(spec);
+      const deferred = deferredToolFields(spec, config, cache);
+      const fingerprint = directToolFingerprint(spec) + (deferred ? JSON.stringify(deferred) : "");
       const previous = registeredDirectTools.get(spec.prefixedName);
       if (previous !== fingerprint) {
         const previousServer = registeredDirectToolServers.get(spec.prefixedName);
-        registerDirectTool(spec, config);
+        registerDirectTool(spec, config, deferred);
         finalizationGuard?.();
         registeredDirectTools.set(spec.prefixedName, fingerprint);
         registeredDirectToolServers.set(spec.prefixedName, spec.serverName);
@@ -575,6 +644,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         (previous ? updated : added).push(spec.prefixedName);
       }
       if (spec.lazy) {
+        // Eager → search on Pi 0.99+: Pi keeps a re-registered tool active, so switch it off once.
+        if (deferSearchTools && previous !== undefined && !lazyDirectTools.has(spec.prefixedName)) {
+          const activeTools = getActiveToolsIfReady();
+          if (activeTools?.includes(spec.prefixedName)) {
+            callReentrant(() => pi.setActiveTools(activeTools.filter((name) => name !== spec.prefixedName)));
+          }
+        }
         // Search mode, whether first registered or flipped from eager (e.g. in
         // the panel): held inactive below unless a search already activated it.
         lazyDirectTools.add(spec.prefixedName);

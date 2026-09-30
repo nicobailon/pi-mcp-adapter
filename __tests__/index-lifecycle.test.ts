@@ -4347,4 +4347,166 @@ describe("directTools: \"search\" — registered inactive, activated by search o
     mocks.executeSearch.mockReturnValue(plain);
     expect(await proxyTool.execute("c1", { search: "q" })).toBe(plain);
   });
+
+  it("registers search-mode tools as plain direct tools without Pi 0.99's registerMcpServer", async () => {
+    const { api } = await boot();
+    expect(Object.keys(registeredTool(api, "demo_alpha"))).toEqual(
+      ["name", "label", "description", "promptSnippet", "parameters", "execute", "renderShell", "renderCall", "renderResult"],
+    );
+  });
+
+  describe("on Pi 0.99+, as Pi deferred tools", () => {
+    const searchConfig = { settings: { scriptMode: false }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
+
+    // Pi 0.99: registering a direct tool activates it, a deferred one stays inactive, and a hidden one leaves the active set.
+    function trackPiToolExposure(api: any): () => string[] {
+      const exposures = new Map([["bash", "direct"], ["mcp", "direct"]]);
+      let active = ["bash", "mcp"];
+      api.registerTool.mockImplementation((tool: { name: string; exposure?: string }) => {
+        const known = exposures.has(tool.name);
+        const exposure = tool.exposure ?? "direct";
+        exposures.set(tool.name, exposure);
+        if (exposure === "hidden") active = active.filter((name) => name !== tool.name);
+        else if (!known && exposure === "direct") active.push(tool.name);
+      });
+      api.getActiveTools.mockImplementation(() => [...active]);
+      api.setActiveTools.mockImplementation((next: string[]) => {
+        active = next.filter((name) => exposures.has(name) && exposures.get(name) !== "hidden");
+      });
+      return () => [...active];
+    }
+
+    async function bootPi099(specs?: unknown[], config: Record<string, any> = searchConfig) {
+      if (specs) mocks.resolveDirectTools.mockReturnValue(specs);
+      const state = createState();
+      state.config = config;
+      mocks.loadMcpConfig.mockReturnValue(config);
+      mocks.initializeMcp.mockResolvedValue(state);
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers } = createPi({ unregisterTool: false });
+      api.registerMcpServer = vi.fn();
+      api.getMcpServers = vi.fn(() => []);
+      const activeTools = trackPiToolExposure(api);
+      mcpAdapter(api);
+      await handlers.get("session_start")?.({}, {});
+      await Promise.resolve();
+      await Promise.resolve();
+      return { api, handlers, activeTools, proxyTool: registeredTool(api, "mcp") };
+    }
+
+    it("registers search-mode tools inactive and deferred, with their server's namespace, annotations and a CallToolResult output schema", async () => {
+      const { resolveDirectTools } = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
+      mocks.resolveDirectTools.mockImplementation(resolveDirectTools);
+      const docs = { command: "docs", directTools: "search", description: " Team docs " };
+      const proxyOnly = { command: "other" };
+      const rowsSchema = { type: "object", properties: { rows: { type: "array" } } };
+      mocks.loadMetadataCache.mockReturnValue({
+        version: 1,
+        servers: {
+          "team-docs": cacheEntry(docs, {
+            instructions: "Search before reading.",
+            tools: [{ name: "find", description: "Find docs", outputSchema: rowsSchema, annotations: { title: "Find", readOnlyHint: true } }],
+          }),
+          other: cacheEntry(proxyOnly, { tools: [{ name: "run" }] }),
+        },
+      });
+
+      const { api, activeTools } = await bootPi099(undefined, { settings: { scriptMode: false }, mcpServers: { "team-docs": docs, other: proxyOnly } });
+
+      const names = api.registerTool.mock.calls.map((call: any[]) => call[0].name);
+      expect(names).toContain("team-docs_find");
+      expect(names).not.toContain("other_run"); // the proxy-only server's tools stay behind the proxy
+      expect(registeredTool(api, "team-docs_find")).toMatchObject({
+        exposure: "deferred",
+        namespace: { name: "mcp__team_docs", description: "Team docs", instructions: "Search before reading." },
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          properties: {
+            content: { type: "array", items: { type: "object" } },
+            structuredContent: rowsSchema,
+            isError: { type: "boolean" },
+            _meta: { type: "object" },
+          },
+          required: ["content"],
+        },
+      });
+      expect(registeredTool(api, "team-docs_find").annotations).not.toHaveProperty("title");
+      expect(activeTools()).not.toContain("team-docs_find");
+    });
+
+    it("never changes the declared tools when a lazy search-mode server connects", async () => {
+      const { api, activeTools, proxyTool } = await bootPi099([]);
+      api.setActiveTools.mockClear();
+      mocks.resolveDirectTools.mockReturnValue([lazySpec("alpha"), lazySpec("beta")]);
+      mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
+
+      await proxyTool.execute("c1", { connect: "demo" });
+
+      expect(registeredTool(api, "demo_alpha")).toMatchObject({ exposure: "deferred" });
+      expect(api.setActiveTools).not.toHaveBeenCalled();
+      expect(activeTools()).toEqual(["bash", "mcp"]);
+    });
+
+    it("leaves activation to Pi: a tool_search activation survives the next request and a resume", async () => {
+      const { api, handlers, activeTools, proxyTool } = await bootPi099([lazySpec("alpha"), lazySpec("beta")]);
+      api.setActiveTools([...activeTools(), "demo_alpha"]); // what tool_search does
+
+      await handlers.get("before_agent_start")?.({}, {});
+      await handlers.get("session_start")?.({}, {}); // Pi restores the branch's active tools on resume
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+
+      mocks.executeSearch.mockReturnValue(searchResult("beta"));
+      const search = await proxyTool.execute("c1", { search: "q" });
+      expect(search.addedToolNames).toEqual(["demo_beta"]);
+      expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha", "demo_beta"]);
+    });
+
+    it("re-registers a search-mode tool that no longer resolves as hidden, since Pi can't unregister it", async () => {
+      const { api, activeTools, proxyTool } = await bootPi099([lazySpec("alpha"), lazySpec("beta")]);
+      api.setActiveTools([...activeTools(), "demo_alpha"]);
+      // Its server was disabled or removed, or includeTools/excludeTools now filter it out.
+      mocks.resolveDirectTools.mockReturnValue([lazySpec("beta")]);
+      mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
+
+      await proxyTool.execute("c1", { connect: "demo" });
+
+      const alpha = api.registerTool.mock.calls.filter((call: any[]) => call[0].name === "demo_alpha").map((call: any[]) => call[0]);
+      expect(alpha.at(-1)).toMatchObject({ name: "demo_alpha", exposure: "hidden", execute: alpha[0].execute });
+      expect(registeredTool(api, "demo_beta")).toMatchObject({ exposure: "deferred" });
+      expect(activeTools()).toEqual(["bash", "mcp"]);
+    });
+
+    it("switches an eager direct tool off once when its server moves to search mode", async () => {
+      const { activeTools, proxyTool } = await bootPi099([{ ...lazySpec("alpha"), lazy: false }]);
+      expect(activeTools()).toEqual(["bash", "mcp", "demo_alpha"]);
+      mocks.resolveDirectTools.mockReturnValue([lazySpec("alpha")]);
+      mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
+
+      await proxyTool.execute("c1", { connect: "demo" });
+
+      expect(activeTools()).toEqual(["bash", "mcp"]);
+    });
+
+    it("returns every result of a deferred tool to codemode scripts as a CallToolResult", async () => {
+      const text = (value: string) => [{ type: "text", text: value }];
+      const executor = vi.fn()
+        .mockResolvedValueOnce({ content: text("7 rows"), details: { server: "demo" }, structuredContent: { rows: 7 } })
+        .mockResolvedValueOnce({ content: text("Error: boom"), details: { error: "tool_error", server: "demo" } });
+      mocks.createDirectToolExecutor.mockReturnValue(executor);
+      const { api } = await bootPi099([lazySpec("alpha")]);
+      const tool = registeredTool(api, "demo_alpha");
+      const ctx = { hasUI: false, cwd: "/one" };
+
+      const ok = await tool.execute("c1", {}, undefined, undefined, ctx);
+      const failed = await tool.execute("c2", {}, undefined, undefined, ctx);
+
+      expect(ok).toMatchObject({ content: text("7 rows"), structuredContent: { content: text("7 rows"), structuredContent: { rows: 7 } } });
+      expect(ok.structuredContent).not.toHaveProperty("isError");
+      expect(failed.structuredContent).toEqual({ content: text("Error: boom"), isError: true });
+      expect(mocks.createDirectToolExecutor).toHaveBeenCalledWith(expect.any(Function), expect.any(Function), expect.objectContaining({ prefixedName: "demo_alpha" }), true);
+    });
+  });
 });

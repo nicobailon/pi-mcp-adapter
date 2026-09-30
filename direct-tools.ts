@@ -129,8 +129,13 @@ type DirectToolExecute = (
 export function createDirectToolExecutor(
   getState: () => McpExtensionState | null,
   getInitPromise: () => Promise<McpExtensionState> | null,
-  spec: DirectToolSpec
+  spec: DirectToolSpec,
+  // Deferred tools (Pi 0.99+) pass the server's structuredContent on to their CallToolResult.
+  structured = false,
 ): DirectToolExecute {
+  const structuredContentOf = (result: ClientCallToolResult) => structured && result.structuredContent !== undefined
+    ? { structuredContent: result.structuredContent as NonNullable<AgentToolResult["structuredContent"]> }
+    : {};
   return async function execute(toolCallId, params, signal) {
     throwIfAborted(signal);
     let state = getState();
@@ -354,6 +359,7 @@ export function createDirectToolExecutor(
         return {
           content: guarded.content,
           details: { error: "tool_error", server: spec.serverName, ...guardedMcpDetails(guarded) },
+          ...structuredContentOf(result),
         };
       }
 
@@ -376,6 +382,7 @@ export function createDirectToolExecutor(
             uiUrl: uiSummary.uiUrl,
             ...guardedMcpDetails(guarded),
           },
+          ...structuredContentOf(result),
         };
       }
 
@@ -387,6 +394,7 @@ export function createDirectToolExecutor(
       return {
         content: guarded.content,
         details: { server: spec.serverName, tool: spec.originalName, ...guardedMcpDetails(guarded) },
+        ...structuredContentOf(result),
       };
     } catch (error) {
       if (error instanceof SessionRecoveryAuthRequiredError) {
