@@ -280,25 +280,40 @@ describe("runMcpScript", () => {
   it("describes and calls a tool name shared by two servers using the server search returned", async () => {
     const sharedState = {
       ...state,
-      config: { settings: { toolPrefix: "none" }, mcpServers: { fixture: definition, other: definition } },
+      // Separate definitions so each server keeps its own observed output shape.
+      config: { settings: { toolPrefix: "none" }, mcpServers: { fixture: definition, other: { ...definition } } },
       toolMetadata: new Map([
         ["fixture", [{ name: "echo", originalName: "echo", description: "Echo a value" }]],
         ["other", [{ name: "echo", originalName: "echo", description: "Other echo" }]],
       ]),
+      observedOutputs: new WeakMap(),
     } as unknown as McpExtensionState;
 
     const result = await runMcpScript(
       sharedState,
-      'const hits = (await tools.search({ query: "echo" })).items; const hit = hits.find((item) => item.server === "fixture"); return { servers: hits.map((item) => item.server).sort(), unscoped: (await tools.call("echo", { value: "unscoped" })).error, unknownServer: (await tools.describe({ path: "echo", server: "missing" })).error.message, described: (await tools.describe({ path: hit.path, server: hit.server })).description, called: (await tools.call(hit.path, { value: "scoped" }, { server: hit.server })).data.structuredContent };',
+      'const hits = (await tools.search({ query: "echo" })).items; const hit = hits.find((item) => item.server === "fixture"); return { servers: hits.map((item) => item.server).sort(), unscoped: (await tools.call("echo", { value: "unscoped" })).error, unknownServer: (await tools.describe({ path: "echo", server: "missing" })).error.message, described: (await tools.describe({ path: hit.path, server: hit.server })).description, called: (await tools.call(hit.path, { value: "scoped" }, { server: hit.server })).data.structuredContent, otherCalled: (await tools.call("echo", { value: 1 }, { server: "other" })).ok, target: (await tools.describe({ path: "echo", server: "other" })).observedOutput.target };',
     );
 
-    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
+    const described = JSON.parse(textBlocks(result).at(-1)!);
+    expect(described).toEqual({
       servers: ["fixture", "other"],
       unscoped: { code: "ambiguous_tool", message: expect.stringContaining("tools.call(path, args, { server })") },
       unknownServer: 'Server "missing" not found. Use the server from a tools.search hit.',
       described: "Echo a value",
       called: { echoed: "scoped" },
+      otherCalled: true,
+      target: '(await tools.call("echo", args, { server: "other" })).data.structuredContent',
     });
+
+    // The copied target reaches "other": its observed shape gains the boolean, while "fixture" keeps its own.
+    const copied = await runMcpScript(sharedState, `const args = { value: true }; return ${described.target};`);
+    expect(JSON.parse(textBlocks(copied).at(-1)!)).toEqual({ echoed: true });
+
+    const empty = await runMcpScript(sharedState,
+      'await tools.call("echo", { value: "a" }, { server: "fixture" }); await tools.call("echo", { value: 2 }, { server: "other" }); return [];');
+    const text = textBlocks(empty).join("\n");
+    expect(text).toContain('(await tools.call("echo", args, { server: "fixture" })).data.structuredContent is:\n{ echoed: string; }');
+    expect(text).toContain('(await tools.call("echo", args, { server: "other" })).data.structuredContent is:\n{ echoed: number | boolean; }');
   });
 
   it("keeps inputs without field documentation compact and suggests corrections without throwing", async () => {

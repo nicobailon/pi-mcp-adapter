@@ -6,7 +6,7 @@ import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from 
 import { loadMcpScriptWasm, resolveMcpScriptQuickJsUrl } from "./mcp-script-wasm.ts";
 import { evaluateJev, validateJevSettings } from "./jev-client.ts";
 import type { JevErrorCode, JevEvaluateInput, JevEvaluationEnvelope } from "./jev-contracts.ts";
-import { executeCall, findTools, resolveDescribeTarget } from "./proxy-modes.ts";
+import { executeCall, findTools, resolveDescribeTarget, unscopedCallReachesServer } from "./proxy-modes.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { paginate } from "./search-ranking.ts";
 import type { SemanticSearchEvaluator } from "./semantic-search.ts";
@@ -24,8 +24,10 @@ const SEEN_FIELDS_MAX_CHARS = 8 * 1024;
 const EMPTY_RETURNS = new Set(["[]", "{}", "null", ""]);
 
 // Spelled out from the call because models otherwise read `content` off the { ok, data } envelope.
-const observedTarget = (observed: ObservedOutput, path: string) => {
-  const call = `(await tools.call(${JSON.stringify(path)}, args))`;
+// Names the server only when the path alone would not reach this server's tool, e.g. a name two servers share.
+const observedTarget = (state: McpExtensionState, observed: ObservedOutput, path: string, server: string) => {
+  const scope = unscopedCallReachesServer(state, path, server) ? "" : `, { server: ${JSON.stringify(server)} }`;
+  const call = `(await tools.call(${JSON.stringify(path)}, args${scope}))`;
   return observed.source === "structuredContent" ? `${call}.data.structuredContent` : `JSON.parse(${call}.data.content[0].text)`;
 };
 
@@ -187,8 +189,8 @@ export async function runMcpScript(
   }));
   let callsSnapshot: ScriptOperation[] | undefined;
   let intermediateBytes = 0;
-  // Successful calls by path, for listing the result fields they returned when the script fails or finds nothing.
-  const calledTools = new Map<string, { server: string; tool: string }>();
+  // Successful calls by server and path, for listing the result fields they returned when the script fails or finds nothing.
+  const calledTools = new Map<string, { path: string; server: string; tool: string }>();
   let returnedEmpty = false;
   const reserveIntermediateBytes = (dataJson: string): boolean => {
     const bytes = Buffer.byteLength(dataJson, "utf8");
@@ -237,7 +239,8 @@ export async function runMcpScript(
     // Rejected responses do not consume budget. This bounds transfer, not upstream allocation.
     calls[index] = { operation: "call", path, ok: true, durationMs: Date.now() - startedAt, startedAt };
     if (typeof details.server === "string" && typeof details.tool === "string") {
-      calledTools.set(typeof details.canonicalTool === "string" ? details.canonicalTool : path, { server: details.server, tool: details.tool });
+      const calledPath = typeof details.canonicalTool === "string" ? details.canonicalTool : path;
+      calledTools.set(JSON.stringify([details.server, calledPath]), { path: calledPath, server: details.server, tool: details.tool });
     }
     return { dataJson };
   };
@@ -390,7 +393,7 @@ export async function runMcpScript(
         ...(tool.annotations ? { annotations: tool.annotations } : {}),
         ...(observed ? {
           observedOutput: {
-            target: observedTarget(observed, tool.name),
+            target: observedTarget(state, observed, tool.name, server),
             typeScript: renderOutputShape(observed.shape),
           },
         } : {}),
@@ -545,11 +548,11 @@ export async function runMcpScript(
   if (errorCode === "timeout" || errorCode === "script_error" || returnedEmpty || output.length === 0) {
     const sections: string[] = [];
     let chars = 0;
-    for (const [path, { server, tool }] of calledTools) {
+    for (const { path, server, tool } of calledTools.values()) {
       const meta = state.toolMetadata.get(server)?.find(entry => entry.originalName === tool && !entry.resourceUri);
       const observed = meta && getObservedOutput(state, server, meta);
       if (!observed) continue;
-      const section = `${observedTarget(observed, path)} is:\n${renderOutputShape(observed.shape)}`;
+      const section = `${observedTarget(state, observed, path, server)} is:\n${renderOutputShape(observed.shape)}`;
       if (chars + section.length > SEEN_FIELDS_MAX_CHARS) break;
       chars += section.length;
       sections.push(section);

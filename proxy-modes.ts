@@ -1187,6 +1187,12 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
   }
 }
 
+/** Whether executeCall without a server resolves this exact displayed tool name to serverName (its first, exact-name lookup). */
+export function unscopedCallReachesServer(state: McpExtensionState, toolName: string, serverName: string): boolean {
+  const matches = getEnabledToolMatches(state, toolName, true);
+  return matches.length === 1 && matches[0]!.server === serverName;
+}
+
 export async function executeCall(
   state: McpExtensionState,
   toolName: string,
