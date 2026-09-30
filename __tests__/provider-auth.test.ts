@@ -117,6 +117,17 @@ describe("auth.provider servers", () => {
     expect(seen).toEqual([]);
   });
 
+  it("keeps a malformed token out of errors and notices", async () => {
+    const { url } = await listen(mcpHandler);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const state = await boot(url, { getApiKeyForProvider: async () => "s3cr3t\nt0k3n" });
+
+    const reported = [getFailureMessage(state, "api"), ...logged.mock.calls.flat()].map(String).join("\n");
+    expect(state.manager.getConnection("api")).toBeUndefined();
+    expect(reported).toContain("not a valid header value");
+    expect(reported).not.toMatch(/s3cr3t|t0k3n/);
+  });
+
   it("does not connect without a model registry that provides provider tokens", async () => {
     const { url, seen } = await listen(mcpHandler);
     vi.spyOn(console, "error").mockImplementation(() => {});

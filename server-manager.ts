@@ -294,7 +294,12 @@ function createProviderTokenFetch(
     // Without a token the request is not sent; the 401 marks the server as needing sign-in.
     if (!token) return new Response(null, { status: 401 });
     const headers = new Headers(request.headers);
-    headers.set("Authorization", `Bearer ${token}`);
+    try {
+      headers.set("Authorization", `Bearer ${token}`);
+    } catch {
+      // The Headers error quotes the value, so it must not surface.
+      throw new TypeError(`Pi provider "${provider}" returned a token that is not a valid header value`);
+    }
     return innerFetch(new Request(request, { headers, redirect: "error" }));
   };
 }

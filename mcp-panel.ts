@@ -88,7 +88,6 @@ interface ServerState {
   source: "user" | "project" | "import";
   importKind?: string;
   ignoredSettings?: string[];
-  /** `auth.provider`: the server signs in with `/login <provider>`, not OAuth. */
   signInProvider?: string;
   includeTools?: string[];
   excludeTools?: string[];
