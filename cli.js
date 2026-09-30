@@ -569,33 +569,28 @@ async function runDoctor(argv, log, error) {
     }
   };
 
-  let results;
-  try {
-    results = await Promise.all(Object.entries(effective.mcpServers).map(async ([name, definition]) => {
-      // The deadline covers the whole check, including server-manager's follow-up probe.
-      const controller = new AbortController();
-      let timer;
-      const timedOut = new Promise((resolve) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          resolve({ state: "failed", message: `no response within ${DOCTOR_CONNECT_TIMEOUT_MS / 1000}s` });
-        }, DOCTOR_CONNECT_TIMEOUT_MS);
-      });
-      const result = await Promise.race([
-        check(name, definition, controller.signal).catch((err) => ({ state: "failed", message: utils.formatTerminalError(err) })),
-        timedOut,
-      ]);
-      clearTimeout(timer);
-      return {
-        name,
-        state: result.state,
-        tools: result.tools ?? null,
-        message: result.message ? utils.sanitizeTerminalText(redactDoctorMessage(result.message, definition, utils)) : null,
-      };
-    }));
-  } finally {
-    await serverManager.closeAll();
-  }
+  const results = await Promise.all(Object.entries(effective.mcpServers).map(async ([name, definition]) => {
+    // The deadline covers the whole check, including server-manager's follow-up probe.
+    const controller = new AbortController();
+    let timer;
+    const timedOut = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        resolve({ state: "failed", message: `no response within ${DOCTOR_CONNECT_TIMEOUT_MS / 1000}s` });
+      }, DOCTOR_CONNECT_TIMEOUT_MS);
+    });
+    const result = await Promise.race([
+      check(name, definition, controller.signal).catch((err) => ({ state: "failed", message: utils.formatTerminalError(err) })),
+      timedOut,
+    ]);
+    clearTimeout(timer);
+    return {
+      name,
+      state: result.state,
+      tools: result.tools ?? null,
+      message: result.message ? utils.sanitizeTerminalText(redactDoctorMessage(result.message, definition, utils)) : null,
+    };
+  }));
 
   if (json) {
     log(JSON.stringify(results, null, 2));
@@ -605,6 +600,13 @@ async function runDoctor(argv, log, error) {
       const tools = result.tools === null ? "" : `, ${result.tools} tool${result.tools === 1 ? "" : "s"}`;
       log(`${utils.sanitizeTerminalText(result.name)}: ${result.state}${tools}${result.message ? ` — ${result.message}` : ""}`);
     }
+  }
+  // Report first: closing waits for timed-out attempts to settle and can fail.
+  try {
+    await serverManager.closeAll();
+  } catch (err) {
+    error(`Some MCP connections did not close cleanly: ${utils.formatTerminalError(err)}`);
+    return 1;
   }
   return results.some((result) => result.state === "failed" || result.state === "needs-auth") ? 1 : 0;
 }
