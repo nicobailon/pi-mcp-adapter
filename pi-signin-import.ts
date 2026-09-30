@@ -7,7 +7,7 @@ import { loadOnboardingState, markPiSignInImportAsked } from "./onboarding-state
 import { isServerDisabled, type McpConfig } from "./types.ts";
 import { resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 
-export interface PiSignInImport {
+interface PiSignInImport {
   serverName: string;
   serverUrl: string;
   /** Normalized URL, the key in Pi's file. */
@@ -75,14 +75,13 @@ function matchPiSignIns(config: McpConfig, authStorageOptions: AuthStorageOption
     if (isServerDisabled(definition) || !supportsOAuth(definition)) continue;
     if (definition.oauth && definition.oauth.grantType === "client_credentials") continue;
     let serverUrl: string | undefined;
-    let url: string;
     try {
       serverUrl = resolveServerUrl(definition);
-      if (!serverUrl) continue;
-      url = String(new URL(serverUrl));
     } catch {
       continue;
     }
+    if (!serverUrl) continue;
+    const url = String(new URL(serverUrl));
     if (!Object.hasOwn(stored, url)) continue;
     const entry = toAuthEntry(stored[url]);
     if (entry) matches.push({ serverName, serverUrl, url, entry });
@@ -90,18 +89,17 @@ function matchPiSignIns(config: McpConfig, authStorageOptions: AuthStorageOption
   return matches;
 }
 
-function hasNoAdapterSignIn(candidate: PiSignInImport, authStorageOptions: AuthStorageOptions): boolean {
-  const status = inspectAuthForUrl(candidate.serverName, candidate.serverUrl, authStorageOptions);
-  return status.status === "absent" || (status.status === "present" && !status.entry.tokens);
+function hasNoAdapterEntry(candidate: PiSignInImport, authStorageOptions: AuthStorageOptions): boolean {
+  return inspectAuthForUrl(candidate.serverName, candidate.serverUrl, authStorageOptions).status === "absent";
 }
 
-/** Servers that can import Pi's sign-in now: matched in Pi's file and not signed in with the adapter. */
+/** Servers that can import Pi's sign-in now: matched in Pi's file, with no adapter credentials for that URL. */
 export function findPiSignInImports(config: McpConfig, authStorageOptions: AuthStorageOptions): PiSignInImport[] {
-  return matchPiSignIns(config, authStorageOptions).filter((candidate) => hasNoAdapterSignIn(candidate, authStorageOptions));
+  return matchPiSignIns(config, authStorageOptions).filter((candidate) => hasNoAdapterEntry(candidate, authStorageOptions));
 }
 
 export function importPiSignIn(candidate: PiSignInImport, authStorageOptions: AuthStorageOptions): void {
-  saveAuthEntry(candidate.serverName, structuredClone(candidate.entry), candidate.serverUrl, authStorageOptions);
+  saveAuthEntry(candidate.serverName, candidate.entry, candidate.serverUrl, authStorageOptions);
 }
 
 /**
@@ -118,7 +116,7 @@ export async function offerPiSignInImports(
   const asked = loadOnboardingState().piSignInImportsAsked ?? [];
   const candidates = matchPiSignIns(config, authStorageOptions)
     .filter((candidate) => !asked.some((entry) => entry.server === candidate.serverName && entry.url === candidate.url))
-    .filter((candidate) => hasNoAdapterSignIn(candidate, authStorageOptions));
+    .filter((candidate) => hasNoAdapterEntry(candidate, authStorageOptions));
   for (const candidate of candidates) {
     const name = sanitizeTerminalText(candidate.serverName);
     const choice = await ctx.ui.select(

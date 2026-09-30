@@ -234,7 +234,7 @@ export function setPiMcpConfigEnabled(enabled: boolean): void {
   piMcpConfigEnabled = enabled;
 }
 
-/** @internal Whether the adapter runs on Pi 0.99+ with discovered config, which also gates importing Pi's sign-ins. */
+/** @internal */
 export function isPiMcpConfigEnabled(): boolean {
   return piMcpConfigEnabled;
 }

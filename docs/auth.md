@@ -136,16 +136,16 @@ This will:
 
 ### Import a sign-in from Pi's built-in MCP
 
-On Pi 0.99 and later, Pi's built-in MCP stores its OAuth sign-ins in `~/.pi/agent/mcp-auth.json` (under `PI_CODING_AGENT_DIR` when set). When a configured OAuth server has no adapter sign-in yet and its URL exactly matches a server URL in that file, an interactive session asks once per server and URL, at session start before any server connects:
+On Pi 0.99 and later, Pi's built-in MCP stores its OAuth sign-ins in `~/.pi/agent/mcp-auth.json` (under `PI_CODING_AGENT_DIR` when set). When a configured OAuth server has no adapter credentials for its URL and that URL exactly matches one in Pi's file, interactive sessions ask once per server and URL, at session start before any server connects:
 
-- **Import sign-in** copies Pi's tokens and client registration into the adapter's credential store, bound to that URL. Pi's in-progress sign-in state (PKCE verifier and state) is never copied.
+- **Import sign-in** copies Pi's tokens and client registration, bound to that URL. Pi's PKCE verifier and state are never copied.
 - **Sign in again** changes nothing; run `/mcp-auth <server>` when you need the server.
 
-If the server rotates refresh tokens, the adapter's first refresh uses up the refresh token Pi also holds, which can sign Pi's shell `pi mcp` commands out of that server. Sign in there again if that happens.
+If the server rotates refresh tokens, the adapter's first refresh can sign Pi's shell `pi mcp` commands out of that server.
 
-To import later, or for project servers, which the startup prompt doesn't cover, open `/mcp-adapter` and press `ctrl+p` (**import sign-ins from Pi**). It imports every eligible server without asking again, then reconnects them. The action only appears when there is something to import.
+To import later, or for project servers (not covered by the startup prompt), press `ctrl+p` in `/mcp-adapter`. It imports every eligible server without asking and reconnects them. The action only appears when there is something to import.
 
-Pi's file is only read, never changed or deleted. Nothing is imported in non-interactive sessions, when `settings.oauthCredentialStore` is `"encrypted-file"`, or for servers with `client_credentials`. A URL that differs in any way from Pi's key, such as another path, is never offered. Malformed files and entries are skipped.
+Pi's file is never changed. Nothing is imported in non-interactive sessions, with `settings.oauthCredentialStore: "encrypted-file"`, or for `client_credentials` servers. Malformed files and entries are skipped.
 
 ### Remote/headless authentication
 

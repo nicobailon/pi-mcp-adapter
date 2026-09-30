@@ -139,6 +139,20 @@ describe("importing sign-ins from Pi's built-in MCP", () => {
     expect(getAuthForUrl("docs", "https://docs.example/mcp")).toBeUndefined();
   });
 
+  it("never replaces an existing adapter entry for the URL", async () => {
+    writePiAuth({ "https://docs.example/mcp": piEntry("https://docs.example/mcp") });
+    const { offerPiSignInImports, findPiSignInImports, getAuthForUrl, saveAuthEntry } = await loadModules();
+    saveAuthEntry("docs", { clientInfo: { clientId: "adapter-client" } }, "https://docs.example/mcp");
+    const config: McpConfig = { mcpServers: { docs: { url: "https://docs.example/mcp", auth: "oauth" } } };
+    const ctx = createCtx(IMPORT);
+
+    await offerPiSignInImports(ctx, config);
+
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(findPiSignInImports(config, {})).toEqual([]);
+    expect(getAuthForUrl("docs", "https://docs.example/mcp")).toEqual({ clientInfo: { clientId: "adapter-client" }, serverUrl: "https://docs.example/mcp" });
+  });
+
   it("imports nothing and leaves Pi's file untouched on Sign in again, and does not ask again", async () => {
     writePiAuth({ "https://docs.example/mcp": piEntry("https://docs.example/mcp") });
     const before = readFileSync(piAuthPath);
@@ -218,20 +232,23 @@ describe("importing sign-ins from Pi's built-in MCP", () => {
     vi.doUnmock("../mcp-panel.ts");
   });
 
-  it("asks at session start in Pi, before the first connection", async () => {
+  it("asks at session start in Pi with the current config, before the first connection", async () => {
     const { url, authorizations } = await startBearerServer("pi-access");
     writePiAuth({ [String(new URL(url))]: piEntry(url) });
-    writeFileSync(join(agentDir, "mcp-adapter.json"), JSON.stringify({
-      // Lazy with no metadata cache: the session's startup bootstrap is the first connection.
-      mcpServers: { docs: { url, auth: "oauth" } },
+    // Lazy with no metadata cache: the session's startup bootstrap is the first connection.
+    const writeConfig = (serverUrl: string) => writeFileSync(join(agentDir, "mcp-adapter.json"), JSON.stringify({
+      mcpServers: { docs: { url: serverUrl, auth: "oauth" } },
       settings: { sampling: false, elicitation: false },
     }));
+    writeConfig("https://moved.example/mcp");
     const cwd = join(root, "project");
     mkdirSync(cwd, { recursive: true });
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await import("@earendil-works/pi-coding-agent");
     const settingsManager = SettingsManager.inMemory();
     const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager, additionalExtensionPaths: [join(process.cwd(), "index.ts")] });
     await loader.reload();
+    // The URL changes after the extension loaded; session start must use the current config.
+    writeConfig(url);
     const { session } = await createAgentSession({
       cwd,
       agentDir,

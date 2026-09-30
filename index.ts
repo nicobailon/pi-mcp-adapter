@@ -1251,7 +1251,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (ctx.hasUI && !programmaticConfig && piSupportsMcp(pi) && existsSync(getPiMcpAuthPath())) {
       try {
         const { offerPiSignInImports } = await import("./pi-signin-import.ts");
-        await offerPiSignInImports(ctx, earlyConfig, owner.signal);
+        await offerPiSignInImports(ctx, excludeProjectServersAtLoadTime(loadMcpConfig(earlyConfigPath, ctx.cwd)), owner.signal);
       } catch (error) {
         console.error(`MCP: could not offer Pi sign-in import: ${formatTerminalError(error)}`);
       }
