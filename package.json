@@ -215,7 +215,7 @@
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.99.1",
-    "@earendil-works/pi-coding-agent": "0.99.1",
+    "@earendil-works/pi-coding-agent": "0.99.2",
     "@earendil-works/pi-tui": "0.99.1",
     "@modelcontextprotocol/conformance": "0.1.16",
     "@types/bun": "^1.0.0",
