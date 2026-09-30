@@ -422,6 +422,45 @@ describe("McpServerManager sampling", () => {
     await expect(manager.refreshTools("demo", connection)).rejects.toBe(timeout);
   });
 
+  it.each([
+    {
+      kind: "tools",
+      reason: "tools-list-changed",
+      next: [{ name: "fresh_tool", description: "Fresh tool" }],
+      read: (connection: any) => connection.tools,
+    },
+    {
+      kind: "prompts",
+      reason: "prompts-list-changed",
+      next: [{ name: "fresh_prompt", description: "Fresh prompt" }],
+      read: (connection: any) => connection.prompts,
+    },
+    {
+      kind: "resources",
+      reason: "resources-list-changed",
+      next: [{ uri: "file://fresh", name: "Fresh resource" }],
+      read: (connection: any) => connection.resources,
+    },
+  ])("retries a failed $kind list-changed publication on the next unchanged refresh", async ({ kind, reason, next, read }) => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const client = mocks.clients[0];
+    const metadataChanged = vi.fn()
+      .mockImplementationOnce(() => { throw new Error("cache unavailable"); })
+      .mockImplementation(() => undefined);
+    manager.setMetadataListChangedListener(metadataChanged);
+
+    client.options.listChanged[kind].onChanged(null, next);
+    expect(read(connection)).toEqual(next);
+
+    client.listTools.mockResolvedValueOnce({ tools: connection.tools });
+    await expect(manager.refreshTools("demo", connection)).resolves.toBe("unchanged");
+
+    expect(metadataChanged).toHaveBeenCalledTimes(2);
+    expect(metadataChanged).toHaveBeenNthCalledWith(2, "demo", reason);
+  });
+
   it("retries queued metadata publication after a no-tools ping", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();

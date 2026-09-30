@@ -1422,8 +1422,7 @@ export class McpServerManager {
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.tools = tools;
     connection.toolsRevision = (connection.toolsRevision ?? 0) + 1;
-    this.metadataListChangedListener?.(serverName, "tools-list-changed");
-    this.pendingMetadataPublications.delete(serverName);
+    this.publishMetadataChanged(serverName, connection, "tools-list-changed");
   }
 
   private handlePromptsListChanged(
@@ -1441,8 +1440,7 @@ export class McpServerManager {
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.prompts = prompts;
     connection.promptDiscoveryFailed = false;
-    this.metadataListChangedListener?.(serverName, "prompts-list-changed");
-    this.pendingMetadataPublications.delete(serverName);
+    this.publishMetadataChanged(serverName, connection, "prompts-list-changed");
   }
 
   private handleResourcesListChanged(
@@ -1460,8 +1458,7 @@ export class McpServerManager {
     if (!connection || connection.client !== client || connection.status !== "connected") return;
     connection.resources = resources;
     connection.resourceDiscoveryFailed = false;
-    this.metadataListChangedListener?.(serverName, "resources-list-changed");
-    this.pendingMetadataPublications.delete(serverName);
+    this.publishMetadataChanged(serverName, connection, "resources-list-changed");
   }
 
   async handleUrlElicitationRequired(
