@@ -153,6 +153,25 @@ describe("importing sign-ins from Pi's built-in MCP", () => {
     expect(getAuthForUrl("docs", "https://docs.example/mcp")).toEqual({ clientInfo: { clientId: "adapter-client" }, serverUrl: "https://docs.example/mcp" });
   });
 
+  it("never replaces an adapter entry saved while the prompt was open", async () => {
+    writePiAuth({ "https://docs.example/mcp": piEntry("https://docs.example/mcp") });
+    const { offerPiSignInImports, getAuthForUrl, saveAuthEntry } = await loadModules();
+    const config: McpConfig = { mcpServers: { docs: { url: "https://docs.example/mcp", auth: "oauth" } } };
+    const ctx = createCtx(IMPORT);
+    ctx.ui.select.mockImplementation(async () => {
+      // Another session signs in with /mcp-auth while this prompt waits.
+      saveAuthEntry("docs", { tokens: { accessToken: "adapter-access" } }, "https://docs.example/mcp");
+      return IMPORT;
+    });
+
+    await offerPiSignInImports(ctx, config);
+    await offerPiSignInImports(ctx, config);
+
+    expect(ctx.ui.select).toHaveBeenCalledTimes(1);
+    expect(getAuthForUrl("docs", "https://docs.example/mcp")).toEqual({ tokens: { accessToken: "adapter-access" }, serverUrl: "https://docs.example/mcp" });
+    expect(ctx.ui.notify).toHaveBeenCalledWith('"docs" is already signed in with the adapter; nothing imported.', "info");
+  });
+
   it("imports nothing and leaves Pi's file untouched on Sign in again, and does not ask again", async () => {
     writePiAuth({ "https://docs.example/mcp": piEntry("https://docs.example/mcp") });
     const before = readFileSync(piAuthPath);

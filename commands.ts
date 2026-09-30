@@ -809,8 +809,7 @@ export async function openMcpPanel(
       const failed: { server: string; error: string }[] = [];
       for (const candidate of findPiSignInImports(config, authStorageOptions)) {
         try {
-          importPiSignIn(candidate, authStorageOptions);
-          imported.push(candidate.serverName);
+          if (importPiSignIn(candidate, authStorageOptions)) imported.push(candidate.serverName);
         } catch (error) {
           failed.push({ server: candidate.serverName, error: error instanceof Error ? error.message : String(error) });
         }

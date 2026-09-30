@@ -98,8 +98,14 @@ export function findPiSignInImports(config: McpConfig, authStorageOptions: AuthS
   return matchPiSignIns(config, authStorageOptions).filter((candidate) => hasNoAdapterEntry(candidate, authStorageOptions));
 }
 
-export function importPiSignIn(candidate: PiSignInImport, authStorageOptions: AuthStorageOptions): void {
+/** Saves Pi's sign-in; returns false, saving nothing, when adapter credentials for the URL exist by now. */
+export function importPiSignIn(candidate: PiSignInImport, authStorageOptions: AuthStorageOptions): boolean {
+  // Checked again at save time: another session can sign in while the prompt waits.
+  const current = inspectAuthForUrl(candidate.serverName, candidate.serverUrl, authStorageOptions);
+  if (current.status === "unavailable") throw new Error(current.message);
+  if (current.status === "present") return false;
   saveAuthEntry(candidate.serverName, candidate.entry, candidate.serverUrl, authStorageOptions);
+  return true;
 }
 
 /**
@@ -134,9 +140,9 @@ export async function offerPiSignInImports(
       continue;
     }
     try {
-      importPiSignIn(candidate, authStorageOptions);
+      const imported = importPiSignIn(candidate, authStorageOptions);
       markPiSignInImportAsked(candidate.serverName, candidate.url);
-      ctx.ui.notify(`Imported Pi's sign-in for ${name}.`, "info");
+      ctx.ui.notify(imported ? `Imported Pi's sign-in for ${name}.` : `"${name}" is already signed in with the adapter; nothing imported.`, "info");
     } catch (error) {
       const message = sanitizeTerminalText(error instanceof Error ? error.message : String(error));
       ctx.ui.notify(`Could not import Pi's sign-in for ${name}: ${message}`, "error");
