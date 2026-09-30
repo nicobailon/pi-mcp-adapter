@@ -300,8 +300,8 @@ describe("mcp-setup-panel custom keybindings", () => {
   it("tells the user whether an added desktop app server is reachable", async () => {
     const figma = KNOWN_SERVER_PRESETS.find(({ id }) => id === "figma")!;
     for (const [reachable, message] of [
-      [true, "Figma (desktop) is ready."],
-      [false, "Figma (desktop) isn't reachable yet. To enable it, open a Design file in Figma, switch to Dev Mode (Shift+D), and click 'Enable desktop MCP server' in the inspect panel."],
+      [true, "A server is answering at http://127.0.0.1:3845/mcp."],
+      [false, "Nothing is answering at http://127.0.0.1:3845/mcp yet. To enable it, open a Design file in Figma, switch to Dev Mode (Shift+D), and click 'Enable desktop MCP server' in the inspect panel."],
     ] as const) {
       const callbacks = createSetupCallbacks();
       callbacks.addKnownServer = async (preset) => ({ path: "/tmp/x", serverName: preset.name, reachable });

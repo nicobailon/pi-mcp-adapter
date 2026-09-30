@@ -672,7 +672,9 @@ export class McpSetupPanel {
         this.callbacks.markSetupCompleted();
         let status = "";
         if (preset.desktopApp && result.reachable !== undefined) {
-          status = result.reachable ? ` ${preset.name} is ready.` : ` ${preset.name} isn't reachable yet. ${preset.desktopApp.enableSteps}`;
+          status = result.reachable
+            ? ` A server is answering at ${preset.entry.url}.`
+            : ` Nothing is answering at ${preset.entry.url} yet. ${preset.desktopApp.enableSteps}`;
         }
         this.notice = {
           text: `Added ${result.serverName} to ${result.path}.${status} Pi will reload after this panel closes.`,
