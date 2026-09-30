@@ -784,7 +784,7 @@ For tool calls, successful `result.data` is the raw MCP `CallToolResult`, not th
 
 #### Composable tool search
 
-In `mcpScript`, search, describe, and call are separate steps, and plain JavaScript joins them. There is no query language to learn: a script filters, sorts, or combines search results with ordinary code, then describes or calls the tools it picked. None of this adds to the model's context until a script runs.
+Use JavaScript to filter, sort, or combine search results before describing or calling tools. This adds no model context until a script runs.
 
 ```js
 const found = await tools.search({ query: "issue", server: "github", limit: 50 });

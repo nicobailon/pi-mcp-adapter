@@ -60,7 +60,7 @@ describe("formatToolName", () => {
 
 describe("buildProxyDescription", () => {
   it("points to mcpScript only when it is registered", () => {
-    expect(buildProxyDescription({ mcpServers: {} }, true)).toContain("use mcpScript");
+    expect(buildProxyDescription({ mcpServers: {} }, true)).toContain("Use mcpScript");
     expect(buildProxyDescription({ mcpServers: {}, settings: { scriptMode: true } }, false)).not.toContain("mcpScript");
   });
 

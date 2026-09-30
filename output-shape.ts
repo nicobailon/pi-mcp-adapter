@@ -82,7 +82,7 @@ function recordObservedOutput(
     private: observedPrivately || (mergeable && previous.private),
   };
   byTool.set(toolName, next);
-  // Saving only changed shapes keeps cache writes to a tool's first calls; sessions without mcpScript never write.
+  // Skip unchanged shapes to avoid repeated cache writes; sessions without mcpScript never write.
   if (state.scriptTool === true && !next.private && JSON.stringify(next) !== JSON.stringify(previous)) {
     try {
       saveObservedOutput(serverName, definition, toolName, toolKey, { source: next.source, shape: next.shape });

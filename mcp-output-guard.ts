@@ -64,7 +64,7 @@ export interface McpOutputGuardOptions {
   enabled?: boolean;
   prefix?: string;
   suffix?: string;
-  /** Short text placed after the output that stays even when the output is truncated. */
+  /** Optional guidance appended when it fits the output limits. */
   footer?: string;
   emptyTextFallback?: string;
   maxBytes?: number;
@@ -104,7 +104,7 @@ export function scriptPipeHint(scriptTool: boolean | undefined, content: Content
   if (scriptTool !== true) return {};
   const bytes = content.reduce((total, block) => total + (block.type === "text" ? byteLength(block.text) : 0), 0);
   return bytes >= SCRIPT_PIPE_HINT_MIN_BYTES
-    ? { footer: "\n\n[To pass this result to another MCP call, use mcpScript so it is not copied through the conversation.]" }
+    ? { footer: "\n\n[Use mcpScript to pass this result to another MCP call without copying it through the conversation.]" }
     : {};
 }
 

@@ -19,17 +19,17 @@ async function callText(text: string, scriptTool: boolean, origin?: "script") {
 describe("script pipe hint", () => {
   it("points large model-facing results at mcpScript only when the tool is registered", async () => {
     const large = "x".repeat(10 * 1024);
-    expect(await callText(large, true)).toContain("use mcpScript");
+    expect(await callText(large, true)).toContain("Use mcpScript");
     expect(await callText(large, false)).not.toContain("mcpScript");
     expect(await callText(large, true, "script")).not.toContain("mcpScript");
     expect(await callText("short", true)).not.toContain("mcpScript");
   });
 
   it("measures the threshold in UTF-8 bytes and keeps the hint when output is truncated", async () => {
-    expect(await callText("界".repeat(3000), true)).toContain("use mcpScript");
+    expect(await callText("界".repeat(3000), true)).toContain("Use mcpScript");
 
     const truncated = await callText("x\n".repeat(40_000), true);
     expect(truncated).toContain("truncated");
-    expect(truncated.trimEnd().endsWith("so it is not copied through the conversation.]")).toBe(true);
+    expect(truncated.trimEnd().endsWith("without copying it through the conversation.]")).toBe(true);
   });
 });

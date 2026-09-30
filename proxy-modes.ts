@@ -722,7 +722,6 @@ function formatToolHints(toolMeta: ToolMetadata): string {
   return hints.join(", ");
 }
 
-/** The tool describe targets, or the error both mcp({ describe }) and mcpScript's tools.describe report. */
 export function resolveDescribeTarget(
   state: McpExtensionState,
   toolName: string,
@@ -907,7 +906,6 @@ export type ToolSearchOutcome =
   | { matches: RankedToolMatch[]; backend?: SemanticSearchBackend }
   | { error: ProxyToolResult };
 
-/** The one search core behind both mcp({ search }) and mcpScript's tools.search. */
 export function findTools(state: McpExtensionState, input: ToolSearchInput): ToolSearchOutcome | Promise<ToolSearchOutcome> {
   const { query, regex, server, searchMode = "lexical" } = input;
   const failure = (text: string, details: Record<string, unknown>): ToolSearchOutcome => ({

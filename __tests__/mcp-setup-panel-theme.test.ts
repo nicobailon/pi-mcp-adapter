@@ -13,7 +13,6 @@ function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-/** Presses DOWN until the setup panel's cursor row shows `label`. */
 function moveCursorTo(panel: { render(width: number): string[]; handleInput(data: string): void }, label: string): void {
   for (let presses = 0; presses < 40; presses += 1) {
     if (panel.render(200).some((line) => stripAnsi(line).includes(`› ${label}`))) return;
@@ -185,8 +184,6 @@ describe("mcp setup panel theme and component rendering", () => {
       panel.handleInput(DOWN);
       renders.push(panel.render(width));
     }
-    // 22 body rows (the cap) plus 7 rows of frame, header, spacers, and footer.
-    expect(new Set(renders.map((lines) => lines.length))).toEqual(new Set([29]));
     for (let presses = 0; presses < 20; presses += 1) panel.handleInput("\x1b[A");
 
     moveCursorTo(panel, "DeepWiki");
@@ -208,6 +205,7 @@ describe("mcp setup panel theme and component rendering", () => {
     panel.handleInput(ENTER);
     renders.push(panel.render(width));
 
+    // 22 body rows (the cap) plus 7 rows of frame, header, spacers, and footer.
     const heights = new Set(renders.map((lines) => lines.length));
     expect([...heights]).toEqual([29]);
     for (const lines of renders) {

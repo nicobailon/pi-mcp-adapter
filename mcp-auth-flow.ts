@@ -472,6 +472,9 @@ export async function startAuth(
   const signal = combineAbortSignals(runtime.signal, options.signal)
   const generation = runtimeState.generation
   throwIfAborted(signal)
+  const explainRejection = (error: unknown): never => {
+    throw error instanceof RegistrationRejectedError ? explainRegistrationRejection(error, serverUrl) : error
+  }
 
   if (config.grantType === "client_credentials") {
     const storedAuth = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
@@ -494,9 +497,7 @@ export async function startAuth(
       const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
       authority()
       throwIfAborted(signal)
-      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }).catch(error => {
-        throw error instanceof RegistrationRejectedError ? explainRegistrationRejection(error, serverUrl) : error
-      }), signal)
+      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }).catch(explainRejection), signal)
       authority()
       throwIfAborted(signal)
       if (result !== "AUTHORIZED") {
@@ -590,9 +591,7 @@ export async function startAuth(
     const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
     authority()
     throwIfAborted(signal)
-    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }).catch(error => {
-      throw error instanceof RegistrationRejectedError ? explainRegistrationRejection(error, serverUrl) : error
-    }), signal)
+    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }).catch(explainRejection), signal)
     authority()
     throwIfAborted(signal)
     if (result === "AUTHORIZED") {

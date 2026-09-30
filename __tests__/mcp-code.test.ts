@@ -45,7 +45,7 @@ describe("runMcpScript", () => {
 
     expect(registerTool).toHaveBeenCalledWith(expect.objectContaining({
       name: "mcpScript",
-      description: expect.stringContaining("multiple MCP tool calls in one request"),
+      description: expect.stringContaining("multiple MCP calls in one request"),
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
     }));
     const scriptTool = registerTool.mock.calls.find(([tool]) => tool.name === "mcpScript")?.[0];
@@ -278,7 +278,7 @@ describe("runMcpScript", () => {
   });
 
   it("describes and calls a tool name shared by two servers using the server search returned", async () => {
-    const sharedState = {
+    const sharedState: McpExtensionState = {
       ...state,
       // Separate definitions so each server keeps its own observed output shape.
       config: { settings: { toolPrefix: "none" }, mcpServers: { fixture: definition, other: { ...definition } } },
@@ -287,7 +287,7 @@ describe("runMcpScript", () => {
         ["other", [{ name: "echo", originalName: "echo", description: "Other echo" }]],
       ]),
       observedOutputs: new WeakMap(),
-    } as unknown as McpExtensionState;
+    };
 
     const result = await runMcpScript(
       sharedState,

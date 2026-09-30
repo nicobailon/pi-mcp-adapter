@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { McpRuntimeToolCallResult } from "../index.ts";
 import { computeServerHash } from "../metadata-cache.ts";
 
 const mocks = vi.hoisted(() => ({
@@ -91,7 +92,7 @@ async function startAdapter() {
   mcpAdapter(api);
   const callTool = (request: Record<string, unknown>) => {
     events.emit(MCP_RUNTIME_TOOL_CALL_EVENT, request);
-    return request.result as Promise<any> | undefined;
+    return request.result as Promise<McpRuntimeToolCallResult> | undefined;
   };
   return { handlers, callTool };
 }
@@ -102,6 +103,7 @@ describe("runtime MCP tool-call event", () => {
     vi.clearAllMocks();
     mocks.loadMcpConfig.mockReturnValue({ mcpServers: {} });
     mocks.loadMetadataCache.mockReturnValue(null);
+    mocks.initializeMcp.mockResolvedValue(createState());
   });
 
   it("calls the tool through executeCall and resolves ok:true", async () => {
@@ -145,7 +147,6 @@ describe("runtime MCP tool-call event", () => {
   });
 
   it("refuses without a live session and never starts initialization", async () => {
-    mocks.initializeMcp.mockResolvedValue(createState());
     const { handlers, callTool } = await startAdapter();
 
     await expect(callTool({ version: 1, tool: "search" })).resolves.toMatchObject({ ok: false });
@@ -160,7 +161,6 @@ describe("runtime MCP tool-call event", () => {
   });
 
   it("reports a tool error that executeCall resolves as ok:false", async () => {
-    mocks.initializeMcp.mockResolvedValue(createState());
     mocks.executeCall.mockResolvedValue({
       content: [{ type: "text", text: "The user declined approval" }],
       details: { mode: "call", error: "approval_denied" },
@@ -168,14 +168,11 @@ describe("runtime MCP tool-call event", () => {
     const { handlers, callTool } = await startAdapter();
     await handlers.get("session_start")?.({}, {});
 
-    const result = await callTool({ version: 1, tool: "search" });
-
-    expect(result.ok).toBe(false);
-    expect(result.error.message).toContain("approval_denied");
+    await expect(callTool({ version: 1, tool: "search" }))
+      .resolves.toMatchObject({ ok: false, error: { message: expect.stringContaining("approval_denied") } });
   });
 
   it("reports an executeCall rejection as ok:false", async () => {
-    mocks.initializeMcp.mockResolvedValue(createState());
     mocks.executeCall.mockRejectedValue(new Error("connection closed"));
     const { handlers, callTool } = await startAdapter();
     await handlers.get("session_start")?.({}, {});
@@ -185,7 +182,6 @@ describe("runtime MCP tool-call event", () => {
   });
 
   it("rejects unsupported versions and empty tool names", async () => {
-    mocks.initializeMcp.mockResolvedValue(createState());
     const { handlers, callTool } = await startAdapter();
     await handlers.get("session_start")?.({}, {});
 

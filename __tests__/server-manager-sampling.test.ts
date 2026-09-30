@@ -424,24 +424,21 @@ describe("McpServerManager sampling", () => {
 
   it.each([
     {
-      kind: "tools",
+      kind: "tools" as const,
       reason: "tools-list-changed",
       next: [{ name: "fresh_tool", description: "Fresh tool" }],
-      read: (connection: any) => connection.tools,
     },
     {
-      kind: "prompts",
+      kind: "prompts" as const,
       reason: "prompts-list-changed",
       next: [{ name: "fresh_prompt", description: "Fresh prompt" }],
-      read: (connection: any) => connection.prompts,
     },
     {
-      kind: "resources",
+      kind: "resources" as const,
       reason: "resources-list-changed",
       next: [{ uri: "file://fresh", name: "Fresh resource" }],
-      read: (connection: any) => connection.resources,
     },
-  ])("retries a failed $kind list-changed publication on the next unchanged refresh", async ({ kind, reason, next, read }) => {
+  ])("retries a failed $kind list-changed publication on the next unchanged refresh", async ({ kind, reason, next }) => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
     const connection = await manager.connect("demo", { command: "node", args: ["server.js"] });
@@ -452,7 +449,7 @@ describe("McpServerManager sampling", () => {
     manager.setMetadataListChangedListener(metadataChanged);
 
     client.options.listChanged[kind].onChanged(null, next);
-    expect(read(connection)).toEqual(next);
+    expect(connection[kind]).toEqual(next);
 
     client.listTools.mockResolvedValueOnce({ tools: connection.tools });
     await expect(manager.refreshTools("demo", connection)).resolves.toBe("unchanged");

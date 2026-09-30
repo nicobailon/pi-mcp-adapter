@@ -9,10 +9,7 @@ export declare function computeServerHash(definition: ServerEntry, environment?:
  * Identifies the tool definition an output shape was learned against. A shape is only used or saved while
  * the tool's description and input schema still match, since a change there can mean a different result.
  */
-export declare function outputShapeKey(tool: {
-    description?: string;
-    inputSchema?: unknown;
-}): string;
+export declare function outputShapeKey(tool: Pick<CachedTool, "description" | "inputSchema">): string;
 /**
  * Saves one tool's observed output shape into its server's cache entry, if the entry matches the running config
  * and tool. The entry comes from the same read the write replaces, so newer metadata from other Pi processes is kept.

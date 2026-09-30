@@ -126,7 +126,7 @@ export function computeServerHash(definition: ServerEntry, environment: NodeJS.P
  * Identifies the tool definition an output shape was learned against. A shape is only used or saved while
  * the tool's description and input schema still match, since a change there can mean a different result.
  */
-export function outputShapeKey(tool: { description?: string; inputSchema?: unknown }): string {
+export function outputShapeKey(tool: Pick<CachedTool, "description" | "inputSchema">): string {
   return stableStringify({ description: tool.description ?? "", inputSchema: tool.inputSchema ?? null });
 }
 

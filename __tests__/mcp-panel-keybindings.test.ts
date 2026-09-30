@@ -20,7 +20,6 @@ function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-/** Presses DOWN until the setup panel's cursor row shows `label`. */
 function moveSetupCursorTo(panel: { render(width: number): string[]; handleInput(data: string): void }, label: string, key = DOWN): void {
   for (let presses = 0; presses < 40; presses += 1) {
     if (panel.render(200).some((line) => stripAnsi(line).includes(`› ${label}`))) return;

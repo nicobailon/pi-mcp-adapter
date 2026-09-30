@@ -50,7 +50,7 @@ function wrapText(text: string, width: number): string[] {
 
 /** Wraps prose, keeping leading indentation and list markers as a hanging indent. */
 function wrapIndented(text: string, width: number): string[] {
-  const indent = /^\s*(?:\d+\.\s+|[-•]\s+)?/.exec(text)?.[0] ?? "";
+  const indent = /^\s*(?:\d+\.\s+|[-•]\s+)?/.exec(text)![0];
   const body = text.slice(indent.length);
   if (!body.trim()) return [text.trimEnd()];
   const indentWidth = visibleWidth(indent);
@@ -212,31 +212,20 @@ function actionSection(id: ActionId): ActionSection {
 }
 
 /**
- * The setup view owns layout and display formatting. The panel below remains
- * the controller for input routing, async actions, and timers.
- *
  * The rendered height depends only on the terminal height, never on the
  * cursor, screen, or notice, so the overlay does not jump while navigating.
  */
 class McpSetupPanelView implements Component {
   private readonly container = new Container();
   /** Details scroll bounds from the last render, used by the controller to clamp PageUp/PageDown. */
-  private detailScrollMax = 0;
-  private detailPageRows = 1;
+  maxDetailScroll = 0;
+  detailPageSize = 1;
 
   constructor(
     private readonly getState: () => McpSetupPanelViewState,
     private readonly callbacks: SetupPanelCallbacks,
     private readonly theme: McpPanelTheme,
   ) {}
-
-  get maxDetailScroll(): number {
-    return this.detailScrollMax;
-  }
-
-  get detailPageSize(): number {
-    return this.detailPageRows;
-  }
 
   render(width: number): string[] {
     const panelWidth = Math.max(MIN_PANEL_WIDTH, width);
@@ -251,32 +240,29 @@ class McpSetupPanelView implements Component {
     if (spacers) this.addRow("", innerWidth);
 
     const entries = this.listEntries(state);
-
-    let paneRows: number;
-    let paneLines: string[];
+    let paneRows = bodyRows;
     if (innerWidth >= TWO_PANE_MIN_INNER_WIDTH) {
       const listWidth = Math.max(MIN_LIST_WIDTH, Math.min(MAX_LIST_WIDTH, Math.floor(innerWidth * 0.4)));
       const paneWidth = contentWidth - listWidth - PANE_GUTTER;
       const listLines = this.renderList(entries, bodyRows, listWidth);
-      paneRows = bodyRows;
-      paneLines = this.renderPane(this.details(state, paneWidth, !spacers), paneRows, paneWidth, state.detailScroll);
+      const paneLines = this.renderPane(this.details(state, paneWidth, !spacers), bodyRows, paneWidth, state.detailScroll);
       const rule = this.theme.border("│");
       for (let row = 0; row < bodyRows; row++) {
-        this.addRow(`${listLines[row] ?? " ".repeat(listWidth)} ${rule}  ${paneLines[row] ?? ""}`, innerWidth);
+        this.addRow(`${listLines[row]!} ${rule}  ${paneLines[row]!}`, innerWidth);
       }
     } else {
       const listRows = Math.min(entries.length, Math.max(1, Math.floor((bodyRows - 1) / 2)));
       paneRows = bodyRows - 1 - listRows;
-      paneLines = this.renderPane(this.details(state, contentWidth, true), paneRows, contentWidth, state.detailScroll);
+      const paneLines = this.renderPane(this.details(state, contentWidth, true), paneRows, contentWidth, state.detailScroll);
       for (const line of this.renderList(entries, listRows, contentWidth)) this.addRow(line, innerWidth);
       this.addRow(this.theme.border("─".repeat(contentWidth)), innerWidth);
       for (const line of paneLines) this.addRow(line, innerWidth);
     }
-    this.detailPageRows = Math.max(1, paneRows - 2);
+    this.detailPageSize = Math.max(1, paneRows - 2);
 
     if (spacers) this.addRow("", innerWidth);
     this.addFrame("├", "┤");
-    this.addRow(this.renderFooter(state, contentWidth, this.detailScrollMax > 0), innerWidth);
+    this.addRow(this.renderFooter(state, contentWidth, this.maxDetailScroll > 0), innerWidth);
     this.addFrame("╰", "╯");
     return this.container.render(panelWidth);
   }
@@ -339,31 +325,18 @@ class McpSetupPanelView implements Component {
     return `${tone(status)}${" ".repeat(width - statusWidth - summaryWidth)}${this.theme.hint(summary)}`;
   }
 
-  private noticeTone(notice: Notice): (text: string) => string {
-    if (notice.tone === "success") return this.theme.confirm;
-    if (notice.tone === "warning") return this.theme.needsAuth;
-    return this.theme.hint;
-  }
-
-  /**
-   * One footer row: key hints on the left (with the scroll keys while the
-   * details overflow) and, while an action runs, `Working…` on the right.
-   */
   private renderFooter(state: McpSetupPanelViewState, width: number, detailsOverflow: boolean): string {
     const busy = "Working…";
     const hintsWidth = state.busy ? width - visibleWidth(busy) - 2 : width;
+    let screenHints = "↑↓ move · enter select · esc close";
+    if (state.screen === "imports") screenHints = "↑↓ move · space toggle · enter save · esc back";
+    else if (state.screen === "paths") screenHints = "↑↓ move · enter open · esc back";
     // Scroll keys lead so narrow footers cut the other hints, not the only way to reach hidden details.
-    const keyHints = `${detailsOverflow ? "pgup/pgdn scroll · " : ""}${this.keyHints(state.screen)}`;
+    const keyHints = `${detailsOverflow ? "pgup/pgdn scroll · " : ""}${screenHints}`;
     const hints = fitText(keyHints, Math.max(0, hintsWidth));
     if (!state.busy) return this.theme.hint(hints);
     const gap = Math.max(2, width - visibleWidth(hints) - visibleWidth(busy));
     return `${this.theme.hint(hints)}${" ".repeat(gap)}${this.theme.hint(busy)}`;
-  }
-
-  private keyHints(screen: Screen): string {
-    if (screen === "imports") return "↑↓ move · space toggle · enter save · esc back";
-    if (screen === "paths") return "↑↓ move · enter open · esc back";
-    return "↑↓ move · enter select · esc close";
   }
 
   private listEntries(state: McpSetupPanelViewState): ListEntry[] {
@@ -466,8 +439,8 @@ class McpSetupPanelView implements Component {
   private renderPane(content: PaneLine[], rows: number, width: number, scroll: number): string[] {
     const lines = [...content];
     while (lines.length > 0 && !lines[lines.length - 1]!.text.trim()) lines.pop();
-    this.detailScrollMax = Math.max(0, lines.length - rows);
-    const start = Math.max(0, Math.min(scroll, this.detailScrollMax));
+    this.maxDetailScroll = Math.max(0, lines.length - rows);
+    const start = Math.max(0, Math.min(scroll, this.maxDetailScroll));
     const end = Math.min(lines.length, start + rows);
     const shown = lines.slice(start, end);
     if (rows >= 3 && start > 0) {
@@ -490,11 +463,7 @@ class McpSetupPanelView implements Component {
   }
 
   private prose(width: number, ...paragraphs: string[]): PaneLine[] {
-    const lines: PaneLine[] = [];
-    for (const paragraph of paragraphs) {
-      for (const text of wrapIndented(paragraph, width)) lines.push({ text });
-    }
-    return lines;
+    return paragraphs.flatMap((paragraph) => wrapIndented(paragraph, width).map((text) => ({ text })));
   }
 
   private muted(text: string): PaneLine {
@@ -517,7 +486,9 @@ class McpSetupPanelView implements Component {
     const lines: PaneLine[] = [];
     const notice = state.busy ? null : state.notice;
     if (notice) {
-      const tone = this.noticeTone(notice);
+      let tone = this.theme.hint;
+      if (notice.tone === "success") tone = this.theme.confirm;
+      else if (notice.tone === "warning") tone = this.theme.needsAuth;
       lines.push(...wrapIndented(notice.text, width).map((text) => ({ text, tone })), { text: "" });
     }
     if (errors.length > 0) lines.push(...errors, { text: "" });
@@ -683,10 +654,6 @@ class McpSetupPanelView implements Component {
     }
   }
 
-  /**
-   * Runs a preview callback. A thrown error becomes readable lines in `errors`,
-   * which the details pane shows first; the preview itself is then empty.
-   */
   private previewOrError(getPreview: () => ConfigWritePreview | null, width: number, errors: PaneLine[]): PaneLine[] | null {
     let preview: ConfigWritePreview | null;
     try {
@@ -733,7 +700,6 @@ export class McpSetupPanel {
   private busy = false;
   private detailScroll = 0;
   private notice: Notice | null = null;
-  private readonly tui: SetupPanelTui;
   private readonly view: McpSetupPanelView;
   private readonly keys: PanelKeys;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -743,10 +709,9 @@ export class McpSetupPanel {
     private discovery: McpDiscoverySummary,
     private callbacks: SetupPanelCallbacks,
     private options: SetupPanelOptions,
-    tui: SetupPanelTui,
+    private readonly tui: SetupPanelTui,
     private done: () => void,
   ) {
-    this.tui = tui;
     this.keys = createPanelKeys(options.keybindings);
     this.view = new McpSetupPanelView(() => this.getViewState(), callbacks, createMcpPanelTheme(options.theme));
     this.screen = options.mode;
@@ -869,7 +834,6 @@ export class McpSetupPanel {
     }
   }
 
-  /** PageUp/PageDown scroll the details by a page, shift+up/shift+down by one line. */
   private handleDetailScroll(data: string): boolean {
     let delta = 0;
     if (matchesKey(data, "pageDown")) delta = this.view.detailPageSize;
@@ -1019,7 +983,6 @@ export class McpSetupPanel {
 
   private async runBusy(fn: () => Promise<void>): Promise<void> {
     this.busy = true;
-    this.notice = { text: "Working...", tone: "muted" };
     this.tui.requestRender();
     try {
       await fn();

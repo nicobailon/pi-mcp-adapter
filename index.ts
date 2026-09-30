@@ -1125,10 +1125,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ? cloneMcpConfig(sessionConfig)
       : loadMcpConfig(earlyConfigPath, event.cwd);
     const skillPaths = discoverConfiguredClaudePluginSkills(resourceConfig, event.cwd);
-    if (scriptTool) {
-      if (existsSync(scriptingSkillPath) && !skillPaths.includes(scriptingSkillPath)) {
-        skillPaths.push(scriptingSkillPath);
-      }
+    if (scriptTool && existsSync(scriptingSkillPath) && !skillPaths.includes(scriptingSkillPath)) {
+      skillPaths.push(scriptingSkillPath);
     }
     return skillPaths.length > 0 ? { skillPaths } : undefined;
   });
@@ -1592,7 +1590,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     (pi.registerTool as (tool: unknown) => unknown)({
       name: "mcpScript",
       label: "MCP Script",
-      description: "Run sandboxed JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } }; tools.<path>(args) resolves the same way. For tools, data is the raw MCP result { content, structuredContent? }: use data.structuredContent when present, otherwise JSON usually needs JSON.parse(data.content[0].text). Use emit(value) for user-visible output." + skillPointer,
+      description: "Run sandboxed JavaScript to loop, filter, chain, or fan out across multiple MCP calls in one request. Use mcp for a single call, search, describe, status, or auth. await tools.search({ query }) returns { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not { ok, data }. await tools.describe({ path }) returns a descriptor with inputTypeScript or { path, error: { code, message, suggestions } }. tools.call(path, args) and tools.<path>(args) return { ok: true, data } or { ok: false, error: { code, message } }. data is the raw MCP result { content, structuredContent? }: use data.structuredContent when present; otherwise JSON usually needs JSON.parse(data.content[0].text). Use emit(value) for user-visible output." + skillPointer,
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
       parameters: Type.Object({
         code: Type.String({ description: "Sandboxed JavaScript MCP script. Pass tool names exactly as mcp lists them, e.g. tools.call(\"github_search_issues\", args), and use emit(value)." }),
