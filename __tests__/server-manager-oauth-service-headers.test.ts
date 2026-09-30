@@ -219,3 +219,29 @@ it("signs connection-owned cross-origin token and MCP requests, but not provider
     }
   }
 });
+
+it("explains a rejected client registration during connect", async () => {
+  let origin = "";
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? "/", origin).pathname;
+    const json = (body: unknown) => response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
+    if (path.startsWith("/.well-known/oauth-protected-resource")) return json({ resource: `${origin}/mcp`, authorization_servers: [origin] });
+    if (path === "/.well-known/oauth-authorization-server") return json({
+      issuer: origin, authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`, registration_endpoint: `${origin}/register`,
+      response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
+    });
+    if (path === "/register") return response.writeHead(403).end("Forbidden");
+    response.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"` }).end();
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  origin = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+  const manager = new McpServerManager();
+  managers.push(manager);
+  try {
+    await expect(manager.connect("rejected", { url: `${origin}/mcp`, auth: "oauth" }))
+      .rejects.toThrow(/Dynamic Client Registration rejected \(HTTP 403\).*pre-registered OAuth clients/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

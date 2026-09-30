@@ -18,6 +18,7 @@ import {
   type SubscriptionFilter,
   type CacheableRequestOptions,
   type RequestOptions,
+  RegistrationRejectedError,
   type UrlElicitationRequiredError,
   type VersionNegotiationOptions,
 } from "@modelcontextprotocol/client";
@@ -43,7 +44,7 @@ import { logger } from "./logger.ts";
 import { RESOURCE_MIME_TYPE } from "./ui-app-bridge-helpers.ts";
 import { isBuiltInAgentPlugin } from "./agent-plugin-provenance.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
-import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import { explainRegistrationRejection, extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import {
   captureOAuthAuthority,
   inspectAuthForUrl,
@@ -1292,6 +1293,8 @@ export class McpServerManager {
   }
 
   private async enrichHttpConnectionError(definition: ServerDefinition, error: unknown): Promise<Error> {
+    // The transport's OAuth provider can register a client during connect, bypassing startAuth.
+    if (error instanceof RegistrationRejectedError) return explainRegistrationRejection(error, resolveServerUrl(definition)!);
     const originalMessage = error instanceof Error ? error.message : String(error);
     if (networkFailureCodes(error, ["ECONNREFUSED"]).length > 0 && isLoopbackUrl(resolveServerUrl(definition)!)) {
       const url = new URL(resolveServerUrl(definition)!);

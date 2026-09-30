@@ -444,8 +444,7 @@ function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
   }
 }
 
-function explainRegistrationRejection(error: unknown, serverUrl: string): unknown {
-  if (!(error instanceof RegistrationRejectedError)) return error
+export function explainRegistrationRejection(error: RegistrationRejectedError, serverUrl: string): Error {
   const hint = new URL(serverUrl).hostname === "mcp.figma.com"
     ? "Figma's remote MCP server only accepts approved clients, and Pi isn't approved yet. Use the Figma desktop app's local server instead: run /mcp-adapter setup."
     : "This server only accepts pre-registered OAuth clients. If the provider gave you a client ID, set oauth.clientId (and oauth.clientSecret if required) for this server."
@@ -496,7 +495,7 @@ export async function startAuth(
       authority()
       throwIfAborted(signal)
       const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }).catch(error => {
-        throw explainRegistrationRejection(error, serverUrl)
+        throw error instanceof RegistrationRejectedError ? explainRegistrationRejection(error, serverUrl) : error
       }), signal)
       authority()
       throwIfAborted(signal)
@@ -592,7 +591,7 @@ export async function startAuth(
     authority()
     throwIfAborted(signal)
     const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }).catch(error => {
-      throw explainRegistrationRejection(error, serverUrl)
+      throw error instanceof RegistrationRejectedError ? explainRegistrationRejection(error, serverUrl) : error
     }), signal)
     authority()
     throwIfAborted(signal)
