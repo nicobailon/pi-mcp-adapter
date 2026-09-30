@@ -38,6 +38,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       - run: npm test
+      # npm test ends with build:public, so any change here means a tracked dist/ file is stale.
+      - name: Check tracked dist files match the sources
+        run: |
+          if ! git diff --exit-code --stat -- dist; then
+            echo "::error::Tracked dist/ files are out of date. Run npm run build:public and commit the result."
+            exit 1
+          fi
       - run: npm run test:oauth
       - run: npm run test:conformance
       - run: npm pack --dry-run
