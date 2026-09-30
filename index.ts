@@ -849,14 +849,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const registration = registerRuntimeServer(name, definition);
     return {
       dispose: async (): Promise<void> => {
-        await registration.dispose();
-        // A Pi registration this one overrode takes the freed name, unless a configured server holds it.
-        const activeState = state;
-        const ctx = sessionCtx;
-        if (!activeState || !ctx || piServers.get(name)?.registration !== null) return;
-        if (Object.hasOwn(activeState.config.mcpServers, name)) return;
-        piServers.delete(name);
-        await callReentrant(() => applyPiMcpServers(activeState, ctx));
+        try {
+          await registration.dispose();
+        } finally {
+          // A Pi registration this one overrode takes the freed name, unless a configured server holds it.
+          // The name is freed before closing, so this runs even when closing fails.
+          const activeState = state;
+          const ctx = sessionCtx;
+          if (activeState && ctx && piServers.get(name)?.registration === null
+            && !Object.hasOwn(activeState.config.mcpServers, name)) {
+            piServers.delete(name);
+            await callReentrant(() => applyPiMcpServers(activeState, ctx));
+          }
+        }
       },
     };
   };

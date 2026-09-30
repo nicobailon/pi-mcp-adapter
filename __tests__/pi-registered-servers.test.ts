@@ -205,6 +205,24 @@ describe("servers registered with pi.registerMcpServer()", () => {
       .toBe(JSON.stringify({ url: "https://registered.test/mcp", directTools: false }));
   });
 
+  it("connects an overridden Pi registration even when closing the adapter registration fails", async () => {
+    const state = createState();
+    state.manager.close.mockRejectedValue(new Error("close failed"));
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
+    const { api, handlers, ctx, change } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, ctx);
+    await settle();
+
+    const registration = registerMcpServer({ pi: api, name: "shared", definition: { url: "https://adapter.test/mcp" } });
+    await change([{ name: "shared", config: { url: "https://registered.test/mcp" } }]);
+    await expect(registration.dispose()).rejects.toThrow("close failed");
+
+    expect((await callThroughMcp(api, ctx, "shared")).content[0].text)
+      .toBe(JSON.stringify({ url: "https://registered.test/mcp", directTools: false }));
+  });
+
   it("rejects an adapter registration of a name Pi registered during load", async () => {
     mocks.initializeMcp.mockResolvedValue(createState());
     const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
