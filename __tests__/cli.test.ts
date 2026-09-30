@@ -547,7 +547,7 @@ describe("cli doctor", () => {
     const url = await listen(() => {});
     await new Promise((done) => servers.pop()!.close(done));
 
-    const result = await doctor([], setup({ mcpServers: { local: { url } } }));
+    const result = await doctor([], setup({ mcpServers: { local: { url, env: { DEBUG: "1" } } } }));
 
     expect(result.code).toBe(1);
     expect(result.stdout).toContain("local: failed");
@@ -612,6 +612,19 @@ describe("cli doctor", () => {
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
     }
+  });
+
+  it("redacts URL query values that a server echoes back", async () => {
+    const url = await listen((_request, response) => {
+      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.end("rejected key=query-secret-value");
+    });
+
+    const result = await doctor(["--json"], setup({ mcpServers: { echo: { url: `${url}?key=query-secret-value`, oauth: false } } }));
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('"state": "failed"');
+    expect(result.stdout).not.toContain("query-secret-value");
   });
 
   it("reports tool counts and leaves no server process running after exit", async () => {

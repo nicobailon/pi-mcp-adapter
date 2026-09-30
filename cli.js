@@ -420,14 +420,22 @@ async function runKey(argv, log, error, stdin) {
 const DOCTOR_CONNECT_TIMEOUT_MS = 15_000;
 
 // Error text can echo configured secrets (child stderr, HTTP error bodies) and URL credentials.
+// Values under 4 characters are flags such as DEBUG=1, and redacting them would garble the text.
 function redactDoctorMessage(text, definition, utils) {
   const configured = [definition.bearerToken, definition.oauth?.clientSecret, ...Object.values(definition.headers ?? {}), ...Object.values(definition.env ?? {})];
   if (definition.bearerTokenEnv) configured.push(process.env[definition.bearerTokenEnv]);
+  if (typeof definition.url === "string") {
+    try {
+      configured.push(...new URL(utils.interpolateEnvVars(definition.url)).searchParams.values());
+    } catch {
+      // An invalid URL is reported without its value.
+    }
+  }
   const secrets = configured
     .filter((value) => typeof value === "string")
     .flatMap((value) => [value, utils.interpolateEnvVars(value)])
     .flatMap((value) => [value, ...value.split(/\s+/)])
-    .filter(Boolean)
+    .filter((value) => value.length >= 4)
     .sort((left, right) => right.length - left.length);
   let redacted = text.replace(/\b([a-z][a-z\d+.-]*:\/\/)(?:[^\s/?#@]*@)?([^\s?#]*)(?:[?#]\S*)?/gi, "$1$2");
   for (const secret of secrets) redacted = redacted.replaceAll(secret, "***");
