@@ -65,6 +65,7 @@ import type { TaskEnabledSession } from "@modelcontextprotocol/ext-tasks/client"
 import {
   interpolateEnvVars,
   expandHomePath,
+  providerAuthUrlError,
   resolveBearerToken,
   resolveCommandSecret,
   resolveCommandSecretsRecord,
@@ -272,6 +273,32 @@ function createBearerCommandFetch(
   };
 }
 
+/**
+ * Wrap a FetchLike so each request to the server's origin carries the Pi provider's current token.
+ * Other origins get no token, and redirects are refused so the token cannot follow one.
+ */
+function createProviderTokenFetch(
+  serverUrl: string,
+  provider: string,
+  providerToken: (provider: string) => Promise<string | undefined>,
+  delegate: FetchLike | undefined,
+): FetchLike {
+  const origin = new URL(serverUrl).origin;
+  const innerFetch = delegate
+    ? (input: URL | RequestInfo, init?: RequestInit) => delegate(input as URL, init)
+    : (input: URL | RequestInfo, init?: RequestInit) => globalThis.fetch(input, init);
+  return async (input, init) => {
+    const request = new Request(input, init);
+    if (new URL(request.url).origin !== origin) return innerFetch(request);
+    const token = await providerToken(provider);
+    // Without a token the request is not sent; the 401 marks the server as needing sign-in.
+    if (!token) return new Response(null, { status: 401 });
+    const headers = new Headers(request.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    return innerFetch(new Request(request, { headers, redirect: "error" }));
+  };
+}
+
 export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
@@ -303,6 +330,7 @@ export class McpServerManager {
   private connectAttempts = new Map<string, AbortController>();
   private traceSettings: McpTraceSettings | undefined;
   private traceWriter: McpTraceWriter | undefined;
+  private providerToken: ((provider: string) => Promise<string | undefined>) | undefined;
   private stopped = false;
 
   /** Default cwd for stdio servers without an explicit config `cwd`. */
@@ -357,6 +385,21 @@ export class McpServerManager {
 
   setAuthStorageOptions(options: AuthStorageOptions): void {
     this.authStorageOptions = options;
+  }
+
+  /** Token lookup for `auth.provider` servers; only a Pi session's model registry provides one. */
+  setProviderToken(providerToken: (provider: string) => Promise<string | undefined>): void {
+    this.providerToken = providerToken;
+  }
+
+  /** Covers config that bypassed file validation (runtime registrations, env-resolved URLs). */
+  private validateProviderAuth(name: string, definition: ServerDefinition): void {
+    if (typeof definition.auth !== "object") return;
+    const urlError = providerAuthUrlError(resolveServerUrl(definition) ?? "");
+    if (urlError) throw new Error(`MCP server "${name}": ${urlError}`);
+    if (!this.providerToken) {
+      throw new Error(`MCP server "${name}": auth.provider isn't available here; it needs a Pi session whose model registry provides provider tokens (Pi 0.99.2 or later)`);
+    }
   }
 
   setOAuthRuntime(runtime: McpOAuthRuntime): void {
@@ -424,6 +467,7 @@ export class McpServerManager {
 
   async connect(name: string, definition: ServerDefinition, signal?: AbortSignal): Promise<ServerConnection> {
     validateCaFile(definition);
+    this.validateProviderAuth(name, definition);
     if (isServerDisabled(definition)) throw new Error(`MCP server "${name}" is disabled`);
     if (this.stopped) throw new Error("MCP server manager is closed");
     const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
@@ -522,6 +566,7 @@ export class McpServerManager {
     signal?: AbortSignal,
   ): Promise<ServerConnection> {
     validateCaFile(definition);
+    this.validateProviderAuth(name, definition);
     if (isServerDisabled(definition)) throw new Error(`MCP server "${name}" is disabled`);
     if (this.stopped) throw new Error("MCP server manager is closed");
     const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
@@ -1263,7 +1308,7 @@ export class McpServerManager {
 
       // A cleanup failure remains a setup failure rather than being hidden
       // behind needs-auth.
-      if (isUnauthorizedHttpError(error) && supportsOAuth(definition) && cleanupFailures.length === 0) {
+      if (isUnauthorizedHttpError(error) && (supportsOAuth(definition) || typeof definition.auth === "object") && cleanupFailures.length === 0) {
         if (!invalidated) {
           invalidateAuthEntryCache(name);
           invalidated = true;
@@ -1516,6 +1561,7 @@ export class McpServerManager {
     throwIfAborted(signal);
     const serverUrl = resolveServerUrl(definition)!;
     const url = new URL(serverUrl);
+    const provider = typeof definition.auth === "object" ? definition.auth.provider : undefined;
 
     // Resolve secret commands only for this connection attempt, without
     // mutating the persisted configuration.
@@ -1628,7 +1674,9 @@ export class McpServerManager {
     // requestHeadersCommand stays last in the header chain.
     const bearerFetch = bearerCommandResolver
       ? createBearerCommandFetch(bearerCommandResolver, commandFetch)
-      : commandFetch;
+      : provider !== undefined
+        ? createProviderTokenFetch(serverUrl, provider, this.providerToken!, commandFetch)
+        : commandFetch;
     const requestFetch = oauthEnabled
       ? createOAuthFetch(serverUrl, () => serviceHeaders, this.oauthRuntime?.signal, {
         // MCP streams outlive individual auth requests; retain SDK request deadlines.
@@ -1733,7 +1781,7 @@ export class McpServerManager {
         continue;
       }
       if (isUnauthorizedHttpError(result.error)) {
-        if (supportsOAuth(definition)) {
+        if (supportsOAuth(definition) || provider !== undefined) {
           if (!invalidated) {
             invalidateAuthEntryCache(serverName);
             invalidated = true;

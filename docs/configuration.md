@@ -50,8 +50,9 @@ On Pi 0.99 and later, the adapter also reads Pi's own `<Pi agent dir>/mcp.json` 
 | `exposure: "direct"` / `"deferred"` / `"codemode"` / `"hidden"` | `directTools: true` / `directTools: "search"` / proxy only / `disabled: true` |
 | `toolExposure` exact names set to `"direct"` | `directTools: [names]` |
 | `toolExposure` entries set to `"hidden"` | `excludeTools`, which can hide more than Pi's `hidden` |
+| `auth: { "provider": ... }` | same; user-global file only, see [Pi provider tokens](auth.md#pi-provider-tokens) |
 
-Entries with `type: "sse"` or `auth: { "provider": ... }`, and entries Pi rejects, are skipped. Other settings without an exact equivalent, such as a per-tool `codemode` or `deferred`, are ignored, and the server keeps its server-level setting. Top-level `settings`, `imports`, `claudePlugins`, and `mcp-servers` come from old adapter configs; they are ignored too and belong in `mcp-adapter.json`. Everything skipped or ignored is reported once per file at startup, and a loaded server's ignored settings are also listed under it in `/mcp-adapter`.
+Entries with `type: "sse"`, and entries Pi rejects, are skipped. Other settings without an exact equivalent, such as a per-tool `codemode` or `deferred`, are ignored, and the server keeps its server-level setting. Top-level `settings`, `imports`, `claudePlugins`, and `mcp-servers` come from old adapter configs; they are ignored too and belong in `mcp-adapter.json`. Everything skipped or ignored is reported once per file at startup, and a loaded server's ignored settings are also listed under it in `/mcp-adapter`.
 
 A server in `.pi/mcp.json` replaces the same-named server from `<Pi agent dir>/mcp.json` as a whole, as in Pi. The adapter never writes Pi's files; changes such as direct tools go to the `mcp-adapter.json` in the same folder. `.pi/mcp.json` servers need project trust and approval like `.mcp.json` servers. Exclusive mode reads neither file.
 

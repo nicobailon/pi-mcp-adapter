@@ -135,6 +135,7 @@ describe("Pi mcp.json config sources", () => {
       { type: "streamable-http", url: "https://x.example/mcp", headers: { Authorization: "Bearer ${TOKEN}" } },
       { url: "https://x.example/mcp", headers: { Authorization: "Bearer ${TOKEN}" } },
     ],
+    ["auth.provider", { url: "https://x.example/mcp", auth: { provider: "github" } }, { url: "https://x.example/mcp", auth: { provider: "github" } }],
   ])("translates %s", async (_row, piEntry, adapterEntry) => {
     writeJson(piGlobal, { mcpServers: { server: piEntry } });
     const { loadMcpConfig } = await loadConfigModule();
@@ -142,14 +143,14 @@ describe("Pi mcp.json config sources", () => {
     expect(loadMcpConfig(undefined, cwd).mcpServers.server).toEqual(adapterEntry);
   });
 
-  it("skips SSE and auth.provider entries and reports them with old adapter keys in one notice per file", async () => {
+  it("skips SSE entries and auth.provider over plain http, and reports them with old adapter keys in one notice per file", async () => {
     writeJson(piGlobal, {
       settings: { toolPrefix: "short" },
       imports: ["cursor"],
       autoEnableCodemode: false,
       mcpServers: {
         legacy: { type: "sse", url: "https://sse.example/sse" },
-        provider: { url: "https://provider.example/mcp", auth: { provider: "github" } },
+        provider: { url: "http://provider.example/mcp", auth: { provider: "github" } },
         kept: { command: "kept" },
       },
     });
@@ -163,9 +164,54 @@ describe("Pi mcp.json config sources", () => {
     });
     expect(config.settings).toBeUndefined();
     expect(getLegacyMcpMigrationNotices(cwd)).toEqual([
-      `${piGlobal}: pi-mcp-adapter does not read settings, imports in this file; move them into ${join(home, ".pi", "agent", "mcp-adapter.json")}. Skipped "legacy" (legacy SSE transport is not supported; use the streamable HTTP URL); "provider" (auth.provider is not supported yet).`,
+      `${piGlobal}: pi-mcp-adapter does not read settings, imports in this file; move them into ${join(home, ".pi", "agent", "mcp-adapter.json")}. Skipped "legacy" (legacy SSE transport is not supported; use the streamable HTTP URL); "provider" (auth.provider requires an https URL, or http on localhost, 127.0.0.1, or [::1]).`,
       `${piProject}: Ignored settings (details in /mcp-adapter): "tuned": lifecycle, toolExposure "read_*": codemode.`,
     ]);
+  });
+
+  it("strips project-scope auth.provider servers, including project overrides of global ones, with one notice", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    writeJson(piGlobal, {
+      mcpServers: {
+        github: { url: "https://api.example/mcp", auth: { provider: "github" } },
+        local: { url: "http://127.0.0.1:8080/mcp", auth: { provider: "github" } },
+      },
+    });
+    writeJson(piProject, { mcpServers: { fromPi: { url: "https://pi.example/mcp", auth: { provider: "github" } } } });
+    writeJson(join(cwd, ".pi", "mcp-adapter.json"), { mcpServers: { fromAdapter: { url: "https://adapter.example/mcp", auth: { provider: "github" } } } });
+    writeJson(join(cwd, ".mcp.json"), { mcpServers: { github: { lifecycle: "eager" } } });
+    const { loadMcpConfigWithSources } = await loadConfigModule();
+
+    const loaded = loadMcpConfigWithSources(undefined, cwd);
+    expect(loaded.config.mcpServers).toEqual({ local: { url: "http://127.0.0.1:8080/mcp", auth: { provider: "github" } } });
+    expect([...loaded.projectServers.keys()]).toEqual([]);
+    expect(warn.mock.calls).toEqual([[
+      'Ignoring MCP servers "github", "fromPi", "fromAdapter": auth.provider is only allowed in user-global config, and project config defines or overrides them',
+    ]]);
+  });
+
+  it("drops an inherited auth.provider when a higher-precedence file changes the server's url", async () => {
+    writeJson(join(home, ".config", "mcp", "mcp.json"), { mcpServers: { api: { url: "https://api.example/mcp", auth: { provider: "github" } } } });
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { mcpServers: { api: { url: "https://other.example/mcp" } } });
+    const { loadMcpConfig } = await loadConfigModule();
+
+    expect(loadMcpConfig(undefined, cwd).mcpServers.api).toEqual({ url: "https://other.example/mcp" });
+  });
+
+  it("rejects adapter-config auth.provider servers without a provider name or on plain http outside loopback", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), {
+      mcpServers: {
+        plain: { url: "http://api.example/mcp", auth: { provider: "github" } },
+        unnamed: { url: "https://api.example/mcp", auth: { provider: "" } },
+        kept: { url: "https://api.example/mcp", auth: { provider: "github" } },
+      },
+    });
+    const { loadMcpConfig } = await loadConfigModule();
+
+    expect(loadMcpConfig(undefined, cwd).mcpServers).toEqual({ kept: { url: "https://api.example/mcp", auth: { provider: "github" } } });
+    expect(warn).toHaveBeenCalledWith('Ignoring MCP server "plain": auth.provider requires an https URL, or http on localhost, 127.0.0.1, or [::1]');
+    expect(warn).toHaveBeenCalledWith('Ignoring MCP server "unnamed": auth.provider must be a provider name');
   });
 
   it("never exposes a tool Pi hides", async () => {

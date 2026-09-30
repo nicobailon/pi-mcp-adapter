@@ -390,8 +390,24 @@ function assertJsonSerializable(value, context, path = "") {
     throw new Error(`${context}: value at ${path || "root"} is not JSON-serializable`);
 }
 export function formatAuthRequiredMessage(config, serverName, defaultMessage) {
+    const auth = config.mcpServers[serverName]?.auth;
+    if (typeof auth === "object")
+        return providerSignInMessage(serverName, auth.provider);
     const template = config.settings?.authRequiredMessage;
     return template ? template.replaceAll("${server}", serverName) : defaultMessage;
+}
+/** Servers with `auth.provider` sign in through Pi, never through MCP OAuth. */
+export function providerSignInMessage(serverName, provider) {
+    return `MCP server "${serverName}" needs sign-in. Run /login ${provider}, then /mcp-adapter reconnect ${serverName}.`;
+}
+/** Why a server must not receive its `auth.provider` token at `url`, or undefined when it may. */
+export function providerAuthUrlError(url) {
+    const parsed = URL.canParse(url) ? new URL(url) : undefined;
+    if (parsed?.protocol === "https:")
+        return undefined;
+    if (parsed?.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname))
+        return undefined;
+    return "auth.provider requires an https URL, or http on localhost, 127.0.0.1, or [::1]";
 }
 export function formatMcpStatus(config, message) {
     if (config.settings?.mcpFooterStatus === "off")

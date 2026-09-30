@@ -458,9 +458,10 @@ export interface ServerEntry {
    * - 'oauth' - Use OAuth 2.1 (auto-discovers endpoints, supports dynamic client registration)
    * - 'bearer' - Use static Bearer token
    * - false - Disable authentication
+   * - { provider } - Send the token of a Pi provider (`/login <provider>`) on every request; user-global config only
    * If not specified and url is present, OAuth will be auto-detected unless custom headers are configured
    */
-  auth?: "oauth" | "bearer" | false;
+  auth?: "oauth" | "bearer" | false | { provider: string };
   bearerToken?: string;
   bearerTokenEnv?: string;
   /** Read a static bearer token from the adapter-owned OS credential store. */

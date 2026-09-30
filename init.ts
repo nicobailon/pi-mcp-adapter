@@ -26,7 +26,7 @@ import { McpServerManager, isTransientHttpConnectError } from "./server-manager.
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
-import { formatMcpFooterStatus, formatMcpStatus, openUrl, parallelLimit, sanitizeTerminalText } from "./utils.ts";
+import { formatMcpFooterStatus, formatMcpStatus, openUrl, parallelLimit, providerSignInMessage, sanitizeTerminalText } from "./utils.ts";
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { getAuthStorageOptions } from "./mcp-auth.ts";
@@ -161,6 +161,10 @@ export async function initializeMcp(
   manager.setDefaultRequestTimeoutMs(config.settings?.requestTimeoutMs);
   manager.setTraceConfig?.(config.settings?.trace);
   manager.setAuthStorageOptions(authStorageOptions);
+  // Pi before 0.99.2 has no getApiKeyForProvider; auth.provider servers then fail to connect with a notice.
+  if (typeof modelRegistry?.getApiKeyForProvider === "function") {
+    manager.setProviderToken(provider => modelRegistry.getApiKeyForProvider(provider));
+  }
   const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
   if (config.settings?.sampling !== false && (hasUI || samplingAutoApprove)) {
     manager.setSamplingConfig({
@@ -345,12 +349,14 @@ export async function initializeMcp(
     }
   }
 
-  const startupServers = bootstrapAll
+  const startupServers = (bootstrapAll
     ? serverEntries
     : serverEntries.filter(([, definition]) => {
         const mode = definition.lifecycle ?? "lazy";
         return mode === "keep-alive" || mode === "eager";
-      });
+      }))
+    // Load-time runs have no model registry for auth.provider; session_start connects those servers.
+    .filter(([, definition]) => !(options.excludeProjectServers && typeof definition.auth === "object"));
 
   if (ui && startupServers.length > 0) {
     const status = formatMcpStatus(state.config, `connecting to ${startupServers.length} servers...`);
@@ -361,7 +367,10 @@ export async function initializeMcp(
     try {
       const connection = await manager.connect(name, definition, runtimeSignal);
       if (connection.status === "needs-auth") {
-        return { name, definition, connection: null, error: `OAuth authentication required. Run /mcp-auth ${name}.`, transient: false };
+        const error = typeof definition.auth === "object"
+          ? providerSignInMessage(name, definition.auth.provider)
+          : `OAuth authentication required. Run /mcp-auth ${name}.`;
+        return { name, definition, connection: null, error, transient: false };
       }
       return { name, definition, connection, error: null, transient: false };
     } catch (error) {

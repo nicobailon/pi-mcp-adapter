@@ -537,6 +537,10 @@ async function runDoctor(argv, log, error) {
     const block = blockedServers.get(name);
     if (block) return { state: "blocked", message: trust.describeProjectServerBlock(block.reason) };
     if (definition.disabled === true) return { state: "disabled" };
+    // The doctor has no Pi model registry to read the provider token from, so it never connects these servers.
+    if (definition.url && typeof definition.auth === "object") {
+      return { state: "needs-auth", message: `signs in with a Pi provider: run /login ${definition.auth.provider} in Pi` };
+    }
     const needsSignIn = { state: "needs-auth", message: `sign-in required: run /mcp-auth ${name} in Pi` };
     let anonymous = false;
     let url;

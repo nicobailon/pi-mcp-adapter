@@ -36,7 +36,11 @@ export declare const TOOL_CALL_ID_REQUEST_META_KEY = "pi-mcp-adapter/toolCallId"
 export declare function withToolCallIdMeta(meta: Record<string, unknown> | undefined, toolCallId: string | undefined): Record<string, unknown> | undefined;
 export declare function normalizeDirectToolInputSchema(schema: unknown): Record<string, unknown>;
 export declare function normalizeToolArguments(value: unknown, context?: string): Record<string, unknown>;
-export declare function formatAuthRequiredMessage(config: Pick<McpConfig, "settings">, serverName: string, defaultMessage: string): string;
+export declare function formatAuthRequiredMessage(config: Pick<McpConfig, "settings" | "mcpServers">, serverName: string, defaultMessage: string): string;
+/** Servers with `auth.provider` sign in through Pi, never through MCP OAuth. */
+export declare function providerSignInMessage(serverName: string, provider: string): string;
+/** Why a server must not receive its `auth.provider` token at `url`, or undefined when it may. */
+export declare function providerAuthUrlError(url: string): string | undefined;
 export declare function formatMcpStatus(config: Pick<McpConfig, "settings">, message: string): string | undefined;
 export declare function formatMcpFooterStatus(config: Pick<McpConfig, "settings">, enabledCount: number, disabledCount: number, connectedCount: number): string | undefined;
 /**

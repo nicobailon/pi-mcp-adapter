@@ -88,6 +88,8 @@ interface ServerState {
   source: "user" | "project" | "import";
   importKind?: string;
   ignoredSettings?: string[];
+  /** `auth.provider`: the server signs in with `/login <provider>`, not OAuth. */
+  signInProvider?: string;
   includeTools?: string[];
   excludeTools?: string[];
   exposeResources: boolean;
@@ -563,6 +565,7 @@ class McpPanel {
         source: prov?.kind ?? "user",
         ...(prov?.importKind !== undefined ? { importKind: prov.importKind } : {}),
         ...(prov?.ignoredSettings !== undefined ? { ignoredSettings: prov.ignoredSettings } : {}),
+        ...(typeof definition.auth === "object" ? { signInProvider: definition.auth.provider } : {}),
         ...(definition.includeTools !== undefined ? { includeTools: definition.includeTools } : {}),
         ...(definition.excludeTools !== undefined ? { excludeTools: definition.excludeTools } : {}),
         exposeResources: definition.exposeResources !== false,
@@ -878,6 +881,10 @@ class McpPanel {
     if (this.authInFlight) return;
     if (server.connectionStatus === "connecting" || server.connectionStatus === "disabled" || server.connectionStatus === "blocked") return;
     const serverName = sanitizeDisplayText(server.name);
+    if (server.signInProvider !== undefined) {
+      this.authNotice = `${serverName} signs in with Pi: run /login ${sanitizeDisplayText(server.signInProvider)}, then press ctrl+r to reconnect.`;
+      return;
+    }
     if (!this.callbacks.canAuthenticate(server.name)) {
       this.authNotice = `${serverName} does not use OAuth authentication.`;
       return;

@@ -1053,7 +1053,9 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
   let cachedNote = "";
   if (connection?.status !== "connected") {
     if (connection?.status === "needs-auth") {
-      cachedNote = ` (needs auth — run mcp({ action: "auth-start", server: "${server}" }))`;
+      cachedNote = typeof definition.auth === "object"
+        ? ` (needs sign-in — run /login ${definition.auth.provider}, then /mcp-adapter reconnect ${server})`
+        : ` (needs auth — run mcp({ action: "auth-start", server: "${server}" }))`;
     } else {
       cachedNote = ` (lazy: tools from cache, not connected yet — mcp({ connect: "${server}" }) to connect)`;
     }

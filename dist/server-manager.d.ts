@@ -76,6 +76,7 @@ export declare class McpServerManager {
     private connectAttempts;
     private traceSettings;
     private traceWriter;
+    private providerToken;
     private stopped;
     /** Default cwd for stdio servers without an explicit config `cwd`. */
     constructor(defaultCwd?: string | undefined);
@@ -88,6 +89,10 @@ export declare class McpServerManager {
     setDefaultRequestTimeoutMs(timeoutMs: number | undefined): void;
     setTraceConfig(settings: McpTraceSettings | undefined): void;
     setAuthStorageOptions(options: AuthStorageOptions): void;
+    /** Token lookup for `auth.provider` servers; only a Pi session's model registry provides one. */
+    setProviderToken(providerToken: (provider: string) => Promise<string | undefined>): void;
+    /** Covers config that bypassed file validation (runtime registrations, env-resolved URLs). */
+    private validateProviderAuth;
     setOAuthRuntime(runtime: McpOAuthRuntime): void;
     getRequestOptions(name: string, signal?: AbortSignal): RequestOptions | undefined;
     private getResolvedRequestTimeoutMs;

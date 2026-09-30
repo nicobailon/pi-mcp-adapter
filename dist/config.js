@@ -11,7 +11,7 @@ import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
 import { validateJevSettings } from "./jev-client.js";
 import { formatServerNamespace, isServerDisabled } from "./types.js";
-import { parseJsonWithComments, stripUtf8Bom, toStringRecord } from "./utils.js";
+import { parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.js";
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [
     join(homedir(), ".agents", "mcp.json"),
@@ -372,7 +372,7 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
         config = mergeConfigs(config, expanded);
     }
     if (isExclusiveConfigMode()) {
-        return { config: resolveConfiguredClaudePluginMcp(config, cwd), projectServers, projectServerPolicy };
+        return { config: stripProjectProviderAuth(resolveConfiguredClaudePluginMcp(config, cwd), projectServers), projectServers, projectServerPolicy };
     }
     const packageConfig = loadPackageMcpConfigs(cwd);
     const pluginConfig = loadAgentPluginConfigs(config.settings?.agentPluginPaths, cwd);
@@ -394,10 +394,23 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
             projectServers.set(name, projectClaudePluginSource);
     }
     return {
-        config: mergedConfig,
+        config: stripProjectProviderAuth(mergedConfig, projectServers),
         projectServers,
         projectServerPolicy,
     };
+}
+/** Pi provider tokens go only to servers from user-global config; Pi forbids `auth` in project files too. */
+function stripProjectProviderAuth(config, projectServers) {
+    const stripped = [...projectServers.keys()].filter((name) => typeof config.mcpServers[name]?.auth === "object");
+    if (stripped.length === 0)
+        return config;
+    const mcpServers = { ...config.mcpServers };
+    for (const name of stripped) {
+        delete mcpServers[name];
+        projectServers.delete(name);
+    }
+    console.warn(`Ignoring MCP servers ${stripped.map((name) => `"${name}"`).join(", ")}: auth.provider is only allowed in user-global config, and project config defines or overrides them`);
+    return { ...config, mcpServers };
 }
 export function resolveConfiguredClaudePluginMcp(config, cwd = process.cwd()) {
     return mergeClaudePluginMcpDefaults(config.claudePlugins, config, cwd);
@@ -780,6 +793,9 @@ function mergeServerMaps(base, next) {
             for (const field of URL_BOUND_AUTH_FIELDS) {
                 delete baseEntry[field];
             }
+            // A provider token is bound to the url that asked for it, like the fields above.
+            if (typeof baseEntry.auth === "object")
+                delete baseEntry.auth;
             if (baseEntry.oauth !== false) {
                 delete baseEntry.oauth;
             }
@@ -1018,9 +1034,7 @@ export function translatePiMcpServer(name, value) {
         return "description must be a string";
     if (type === "sse")
         return "legacy SSE transport is not supported; use the streamable HTTP URL";
-    if (isRecord(auth) && typeof auth.provider === "string")
-        return "auth.provider is not supported yet";
-    const ignored = [...Object.keys(unknown), ...(auth !== undefined ? ["auth"] : [])];
+    const ignored = Object.keys(unknown);
     let entry;
     let otherTransportKeys;
     if (typeof url === "string" && (type === undefined || type === "http" || type === "streamable-http")) {
@@ -1032,6 +1046,14 @@ export function translatePiMcpServer(name, value) {
         if (typeof translatedOAuth === "string")
             return translatedOAuth;
         entry = { url, ...(headers !== undefined ? { headers } : {}), ...(translatedOAuth ? { oauth: translatedOAuth.oauth } : {}) };
+        if (auth !== undefined) {
+            if (!isRecord(auth) || typeof auth.provider !== "string" || !auth.provider)
+                return "auth.provider must be a provider name";
+            const urlError = providerAuthUrlError(url);
+            if (urlError)
+                return urlError;
+            entry.auth = { provider: auth.provider };
+        }
         ignored.push(...translatedOAuth?.ignored ?? []);
         otherTransportKeys = ["command", "args", "env", "cwd"];
     }
@@ -1048,7 +1070,7 @@ export function translatePiMcpServer(name, value) {
             ...(env !== undefined ? { env } : {}),
             ...(cwd !== undefined ? { cwd } : {}),
         };
-        otherTransportKeys = ["url", "headers", "oauth"];
+        otherTransportKeys = ["url", "headers", "oauth", "auth"];
     }
     else {
         return 'needs either "command" (stdio) or "url" (streamable HTTP)';
@@ -1172,6 +1194,17 @@ function toServerEntries(servers) {
     for (const [name, entry] of Object.entries(servers)) {
         if (!isServerEntry(entry))
             continue;
+        const auth = entry.auth;
+        if (typeof auth === "object") {
+            const provider = isRecord(auth) ? auth.provider : undefined;
+            const error = typeof provider !== "string" || !provider ? "auth.provider must be a provider name"
+                : typeof entry.url !== "string" ? "auth.provider requires a url"
+                    : providerAuthUrlError(entry.url);
+            if (error) {
+                console.warn(`Ignoring MCP server "${name}": ${error}`);
+                continue;
+            }
+        }
         if (entry.description !== undefined && typeof entry.description !== "string") {
             console.warn(`Ignoring invalid description for MCP server "${name}": expected a string`);
             const { description: _description, ...rest } = entry;

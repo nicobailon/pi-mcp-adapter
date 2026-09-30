@@ -596,6 +596,20 @@ describe("cli doctor", () => {
     expect(paths.every((path) => path === "/mcp")).toBe(true);
   });
 
+  it("reports auth.provider servers as needing a Pi sign-in without connecting", async () => {
+    let requests = 0;
+    const url = await listen((_request, response) => {
+      requests += 1;
+      response.writeHead(500).end();
+    });
+
+    const result = await doctor([], setup({ mcpServers: { provider: { url, auth: { provider: "github" } } } }));
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("provider: needs-auth — signs in with a Pi provider: run /login github in Pi");
+    expect(requests).toBe(0);
+  });
+
   it("treats a stored OAuth record without tokens as a missing sign-in", async () => {
     const paths: string[] = [];
     const url = await listen((request, response) => {

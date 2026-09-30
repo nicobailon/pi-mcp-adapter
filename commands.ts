@@ -33,7 +33,7 @@ import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { inspectBearerTokenForUrl, removeBearerToken } from "./mcp-bearer-store.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
 import { findPiSignInImports, importPiSignIn } from "./pi-signin-import.ts";
-import { formatTerminalError, openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
+import { formatTerminalError, openPath, providerSignInMessage, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
 import { resolveJevCredential } from "./jev-key-store.ts";
 import { describeProjectServerBlock } from "./project-server-trust.ts";
@@ -306,7 +306,9 @@ export async function reconnectServer(
     state.owner?.throwIfInactive();
     if (connection.status === "needs-auth") {
       if (ui) {
-        ui.notify(`MCP: ${name} requires OAuth. Run /mcp-auth ${name} first.`, "warning");
+        ui.notify(typeof definition.auth === "object"
+          ? `MCP: ${providerSignInMessage(name, definition.auth.provider)}`
+          : `MCP: ${name} requires OAuth. Run /mcp-auth ${name} first.`, "warning");
       }
       updateStatusBar(state);
       return false;
@@ -396,6 +398,11 @@ export async function authenticateServer(
     return { ok: false, message };
   }
 
+  if (typeof definition.auth === "object") {
+    const message = providerSignInMessage(serverName, definition.auth.provider);
+    ui.notify(message, "info");
+    return { ok: false, message };
+  }
   if (!supportsOAuth(definition)) {
     const message = `Server "${serverName}" does not use OAuth authentication. Set "auth": "oauth" or omit auth for auto-detection.`;
     ui.notify(
