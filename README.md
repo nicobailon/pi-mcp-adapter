@@ -25,7 +25,7 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 | How the model reaches tools | `codemode` scripts by default; `tool_search` or direct per server | One `mcp` proxy tool by default; `tool_search` or direct per server |
 | Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex, plus optional semantic search with Jev |
 | Scripts that call many tools | Pi's `codemode`, turned on automatically | Pi's `codemode` (add `"+codemode"` to `defaultTools`), or the adapter's opt-in `mcpScript`: MCP tools only, with search across servers, and also on Pi before 0.99 |
-| When servers start | Every enabled server, at session start | On first use, once the first session has cached their tools; idle servers stop after 10 minutes |
+| When servers start | Every enabled server, at session start | On first use; a server without cached tools starts once at session start to cache them, then stops. Idle servers stop after 10 minutes |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
 | MCP prompts, elicitation, sampling, Tasks | No | Yes |
 | MCP UI apps | Left out | Native window or browser |

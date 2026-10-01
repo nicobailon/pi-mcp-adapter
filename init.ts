@@ -351,7 +351,7 @@ export async function initializeMcp(
   }
 
   const results = await parallelLimit(startupServers, 10, async ([name, definition]) => {
-    // Plain lazy servers are only discovered here; they start again on first use.
+    // Plain lazy servers close once their tools are captured; they start again on first use.
     const resident = (definition.lifecycle ?? "lazy") !== "lazy" || getEffectiveIdleTimeoutMinutes(state, name) === 0;
     try {
       const connection = await manager.connect(name, definition, runtimeSignal);

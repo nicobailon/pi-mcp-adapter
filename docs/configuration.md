@@ -121,10 +121,10 @@ Project servers follow the trust and approval rules above as in a non-interactiv
 
 ## Lifecycle Modes
 
-- **`lazy`** (default) — Don't connect at startup. Connect on first tool call. Disconnect after idle timeout. Cached metadata keeps search/list working without connections.
+- **`lazy`** (default) — Don't stay connected at startup: a server without cached metadata (new, changed config, or past a server-declared TTL) connects once to cache its tools, then disconnects. Connect on first tool call. Disconnect after idle timeout. Cached metadata keeps search/list working without connections.
 - **`eager`** — Connect at startup but don't auto-reconnect if the connection drops. No idle timeout by default (set `idleTimeout` explicitly to enable).
 - **`keep-alive`** — Connect at startup. Remote HTTP servers refresh their tool catalog during health checks, before user input, and before adapter-triggered turns, reconnecting when the server reports that the session expired. No idle timeout. Use for servers you always need available.
-- **`lazy-keep-alive`** — Don't connect at startup. Connect on first tool call (like `lazy`). Once spawned, never idle-shut down and use the same catalog refresh and reconnect checks as `keep-alive`. Use for servers that are expensive to start but should stay resident after their first use.
+- **`lazy-keep-alive`** — Don't connect at startup unless the server has no cached metadata. Connect on first tool call (like `lazy`). Once spawned, never idle-shut down and use the same catalog refresh and reconnect checks as `keep-alive`. Use for servers that are expensive to start but should stay resident after their first use.
 
 For remote HTTP keep-alive servers, the authoritative `tools/list` refresh is also the fallback when `list_changed` notifications are unavailable or their stream is lost. Each `tools/list` or `ping` request is capped at 5 seconds, up to 10 servers are checked concurrently, and transient failures use bounded backoff. A successful refresh updates metadata without reconnecting; a response proving that the HTTP session expired triggers a full reconnect and reinstalls the notification handlers. Dynamic direct-tool registration follows the refreshed metadata unless `freezeDirectTools` is enabled.
 
