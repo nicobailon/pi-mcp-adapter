@@ -2,33 +2,69 @@
 
 How the adapter differs from the MCP support built into Pi ([Pi's MCP docs](https://pi.dev/docs/latest/mcp)), as of Pi 0.99.2. Both read Pi's `mcp.json` files. On Pi 0.99 and later, installing the adapter replaces the built-in in sessions, except when a host supplies its own config through `createMcpAdapter()`; see [Pi's built-in MCP](configuration.md#pis-built-in-mcp).
 
-In short, the built-in is ahead on per-call permission hooks, roots, and shell commands for adding servers. The adapter is ahead on when servers start and stop, where tokens are stored, configs from other clients, guided setup in a session with presets such as Figma and RepoPrompt, and the MCP features the built-in doesn't handle: prompts, elicitation, sampling, Tasks, and MCP UI. Pi's `codemode` scripts work with both.
+## In short
+
+What you get with the adapter:
+
+- **Idle servers cost nothing.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. The adapter starts a server when the model first calls it and stops it after 10 idle minutes. With 100 servers installed, that's 6.5 GiB of server memory against none at session start ([measurements](#measured-with-100-servers)).
+- **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, offer prompt templates as slash commands, ask the model for a reply, and run long jobs as MCP Tasks. The built-in supports none of these.
+- **Sign-in tokens stay in your OS keychain**, not in a JSON file.
+- **Adding servers is easier.** Give the agent a server's URL and it installs it, signs you in, and checks its tools in the same session. Configs from Cursor, Claude Code, Codex, VS Code, and other clients are imported, and `/mcp-adapter setup` adds presets.
+
+What only the built-in has: Pi's permission extensions see each MCP call as its own tool call without changes, and the session directory is sent to servers as a root.
+
+Pi's `codemode` scripts work with both. Sign-ins made with the built-in can be imported into the adapter; see [Import a sign-in from Pi's built-in MCP](auth.md#import-a-sign-in-from-pis-built-in-mcp).
+
+## Running servers
+
+| | Pi's built-in MCP | pi-mcp-adapter |
+|---|---|---|
+| When servers start and stop | Pi 0.99.2 connects every enabled server in the background when a session starts and keeps it connected until the session ends; there is no idle stop ([Diagnose connection problems](https://pi.dev/docs/latest/mcp#diagnose-connection-problems)). With 100 local test servers, all 100 were still running after 15 minutes ([measurements](#measured-with-100-servers)) | Started on first use and stopped after 10 idle minutes (the default). Calls in progress, approvals, and open MCP UI pages keep a server running. When a session starts, servers without cached tools, such as new ones, are started 10 at a time to read their tools, and plain `lazy` servers stop again right after; a server whose discovery failed isn't retried at startup until its config changes. `eager` and `keep-alive` servers start with the session and stay up ([How idle shutdown works](configuration.md#how-idle-shutdown-works), [Lifecycle modes](configuration.md#lifecycle-modes)) |
+
+## Adding and configuring servers
+
+| | Pi's built-in MCP | pi-mcp-adapter |
+|---|---|---|
+| Add a server | `pi mcp add` and `pi mcp remove` in a shell, then `/reload` in a running session ([Quick setup](https://pi.dev/docs/latest/mcp#quick-setup)) | In a session: give the agent the URL, and `mcp({ action: "install", url })` connects the server, runs OAuth sign-in, and checks its tools without `/reload`; or use `/mcp-adapter setup`. There's no shell command for adding, but servers added with `pi mcp add` are read ([Install from one URL](servers.md#install-from-one-url)) |
+| Guided setup | None. `/mcp` inspects servers, signs in, reconnects, changes exposure, and turns configured servers on or off; new servers are added by hand or with `pi mcp add` ([Quick setup](https://pi.dev/docs/latest/mcp#quick-setup)) | The `/mcp-adapter setup` overlay picks where new servers go, imports configs found on the machine, scaffolds a config, and adds presets: Figma (desktop) when the Figma app is installed, RepoPrompt when its MCP server is installed locally, and GitHub, Notion, Context7, DeepWiki, Parallel Search, and Chrome DevTools. Every write shows the exact file diff first ([Setup panel](configuration.md#setup-panel)) |
+| Configs from other clients | Convert entries by hand ([Migrate configuration](https://pi.dev/docs/latest/mcp#migrate-configuration-from-another-client)) | `imports` reads Cursor, Claude Code, Claude Desktop, OpenCode, VS Code, Windsurf, and Codex configs; `/mcp-adapter setup` and `pi-mcp-adapter init` find them ([Import existing configs](configuration.md#import-existing-configs)) |
+| Config files | `~/.pi/agent/mcp.json` and `.pi/mcp.json` ([Configure servers](https://pi.dev/docs/latest/mcp#configure-servers)) | Pi's two files, plus `.mcp.json`, `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `mcp-adapter.json` ([File layout](configuration.md#file-layout)) |
+| Check servers from a shell | `pi mcp list`, which exits with status 1 when a server fails ([Diagnose connection problems](https://pi.dev/docs/latest/mcp#diagnose-connection-problems)) | `pi-mcp-adapter doctor [--json]`, which exits with status 1 when a server fails or needs sign-in, and never starts OAuth ([Check servers from a shell](configuration.md#check-servers-from-a-shell)) |
+
+## What servers can do
+
+"No" means Pi 0.99.2's MCP client doesn't support it: it declares only the `roots` capability and never lists or fetches prompts.
+
+| | Pi's built-in MCP | pi-mcp-adapter |
+|---|---|---|
+| Prompts (templates a server offers) | No | Slash commands `/mcp__<server>__<prompt>` ([MCP prompts](prompts-and-ui.md#mcp-prompts)) |
+| Elicitation (a server asks you for input) | No | Forms through Pi dialogs, and URL mode in the TUI ([MCP elicitation](prompts-and-ui.md#mcp-elicitation)) |
+| Sampling (a server asks the model for a reply) | No | Text only, with a confirmation prompt ([Settings](configuration.md#settings), [Limitations](../README.md#limitations)) |
+| Tasks (long-running tool calls) | No | Supported when the server advertises the Tasks extension on an MCP 2026-07-28 connection, which needs `protocolVersion: "auto"` or `"2026-07-28"` ([Task-augmented tool calls](servers.md#task-augmented-tool-calls), [Protocol version negotiation](servers.md#protocol-version-negotiation)) |
+| MCP UI (interactive tool pages) | UI resources are left out ([Use resources](https://pi.dev/docs/latest/mcp#use-resources)) | Tool UIs open in a native macOS window or the browser and can call tools ([MCP UI integration](prompts-and-ui.md#mcp-ui-integration)) |
+| Resources (data a server exposes) | `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource` tools ([Use resources](https://pi.dev/docs/latest/mcp#use-resources)) | Resources exposed as tools, on by default (`exposeResources`) ([Settings](configuration.md#settings)) |
+| Roots (the session directory, sent to servers) | Sent | Not declared ([Task-augmented tool calls](servers.md#task-augmented-tool-calls)) |
+
+## How the model finds and calls tools
+
+| | Pi's built-in MCP | pi-mcp-adapter |
+|---|---|---|
+| Tool search | `tool_search` finds and loads tools with `deferred` exposure, ranked by words (BM25) ([Control tool exposure](https://pi.dev/docs/latest/mcp#control-tool-exposure), [Tool search](https://pi.dev/docs/latest/cli#tool-search)) | On Pi 0.99 and later, tools of servers set to `directTools: "search"` are Pi deferred tools, so `tool_search` finds them. Other tools are found with `mcp({ search })`, ranked by words or matched by regex. With a System One API key, `searchMode: "semantic"` has the Jev model rank tools by meaning; it's used only when a search asks for it ([Search-activated direct tools](tools.md#search-activated-direct-tools), [Jev semantic search](scripting.md#jev-semantic-search-and-opt-in-script-evaluation)) |
+| Scripts that call many tools | Pi's `codemode` tool, turned on when a server with the default `codemode` exposure connects. Scripts call MCP tools by name, and any other Pi tool such as `bash` or `read` ([Control tool exposure](https://pi.dev/docs/latest/mcp#control-tool-exposure)) | Pi's `codemode` also works with the adapter, but isn't turned on automatically: add `"+codemode"` to `defaultTools` in Pi's settings. Scripts call the proxy through `tools.mcp(...)`, direct tools by name, and other Pi tools as usual ([Search-activated direct tools](tools.md#search-activated-direct-tools)). The adapter also has its own `mcpScript` tool, off by default (`settings.scriptMode`). It calls MCP tools only, with search, describe, and call across servers, optional Jev semantic search, and a 16 MiB transfer budget per script. It also works on Pi before 0.99, which has no `codemode` ([MCP scripting](scripting.md)) |
+
+## Security
 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
 | OAuth token storage | A JSON file, `~/.pi/agent/mcp-auth.json`, created with mode 0600 ([OAuth](https://pi.dev/docs/latest/mcp#authenticate-with-oauth)) | The OS credential store: macOS Keychain, Windows Credential Manager, or Linux Secret Service. No plaintext fallback; an encrypted file store is opt-in ([Token storage](auth.md#token-storage)) |
-| When servers start and stop | Pi 0.99.2 connects every enabled server in the background when a session starts and keeps them connected until the session ends; there is no idle stop ([Diagnose connection problems](https://pi.dev/docs/latest/mcp#diagnose-connection-problems)). With 100 local test servers, all 100 were still running after 15 minutes ([measurements](#measured-with-100-servers)) | On first use by default, and stopped after 10 idle minutes; calls in progress, approvals, and open MCP UI pages keep a server running. A trusted server without valid cached tools, such as a new one, connects once when a session starts, 10 at a time, to cache them, then a `lazy` server stops. Cached tools don't expire with age; server-declared TTLs still apply. `eager` and `keep-alive` servers start with the session ([How idle shutdown works](configuration.md#how-idle-shutdown-works), [Lifecycle modes](configuration.md#lifecycle-modes)) |
-| Config files | `~/.pi/agent/mcp.json` and `.pi/mcp.json` ([Configure servers](https://pi.dev/docs/latest/mcp#configure-servers)) | Pi's two files, plus `.mcp.json`, `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `mcp-adapter.json` ([File layout](configuration.md#file-layout)) |
-| Configs from other clients | Convert entries by hand ([Migrate configuration](https://pi.dev/docs/latest/mcp#migrate-configuration-from-another-client)) | `imports` reads Cursor, Claude Code, Claude Desktop, OpenCode, VS Code, Windsurf, and Codex configs; `/mcp-adapter setup` and `pi-mcp-adapter init` find them ([Import existing configs](configuration.md#import-existing-configs)) |
-| Guided setup in a session | None. `/mcp` inspects, signs in, reconnects, changes exposure, and enables or disables configured servers; new servers are added by hand or with `pi mcp add`, then `/reload`. The docs show Figma's remote server with `oauth.clientName` set to `"Claude Code"` ([Quick setup](https://pi.dev/docs/latest/mcp#quick-setup), [Authenticate with OAuth](https://pi.dev/docs/latest/mcp#authenticate-with-oauth)) | The `/mcp-adapter setup` overlay picks where new servers go, imports configs found on the machine, scaffolds a config, and adds presets: Figma (desktop) when the Figma app is installed, RepoPrompt when its MCP server is installed locally, and GitHub, Notion, Context7, DeepWiki, Parallel Search, and Chrome DevTools. Every write shows the exact file diff first ([Setup panel](configuration.md#setup-panel)) |
-| Add a server from a shell | `pi mcp add` and `pi mcp remove` ([Quick setup](https://pi.dev/docs/latest/mcp#quick-setup)) | No shell command of its own; servers added with `pi mcp add` are read. In a session: `/mcp-adapter setup` or `mcp({ action: "install", url })` ([Install from one URL](servers.md#install-from-one-url)) |
-| Check servers from a shell | `pi mcp list`, exits 1 when a server fails ([Diagnose connection problems](https://pi.dev/docs/latest/mcp#diagnose-connection-problems)) | `pi-mcp-adapter doctor [--json]`, exits 1 when a server fails or needs sign-in, and never starts OAuth ([Check servers from a shell](configuration.md#check-servers-from-a-shell)) |
-| MCP prompts | No | Slash commands `/mcp__<server>__<prompt>` ([MCP prompts](prompts-and-ui.md#mcp-prompts)) |
-| Elicitation (servers asking for input) | No | Forms through Pi dialogs, and URL mode in the TUI ([MCP elicitation](prompts-and-ui.md#mcp-elicitation)) |
-| Sampling (servers asking for a model reply) | No | Text only, with a confirmation prompt ([Settings](configuration.md#settings), [Limitations](../README.md#limitations)) |
-| MCP Tasks | No | Supported when the server advertises the Tasks extension on an MCP 2026-07-28 connection, which needs `protocolVersion: "auto"` or `"2026-07-28"` ([Task-augmented tool calls](servers.md#task-augmented-tool-calls), [Protocol version negotiation](servers.md#protocol-version-negotiation)) |
-| MCP UI | UI resources are left out ([Use resources](https://pi.dev/docs/latest/mcp#use-resources)) | Tool UIs open in a native macOS window or the browser and can call tools ([MCP UI integration](prompts-and-ui.md#mcp-ui-integration)) |
-| Tool approval | Every MCP call goes through Pi's tool pipeline, so permission extensions see each tool and its annotations ([Permissions](https://pi.dev/docs/latest/mcp#permissions)) | `approveTools` asks before matching tools run. Permission extensions see proxy calls as calls to the adapter's proxy tools, and direct and search-mode tools under their own names ([Tool approval](tools.md#tool-approval)) |
-| Tool search | `tool_search` finds and loads tools with `deferred` exposure, ranked by words (BM25) ([Control tool exposure](https://pi.dev/docs/latest/mcp#control-tool-exposure), [Tool search](https://pi.dev/docs/latest/cli#tool-search)) | On Pi 0.99 and later, tools of `directTools: "search"` servers are Pi deferred tools, so `tool_search` finds them. Other tools are found with `mcp({ search })`, ranked by words or matched by regex. With a System One key, `searchMode: "semantic"` has Jev rank tools by meaning; it is used only when a search asks for it ([Search-activated direct tools](tools.md#search-activated-direct-tools), [Jev semantic search](scripting.md#jev-semantic-search-and-opt-in-script-evaluation)) |
-| Scripts that call many tools | Pi's `codemode` tool, turned on when a server with the default `codemode` exposure connects. Scripts call MCP tools by name, and any other Pi tool such as `bash` or `read` ([Control tool exposure](https://pi.dev/docs/latest/mcp#control-tool-exposure)) | Pi's `codemode` also works with the adapter, but isn't turned on automatically: add `"+codemode"` to `defaultTools` in Pi's settings. Scripts call proxy tools through `tools.mcp(...)`, search-mode and direct tools by name, and other Pi tools as usual ([Search-activated direct tools](tools.md#search-activated-direct-tools)). The adapter also has its own `mcpScript` tool, off by default (`settings.scriptMode`). It calls MCP tools only, with search, describe, and call across servers, optional Jev semantic search, and a 16 MiB transfer budget per script. It also works on Pi before 0.99, which has no `codemode` ([MCP scripting](scripting.md)) |
-| Resources | `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource` tools ([Use resources](https://pi.dev/docs/latest/mcp#use-resources)) | Resources exposed as tools, on by default (`exposeResources`) ([Settings](configuration.md#settings)) |
-| Roots | Sends the session directory as the root | Not declared ([Task-augmented tool calls](servers.md#task-augmented-tool-calls)) |
+| Asking before risky tools | Every MCP call goes through Pi's tool pipeline, so permission extensions see each tool and its annotations ([Permissions](https://pi.dev/docs/latest/mcp#permissions)) | `approveTools` asks before matching tools run. Pi permission extensions see proxy calls as calls to the adapter's proxy tools and direct tools under their own names; an extension that wants each MCP call uses the adapter's approval broker event ([Tool approval](tools.md#tool-approval)) |
+
+## Connections
+
+| | Pi's built-in MCP | pi-mcp-adapter |
+|---|---|---|
 | Transports | stdio and streamable HTTP; SSE is rejected ([Configuration rules](https://pi.dev/docs/latest/mcp#configuration-rules)) | stdio and streamable HTTP, with fallback to legacy SSE, plus an `rmcp-mux` Unix-domain socket ([Fields](servers.md#fields), [rmcp-mux](servers.md#shared-mcp-processes-with-rmcp-mux)) |
 | Servers from other extensions | `pi.registerMcpServer()` ([Add servers from extensions](https://pi.dev/docs/latest/mcp#add-servers-from-extensions)) | Connects those servers on Pi 0.99 and later, through the proxy only ([Runtime registration](extension-api.md#runtime-registration-from-other-extensions)) |
-
-"No" means Pi 0.99.2's MCP client doesn't handle it: it declares only the `roots` capability and doesn't request prompts.
-
-Sign-ins made with Pi's built-in can be imported into the adapter; see [Import a sign-in from Pi's built-in MCP](auth.md#import-a-sign-in-from-pis-built-in-mcp).
 
 ## Measured with 100 servers
 
