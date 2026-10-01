@@ -7,10 +7,9 @@ const BUILTIN_MCP = "builtin:mcp";
 const ADAPTER_VERSION: string = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf-8")).version;
 
 /**
- * Once per adapter version, adds `-builtin:mcp` to `extensions` in Pi's user settings, as
- * `pi config` does. Any existing `builtin:mcp` entry, such as `+builtin:mcp` from turning it
- * back on, is left alone. Returns whether it wrote; throws when Pi's settings can't be read
- * or written, leaving the version unhandled so the next start retries.
+ * Once per adapter version, adds `-builtin:mcp` to Pi's user `extensions` unless it already has a
+ * `builtin:mcp` entry, such as `pi config`'s `+builtin:mcp`. Returns whether it wrote. Throws on a
+ * settings read or write error without recording the version, so the next start retries.
  */
 export async function turnOffPiBuiltinMcp(): Promise<boolean> {
   if (loadOnboardingState().piBuiltinMcpHandledVersion === ADAPTER_VERSION) return false;
