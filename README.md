@@ -28,12 +28,13 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 | MCP prompts, elicitation, sampling, Tasks | No | Yes |
 | MCP UI apps | Left out | Native window or browser |
 | Configs from Cursor, Claude Code, Codex, VS Code | Convert by hand | Imported |
+| Guided setup in a session | No; `/mcp` manages servers that are already configured | `/mcp-adapter setup` overlay: imports configs found on your machine, adds presets (Figma desktop and RepoPrompt when installed, GitHub, Notion, Context7, DeepWiki, Parallel Search, Chrome DevTools), and previews each file change before writing |
 | Ask before risky tools | Through a permission extension, which sees every MCP call | Built in (`approveTools`); permission extensions see proxy calls as the proxy tool |
 | Roots (session directory sent to servers) | Yes | No |
 | Shell commands | `pi mcp add`, `remove`, `list` | `pi-mcp-adapter init`, `doctor` |
 | Transports | stdio, streamable HTTP | stdio, streamable HTTP, legacy SSE, `rmcp-mux` socket |
 
-The built-in is enough if you want `codemode`, permission hooks on every MCP call, roots, or `pi mcp add`. Use the adapter for servers that start only when used, tokens in the OS keychain, the MCP features the built-in doesn't handle, and configs you already have from other clients. The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
+The built-in is enough if you want `codemode`, permission hooks on every MCP call, roots, or `pi mcp add`. Use the adapter for servers that start only when used, tokens in the OS keychain, the MCP features the built-in doesn't handle, guided setup with presets like Figma and RepoPrompt, and configs you already have from other clients. The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
 
 After you install the adapter, Pi warns at each startup that its built-in MCP was not loaded. Turn the built-in off in `pi config` to stop the warning ([details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp)).
 
