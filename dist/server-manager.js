@@ -1189,6 +1189,7 @@ export class McpServerManager {
                     const accepted = this.acceptedUrlElicitations.get(serverName);
                     if (!accepted?.delete(notification.params.elicitationId))
                         return;
+                    this.touch(serverName);
                     this.elicitationConfig?.ui.notify(`MCP browser interaction for ${serverName} completed. You can retry the tool now.`, "info");
                 });
             }
@@ -1254,6 +1255,8 @@ export class McpServerManager {
     rememberUrlElicitation(serverName, elicitationId) {
         if (this.runtimeSignal?.aborted)
             return;
+        // The browser flow can outlast the call that started it; give the user one idle timeout to finish and retry.
+        this.touch(serverName);
         let accepted = this.acceptedUrlElicitations.get(serverName);
         if (!accepted) {
             accepted = new Set();
