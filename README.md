@@ -30,7 +30,7 @@ The built-in has two things the adapter doesn't: Pi's permission extensions see 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
 | Servers running | Every enabled server, for the whole session | Only servers in use; each stops after 10 idle minutes |
-| Server memory with 100 servers installed | 6.5 GiB at session start | None at session start once their tools are cached; only servers in use after that |
+| Server memory (100 installed, 3 in use) | 6.5 GiB at start, 5.5 GiB after 15 minutes | Only the 3 in use, then none once they're idle |
 | How the model reaches tools | Default: `codemode` scripts. Per server: direct, or loaded by `tool_search` | Default: one `mcp` proxy tool. Per server: direct, or loaded by `tool_search`. Scripts: Pi's `codemode` (add `"+codemode"` to `defaultTools`) or the adapter's `mcpScript`, both opt-in |
 | Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex, plus optional semantic search with Jev |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
