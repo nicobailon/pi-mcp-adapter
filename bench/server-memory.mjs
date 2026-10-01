@@ -11,6 +11,8 @@
 //             idle stop, call 1 again.
 // Scenario 3: Pi's built-in MCP (no adapter) with the same servers.
 // real:       one @modelcontextprotocol/server-everything process.
+//             Install it first and pass the directory as --everything:
+//             npm install --prefix /tmp/everything @modelcontextprotocol/server-everything@2026.8.31
 //
 // --adapter picks the checkout whose index.ts is loaded; the stub servers
 // always come from this checkout. Pi (for the adapter session and for
@@ -20,6 +22,11 @@
 // the process command line. Each result line is printed and, with --out,
 // appended to that file as soon as it is measured. Interrupting the bench
 // kills everything it started.
+//
+// Run one 100-server scenario at a time on an otherwise quiet machine. RSS is
+// an estimate: shared pages are counted per process, and macOS memory
+// compression moves totals between runs, so compare process counts first.
+// Not part of CI; there are no thresholds.
 import { execFile, spawn } from "node:child_process";
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { arch, cpus, release, tmpdir } from "node:os";

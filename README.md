@@ -25,7 +25,6 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 | How the model reaches tools | `codemode` scripts by default; `tool_search` or direct per server | One `mcp` proxy tool by default; `tool_search` or direct per server |
 | Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex, plus optional semantic search with Jev |
 | Scripts that call many tools | Pi's `codemode`, turned on automatically | Pi's `codemode` (add `"+codemode"` to `defaultTools`), or the adapter's opt-in `mcpScript`: MCP tools only, with search across servers, and also on Pi before 0.99 |
-| When servers start | Every enabled server, at session start | On first use; a server without cached tools starts once at session start to cache them, then stops. Idle servers stop after 10 minutes |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
 | MCP prompts, elicitation, sampling, Tasks | No | Yes |
 | MCP UI apps | Left out | Native window or browser |
@@ -39,6 +38,36 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 The built-in is enough if you want permission hooks on every MCP call, roots, or `pi mcp add`. Use the adapter for servers that start only when used, tokens in the OS keychain, the MCP features the built-in doesn't handle, guided setup with presets like Figma and RepoPrompt, and configs you already have from other clients. Pi's `codemode` works with both. The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
 
 When you install or update the adapter, it turns Pi's built-in MCP off in Pi's settings for you (the same switch as `pi config` → Built-in), so the two don't both run. If you remove the adapter, turn the built-in back on there ([details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp)).
+
+## Many servers, few running
+
+**Keep many servers available without keeping every server running.**
+
+For plain lazy local servers, the adapter keeps tool metadata searchable, starts a server when needed, and stops it after inactivity. New or changed servers are discovered once, a few at a time, and closed as soon as their tools are saved. Cached tools don't expire with age; server-declared TTLs still apply.
+
+```
+100 enabled local stdio servers; valid cached metadata; 3 used
+
+                        Pi 0.99.2 built-in   pi-mcp-adapter
+Session starts          connects all 100     starts none
+Use 3 servers           all 100 stay up      starts those 3
+Stop using them         all 100 stay up      those 3 stop after the idle timeout
+```
+
+Active calls, approvals, open UIs, and resident lifecycle settings keep a server running. This reduces idle processes; it is not a RAM cap. Cold discovery briefly starts a few servers at a time, and starting a stopped server adds latency.
+
+Measured with 100 stub servers of 50 tools each, Pi 0.99.2, Node 25.2.1, Apple M4 Pro, macOS 15.6:
+
+| | Servers running | Server memory (RSS) |
+|---|---|---|
+| Pi 0.99.2 built-in | 100 at session start, still 100 after 15 minutes | 6.5 GiB at start, 5.5 GiB after 15 minutes |
+| Adapter 4.0.0, first session (no cache) | 100 when ready, until the idle stop | 4.7–7.2 GiB |
+| Adapter after #783, first session (no cache) | at most 10 during discovery (ready in about 2 s), 0 when ready | none when ready |
+| Adapter, valid cache, 3 servers used | 0, then 3, then 0 after the idle timeout; the other 97 never start | only the 3 in use |
+
+A call that has to start its stub server took 188–270 ms. One real server, `@modelcontextprotocol/server-everything` 2026.8.31, used 70–71 MiB and started in 114–148 ms; other servers differ. RSS counts shared pages in every process that maps them, so totals are estimates. To measure on your machine, run `node bench/server-memory.mjs` (see the comment at its top).
+
+This applies to local stdio servers; closing an HTTP or `rmcp-mux` connection doesn't stop the upstream service. For a server that holds state between calls, use `"lifecycle": "lazy-keep-alive"` or `"idleTimeout": 0`. To share one server process across Pi sessions, use [rmcp-mux](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/servers.md#shared-mcp-processes-with-rmcp-mux). Details: [How idle shutdown works](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#how-idle-shutdown-works).
 
 ## Install
 
@@ -149,7 +178,7 @@ On Pi 0.99 and later, servers you already signed in to with Pi's built-in MCP ca
 
 ## Limitations
 
-- Cross-session server sharing not yet implemented (each Pi session runs its own server processes)
+- Each Pi session runs its own server processes; [rmcp-mux](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/servers.md#shared-mcp-processes-with-rmcp-mux) can share one across sessions
 - Compact MCP result rendering summarizes text, but inline images are still controlled by Pi's image display settings and may render below the compact text summary.
 - Pi still owns one separator row before self-rendered tool output, so compact mode reduces adapter rendering height but cannot promise true zero-gap rows.
 - MCP sampling support is text-only; context inclusion, tools, stop sequences, audio, and image content are rejected with explicit errors.

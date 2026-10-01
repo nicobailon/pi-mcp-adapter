@@ -130,6 +130,25 @@ For remote HTTP keep-alive servers, the authoritative `tools/list` refresh is al
 
 When any enabled server uses `eager` or `keep-alive`, initialization also starts when the extension loads. This supports hosts that embed Pi programmatically and never emit `session_start`; if a session does start later, the session-owned runtime supersedes the load-time runtime.
 
+## How idle shutdown works
+
+This applies to local stdio servers. Closing an HTTP or `rmcp-mux` connection doesn't stop the upstream service ([rmcp-mux](servers.md#shared-mcp-processes-with-rmcp-mux)).
+
+**Timing.** A server can be stopped once `idleTimeout` minutes (default 10) have passed since its last completed activity. A check runs every 30 seconds and stops idle servers one at a time, so a server stops up to about 30 seconds after the timeout, later if a check is still running. The timeout is a minimum, not an exact deadline. In the [benchmark](../README.md#many-servers-few-running), servers with `idleTimeout: 1` stopped 89 to 90 seconds after their last call. A stopped server starts again on its next call, which adds its startup time to that call.
+
+**What counts as in use.** A server is never stopped while:
+
+- a tool call is running, including one waiting for approval
+- an MCP UI page for it is open; the page's heartbeat every 10 seconds counts as activity, and the normal timer resumes once the page closes
+
+Accepting a browser (URL) request from the server, and its completion, also count as activity.
+
+**What ignores the timer.** `keep-alive`, `lazy-keep-alive`, `eager` unless the server sets `idleTimeout`, and `idleTimeout: 0`, set globally or on the server. Use `lazy-keep-alive` or `idleTimeout: 0` for servers that hold state you don't want to lose between calls.
+
+**Startup discovery.** When a session starts, a server without valid cached tools (new, changed config, corrupt cache, or past a TTL the server declared) is connected once to read its tools, 10 at a time. Plain `lazy` servers are closed as soon as their tools are captured, before the next server starts, and all entries from the pass are saved in one cache write. `lazy-keep-alive`, `idleTimeout: 0`, and servers that need sign-in are not closed. A `lazy` or `lazy-keep-alive` server whose cached entry is private (sign-in-scoped) is not discovered at startup.
+
+**Failed discovery.** A `lazy` or `lazy-keep-alive` server that fails discovery or needs sign-in is tried once per config. Later sessions don't start it at startup until its config changes, the cache file is missing or corrupt, or it connects successfully, for example when you use it. Temporary HTTP outages are retried next session. `eager` and `keep-alive` servers connect at every start.
+
 ## Settings
 
 ```json
