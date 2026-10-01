@@ -1,6 +1,8 @@
-# Pi's built-in MCP and pi-mcp-adapter
+# pi-mcp-adapter vs Pi's built-in MCP
 
-As of Pi 0.99.2. Pi ships its own MCP support ([Pi's MCP docs](https://pi.dev/docs/latest/mcp)). On Pi 0.99 and later, installing the adapter replaces the built-in in sessions, except when a host supplies its own config through `createMcpAdapter()`; see [Pi's built-in MCP](configuration.md#pis-built-in-mcp). Both read Pi's `mcp.json` files.
+How the adapter differs from the MCP support built into Pi ([Pi's MCP docs](https://pi.dev/docs/latest/mcp)), as of Pi 0.99.2. Both read Pi's `mcp.json` files. On Pi 0.99 and later, installing the adapter replaces the built-in in sessions, except when a host supplies its own config through `createMcpAdapter()`; see [Pi's built-in MCP](configuration.md#pis-built-in-mcp).
+
+In short, the built-in is ahead on per-call permission hooks, roots, `codemode`, and shell commands for adding servers. The adapter is ahead on when servers start, where tokens are stored, configs from other clients, and the MCP features the built-in doesn't handle: prompts, elicitation, sampling, Tasks, and MCP UI.
 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|

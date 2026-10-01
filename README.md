@@ -8,13 +8,26 @@ Use MCP servers with [Pi](https://github.com/badlogic/pi-mono/) without burning 
 
 https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a
 
-## Why This Exists
+## pi-mcp-adapter vs Pi's built-in MCP
 
-Mario wrote about [why you might not need MCP](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/). The problem: tool definitions are verbose. A single MCP server can burn 10k+ tokens, and you're paying that cost whether you use those tools or not. Connect a few servers and you've burned half your context window before the conversation starts.
+The adapter started as a way to use MCP servers without spending the context window on tool definitions ([why you might not need MCP](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/)). Pi 0.99 added MCP support of its own, which also keeps tool definitions out of context by default. Installing the adapter replaces the built-in in Pi sessions. The two differ here:
 
-His take: skip MCP entirely, write simple CLI tools instead.
+| | Pi's built-in MCP | pi-mcp-adapter |
+|---|---|---|
+| How the model reaches tools | `codemode` scripts by default; `tool_search` or direct per server | One `mcp` proxy tool (~200 tokens) by default; direct tools per server |
+| When servers start | Every enabled server, at session start | On first use, once the first session has cached their tools; idle servers stop after 10 minutes |
+| OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
+| MCP prompts, elicitation, sampling, Tasks | No | Yes |
+| MCP UI apps | Left out | Native window or browser |
+| Configs from Cursor, Claude Code, Codex, VS Code | Convert by hand | Imported |
+| Ask before risky tools | Through a permission extension, which sees every MCP call | Built in (`approveTools`); permission extensions see proxy calls as the proxy tool |
+| Roots (session directory sent to servers) | Yes | No |
+| Shell commands | `pi mcp add`, `remove`, `list` | `pi-mcp-adapter init`, `doctor` |
+| Transports | stdio, streamable HTTP | stdio, streamable HTTP, legacy SSE, `rmcp-mux` socket |
 
-But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter gives you access without the bloat. One proxy tool (~200 tokens) instead of hundreds. The agent discovers what it needs on-demand. Servers only start when you actually use them.
+The built-in is enough if you want `codemode`, permission hooks on every MCP call, roots, or `pi mcp add`. Use the adapter for servers that start only when used, tokens in the OS keychain, the MCP features the built-in doesn't handle, and configs you already have from other clients. The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
+
+After you install the adapter, Pi warns at each startup that its built-in MCP was not loaded. Turn the built-in off in `pi config` to stop the warning ([details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp)).
 
 ## Install
 
@@ -130,10 +143,6 @@ On Pi 0.99 and later, servers you already signed in to with Pi's built-in MCP ca
 - Pi still owns one separator row before self-rendered tool output, so compact mode reduces adapter rendering height but cannot promise true zero-gap rows.
 - MCP sampling support is text-only; context inclusion, tools, stop sequences, audio, and image content are rejected with explicit errors.
 
-## Compared with Pi's built-in MCP
-
-Pi 0.99 ships its own MCP support, which the adapter replaces in sessions. [Pi's built-in MCP and pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) compares them feature by feature, as of Pi 0.99.2.
-
 ## Documentation
 
 The full reference lives in `docs/`:
@@ -143,7 +152,7 @@ The full reference lives in `docs/`:
 | [Configuration](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md) | The setup panel, config files and precedence, imports from other hosts, project server trust, lifecycle modes, and every `settings` key. |
 | [Server options](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/servers.md) | Every server field, custom HTTPS trust, macOS local-network access, protocol negotiation, MCP Tasks, stdio environment, rmcp-mux, and URL install. |
 | [Authentication](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/auth.md) | OAuth setup, remote and headless sign-in, token storage, headers, bearer tokens, and secret commands. |
-| [Pi's built-in MCP and pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) | What each one supports, as of Pi 0.99.2. |
+| [pi-mcp-adapter vs Pi's built-in MCP](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) | Every difference, with sources, as of Pi 0.99.2. |
 | [Using MCP tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/tools.md) | The `mcp` tool, search and search keywords, direct tools, tool approval, and the output guard. |
 | [MCP scripting](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md) | Jev semantic search, the `mcpScript` tool, and composable tool search. |
 | [Prompts, elicitation, and MCP UI](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/prompts-and-ui.md) | MCP prompts as slash commands, servers asking for input, and interactive MCP UI windows. |
