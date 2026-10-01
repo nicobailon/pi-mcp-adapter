@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README is now a short overview. The full reference moved into `docs/`: configuration, server options, authentication (formerly `OAUTH.md`), using MCP tools, scripting, prompts and MCP UI, and the extension API.
 - A tool call's timeout (`requestTimeoutMs`, or the MCP SDK default of 60 seconds) now restarts whenever the tool reports progress, as in Pi's built-in MCP, so a long tool that keeps reporting progress no longer times out. Tool calls always ask the server for progress, with or without a UI.
 - On Pi 0.99 and later, `directTools: "search"` tools are Pi deferred tools. Pi's `tool_search` finds them, and Pi keeps their activation on the session branch, so it survives a resume. Permission extensions see their MCP annotations, and codemode scripts get their `CallToolResult`. Calls still go through the adapter's approval and output limits. See [search-activated direct tools](docs/tools.md#search-activated-direct-tools).
+- Working out which direct tools to register is faster when many servers use `includeTools` or `excludeTools`: the cross-server name index is built once per pass instead of once per filtered server (100 servers × 50 tools: about 1 second → 60 ms).
 
 ### Fixed
 

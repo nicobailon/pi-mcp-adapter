@@ -624,10 +624,10 @@ describe("excludeTools filtering", () => {
 
   it("keeps cached metadata filtering scoped to current server identities", () => {
     const config: McpConfig = {
-      settings: { toolPrefix: "server" },
+      settings: { toolPrefix: "server", directTools: true },
       mcpServers: {
-        "my-server": { command: "hyphen", excludeTools: ["my_2d_server_do_thing"] },
         my_2d_server: { command: "escaped", excludeTools: ["my_2d_server_do_thing"] },
+        "my-server": { command: "hyphen", excludeTools: ["my_2d_server_do_thing"] },
       },
     };
     const cache: MetadataCache = {
@@ -642,6 +642,7 @@ describe("excludeTools filtering", () => {
 
     expect(reconstructToolMetadata("my-server", cache.servers["my-server"]!, "server", config.mcpServers["my-server"], config.mcpServers, cache).map(tool => tool.name)).toEqual(["my-server_do_thing"]);
     expect(reconstructToolMetadata("my_2d_server", cache.servers.my_2d_server!, "server", config.mcpServers.my_2d_server, config.mcpServers, cache)).toEqual([]);
+    expect(resolveDirectTools(config, cache, "server").map(tool => tool.prefixedName)).toEqual(["my-server_do_thing"]);
   });
 
   it("filters included tools from live and cached metadata before applying exclusions", () => {

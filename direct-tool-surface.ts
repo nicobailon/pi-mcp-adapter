@@ -1,5 +1,5 @@
 import { Check, Errors } from "typebox/value";
-import type { DirectToolSpec, McpConfig, ToolPrefix } from "./types.ts";
+import type { DirectToolSpec, McpConfig, ToolPrefix, ToolSelectorCandidateIndex } from "./types.ts";
 import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
@@ -82,6 +82,7 @@ export function resolveDirectTools(
 
   const envSelection = envOverride ? parseDirectToolSelectors(envOverride) : null;
   const globalDirect = config.settings?.directTools;
+  let selectorCandidateIndex: ToolSelectorCandidateIndex | undefined;
 
   for (const [serverName, definition] of Object.entries(config.mcpServers)) {
     if (isServerDisabled(definition)) continue;
@@ -115,7 +116,7 @@ export function resolveDirectTools(
     const hasToolFilters =
       (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
       (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
-    const selectorCandidateIndex = hasToolFilters ? (() => {
+    if (hasToolFilters && !selectorCandidateIndex) {
       const candidates = new Set<string>();
       for (const [otherServerName, otherDefinition] of Object.entries(config.mcpServers)) {
         const otherCache = cache.servers[otherServerName];
@@ -132,8 +133,8 @@ export function resolveDirectTools(
           }
         }
       }
-      return createToolSelectorCandidateIndex(candidates);
-    })() : undefined;
+      selectorCandidateIndex = createToolSelectorCandidateIndex(candidates);
+    }
 
     for (const tool of serverCache.tools ?? []) {
       if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
