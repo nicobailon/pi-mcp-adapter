@@ -6,10 +6,10 @@ How the adapter differs from the MCP support built into Pi ([Pi's MCP docs](http
 
 What you get with the adapter:
 
-- **Idle servers cost nothing.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. The adapter starts a server when the model first calls it and stops it after 10 idle minutes. With 100 servers installed and their tools cached, that's 6.5 GiB of server memory against none at session start ([measurements](#measured-with-100-servers)).
+- **Idle servers cost nothing.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. By default, the adapter starts a server when the model first calls it and stops it after 10 idle minutes. With 100 servers installed and their tools cached, that's 6.5 GiB of server memory against none at session start ([measurements](#measured-with-100-servers)).
 - **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, offer prompt templates as slash commands, ask the model for a reply, and run long jobs as MCP Tasks (with `"protocolVersion": "auto"`). The built-in supports none of these.
-- **Sign-in tokens stay in your OS keychain**, not in a JSON file.
-- **Adding servers is easier.** Give the agent a server's URL and it installs it, signs you in, and checks its tools in the same session. Configs from Cursor, Claude Code, Codex, VS Code, and other clients are imported, and `/mcp-adapter setup` adds presets.
+- **Sign-in tokens go in your OS keychain** by default (an encrypted file is opt-in), not in a plain JSON file.
+- **Adding servers is easier.** Give the agent a server's URL and it installs it and checks its tools in the same session, opening sign-in first if the server needs it. Configs from Cursor, Claude Code, Codex, VS Code, and other clients can be imported with `/mcp-adapter setup`, which also adds presets.
 
 What only the built-in has: Pi's permission extensions see each MCP call as its own tool call without changes, and the session directory is sent to servers as a root.
 
