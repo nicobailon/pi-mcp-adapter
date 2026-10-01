@@ -96,6 +96,12 @@ function createManager() {
   return manager;
 }
 
+// Startup does not discover servers with private metadata, so the direct-tools bootstrap connects them.
+const privateCache = () => ({
+  version: 1 as const,
+  servers: { srv: { configHash: "hash", cachedAt: Date.now(), tools: [], resources: [], cacheScope: "private" } },
+});
+
 describe("lazy-keep-alive initializeMcp integration", () => {
   const originalDirectTools = process.env.MCP_DIRECT_TOOLS;
   let tempDir: string;
@@ -345,8 +351,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
   });
 
   it("records direct-tool bootstrap failures", async () => {
-    mkdirSync(tempDir, { recursive: true });
-    writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
+    mocks.cache = privateCache();
     mocks.config = {
       settings: {},
       mcpServers: { srv: { command: "demo", lifecycle: "lazy", directTools: true } },
@@ -366,15 +371,14 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     expect(state.failureMessages.get("srv")).toBe("bootstrap failed");
   });
 
-  it("clears stale startup diagnostics when direct-tool bootstrap recovers", async () => {
-    mkdirSync(tempDir, { recursive: true });
-    writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
+  it("leaves a failed startup connection to the reconnect loop instead of retrying it in the direct-tools bootstrap", async () => {
     mocks.config = {
       settings: {},
       mcpServers: { srv: { command: "demo", lifecycle: "keep-alive", directTools: true } },
     };
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["srv"]);
     mocks.manager.connect.mockRejectedValueOnce(new Error("startup failed"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const { initializeMcp } = await import("../init.ts");
 
     const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
@@ -384,9 +388,38 @@ describe("lazy-keep-alive initializeMcp integration", () => {
       signal: undefined,
     } as any);
 
-    expect(mocks.manager.connect).toHaveBeenCalledTimes(2);
-    expect(state.failureTracker.has("srv")).toBe(false);
-    expect(state.failureMessages.has("srv")).toBe(false);
+    expect(mocks.manager.connect).toHaveBeenCalledTimes(1);
+    expect(state.failureMessages.get("srv")).toBe("startup failed");
+  });
+
+  it("closes only plain lazy discovery connections and counts resident servers as connected", async () => {
+    mocks.config = {
+      settings: {},
+      mcpServers: {
+        plain: { command: "plain" },
+        resident: { command: "resident", lifecycle: "lazy-keep-alive" },
+        pinned: { command: "pinned", idleTimeout: 0 },
+        signin: { command: "signin" },
+      },
+    };
+    mocks.manager.connect.mockImplementation(async (name: string) => ({
+      status: name === "signin" ? "needs-auth" : "connected",
+      tools: [],
+      resources: [],
+    }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { initializeMcp } = await import("../init.ts");
+    const ui = { setStatus: vi.fn(), notify: vi.fn() };
+
+    await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
+      cwd: tempDir,
+      hasUI: true,
+      mode: "tui",
+      ui,
+    } as any);
+
+    expect(mocks.manager.close.mock.calls).toEqual([["plain"]]);
+    expect(ui.notify).toHaveBeenCalledWith("MCP: 2 servers connected (0 tools)", "info");
   });
 
   it("sanitizes captured diagnostics in startup notifications and terminal logs", async () => {
@@ -563,8 +596,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
   });
 
   it("marks direct-tool metadata bootstrap spawns for health-check reconnects", async () => {
-    mkdirSync(tempDir, { recursive: true });
-    writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
+    mocks.cache = privateCache();
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["srv"]);
     const { initializeMcp } = await import("../init.ts");
 

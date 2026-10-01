@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata, type ToolSelectorCandidateIndex } from "./types.ts";
-import { existsSync } from "node:fs";
 import { cloneMcpConfig, loadMcpConfig, resolveConfiguredClaudePluginMcp } from "./config.ts";
 import { applyProjectServerTrustToConfig, describeProjectServerBlock, excludeProjectServersAtLoadTime } from "./project-server-trust.ts";
 import { ConsentManager } from "./consent-manager.ts";
@@ -9,7 +8,6 @@ import { McpLifecycleManager } from "./lifecycle.ts";
 import {
   computeServerHash,
   createCachedToolSelectorCandidateIndex,
-  getMetadataCachePath,
   getMissingConfiguredDirectToolServers,
   isServerCacheValid,
   keepOutputShapes,
@@ -20,9 +18,10 @@ import {
   serializePrompts,
   serializeResources,
   serializeTools,
+  type MetadataCache,
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
-import { McpServerManager, isTransientHttpConnectError } from "./server-manager.ts";
+import { McpServerManager, isTransientHttpConnectError, type ServerConnection } from "./server-manager.ts";
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
@@ -294,21 +293,8 @@ export async function initializeMcp(
   const idleSetting = typeof config.settings?.idleTimeout === "number" ? config.settings.idleTimeout : 10;
   lifecycle.setGlobalIdleTimeout(idleSetting);
 
-  let cache: ReturnType<typeof loadMetadataCache> = null;
-  let bootstrapAll = false;
-
-  if (serverEntries.length > 0) {
-    const cachePath = getMetadataCachePath();
-    const cacheFileExists = existsSync(cachePath);
-    cache = loadMetadataCache();
-    if (!cacheFileExists) {
-      bootstrapAll = true;
-      saveMetadataCache({ version: 1, servers: {} });
-    } else if (!cache) {
-      cache = { version: 1, servers: {} };
-      saveMetadataCache(cache);
-    }
-  }
+  const cache = serverEntries.length > 0 ? loadMetadataCache() : null;
+  const needsDiscovery = new Set<string>();
 
   const prefix = config.settings?.toolPrefix ?? "server";
   let cachedSelectorCandidateIndex: ToolSelectorCandidateIndex | undefined;
@@ -346,15 +332,16 @@ export async function initializeMcp(
         serverInstructions.set(name, cachedEntry.instructions);
       }
       seedObservedOutputs(state, name, cachedEntry);
+    } else if (cachedEntry?.cacheScope !== "private") {
+      needsDiscovery.add(name);
     }
   }
 
-  const startupServers = (bootstrapAll
-    ? serverEntries
-    : serverEntries.filter(([, definition]) => {
-        const mode = definition.lifecycle ?? "lazy";
-        return mode === "keep-alive" || mode === "eager";
-      }))
+  const startupServers = serverEntries
+    .filter(([name, definition]) => {
+      const mode = definition.lifecycle ?? "lazy";
+      return mode === "keep-alive" || mode === "eager" || needsDiscovery.has(name);
+    })
     // Load-time runs have no model registry for auth.provider; session_start connects those servers.
     .filter(([, definition]) => !(options.excludeProjectServers && typeof definition.auth === "object"));
 
@@ -364,28 +351,40 @@ export async function initializeMcp(
   }
 
   const results = await parallelLimit(startupServers, 10, async ([name, definition]) => {
+    // Plain lazy servers are only discovered here; they start again on first use.
+    const resident = (definition.lifecycle ?? "lazy") !== "lazy" || getEffectiveIdleTimeoutMinutes(state, name) === 0;
     try {
       const connection = await manager.connect(name, definition, runtimeSignal);
       if (connection.status === "needs-auth") {
         const error = typeof definition.auth === "object"
           ? providerSignInMessage(name, definition.auth.provider)
           : `OAuth authentication required. Run /mcp-auth ${name}.`;
-        return { name, definition, connection: null, error, transient: false };
+        return { name, definition, resident, connection: null, error, transient: false };
       }
-      return { name, definition, connection, error: null, transient: false };
+      // Capture before closing: the closed connection object keeps its catalog for publication below.
+      captureMetadata(state, name, connection, () => cache);
+      if (!resident) await manager.close(name);
+      return { name, definition, resident, connection, error: null, transient: false };
     } catch (error) {
       if (isAbortError(error, runtimeSignal)) {
         if (owner.signal.aborted) throw error;
-        return { name, definition, connection: null, error: null, transient: false };
+        return { name, definition, resident, connection: null, error: null, transient: false };
       }
       const transient = isTransientHttpConnectError(error);
       const message = error instanceof Error ? error.message : String(error);
-      return { name, definition, connection: null, error: message, transient };
+      return { name, definition, resident, connection: null, error: message, transient };
     }
   });
 
   if (initialSignal?.aborted) return state;
   owner.throwIfInactive();
+
+  // One merged write for the whole pass; rewriting the file per server is slow with large catalogs.
+  const captured = results.flatMap(({ name, connection }) => {
+    const entry = connection ? state.sessionMetadata?.get(name) : undefined;
+    return entry ? [[name, entry] as const] : [];
+  });
+  if (captured.length > 0) saveMetadataCache({ version: 1, servers: Object.fromEntries(captured) });
 
   const startupKnownMetadata = new Map<string, ToolMetadata[]>();
   for (const { name, definition, connection } of results) {
@@ -442,7 +441,6 @@ export async function initializeMcp(
     } else {
       serverInstructions.delete(name);
     }
-    updateMetadataCache(state, name);
     notifyToolMetadataUpdated(state, name, "startup");
     markKeepAliveAfterConnect(state, name);
 
@@ -454,12 +452,13 @@ export async function initializeMcp(
     }
   }
 
-  const connectedCount = results.filter(r => r.connection).length;
-  const failedCount = results.filter(r => r.error).length;
+  const residentResults = results.filter(r => r.resident);
+  const connectedCount = residentResults.filter(r => r.connection).length;
+  const failedCount = residentResults.filter(r => r.error).length;
   if (ui && connectedCount > 0 && config.settings?.notifyOnStartupConnect !== false) {
     const totalTools = totalToolCount(state);
     const msg = failedCount > 0
-      ? `MCP: ${connectedCount}/${startupServers.length} servers connected (${totalTools} tools)`
+      ? `MCP: ${connectedCount}/${residentResults.length} servers connected (${totalTools} tools)`
       : `MCP: ${connectedCount} servers connected (${totalTools} tools)`;
     ui.notify(msg, "info");
   }
@@ -472,7 +471,8 @@ export async function initializeMcp(
 
     if (missingCacheServers.length > 0) {
       const bootstrapResults = await parallelLimit(
-        missingCacheServers.filter(name => !results.some(r => r.name === name && r.connection)),
+        // Startup already made this session's attempt for these servers, including failed ones.
+        missingCacheServers.filter(name => !results.some(r => r.name === name)),
         10,
         async (name) => {
           try {
@@ -601,17 +601,26 @@ export function updateMetadataCache(
   state: McpExtensionState,
   serverName: string,
 ): void {
-  if (state.provisionalInstalls?.has(serverName)) return;
   const connection = state.manager.getConnection(serverName);
   if (!connection || connection.status !== "connected") return;
+  const entry = captureMetadata(state, serverName, connection, loadMetadataCache);
+  if (entry) saveMetadataCache({ version: 1, servers: { [serverName]: entry } });
+}
 
+/** Builds a server's cache entry from a connection's catalog and records it as this session's metadata. */
+function captureMetadata(
+  state: McpExtensionState,
+  serverName: string,
+  connection: ServerConnection,
+  loadCache: () => MetadataCache | null,
+): ServerCacheEntry | undefined {
+  if (state.provisionalInstalls?.has(serverName)) return undefined;
   const definition = state.config.mcpServers[serverName];
-  if (!definition || isServerDisabled(definition)) return;
+  if (!definition || isServerDisabled(definition)) return undefined;
 
   const configHash = computeServerHash(definition);
-  if (connection.definition && computeServerHash(connection.definition) !== configHash) return;
-  const existing = loadMetadataCache();
-  const existingEntry = existing?.servers?.[serverName];
+  if (connection.definition && computeServerHash(connection.definition) !== configHash) return undefined;
+  const existingEntry = loadCache()?.servers?.[serverName];
 
   const tools = serializeTools(connection.tools);
   let resources = definition.exposeResources === false ? [] : serializeResources(connection.resources);
@@ -651,8 +660,8 @@ export function updateMetadataCache(
   };
 
   (state.sessionMetadata ??= new Map()).set(serverName, entry);
-  saveMetadataCache({ version: 1, servers: { [serverName]: entry } });
   seedObservedOutputs(state, serverName, entry);
+  return entry;
 }
 
 export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: string, reason: string): void {
