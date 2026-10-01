@@ -31,12 +31,16 @@ export function loadMetadataCache() {
         return null;
     }
 }
-/** With keepNewer, an entry on disk saved after the one being written (by another session) is kept. */
 export function saveMetadataCache(cache, options = {}) {
     updateMetadataCacheFile(servers => {
         const next = { ...servers };
         for (const [name, entry] of Object.entries(cache.servers)) {
-            if (options.keepNewer && (servers[name]?.cachedAt ?? 0) > entry.cachedAt)
+            // The startup batch is written after the whole pass, so another session may have saved meanwhile. It never replaces
+            // a better entry for the same config: a failure marker never replaces a catalog, and a catalog yields only to a
+            // newer catalog. An entry for another config is always replaced, since this pass discovered the current one.
+            const onDisk = servers[name];
+            if (options.startupBatch && onDisk?.configHash === entry.configHash && !onDisk.discoveryFailed
+                && (entry.discoveryFailed || (onDisk.cachedAt ?? 0) > entry.cachedAt))
                 continue;
             next[name] = entry;
         }

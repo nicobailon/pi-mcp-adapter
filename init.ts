@@ -354,7 +354,6 @@ export async function initializeMcp(
     ui.setStatus("mcp", status);
   }
 
-  const discoveryStartedAt = Date.now();
   const results = await parallelLimit(startupServers, 10, async ([name, definition]) => {
     const resident = (definition.lifecycle ?? "lazy") !== "lazy" || getEffectiveIdleTimeoutMinutes(state, name) === 0;
     try {
@@ -384,7 +383,6 @@ export async function initializeMcp(
   owner.throwIfInactive();
 
   // One merged write for the whole pass; rewriting the file per server is slow with large catalogs.
-  // An entry another session saved during the pass is newer than this capture and is kept.
   const captured = results.flatMap(({ name, definition, connection, error, transient }): [string, ServerCacheEntry][] => {
     if (connection) {
       const entry = state.sessionMetadata?.get(name);
@@ -393,9 +391,9 @@ export async function initializeMcp(
     // Mark a failed discovery so later sessions skip this config; transient outages stay unmarked.
     if (!error || transient || !needsDiscovery.has(name)) return [];
     const configHash = tryComputeServerHash(definition);
-    return configHash ? [[name, { configHash, tools: [], resources: [], discoveryFailed: true, cachedAt: discoveryStartedAt }]] : [];
+    return configHash ? [[name, { configHash, tools: [], resources: [], discoveryFailed: true, cachedAt: Date.now() }]] : [];
   });
-  if (captured.length > 0) saveMetadataCache({ version: 1, servers: Object.fromEntries(captured) }, { keepNewer: true });
+  if (captured.length > 0) saveMetadataCache({ version: 1, servers: Object.fromEntries(captured) }, { startupBatch: true });
 
   const startupKnownMetadata = new Map<string, ToolMetadata[]>();
   for (const { name, definition, connection } of results) {

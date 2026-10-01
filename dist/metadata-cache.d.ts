@@ -3,9 +3,8 @@ import { type ToolPrefix, type ToolSelectorCandidateIndex } from "./types.ts";
 export type { CachedPrompt, CachedResource, CachedTool, MetadataCache, ServerCacheEntry } from "./types.ts";
 export declare function getMetadataCachePath(): string;
 export declare function loadMetadataCache(): MetadataCache | null;
-/** With keepNewer, an entry on disk saved after the one being written (by another session) is kept. */
 export declare function saveMetadataCache(cache: MetadataCache, options?: {
-    keepNewer?: boolean;
+    startupBatch?: boolean;
 }): void;
 export declare function computeServerHash(definition: ServerEntry, environment?: NodeJS.ProcessEnv): string;
 /**

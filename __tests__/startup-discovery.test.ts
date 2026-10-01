@@ -113,6 +113,30 @@ describe("startup discovery", () => {
     expect(loadMetadataCache()!.servers.lazy).toEqual(newer);
   });
 
+  it.each([
+    { onDisk: "none", ours: "catalog", kept: "ours" },
+    { onDisk: "catalog for another config", ours: "marker", kept: "ours" },
+    { onDisk: "newer catalog", ours: "catalog", kept: "disk" },
+    { onDisk: "newer catalog", ours: "marker", kept: "disk" },
+    { onDisk: "older catalog", ours: "catalog", kept: "ours" },
+    { onDisk: "older catalog", ours: "marker", kept: "disk" },
+    { onDisk: "newer marker", ours: "catalog", kept: "ours" },
+    { onDisk: "older marker", ours: "marker", kept: "ours" },
+  ])("a startup batch write over $onDisk keeps $kept when ours is a $ours", ({ onDisk, ours, kept }) => {
+    const now = Date.now();
+    const entry = (kind: string, cachedAt: number, configHash = "current") => kind.includes("marker")
+      ? { configHash, tools: [], resources: [], discoveryFailed: true as const, cachedAt }
+      : { configHash, tools: [{ name: "list" }], resources: [], cachedAt };
+    const disk = onDisk === "none" ? undefined
+      : entry(onDisk, onDisk.startsWith("newer") ? now + 1_000 : now - 1_000, onDisk.includes("another") ? "previous" : "current");
+    const mine = entry(ours, now);
+    if (disk) saveMetadataCache({ version: 1, servers: { srv: disk } });
+
+    saveMetadataCache({ version: 1, servers: { srv: mine } }, { startupBatch: true });
+
+    expect(loadMetadataCache()!.servers.srv).toEqual(kept === "ours" ? mine : disk);
+  });
+
   it("discovers only servers whose saved metadata is missing, stale, or past its declared TTL", async () => {
     const servers = {
       valid: server("valid"),
