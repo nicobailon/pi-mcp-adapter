@@ -60,7 +60,6 @@ function sanitizeRowContent(content: string): string {
   return result;
 }
 
-// Servers without a configured description show the first line of their cached instructions.
 function serverDescription(definition: ServerEntry | undefined, entry: ServerCacheEntry | undefined): string | undefined {
   return definition?.description?.trim() || entry?.instructions?.trim().split("\n", 1)[0] || undefined;
 }

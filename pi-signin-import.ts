@@ -89,13 +89,10 @@ function matchPiSignIns(config: McpConfig, authStorageOptions: AuthStorageOption
   return matches;
 }
 
-function hasNoAdapterEntry(candidate: PiSignInImport, authStorageOptions: AuthStorageOptions): boolean {
-  return inspectAuthForUrl(candidate.serverName, candidate.serverUrl, authStorageOptions).status === "absent";
-}
-
 /** Servers that can import Pi's sign-in now: matched in Pi's file, with no adapter credentials for that URL. */
 export function findPiSignInImports(config: McpConfig, authStorageOptions: AuthStorageOptions): PiSignInImport[] {
-  return matchPiSignIns(config, authStorageOptions).filter((candidate) => hasNoAdapterEntry(candidate, authStorageOptions));
+  return matchPiSignIns(config, authStorageOptions)
+    .filter((candidate) => inspectAuthForUrl(candidate.serverName, candidate.serverUrl, authStorageOptions).status === "absent");
 }
 
 /** Saves Pi's sign-in; returns false, saving nothing, when adapter credentials for the URL exist by now. */
@@ -122,14 +119,13 @@ export async function offerPiSignInImports(
   const asked = loadOnboardingState().piSignInImportsAsked ?? [];
   const candidates = matchPiSignIns(config, authStorageOptions)
     .filter((candidate) => !asked.some((entry) => entry.server === candidate.serverName && entry.url === candidate.url))
-    .filter((candidate) => hasNoAdapterEntry(candidate, authStorageOptions));
+    .filter((candidate) => inspectAuthForUrl(candidate.serverName, candidate.serverUrl, authStorageOptions).status === "absent");
   for (const candidate of candidates) {
     const name = sanitizeTerminalText(candidate.serverName);
     const choice = await ctx.ui.select(
       [
-        `Pi's built-in MCP is signed in to "${name}" (${sanitizeTerminalText(candidate.url)}). Import that sign-in?`,
-        "If the server rotates refresh tokens, the adapter's first refresh can sign Pi's shell `pi mcp` commands out of it.",
-        `To sign in again instead, run /mcp-auth ${name} when you need it.`,
+        `Pi's built-in MCP is signed in to "${name}" (${sanitizeTerminalText(candidate.url)}). Import it, or sign in again with /mcp-auth ${name}.`,
+        "If the server rotates refresh tokens, the adapter's first refresh can sign Pi's `pi mcp` commands out.",
       ].join("\n"),
       [IMPORT_CHOICE, SIGN_IN_AGAIN_CHOICE],
       signal ? { signal } : undefined,

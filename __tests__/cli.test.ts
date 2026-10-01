@@ -652,7 +652,7 @@ describe("cli doctor", () => {
   it("prints JSON without configured header, token, env, or URL query values", async () => {
     const url = await listen((request, response) => {
       response.writeHead(400, { "Content-Type": "text/plain" });
-      response.end(`rejected ${request.headers.authorization ?? request.headers["x-api-key"]}`);
+      response.end(`rejected ${request.headers.authorization ?? request.headers["x-api-key"]} key=query-secret-value`);
     });
     const context = setup({
       mcpServers: {
@@ -672,19 +672,6 @@ describe("cli doctor", () => {
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
     }
-  });
-
-  it("redacts URL query values that a server echoes back", async () => {
-    const url = await listen((_request, response) => {
-      response.writeHead(400, { "Content-Type": "text/plain" });
-      response.end("rejected key=query-secret-value");
-    });
-
-    const result = await doctor(["--json"], setup({ mcpServers: { echo: { url: `${url}?key=query-secret-value`, oauth: false } } }));
-
-    expect(result.code).toBe(1);
-    expect(result.stdout).toContain('"state": "failed"');
-    expect(result.stdout).not.toContain("query-secret-value");
   });
 
   it("reports tool counts and leaves no server process running after exit", async () => {

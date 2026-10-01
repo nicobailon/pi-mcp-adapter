@@ -5,8 +5,6 @@ import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
-import type { DirectToolSpec } from "../types.ts";
-import { UiResourceHandler } from "../ui-resource-handler.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/progress-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
@@ -41,11 +39,8 @@ describe("progress-aware tool call timeouts with the real MCP SDK", () => {
       toolMetadata: new Map([["real", [{ name: "real_slow", originalName: "slow", description: "slow" }]]]),
       serverInstructions: new Map(),
       failureTracker: new Map(),
-      uiResourceHandler: new UiResourceHandler(manager),
-      completedUiSessions: [],
-      uiServer: null,
     } as McpExtensionState;
-    const spec = { serverName: "real", prefixedName: "real_slow", originalName: "slow", description: "slow" } as DirectToolSpec;
+    const spec = { serverName: "real", prefixedName: "real_slow", originalName: "slow", description: "slow" };
 
     const result = adapter === "proxy"
       ? await executeCall(state, "real_slow", {}, "real")

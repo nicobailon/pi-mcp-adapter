@@ -15,11 +15,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../metadata-cache.ts", () => ({
   computeServerHash: vi.fn(() => "hash"),
   createCachedToolSelectorCandidateIndex: vi.fn(() => undefined),
-  getMetadataCachePath: vi.fn(() => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-mcp-transient-cache-"));
-    mocks.tempDirs.push(dir);
-    return join(dir, "cache.json");
-  }),
   getMissingConfiguredDirectToolServers: vi.fn(() => [] as string[]),
   isServerCacheValid: vi.fn(() => false),
   loadMetadataCache: vi.fn(() => mocks.cache),

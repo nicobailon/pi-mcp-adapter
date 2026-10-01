@@ -2,8 +2,7 @@ name: CI
 
 on:
   pull_request:
-    # Docs-only PRs (Markdown and docs/, nothing under .github/) skip CI, matching what the backlog
-    # skill's pr-gate treats as docs-only. Pushes to main always run it.
+    # Skip docs-only PRs, but always check .github changes and pushes to main.
     paths:
       - "**"
       - "!**/*.md"

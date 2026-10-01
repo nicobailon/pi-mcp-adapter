@@ -55,21 +55,6 @@ function createState(mcpServers: Record<string, unknown> = {}) {
   } as any;
 }
 
-function createEventBus() {
-  const listeners = new Map<string, Set<(data: unknown) => void>>();
-  return {
-    emit(channel: string, data: unknown) {
-      for (const listener of listeners.get(channel) ?? []) listener(data);
-    },
-    on(channel: string, listener: (data: unknown) => void) {
-      const channelListeners = listeners.get(channel) ?? new Set();
-      channelListeners.add(listener);
-      listeners.set(channel, channelListeners);
-      return () => channelListeners.delete(listener);
-    },
-  };
-}
-
 function createPi(registered: Array<{ name: string; config: Record<string, unknown> }> = [], piMcp = true) {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let activeTools = ["mcp"];
@@ -81,7 +66,7 @@ function createPi(registered: Array<{ name: string; config: Record<string, unkno
     on: vi.fn((event: string, handler: (...args: any[]) => unknown) => {
       handlers.set(event, handler);
     }),
-    events: createEventBus(),
+    events: { emit: vi.fn(), on: vi.fn() },
     getAllTools: vi.fn(() => []),
     getActiveTools: vi.fn(() => activeTools),
     setActiveTools: vi.fn((next: string[]) => {
@@ -178,7 +163,7 @@ describe("servers registered with pi.registerMcpServer()", () => {
     await handlers.get("session_start")?.({}, ctx);
     await settle();
 
-    registerMcpServer({ pi: api, name: "shared", definition: { url: "https://adapter.test/mcp" } });
+    const registration = registerMcpServer({ pi: api, name: "shared", definition: { url: "https://adapter.test/mcp" } });
     await change([{ name: "shared", config: { url: "https://registered.test/mcp" } }]);
 
     expect(notify).toHaveBeenCalledWith(
@@ -187,20 +172,8 @@ describe("servers registered with pi.registerMcpServer()", () => {
     );
     expect((await callThroughMcp(api, ctx, "shared")).content[0].text)
       .toBe(JSON.stringify({ url: "https://adapter.test/mcp", directTools: false }));
-  });
 
-  it("connects an overridden Pi registration once the adapter registration is disposed", async () => {
-    mocks.initializeMcp.mockResolvedValue(createState());
-    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
-    const { api, handlers, ctx, change } = createPi();
-    mcpAdapter(api);
-    await handlers.get("session_start")?.({}, ctx);
-    await settle();
-
-    const registration = registerMcpServer({ pi: api, name: "shared", definition: { url: "https://adapter.test/mcp" } });
-    await change([{ name: "shared", config: { url: "https://registered.test/mcp" } }]);
     await registration.dispose();
-
     expect((await callThroughMcp(api, ctx, "shared")).content[0].text)
       .toBe(JSON.stringify({ url: "https://registered.test/mcp", directTools: false }));
   });

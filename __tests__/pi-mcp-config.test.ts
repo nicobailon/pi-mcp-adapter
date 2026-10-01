@@ -9,10 +9,6 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
 }
 
-function stripAnsi(input: string): string {
-  return input.replace(/\x1b\[[0-9;]*m/g, "");
-}
-
 describe("Pi mcp.json config sources", () => {
   let root: string;
   let home: string;
@@ -240,7 +236,7 @@ describe("Pi mcp.json config sources", () => {
     };
 
     const panel = createMcpPanel(loadMcpConfig(undefined, cwd), null, getServerProvenance(undefined, cwd), callbacks, { requestRender: () => {} }, () => {});
-    const output = stripAnsi(panel.render(100).join("\n"));
+    const output = panel.render(100).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
     panel.dispose();
 
     expect(output).toContain('Ignored Pi mcp.json settings: toolExposure "search_*": direct');

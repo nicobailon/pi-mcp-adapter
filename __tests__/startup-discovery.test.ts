@@ -59,17 +59,19 @@ describe("startup discovery", () => {
   const text = (result: { content: { type: string; text?: string }[] }) => result.content.map(part => part.text ?? "").join("\n");
 
   it("saves discovered metadata in one write and stops plain lazy servers until they are used", async () => {
-    // Another Pi process saves its own entry while this one is discovering.
+    // Another Pi process saves its own entry and a newer catalog for one of ours while this one is discovering.
+    const resident = server("resident", { lifecycle: "lazy-keep-alive" });
     const otherEntry = { configHash: "other", tools: [], resources: [], cachedAt: Date.now() };
+    const newer = { configHash: computeServerHash(resident), tools: [], resources: [], cachedAt: Date.now() + 60_000 };
     const close = McpServerManager.prototype.close;
     vi.spyOn(McpServerManager.prototype, "close").mockImplementation(async function (this: McpServerManager, name) {
-      if (!loadMetadataCache()?.servers.other) writeFileSync(getMetadataCachePath(), JSON.stringify({ version: 1, servers: { other: otherEntry } }));
+      if (!loadMetadataCache()?.servers.other) writeFileSync(getMetadataCachePath(), JSON.stringify({ version: 1, servers: { other: otherEntry, resident: newer } }));
       return close.call(this, name);
     });
 
     const state = await start({
       lazy: server("lazy", { directTools: true }),
-      resident: server("resident", { lifecycle: "lazy-keep-alive" }),
+      resident,
       pinned: server("pinned", { idleTimeout: 0 }),
     });
     try {
@@ -97,20 +99,7 @@ describe("startup discovery", () => {
     } finally {
       await state.owner.stop("test cleanup");
     }
-  });
-
-  it("keeps an entry another session saved for the same server during discovery", async () => {
-    const newer = { configHash: computeServerHash(server("lazy")), tools: [], resources: [], cachedAt: Date.now() + 60_000 };
-    const close = McpServerManager.prototype.close;
-    vi.spyOn(McpServerManager.prototype, "close").mockImplementation(async function (this: McpServerManager, name) {
-      writeFileSync(getMetadataCachePath(), JSON.stringify({ version: 1, servers: { lazy: newer } }));
-      return close.call(this, name);
-    });
-
-    const state = await start({ lazy: server("lazy") });
-    await state.owner.stop("test cleanup");
-
-    expect(loadMetadataCache()!.servers.lazy).toEqual(newer);
+    expect(loadMetadataCache()!.servers.resident).toEqual(newer);
   });
 
   const now = Date.now();

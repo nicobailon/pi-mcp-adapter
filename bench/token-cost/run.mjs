@@ -13,17 +13,11 @@
 //   scripts  this adapter with settings.scriptMode: true, bulk tasks only
 //            (filter, batch, pipe)
 //
-// Each run is a headless `pi -p` session in its own directory under --out
-// (default: a new temp directory) with two local test servers from server.mjs:
-// an issue tracker (150 issues, 70 pull requests) and a notes service. Every
-// answer is checked against data.mjs, and write tasks against the servers'
-// call log. The run uses your installed `pi` and its model credentials; each
-// --model takes a label and a provider/id, and --extension loads an extra
-// extension such as a provider bridge. The summary prints median tokens and
-// cost per task, setup, and model. Cost is the provider-reported cost; when a
-// provider reports none, it is computed at Claude Sonnet prices ($3 per million
-// input tokens, $3.75 cache write, $0.30 cache read, $15 output).
-// Not part of CI; there are no thresholds.
+// Each run is a headless `pi -p` session under --out (default: a temp directory) against
+// server.mjs's issue tracker and notes servers, using your installed `pi` and its credentials.
+// --model is label=provider/id; --extension loads e.g. a provider bridge. Answers are checked
+// against data.mjs, writes against the servers' call log. Unreported cost uses Sonnet prices per
+// million: $3 in, $3.75 cache write, $0.30 cache read, $15 out. Not part of CI; no thresholds.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

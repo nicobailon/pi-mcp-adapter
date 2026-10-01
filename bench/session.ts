@@ -1,8 +1,5 @@
 // Child process for bench/server-memory.mjs: one Pi session with the adapter
 // loaded, driven by JSON lines on stdin and answering with JSON lines on stdout.
-//   {"op":"ready"}                  -> waits for MCP init via mcp({})
-//   {"op":"call","server":"s000"}   -> calls one tool on that server
-//   {"op":"shutdown"}               -> session_shutdown, then exit
 // Pi is loaded from BENCH_PI (an installed pi-coding-agent package), whose
 // extension loader also hands that copy to the adapter. If stdin closes
 // because the parent died, the session shuts down so no servers are left.

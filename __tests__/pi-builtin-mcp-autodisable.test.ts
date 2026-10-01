@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadOnboardingState } from "../onboarding-state.ts";
 
 const VERSION = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8")).version as string;
 
@@ -32,15 +33,8 @@ describe("turning off Pi's built-in MCP", () => {
 
   const writeSettings = (settings: object) => writeFileSync(settingsPath, JSON.stringify(settings));
   const readSettings = () => JSON.parse(readFileSync(settingsPath, "utf-8"));
-  const handledVersion = () => {
-    try {
-      return JSON.parse(readFileSync(join(agentDir, "mcp-onboarding.json"), "utf-8")).piBuiltinMcpHandledVersion;
-    } catch {
-      return undefined;
-    }
-  };
+  const handledVersion = () => loadOnboardingState().piBuiltinMcpHandledVersion;
 
-  /** Loads the adapter into a minimal Pi and starts a session. */
   async function startSession(options: { config?: object; piMcp?: boolean } = {}) {
     const { createMcpAdapter } = await import("../index.ts");
     const handlers = new Map<string, (...args: any[]) => unknown>();

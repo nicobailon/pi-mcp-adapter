@@ -111,19 +111,16 @@ async function sample(match, hostPid) {
     live: servers.length,
     serverRssKiB: servers.reduce((sum, p) => sum + p.rssKiB, 0),
     hostRssKiB: all.find(p => p.pid === hostPid)?.rssKiB ?? 0,
-    pids: servers.map(p => p.pid),
   };
 }
 
-// Samples every ~250 ms; keeps the peak and a timeline of live-count changes.
 function startSampler(match, hostPid, origin = Date.now()) {
-  const state = { peak: 0, peakServerRssKiB: 0, timeline: [], last: undefined, stopped: false };
+  const state = { peak: 0, timeline: [], last: undefined, stopped: false };
   samplers.add(state);
   const loop = (async () => {
     while (!state.stopped) {
       const s = await sample(match, hostPid);
       state.peak = Math.max(state.peak, s.live);
-      state.peakServerRssKiB = Math.max(state.peakServerRssKiB, s.serverRssKiB);
       if (s.live !== state.last) state.timeline.push([Math.round((Date.now() - origin) / 1000), s.live]);
       state.last = s.live;
       await sleep(250);
