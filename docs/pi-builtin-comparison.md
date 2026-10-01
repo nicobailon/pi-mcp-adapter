@@ -47,4 +47,4 @@ Sign-ins made with Pi's built-in can be imported into the adapter; see [Import a
 - **Memory** is the sum of each server process's RSS. Pages shared between processes are counted in each one, so treat it as an estimate; the process counts are exact.
 - **Local stdio servers only.** Closing an HTTP or `rmcp-mux` connection doesn't stop the remote service. To share one server process across Pi sessions, use [rmcp-mux](servers.md#shared-mcp-processes-with-rmcp-mux).
 - **Not a memory cap.** Calls in progress, approvals, open MCP UI pages, and keep-alive settings keep a server running ([How idle shutdown works](configuration.md#how-idle-shutdown-works)).
-- **To reproduce:** `node bench/server-memory.mjs`; the comment at its top explains the scenarios.
+- **To reproduce:** `node bench/server-memory.mjs --scenario 1,2,3 --hold-minutes 15`; the comment at its top explains each scenario.

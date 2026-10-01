@@ -36,14 +36,14 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 | Shell commands | `pi mcp add`, `remove`, `list` | `pi-mcp-adapter init`, `doctor` |
 | Transports | stdio, streamable HTTP | stdio, streamable HTTP, legacy SSE, `rmcp-mux` socket |
 
-With 100 local servers installed and 3 in use:
+With 100 local servers installed, their tools already cached, and 3 in use:
 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
 | Servers running at session start | 100 | 0 |
 | While you use 3 | 100 | 3 |
-| 10 idle minutes later | 100 | 0 |
-| Server memory at session start | ~6.5 GB | 0 |
+| After the idle timeout (10 min) | 100 | 0 |
+| Server memory at session start | 6.5 GiB | 0 |
 
 Stopped servers stay searchable, and a stopped server starts again on its next call (0.1–0.3 s for a small local server). A server that keeps state between calls can stay up with `"lifecycle": "lazy-keep-alive"`. [Measurements and details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md#measured-with-100-servers).
 
