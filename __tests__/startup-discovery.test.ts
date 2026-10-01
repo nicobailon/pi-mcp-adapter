@@ -10,7 +10,7 @@ import { createPromptCommand } from "../prompts.ts";
 import { executeCall, executeConnect, executeDescribe, executeSearch } from "../proxy-modes.ts";
 import { createMcpRuntimeOwner } from "../runtime-owner.ts";
 import { McpServerManager } from "../server-manager.ts";
-import type { ServerEntry } from "../types.ts";
+import type { ServerCacheEntry, ServerEntry } from "../types.ts";
 
 const fs = vi.hoisted(() => ({ cacheWrites: [] as string[] }));
 vi.mock("node:fs", async (importOriginal) => {
@@ -113,28 +113,29 @@ describe("startup discovery", () => {
     expect(loadMetadataCache()!.servers.lazy).toEqual(newer);
   });
 
+  const now = Date.now();
+  const catalog = (extra: Partial<ServerCacheEntry> = {}): ServerCacheEntry =>
+    ({ configHash: "current", tools: [{ name: "list" }], resources: [], cachedAt: now, ...extra });
+  const marker: ServerCacheEntry = { configHash: "current", tools: [], resources: [], discoveryFailed: true, cachedAt: now };
+  const shape = { source: "structuredContent" as const, shape: { kind: "object", fields: {} } };
+  const expired = catalog({ ttlMs: 1_000, cachedAt: now - 60_000 });
+  const nextConfig = catalog({ configHash: "next" });
+  const newerCatalog = catalog({ tools: [{ name: "list" }, { name: "other" }], cachedAt: now + 1_000 });
+  const previousConfig = catalog({ configHash: "previous" });
   it.each([
-    { onDisk: "none", ours: "catalog", kept: "ours" },
-    { onDisk: "catalog for another config", ours: "marker", kept: "ours" },
-    { onDisk: "newer catalog", ours: "catalog", kept: "disk" },
-    { onDisk: "newer catalog", ours: "marker", kept: "disk" },
-    { onDisk: "older catalog", ours: "catalog", kept: "ours" },
-    { onDisk: "older catalog", ours: "marker", kept: "disk" },
-    { onDisk: "newer marker", ours: "catalog", kept: "ours" },
-    { onDisk: "older marker", ours: "marker", kept: "ours" },
-  ])("a startup batch write over $onDisk keeps $kept when ours is a $ours", ({ onDisk, ours, kept }) => {
-    const now = Date.now();
-    const entry = (kind: string, cachedAt: number, configHash = "current") => kind.includes("marker")
-      ? { configHash, tools: [], resources: [], discoveryFailed: true as const, cachedAt }
-      : { configHash, tools: [{ name: "list" }], resources: [], cachedAt };
-    const disk = onDisk === "none" ? undefined
-      : entry(onDisk, onDisk.startsWith("newer") ? now + 1_000 : now - 1_000, onDisk.includes("another") ? "previous" : "current");
-    const mine = entry(ours, now);
+    { case: "a: our marker replaces an unchanged expired catalog", disk: expired, snapshot: expired, ours: marker, kept: marker },
+    { case: "b: our marker keeps another config's catalog saved during the pass", disk: nextConfig, snapshot: undefined, ours: marker, kept: nextConfig },
+    { case: "c: our catalog replaces a newer marker", disk: { ...marker, cachedAt: now + 1_000 }, snapshot: undefined, ours: catalog(), kept: catalog() },
+    { case: "d: our catalog keeps a newer catalog for the same config", disk: newerCatalog, snapshot: undefined, ours: catalog(), kept: newerCatalog },
+    { case: "e: our catalog keeps output shapes saved during the pass", disk: catalog({ cachedAt: now - 1_000, outputShapes: { list: shape } }), snapshot: undefined, ours: catalog(), kept: catalog({ outputShapes: { list: shape } }) },
+    { case: "f: our marker is written when there is no entry", disk: undefined, snapshot: undefined, ours: marker, kept: marker },
+    { case: "g: our catalog replaces another config's catalog", disk: previousConfig, snapshot: undefined, ours: catalog(), kept: catalog() },
+  ])("startup batch write, $case", ({ disk, snapshot, ours, kept }) => {
     if (disk) saveMetadataCache({ version: 1, servers: { srv: disk } });
 
-    saveMetadataCache({ version: 1, servers: { srv: mine } }, { startupBatch: true });
+    saveMetadataCache({ version: 1, servers: { srv: ours } }, { startupSnapshot: snapshot ? { srv: snapshot } : {} });
 
-    expect(loadMetadataCache()!.servers.srv).toEqual(kept === "ours" ? mine : disk);
+    expect(loadMetadataCache()!.servers.srv).toEqual(kept);
   });
 
   it("discovers only servers whose saved metadata is missing, stale, or past its declared TTL", async () => {

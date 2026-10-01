@@ -393,7 +393,7 @@ export async function initializeMcp(
     const configHash = tryComputeServerHash(definition);
     return configHash ? [[name, { configHash, tools: [], resources: [], discoveryFailed: true, cachedAt: Date.now() }]] : [];
   });
-  if (captured.length > 0) saveMetadataCache({ version: 1, servers: Object.fromEntries(captured) }, { startupBatch: true });
+  if (captured.length > 0) saveMetadataCache({ version: 1, servers: Object.fromEntries(captured) }, { startupSnapshot: cache?.servers ?? {} });
 
   const startupKnownMetadata = new Map<string, ToolMetadata[]>();
   for (const { name, definition, connection } of results) {

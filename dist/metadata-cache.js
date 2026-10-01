@@ -35,14 +35,26 @@ export function saveMetadataCache(cache, options = {}) {
     updateMetadataCacheFile(servers => {
         const next = { ...servers };
         for (const [name, entry] of Object.entries(cache.servers)) {
-            // The startup batch is written after the whole pass, so another session may have saved meanwhile. It never replaces
-            // a better entry for the same config: a failure marker never replaces a catalog, and a catalog yields only to a
-            // newer catalog. An entry for another config is always replaced, since this pass discovered the current one.
-            const onDisk = servers[name];
-            if (options.startupBatch && onDisk?.configHash === entry.configHash && !onDisk.discoveryFailed
-                && (entry.discoveryFailed || (onDisk.cachedAt ?? 0) > entry.cachedAt))
-                continue;
-            next[name] = entry;
+            // Startup batch: a catalog is written unless disk has a newer catalog for the same config, and keeps output shapes
+            // saved meanwhile. A failure marker is written only if disk is unchanged since the startup snapshot, so it never
+            // destroys what another session wrote during the pass.
+            const disk = servers[name];
+            if (!options.startupSnapshot) {
+                next[name] = entry;
+            }
+            else if (entry.discoveryFailed) {
+                if (JSON.stringify(disk) === JSON.stringify(options.startupSnapshot[name]))
+                    next[name] = entry;
+            }
+            else if (disk && !disk.discoveryFailed && disk.configHash === entry.configHash) {
+                if ((disk.cachedAt ?? 0) > entry.cachedAt)
+                    continue;
+                const outputShapes = { ...entry.outputShapes, ...keepOutputShapes(disk, entry.configHash, entry.tools) };
+                next[name] = Object.keys(outputShapes).length > 0 ? { ...entry, outputShapes } : entry;
+            }
+            else {
+                next[name] = entry;
+            }
         }
         return next;
     });

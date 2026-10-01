@@ -4,7 +4,7 @@ export type { CachedPrompt, CachedResource, CachedTool, MetadataCache, ServerCac
 export declare function getMetadataCachePath(): string;
 export declare function loadMetadataCache(): MetadataCache | null;
 export declare function saveMetadataCache(cache: MetadataCache, options?: {
-    startupBatch?: boolean;
+    startupSnapshot?: MetadataCache["servers"];
 }): void;
 export declare function computeServerHash(definition: ServerEntry, environment?: NodeJS.ProcessEnv): string;
 /**
