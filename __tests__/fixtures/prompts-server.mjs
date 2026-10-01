@@ -6,6 +6,7 @@ import {
   ListPromptsRequestSchema,
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
 // A minimal MCP server that advertises the `prompts` capability and returns
@@ -20,7 +21,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [{ name: "noop", inputSchema: { type: "object", properties: {} } }],
 }));
 
-server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [{ uri: "test://notes", name: "notes" }] }));
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => ({
+  contents: [{ uri: request.params.uri, mimeType: "text/plain", text: "notes body" }],
+}));
 
 server.setRequestHandler(CallToolRequestSchema, async () => ({
   content: [{ type: "text", text: "ok" }],

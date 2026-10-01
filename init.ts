@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata, type ToolSelectorCandidateIndex } from "./types.ts";
+import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ServerEntry, type ToolMetadata, type ToolSelectorCandidateIndex } from "./types.ts";
 import { cloneMcpConfig, loadMcpConfig, resolveConfiguredClaudePluginMcp } from "./config.ts";
 import { applyProjectServerTrustToConfig, describeProjectServerBlock, excludeProjectServersAtLoadTime } from "./project-server-trust.ts";
 import { ConsentManager } from "./consent-manager.ts";
@@ -295,6 +295,7 @@ export async function initializeMcp(
 
   const cache = serverEntries.length > 0 ? loadMetadataCache() : null;
   const needsDiscovery = new Set<string>();
+  const failedDiscovery = new Set<string>();
 
   const prefix = config.settings?.toolPrefix ?? "server";
   let cachedSelectorCandidateIndex: ToolSelectorCandidateIndex | undefined;
@@ -332,6 +333,9 @@ export async function initializeMcp(
         serverInstructions.set(name, cachedEntry.instructions);
       }
       seedObservedOutputs(state, name, cachedEntry);
+    } else if (cachedEntry?.discoveryFailed && cachedEntry.configHash === tryComputeServerHash(definition)) {
+      // Startup tries a config once; a server that failed is tried again on first use.
+      failedDiscovery.add(name);
     } else if (cachedEntry?.cacheScope !== "private") {
       needsDiscovery.add(name);
     }
@@ -380,9 +384,15 @@ export async function initializeMcp(
   owner.throwIfInactive();
 
   // One merged write for the whole pass; rewriting the file per server is slow with large catalogs.
-  const captured = results.flatMap(({ name, connection }) => {
-    const entry = connection ? state.sessionMetadata?.get(name) : undefined;
-    return entry ? [[name, entry] as const] : [];
+  const captured = results.flatMap(({ name, definition, connection, error, transient }): [string, ServerCacheEntry][] => {
+    if (connection) {
+      const entry = state.sessionMetadata?.get(name);
+      return entry ? [[name, entry]] : [];
+    }
+    // Record a failed discovery so later sessions don't retry the same config; transient outages are retried.
+    if (!error || transient || !needsDiscovery.has(name)) return [];
+    const configHash = tryComputeServerHash(definition);
+    return configHash ? [[name, { configHash, tools: [], resources: [], discoveryFailed: true, cachedAt: Date.now() }]] : [];
   });
   if (captured.length > 0) saveMetadataCache({ version: 1, servers: Object.fromEntries(captured) });
 
@@ -471,8 +481,8 @@ export async function initializeMcp(
 
     if (missingCacheServers.length > 0) {
       const bootstrapResults = await parallelLimit(
-        // Startup already made this session's attempt for these servers, including failed ones.
-        missingCacheServers.filter(name => !results.some(r => r.name === name)),
+        // Startup already attempted these servers, in this session or in an earlier one that failed.
+        missingCacheServers.filter(name => !failedDiscovery.has(name) && !results.some(r => r.name === name)),
         10,
         async (name) => {
           try {
@@ -769,4 +779,13 @@ function getEffectiveIdleTimeoutMinutes(state: McpExtensionState, serverName: st
   const mode = definition.lifecycle ?? "lazy";
   if (mode === "eager" || mode === "lazy-keep-alive") return 0;
   return typeof state.config.settings?.idleTimeout === "number" ? state.config.settings.idleTimeout : 10;
+}
+
+/** The config hash, or undefined when the config can't be resolved yet (for example a missing env var in the URL). */
+function tryComputeServerHash(definition: ServerEntry): string | undefined {
+  try {
+    return computeServerHash(definition);
+  } catch {
+    return undefined;
+  }
 }

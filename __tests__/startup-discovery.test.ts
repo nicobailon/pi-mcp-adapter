@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeMcp } from "../init.ts";
+import { resolveDirectTools } from "../direct-tool-surface.ts";
 import { computeServerHash, getMetadataCachePath, loadMetadataCache, saveMetadataCache } from "../metadata-cache.ts";
-import { executeCall, executeDescribe } from "../proxy-modes.ts";
+import { createPromptCommand } from "../prompts.ts";
+import { executeCall, executeConnect, executeDescribe, executeSearch } from "../proxy-modes.ts";
 import { createMcpRuntimeOwner } from "../runtime-owner.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { ServerEntry } from "../types.ts";
@@ -54,6 +56,7 @@ describe("startup discovery", () => {
     owner,
     { config: { mcpServers } },
   );
+  const text = (result: { content: { type: string; text?: string }[] }) => result.content.map(part => part.text ?? "").join("\n");
 
   it("saves discovered metadata in one write and stops plain lazy servers until they are used", async () => {
     // Another Pi process saves its own entry while this one is discovering.
@@ -65,21 +68,31 @@ describe("startup discovery", () => {
     });
 
     const state = await start({
-      lazy: server("lazy"),
+      lazy: server("lazy", { directTools: true }),
       resident: server("resident", { lifecycle: "lazy-keep-alive" }),
       pinned: server("pinned", { idleTimeout: 0 }),
     });
     try {
       expect([...state.manager.getAllConnections()].map(([name, connection]) => [name, connection.status]).sort())
         .toEqual([["pinned", "connected"], ["resident", "connected"]]);
-      expect(state.toolMetadata.get("lazy")?.map(tool => tool.name)).toEqual(["lazy_noop"]);
-      expect(state.promptMetadata.get("lazy")).toHaveLength(2);
       expect(Object.keys(loadMetadataCache()!.servers).sort()).toEqual(["lazy", "other", "pinned", "resident"]);
       expect(fs.cacheWrites.filter(path => path !== getMetadataCachePath())).toHaveLength(1);
-      expect(executeDescribe(state, "lazy_noop").content[0]!.text).toContain("lazy_noop");
 
-      const result = await executeCall(state, "lazy_noop", {});
-      expect(result.content[0]).toMatchObject({ text: "ok" });
+      // The stopped server's tools stay searchable, describable, and exposed as direct tools.
+      expect(text(await executeSearch(state, "noop", undefined, "lazy"))).toContain("lazy_noop");
+      expect(executeDescribe(state, "lazy_noop").content[0]!.text).toContain("lazy_noop");
+      expect(resolveDirectTools(state.config, loadMetadataCache(), "server").map(spec => spec.prefixedName))
+        .toEqual(["lazy_noop", "lazy_read_notes"]);
+
+      // Each use starts it again.
+      const sendUserMessage = vi.fn();
+      const brief = state.promptMetadata.get("lazy")!.find(prompt => prompt.originalName === "brief")!;
+      await createPromptCommand({ sendUserMessage } as any, () => state, brief).handler("mcp", { hasUI: false } as any);
+      expect(sendUserMessage).toHaveBeenCalledWith("Give me the brief on mcp for today.");
+      await state.manager.close("lazy");
+      expect(text(await executeCall(state, "lazy_read_notes", {}))).toContain("notes body");
+      await state.manager.close("lazy");
+      expect(text(await executeCall(state, "lazy_noop", {}))).toBe("ok");
       expect(state.manager.getConnection("lazy")?.status).toBe("connected");
     } finally {
       await state.owner.stop("test cleanup");
@@ -110,6 +123,41 @@ describe("startup discovery", () => {
     await state.owner.stop("test cleanup");
 
     expect(connected.sort()).toEqual(["changed", "expired", "missing"]);
+  });
+
+  it("tries a server that failed discovery once per config, until it connects", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // The server can't start until its script exists.
+    const script = join(dir, "late-server.mjs");
+    const flaky = { command: process.execPath, args: [script] };
+    const changed = { ...flaky, args: [script, "changed"] };
+    const session = async (definition: ServerEntry) => {
+      connected = [];
+      const state = await start({ flaky: definition });
+      return { state, attempted: connected.includes("flaky") };
+    };
+
+    const first = await session(flaky);
+    expect(first.attempted).toBe(true);
+    expect(first.state.failureMessages.has("flaky")).toBe(true);
+    await first.state.owner.stop("test cleanup");
+    const second = await session(flaky);
+    expect(second.attempted).toBe(false);
+    await second.state.owner.stop("test cleanup");
+    const third = await session(changed);
+    expect(third.attempted).toBe(true);
+    await third.state.owner.stop("test cleanup");
+
+    writeFileSync(script, `await import(${JSON.stringify(fixture("prompts-server.mjs"))});\n`);
+    const fourth = await session(changed);
+    try {
+      expect(fourth.attempted).toBe(false);
+      expect(text(await executeConnect(fourth.state, "flaky"))).toContain("flaky_noop");
+      expect(loadMetadataCache()!.servers.flaky).toMatchObject({ configHash: computeServerHash(changed), tools: [expect.objectContaining({ name: "noop" })] });
+      expect(loadMetadataCache()!.servers.flaky!.discoveryFailed).toBeUndefined();
+    } finally {
+      await fourth.state.owner.stop("test cleanup");
+    }
   });
 
   it("rediscovers every server when the cache file is corrupt", async () => {
