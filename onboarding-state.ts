@@ -9,6 +9,8 @@ export interface McpOnboardingState {
   lastDiscoveryFingerprint?: string;
   /** Servers already asked whether to import Pi's sign-in, by name and normalized URL. */
   piSignInImportsAsked?: { server: string; url: string }[];
+  /** Adapter version that last turned off, or found configured, Pi's built-in MCP. */
+  piBuiltinMcpHandledVersion?: string;
 }
 
 const DEFAULT_STATE: McpOnboardingState = {
@@ -40,6 +42,9 @@ export function loadOnboardingState(): McpOnboardingState {
             piSignInImportsAsked: raw.piSignInImportsAsked.filter((entry): entry is { server: string; url: string } =>
               typeof entry?.server === "string" && typeof entry.url === "string"),
           }
+        : {}),
+      ...(typeof raw.piBuiltinMcpHandledVersion === "string"
+        ? { piBuiltinMcpHandledVersion: raw.piBuiltinMcpHandledVersion }
         : {}),
     };
   } catch {

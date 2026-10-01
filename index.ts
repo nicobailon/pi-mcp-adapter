@@ -1322,6 +1322,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
 
     if (generation !== lifecycleGeneration || !owner.isActive()) return;
+    if (!programmaticConfig && piSupportsMcp(pi)) {
+      const report = (message: string, level: "info" | "warning") => {
+        if (generation !== lifecycleGeneration || !owner.isActive()) return;
+        if (ctx.hasUI) ctx.ui.notify(message, level);
+        else console.error(message);
+      };
+      void import("./pi-builtin-mcp.ts")
+        .then(({ turnOffPiBuiltinMcp }) => turnOffPiBuiltinMcp())
+        .then((turnedOff) => {
+          if (turnedOff) report("Turned off Pi's built-in MCP so it doesn't run next to pi-mcp-adapter. If you remove the adapter, turn it back on in `pi config` → Built-in.", "info");
+        })
+        .catch((error) => report(`MCP: could not turn off Pi's built-in MCP: ${formatTerminalError(error)}`, "warning"));
+    }
     // Before any connection, so an imported sign-in is used from the first connect.
     if (ctx.hasUI && !programmaticConfig && piSupportsMcp(pi) && existsSync(getPiMcpAuthPath())) {
       try {

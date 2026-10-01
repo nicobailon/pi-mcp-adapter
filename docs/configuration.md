@@ -62,7 +62,7 @@ On Pi 0.84 to 0.87, the adapter does not read either file. If you used one with 
 
 On Pi 0.99 and later, the adapter replaces Pi's built-in MCP extension in sessions, except when a host supplies its own config through [`createMcpAdapter()`](extension-api.md#sdk-configuration). Both register `/mcp`, and Pi leaves the built-in out when another extension does, so `/mcp` opens the adapter and only the adapter connects the servers in Pi's `mcp.json` files.
 
-Pi reports this as a warning that the built-in `mcp` extension was not loaded, at every startup and `/reload` (on stderr outside interactive mode). To stop it, turn the built-in off under Built-in extensions in `pi config`, or add `"-builtin:mcp"` to `extensions` in Pi's `settings.json`.
+While the built-in is turned on, Pi warns at every startup and `/reload` that it was not loaded. So on the first start after you install or update the adapter, the adapter turns it off for you: it adds `"-builtin:mcp"` to `extensions` in Pi's user `settings.json`, the same entry `pi config` writes, and says so once. It never changes project settings and leaves any existing `builtin:mcp` entry alone, so turning the built-in back on under Built-in extensions in `pi config` sticks. If you remove the adapter, turn the built-in back on there to get Pi's MCP support again.
 
 Pi's shell commands `pi mcp add`, `list`, `login`, and `logout` still use Pi's own files. Servers added with `pi mcp add` are read as described above. Sign-ins made with `pi mcp login` stay in Pi's `mcp-auth.json`: the adapter can [import them](auth.md#import-a-sign-in-from-pis-built-in-mcp), but later sign-ins and sign-outs on either side are not shared.
 
