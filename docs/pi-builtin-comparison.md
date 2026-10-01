@@ -6,7 +6,7 @@ How the adapter differs from the MCP support built into Pi ([Pi's MCP docs](http
 
 What you get with the adapter:
 
-- **Idle servers cost nothing.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. By default, the adapter starts a server when the model first calls it and stops it after 10 idle minutes. With 100 servers installed and their tools cached, that's 6.5 GiB of server memory against none at session start ([measurements](#measured-with-100-servers)).
+- **Idle servers cost nothing.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. By default, the adapter starts a server when the model first calls it and stops it after 10 idle minutes. With 100 servers installed and their tools cached, that's 7.0 GB of server memory against none at session start ([measurements](#measured-with-100-servers)).
 - **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, offer prompt templates as slash commands, ask the model for a reply, and run long jobs as MCP Tasks (with `"protocolVersion": "auto"`). The built-in supports none of these.
 - **Sign-in tokens go in your OS keychain** by default (an encrypted file is opt-in), not in a plain JSON file.
 - **Adding servers is easier.** Give the agent a server's URL and it installs it and checks its tools in the same session, opening sign-in first if the server needs it. Configs from Cursor, Claude Code, Codex, VS Code, and other clients can be imported with `/mcp-adapter setup`, which also adds presets.
@@ -75,11 +75,11 @@ Pi's `codemode` scripts work with both. Sign-ins made with the built-in can be i
 | Servers running at session start | 100 | 0 |
 | Servers running while 3 are used | 100 | 3 |
 | Servers running after the idle timeout | 100 (checked after 15 minutes) | 0 |
-| Server memory at session start | 6.5 GiB | 0 |
-| Server memory after 15 minutes | 5.5 GiB | 0 once idle servers stop |
+| Server memory at session start | 7.0 GB | 0 |
+| Server memory after 15 minutes | 5.9 GB | 0 once idle servers stop |
 
 - **First session, no cached tools:** the adapter starts servers 10 at a time to read their tools and stops each one right after. The session was ready in about 2 s with 0 servers running.
-- **Starting a stopped server:** a test server took 0.19–0.27 s on its next call. The real `@modelcontextprotocol/server-everything` 2026.8.31 started in 0.11–0.15 s and used 70 MiB.
+- **Starting a stopped server:** a test server took 0.19–0.27 s on its next call. The real `@modelcontextprotocol/server-everything` 2026.8.31 started in 0.11–0.15 s and used about 74 MB.
 - **Memory** is the sum of each server process's RSS. Pages shared between processes are counted in each one, so treat it as an estimate; the process counts are exact.
 - **Local stdio servers only.** Closing an HTTP or `rmcp-mux` connection doesn't stop the remote service. To share one server process across Pi sessions, use [rmcp-mux](servers.md#shared-mcp-processes-with-rmcp-mux).
 - **Not a memory cap.** Calls in progress, approvals, open MCP UI pages, and keep-alive settings keep a server running ([How idle shutdown works](configuration.md#how-idle-shutdown-works)).
