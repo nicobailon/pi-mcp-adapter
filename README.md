@@ -21,7 +21,7 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 Since then, Pi 0.99 added MCP support of its own, which also keeps tool definitions out of context. Installing the adapter replaces it in Pi sessions. What you get by switching:
 
 - **Install many servers without paying for idle ones.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. The adapter starts a server when the model first calls it and stops it after 10 idle minutes.
-- **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, offer prompt templates as slash commands, and run long jobs as MCP Tasks. The built-in doesn't handle these.
+- **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, and offer prompt templates as slash commands. The built-in doesn't handle these.
 - **Sign-in tokens stay in your OS keychain**, not in a JSON file under `~/.pi/agent`.
 - **Adding servers is easier.** Give the agent a server's URL and it installs it, signs you in, and checks its tools in the same session, with no shell command or `/reload`. Servers already configured in Cursor, Claude Code, Codex, or VS Code are imported, and `/mcp-adapter setup` adds presets such as Figma and GitHub.
 
@@ -30,11 +30,11 @@ The built-in has two things the adapter doesn't: Pi's permission extensions see 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
 | Servers running | Every enabled server, for the whole session | Only servers in use; each stops after 10 idle minutes |
-| Server memory with 100 servers installed | 6.5 GiB at session start | None at session start; only servers in use after that |
+| Server memory with 100 servers installed | 6.5 GiB at session start | None at session start once their tools are cached; only servers in use after that |
 | How the model reaches tools | Default: `codemode` scripts. Per server: direct, or loaded by `tool_search` | Default: one `mcp` proxy tool. Per server: direct, or loaded by `tool_search`. Scripts: Pi's `codemode` (add `"+codemode"` to `defaultTools`) or the adapter's `mcpScript`, both opt-in |
 | Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex, plus optional semantic search with Jev |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
-| MCP prompts, elicitation, sampling, Tasks | No | Yes |
+| MCP prompts, elicitation, sampling, Tasks | No | Yes; Tasks need `"protocolVersion": "auto"` |
 | MCP UI apps | Left out | Native window or browser |
 | Add a server | `pi mcp add` in a shell, then `/reload` | Give the agent the URL: `mcp({ action: "install", url })` connects it, runs OAuth sign-in, and checks its tools in the current session |
 | Configs from Cursor, Claude Code, Codex, VS Code | Convert by hand | Imported |
