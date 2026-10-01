@@ -22,7 +22,8 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
-| How the model reaches tools | `codemode` scripts by default; `tool_search` or direct per server | One `mcp` proxy tool by default; direct tools per server |
+| How the model reaches tools | `codemode` scripts by default; `tool_search` or direct per server | One `mcp` proxy tool by default; `tool_search` or direct per server |
+| Scripts that call many tools | Pi's `codemode`, turned on automatically | Pi's `codemode` (add `"+codemode"` to `defaultTools`), or the adapter's own `mcpScript` with MCP search across servers |
 | When servers start | Every enabled server, at session start | On first use, once the first session has cached their tools; idle servers stop after 10 minutes |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
 | MCP prompts, elicitation, sampling, Tasks | No | Yes |
@@ -34,7 +35,7 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 | Shell commands | `pi mcp add`, `remove`, `list` | `pi-mcp-adapter init`, `doctor` |
 | Transports | stdio, streamable HTTP | stdio, streamable HTTP, legacy SSE, `rmcp-mux` socket |
 
-The built-in is enough if you want `codemode`, permission hooks on every MCP call, roots, or `pi mcp add`. Use the adapter for servers that start only when used, tokens in the OS keychain, the MCP features the built-in doesn't handle, guided setup with presets like Figma and RepoPrompt, and configs you already have from other clients. The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
+The built-in is enough if you want permission hooks on every MCP call, roots, or `pi mcp add`. Use the adapter for servers that start only when used, tokens in the OS keychain, the MCP features the built-in doesn't handle, guided setup with presets like Figma and RepoPrompt, and configs you already have from other clients. Pi's `codemode` works with both. The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
 
 After you install the adapter, Pi warns at each startup that its built-in MCP was not loaded. Turn the built-in off in `pi config` to stop the warning ([details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp)).
 
