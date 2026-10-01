@@ -22,7 +22,7 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
-| How the model reaches tools | `codemode` scripts by default; `tool_search` or direct per server | One `mcp` proxy tool (~200 tokens) by default; direct tools per server |
+| How the model reaches tools | `codemode` scripts by default; `tool_search` or direct per server | One `mcp` proxy tool by default; direct tools per server |
 | When servers start | Every enabled server, at session start | On first use, once the first session has cached their tools; idle servers stop after 10 minutes |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
 | MCP prompts, elicitation, sampling, Tasks | No | Yes |
