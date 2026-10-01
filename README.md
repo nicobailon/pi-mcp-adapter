@@ -8,9 +8,17 @@ Use MCP servers with [Pi](https://github.com/badlogic/pi-mono/) without burning 
 
 https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a
 
+## Why This Exists
+
+Mario wrote about [why you might not need MCP](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/). The problem: tool definitions are verbose. A single MCP server can burn 10k+ tokens, and you're paying that cost whether you use those tools or not. Connect a few servers and you've burned half your context window before the conversation starts.
+
+His take: skip MCP entirely, write simple CLI tools instead.
+
+But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter gives you access without the bloat. One proxy tool (~200 tokens) instead of hundreds. The agent discovers what it needs on-demand. Servers only start when you actually use them.
+
 ## pi-mcp-adapter vs Pi's built-in MCP
 
-The adapter started as a way to use MCP servers without spending the context window on tool definitions ([why you might not need MCP](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/)). Pi 0.99 added MCP support of its own, which also keeps tool definitions out of context by default. Installing the adapter replaces the built-in in Pi sessions. The two differ here:
+Since then, Pi 0.99 added MCP support of its own, which also keeps tool definitions out of context by default. Installing the adapter replaces the built-in in Pi sessions. The two differ here:
 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
