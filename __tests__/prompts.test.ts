@@ -327,6 +327,37 @@ describe("createPromptCommand handler", () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("Missing required argument"), "error");
   });
 
+  it("refreshes stale cached arguments before rejecting a call", async () => {
+    const state = baseState(new Map([["demo", [meta()]]]));
+    (state.manager.getPrompt as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [{ role: "user", content: { type: "text", text: "Brief" } }],
+    });
+    const lazyConnect = vi.fn(async () => {
+      state.promptMetadata!.set("demo", [meta({ arguments: [{ name: "topic", required: false }] })]);
+      state.promptMetadataLive = new Set(["demo"]);
+      return true;
+    });
+    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+
+    await createPromptCommand(pi, () => state, meta(), { lazyConnect }).handler("", commandCtx());
+
+    expect(lazyConnect).toHaveBeenCalledTimes(1);
+    expect(pi.sendUserMessage).toHaveBeenCalledWith("Brief");
+  });
+
+  it("rejects missing arguments from live metadata without connecting", async () => {
+    const state = baseState(new Map([["demo", [meta()]]]));
+    state.promptMetadataLive = new Set(["demo"]);
+    const lazyConnect = vi.fn();
+    const notify = vi.fn();
+
+    await createPromptCommand({ sendUserMessage: vi.fn() } as unknown as ExtensionAPI, () => state, meta(), { lazyConnect })
+      .handler("", commandCtx({ ui: { notify } as any }));
+
+    expect(lazyConnect).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("Missing required argument"), "error");
+  });
+
   it("surfaces MCP server errors without sending a user message", async () => {
     const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
     const state = baseState(promptMetadata);

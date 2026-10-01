@@ -345,12 +345,12 @@ export function createPromptCommand(
       }
       const live = liveMetadata ?? metadata;
       const parsed = parsePromptArgs(args ?? "");
-      const resolved = resolvePromptArgs(live, parsed);
-      if (!resolved.ok) {
+      let resolved = resolvePromptArgs(live, parsed);
+      // Cached argument lists can be stale; only live metadata may reject before the connect that refreshes them.
+      if (!resolved.ok && state.promptMetadataLive?.has(metadata.serverName)) {
         if (ctx.hasUI) ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
         return;
       }
-      const promptArgs = resolved.args ?? {};
 
       if (!state.config.mcpServers[metadata.serverName]) {
         if (ctx.hasUI) {
@@ -392,6 +392,14 @@ export function createPromptCommand(
         return;
       }
       const dispatchMetadata = refreshed ?? live;
+      if (!resolved.ok) {
+        resolved = resolvePromptArgs(dispatchMetadata, parsed);
+        if (!resolved.ok) {
+          if (ctx.hasUI) ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
+          return;
+        }
+      }
+      const promptArgs = resolved.args ?? {};
       let result: GetPromptResult;
       try {
         result = await state.manager.getPrompt(
