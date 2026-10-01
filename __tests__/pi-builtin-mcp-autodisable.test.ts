@@ -99,7 +99,8 @@ describe("turning off Pi's built-in MCP", () => {
     expect(notify).not.toHaveBeenCalledWith(expect.stringContaining("built-in MCP"), expect.anything());
   }, 20_000);
 
-  it("retries on the next start when Pi's settings can't be written", async () => {
+  // Read-only files stay writable for root, so the write cannot fail there.
+  it.skipIf(process.getuid?.() === 0)("retries on the next start when Pi's settings can't be written", async () => {
     writeSettings({});
     chmodSync(settingsPath, 0o444);
 
