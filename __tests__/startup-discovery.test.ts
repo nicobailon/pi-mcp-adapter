@@ -99,6 +99,20 @@ describe("startup discovery", () => {
     }
   });
 
+  it("keeps an entry another session saved for the same server during discovery", async () => {
+    const newer = { configHash: computeServerHash(server("lazy")), tools: [], resources: [], cachedAt: Date.now() + 60_000 };
+    const close = McpServerManager.prototype.close;
+    vi.spyOn(McpServerManager.prototype, "close").mockImplementation(async function (this: McpServerManager, name) {
+      writeFileSync(getMetadataCachePath(), JSON.stringify({ version: 1, servers: { lazy: newer } }));
+      return close.call(this, name);
+    });
+
+    const state = await start({ lazy: server("lazy") });
+    await state.owner.stop("test cleanup");
+
+    expect(loadMetadataCache()!.servers.lazy).toEqual(newer);
+  });
+
   it("discovers only servers whose saved metadata is missing, stale, or past its declared TTL", async () => {
     const servers = {
       valid: server("valid"),

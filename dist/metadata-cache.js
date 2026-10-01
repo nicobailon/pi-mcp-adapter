@@ -31,8 +31,17 @@ export function loadMetadataCache() {
         return null;
     }
 }
-export function saveMetadataCache(cache) {
-    updateMetadataCacheFile(servers => ({ ...servers, ...cache.servers }));
+/** With keepNewer, an entry on disk saved after the one being written (by another session) is kept. */
+export function saveMetadataCache(cache, options = {}) {
+    updateMetadataCacheFile(servers => {
+        const next = { ...servers };
+        for (const [name, entry] of Object.entries(cache.servers)) {
+            if (options.keepNewer && (servers[name]?.cachedAt ?? 0) > entry.cachedAt)
+                continue;
+            next[name] = entry;
+        }
+        return next;
+    });
 }
 /** Reads the cache file, applies one update, and writes the result; an update returning undefined skips the write. */
 function updateMetadataCacheFile(update) {

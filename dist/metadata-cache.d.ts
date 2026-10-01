@@ -3,7 +3,10 @@ import { type ToolPrefix, type ToolSelectorCandidateIndex } from "./types.ts";
 export type { CachedPrompt, CachedResource, CachedTool, MetadataCache, ServerCacheEntry } from "./types.ts";
 export declare function getMetadataCachePath(): string;
 export declare function loadMetadataCache(): MetadataCache | null;
-export declare function saveMetadataCache(cache: MetadataCache): void;
+/** With keepNewer, an entry on disk saved after the one being written (by another session) is kept. */
+export declare function saveMetadataCache(cache: MetadataCache, options?: {
+    keepNewer?: boolean;
+}): void;
 export declare function computeServerHash(definition: ServerEntry, environment?: NodeJS.ProcessEnv): string;
 /**
  * Identifies the tool definition an output shape was learned against. A shape is only used or saved while
