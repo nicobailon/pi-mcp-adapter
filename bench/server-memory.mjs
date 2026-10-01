@@ -18,8 +18,9 @@
 // always come from this checkout. Pi (for the adapter session and for
 // scenario 3) is the installed package at --pi. Everything runs in temporary
 // HOME/agent/project directories, so no real config, cache, or imported host
-// config is read. Server processes are found by matching the fixture path on
-// the process command line. Each result line is printed and, with --out,
+// config is read. Stub servers get a `--bench-run=<pid>` argument, and only
+// processes with this run's tag are counted or killed, so tests or another
+// bench using the same fixture are left alone. Each result line is printed and, with --out,
 // appended to that file as soon as it is measured. Interrupting the bench
 // kills everything it started.
 //
@@ -51,6 +52,7 @@ const { values: opts } = parseArgs({
   },
 });
 const fixture = join(repo, "__tests__/fixtures/tools-only-server.mjs");
+const serverTag = `--bench-run=${process.pid}`;
 const serverCount = Number(opts.servers);
 const toolCount = Number(opts.tools);
 const runCount = Number(opts.runs);
@@ -67,14 +69,16 @@ function record(result) {
 // Everything the bench starts, so an interrupt can stop it: direct children,
 // plus command-line matches for processes they spawn.
 const children = new Set();
-const cleanupMatches = new Set([fixture]);
+const cleanupMatches = new Set([serverTag]);
 const tempRoots = new Set();
+const samplers = new Set();
 function track(child) {
   children.add(child);
   child.once("exit", () => children.delete(child));
   return child;
 }
 async function cleanup() {
+  for (const sampler of samplers) sampler.stopped = true;
   for (const child of children) child.kill("SIGKILL");
   let killed = 0;
   for (const match of cleanupMatches) killed += await killLeftovers(match);
@@ -114,6 +118,7 @@ async function sample(match, hostPid) {
 // Samples every ~250 ms; keeps the peak and a timeline of live-count changes.
 function startSampler(match, hostPid, origin = Date.now()) {
   const state = { peak: 0, peakServerRssKiB: 0, timeline: [], last: undefined, stopped: false };
+  samplers.add(state);
   const loop = (async () => {
     while (!state.stopped) {
       const s = await sample(match, hostPid);
@@ -124,7 +129,7 @@ function startSampler(match, hostPid, origin = Date.now()) {
       await sleep(250);
     }
   })();
-  state.stop = async () => { state.stopped = true; await loop; };
+  state.stop = async () => { state.stopped = true; samplers.delete(state); await loop; };
   return state;
 }
 
@@ -171,7 +176,7 @@ function isolatedEnv(dirs) {
 function mcpServers() {
   return Object.fromEntries(Array.from({ length: serverCount }, (_, i) => [
     `s${String(i).padStart(3, "0")}`,
-    { command: process.execPath, args: [fixture, "--tools", String(toolCount)] },
+    { command: process.execPath, args: [fixture, "--tools", String(toolCount), serverTag] },
   ]));
 }
 
@@ -212,13 +217,13 @@ async function scenario1(run) {
   try {
     writeAdapterConfig(dirs);
     const session = startSession(dirs);
-    const sampler = startSampler(fixture, session.pid);
+    const sampler = startSampler(serverTag, session.pid);
     const ready = await session.send({ op: "ready" });
     await sleep(1000);
     await sampler.stop();
-    const after = await sample(fixture, session.pid);
+    const after = await sample(serverTag, session.pid);
     await session.shutdown();
-    const leftovers = await killLeftovers(fixture);
+    const leftovers = await killLeftovers(serverTag);
     return {
       scenario: 1, run,
       piVersion: ready.piVersion,
@@ -246,24 +251,24 @@ async function scenario2(run) {
     const warm = startSession(dirs);
     await warm.send({ op: "ready" });
     await warm.shutdown();
-    await killLeftovers(fixture);
+    await killLeftovers(serverTag);
 
     const origin = Date.now();
     const session = startSession(dirs);
-    const sampler = startSampler(fixture, session.pid, origin);
+    const sampler = startSampler(serverTag, session.pid, origin);
     const ready = await session.send({ op: "ready" });
-    const liveAtReady = (await sample(fixture, session.pid)).live;
+    const liveAtReady = (await sample(serverTag, session.pid)).live;
     const firstCalls = [];
     for (const server of ["s000", "s001", "s002"]) firstCalls.push(Math.round((await session.send({ op: "call", server })).ms));
-    const liveAfterCalls = (await sample(fixture, session.pid)).live;
+    const liveAfterCalls = (await sample(serverTag, session.pid)).live;
     const lastCall = Date.now();
-    await waitForLive(fixture, live => live === 0, 3 * 60_000);
+    await waitForLive(serverTag, live => live === 0, 3 * 60_000);
     const idleStopSec = Math.round((Date.now() - lastCall) / 1000);
     const reconnect = await session.send({ op: "call", server: "s000" });
-    const after = await sample(fixture, session.pid);
+    const after = await sample(serverTag, session.pid);
     await sampler.stop();
     await session.shutdown();
-    const leftovers = await killLeftovers(fixture);
+    const leftovers = await killLeftovers(serverTag);
     return {
       scenario: 2, run,
       piVersion: ready.piVersion,
@@ -301,20 +306,20 @@ async function scenario3() {
       stdio: ["pipe", "ignore", "inherit"],
     }));
     const exited = new Promise(resolve => child.once("exit", resolve));
-    const sampler = startSampler(fixture, child.pid);
-    await waitForLive(fixture, live => live >= serverCount, 120_000);
+    const sampler = startSampler(serverTag, child.pid);
+    await waitForLive(serverTag, live => live >= serverCount, 120_000);
     const readyMs = Date.now() - start;
     await sleep(2000);
-    const atReady = await sample(fixture, child.pid);
+    const atReady = await sample(serverTag, child.pid);
     await sleep(Number(opts["hold-minutes"]) * 60_000);
-    const afterHold = await sample(fixture, child.pid);
+    const afterHold = await sample(serverTag, child.pid);
     await sampler.stop();
     child.stdin.end();
     const exitTimer = setTimeout(() => child.kill("SIGTERM"), 15_000);
     await exited;
     clearTimeout(exitTimer);
     await sleep(500);
-    const leftovers = await killLeftovers(fixture);
+    const leftovers = await killLeftovers(serverTag);
     const settingsPath = join(dirs.agentDir, "settings.json");
     let settings = "(none)";
     try { settings = readFileSync(settingsPath, "utf8"); } catch {}
