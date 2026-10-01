@@ -18,7 +18,7 @@ import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { observedOutputRecorder } from "./output-shape.ts";
-import { ensureToolCallApproved } from "./tool-approval.ts";
+import { ensureToolCallApproved, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -218,30 +218,6 @@ export function createDirectToolExecutor(
     const annotations = spec.resourceUri
       ? undefined
       : state.toolMetadata.get(spec.serverName)?.find(tool => !tool.resourceUri && tool.originalName === spec.originalName)?.annotations;
-    const approval = await ensureToolCallApproved(state, spec.serverName, {
-      name: spec.prefixedName,
-      originalName: spec.originalName,
-      description: spec.description,
-      ...(spec.inputSchema !== undefined ? { inputSchema: spec.inputSchema } : {}),
-      ...(spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : {}),
-      ...(spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : {}),
-      ...(spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : {}),
-      ...(annotations !== undefined ? { annotations } : {}),
-    }, normalizedParams, ownedSignal, spec.resourceUri ? "resource" : "direct");
-    if (approval.ok === false) {
-      const denied = approval.reason === "denied";
-      const message = denied
-        ? `The user declined approval to run MCP tool "${spec.originalName}" on server "${spec.serverName}".`
-        : `MCP tool "${spec.originalName}" on server "${spec.serverName}" is approval-gated and requires an interactive session.`;
-      return {
-        content: [{ type: "text" as const, text: message }],
-        details: {
-          error: denied ? "approval_denied" : "approval_required",
-          server: spec.serverName,
-          tool: spec.originalName,
-        },
-      };
-    }
 
     let uiSession: UiSessionRuntime | null = null;
     const requestOptions = state.manager.getRequestOptions?.(spec.serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
@@ -271,9 +247,35 @@ export function createDirectToolExecutor(
       return state.manager.getConnection(spec.serverName);
     };
 
+    let approval: ToolCallApprovalResult | undefined;
     try {
+      // In flight from here so an idle check cannot close the server while the approval dialog is open.
       state.manager.touch(spec.serverName);
       state.manager.incrementInFlight(spec.serverName);
+      approval = await ensureToolCallApproved(state, spec.serverName, {
+        name: spec.prefixedName,
+        originalName: spec.originalName,
+        description: spec.description,
+        ...(spec.inputSchema !== undefined ? { inputSchema: spec.inputSchema } : {}),
+        ...(spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : {}),
+        ...(spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : {}),
+        ...(spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : {}),
+        ...(annotations !== undefined ? { annotations } : {}),
+      }, normalizedParams, ownedSignal, spec.resourceUri ? "resource" : "direct");
+      if (approval.ok === false) {
+        const denied = approval.reason === "denied";
+        const message = denied
+          ? `The user declined approval to run MCP tool "${spec.originalName}" on server "${spec.serverName}".`
+          : `MCP tool "${spec.originalName}" on server "${spec.serverName}" is approval-gated and requires an interactive session.`;
+        return {
+          content: [{ type: "text" as const, text: message }],
+          details: {
+            error: denied ? "approval_denied" : "approval_required",
+            server: spec.serverName,
+            tool: spec.originalName,
+          },
+        };
+      }
 
       if (spec.resourceUri) {
         const result = await withSessionRecovery<ClientReadResourceResult>(
@@ -397,6 +399,8 @@ export function createDirectToolExecutor(
         ...structuredContentOf(result),
       };
     } catch (error) {
+      // Approval errors, such as an abort while the dialog is open, propagate unchanged.
+      if (!approval) throw error;
       if (error instanceof SessionRecoveryAuthRequiredError) {
         const message = error.authMessage ?? getDirectAuthRequiredMessage(state, spec.serverName);
         uiSession?.sendToolCancelled(message);

@@ -20,7 +20,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, type RankedToolMatch } from "./search-ranking.ts";
-import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
+import { ensureToolCallApproved, isToolCallApprovalRequired, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { semanticSearch, type SemanticSearchBackend, type SemanticSearchEvaluator } from "./semantic-search.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
@@ -1546,29 +1546,6 @@ export async function executeCall(
       details: { mode: "call", error: "call_failed", ...callIdentity, message: validationError, ...guardedMcpDetails(guarded) },
     };
   }
-  const approval = await ensureToolCallApproved(
-    state,
-    serverName,
-    toolMeta,
-    normalizedArgs,
-    ownedSignal,
-    origin ?? (toolMeta.resourceUri ? "resource" : "proxy"),
-  );
-  if (approval.ok === false) {
-    const denied = approval.reason === "denied";
-    const message = denied
-      ? `The user declined approval to run MCP tool "${toolMeta.originalName}" on server "${serverName}".`
-      : `MCP tool "${toolMeta.originalName}" on server "${serverName}" is approval-gated and requires an interactive session.`;
-    return {
-      content: [{ type: "text" as const, text: message }],
-      details: {
-        mode: "call",
-        error: denied ? "approval_denied" : "approval_required",
-        server: serverName,
-        tool: toolMeta.originalName,
-      },
-    };
-  }
 
   let uiSession: UiSessionRuntime | null = null;
   const requestOptions = withUiProgressBridge(
@@ -1605,9 +1582,34 @@ export async function executeCall(
     return state.manager.getConnection(serverName);
   };
 
+  let approval: ToolCallApprovalResult | undefined;
   try {
+    // In flight from here so an idle check cannot close the server while the approval dialog is open.
     state.manager.touch(serverName);
     state.manager.incrementInFlight(serverName);
+    approval = await ensureToolCallApproved(
+      state,
+      serverName,
+      toolMeta,
+      normalizedArgs,
+      ownedSignal,
+      origin ?? (toolMeta.resourceUri ? "resource" : "proxy"),
+    );
+    if (approval.ok === false) {
+      const denied = approval.reason === "denied";
+      const message = denied
+        ? `The user declined approval to run MCP tool "${toolMeta.originalName}" on server "${serverName}".`
+        : `MCP tool "${toolMeta.originalName}" on server "${serverName}" is approval-gated and requires an interactive session.`;
+      return {
+        content: [{ type: "text" as const, text: message }],
+        details: {
+          mode: "call",
+          error: denied ? "approval_denied" : "approval_required",
+          server: serverName,
+          tool: toolMeta.originalName,
+        },
+      };
+    }
 
     if (toolMeta.resourceUri) {
       const result = await withSessionRecovery<ClientReadResourceResult>(
@@ -1741,6 +1743,8 @@ export async function executeCall(
       details: { mode: "call", ...guardedMcpDetails(guarded), ...callIdentity },
     };
   } catch (error) {
+    // Approval errors, such as an abort while the dialog is open, propagate unchanged.
+    if (!approval) throw error;
     if (error instanceof SessionRecoveryAuthRequiredError) {
       const message = error.authMessage ?? getAuthRequiredMessage(state, serverName);
       uiSession?.sendToolCancelled(message);

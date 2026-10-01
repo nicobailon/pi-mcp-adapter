@@ -499,41 +499,41 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
             };
           }) : []),
         ]);
-        const approval = options.state
-          ? await ensureToolCallApproved(
-              options.state,
-              options.serverName,
-              toolMeta,
-              callArgs.arguments,
-              options.state.owner?.signal,
-              "iframe",
-              approvalMetadata,
-            )
-          : options.config && isToolCallApprovalRequired(options.config, options.serverName, toolMeta, approvalMetadata)
-            ? { ok: false as const, reason: "approval_required_headless" as const }
-            : { ok: true as const };
-        if (approval.ok === false) {
-          const denied = approval.reason === "denied";
-          const message = denied
-            ? `The user declined approval to run MCP tool "${callParams.name}" on server "${options.serverName}".`
-            : `MCP tool "${callParams.name}" on server "${options.serverName}" is approval-gated and requires an interactive session.`;
-          sendJson(res, 200, {
-            ok: true,
-            result: {
-              content: [{ type: "text" as const, text: message }],
-              details: {
-                error: denied ? "approval_denied" : "approval_required",
-                server: options.serverName,
-                tool: callParams.name,
-              },
-            },
-          });
-          return;
-        }
-
         try {
+          // In flight from here so an idle check cannot close the server while the approval dialog is open.
           options.manager.touch(options.serverName);
           options.manager.incrementInFlight(options.serverName);
+          const approval = options.state
+            ? await ensureToolCallApproved(
+                options.state,
+                options.serverName,
+                toolMeta,
+                callArgs.arguments,
+                options.state.owner?.signal,
+                "iframe",
+                approvalMetadata,
+              )
+            : options.config && isToolCallApprovalRequired(options.config, options.serverName, toolMeta, approvalMetadata)
+              ? { ok: false as const, reason: "approval_required_headless" as const }
+              : { ok: true as const };
+          if (approval.ok === false) {
+            const denied = approval.reason === "denied";
+            const message = denied
+              ? `The user declined approval to run MCP tool "${callParams.name}" on server "${options.serverName}".`
+              : `MCP tool "${callParams.name}" on server "${options.serverName}" is approval-gated and requires an interactive session.`;
+            sendJson(res, 200, {
+              ok: true,
+              result: {
+                content: [{ type: "text" as const, text: message }],
+                details: {
+                  error: denied ? "approval_denied" : "approval_required",
+                  server: options.serverName,
+                  tool: callParams.name,
+                },
+              },
+            });
+            return;
+          }
           const callTool = async (conn: ServerConnection) => {
             await options.manager.ensureListen?.(options.serverName, conn);
             const requestOptions = options.manager.getRequestOptions?.(options.serverName);
@@ -661,6 +661,8 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/heartbeat") {
+        // An open page keeps its server from being idle-closed; once heartbeats stop, the normal idle timer applies.
+        options.manager.touch(options.serverName);
         sendJson(res, 200, { ok: true, result: {} });
         return;
       }
