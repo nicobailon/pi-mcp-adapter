@@ -8,6 +8,10 @@ import { isServerDisabled, type McpConfig, type ProjectServerBlock, type Project
 
 const APPROVALS_VERSION = 1;
 const APPROVALS_FILE = "mcp-project-approvals.json";
+const DENY_PROJECT_SERVER = "Don't allow";
+const ALLOW_PROJECT_SERVER = "Allow";
+// Pi preselects the first option, so a stray Enter denies.
+const PROJECT_SERVER_CHOICES = [DENY_PROJECT_SERVER, ALLOW_PROJECT_SERVER];
 // Same registry key as config.ts; Symbol.for avoids a runtime import of config.ts.
 const MCP_CONFIG_SOURCE_METADATA = Symbol.for("pi-mcp-adapter/config-source-metadata");
 
@@ -204,10 +208,10 @@ export async function applyProjectServerTrust(
       reason = "untrusted";
     } else if (!ctx.hasUI) {
       reason = "approval-required";
-    } else if (await ctx.ui.confirm(
-      `Allow project MCP server “${name}”?`,
-      `Project config: ${source.path}\nEndpoint: ${describeServer(definition)}\n\nThis server can run local commands or make network requests with your user permissions.`,
-    )) {
+    } else if (await ctx.ui.select(
+      `Allow project MCP server “${name}”?\nProject config: ${source.path}\nEndpoint: ${describeServer(definition)}\n\nThis server can run local commands or make network requests with your user permissions.`,
+      PROJECT_SERVER_CHOICES,
+    ) === ALLOW_PROJECT_SERVER) {
       approveProjectServer(ctx.cwd, name, definition);
       continue;
     } else {

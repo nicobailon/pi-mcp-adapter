@@ -97,18 +97,18 @@ describe("load-time initialization with project server overrides", () => {
     expect(connected()).not.toContain("equibles");
 
     // session_start still gates the project-enabled server, and connects it once approved.
-    const confirm = vi.fn(async () => true);
+    const select = vi.fn(async () => "Allow");
     await pi.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, {
       cwd,
       hasUI: true,
       mode: "rpc",
       isProjectTrusted: () => true,
-      ui: { confirm, notify: vi.fn(), setStatus: vi.fn(), theme: undefined },
+      ui: { select, notify: vi.fn(), setStatus: vi.fn(), theme: undefined },
       modelRegistry: {},
       signal: undefined,
     });
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(confirm.mock.calls[0][0]).toContain("equibles");
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select.mock.calls[0][0]).toContain("equibles");
     expect(warnings().filter(message => message.includes("blocked by project trust"))).toEqual([]);
     await vi.waitFor(() => expect(connected()).toContain("equibles"));
 

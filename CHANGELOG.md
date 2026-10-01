@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Pressing Enter at the project-server approval prompt no longer approves the server. The prompt now starts on "Don't allow", so a first prompt typed while it is open can't approve a server by accident; choose "Allow" to approve it. Thanks to [@meirm](https://github.com/meirm) for #797.
 - Idle shutdown no longer closes a server that is still in use. A tool call waiting for approval, an open MCP UI page, and an accepted browser (URL) request now keep the server running, so the approved call, a UI button, or the retry after the browser step no longer fails because the server was stopped meanwhile (#783).
 - Ending or switching a session no longer prints `MCP: runtime cleanup failed: Cannot access 'scopedMaterializedResourceSessions' before initialization`, and temp files from binary MCP resources are removed again. Cleanup no longer loads a module during teardown. Thanks @wu546526 (#781).
 - `pi-mcp-adapter doctor` prints its report before closing connections, so a slow or failing shutdown no longer hides or delays it; a shutdown failure is reported and exits 1.

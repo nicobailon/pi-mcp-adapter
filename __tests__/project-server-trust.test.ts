@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -44,7 +44,7 @@ describe("project MCP server trust", () => {
       hasUI: false,
       mode: "rpc",
       isProjectTrusted: () => true,
-      ui: { confirm: vi.fn() },
+      ui: { select: vi.fn() },
       ...overrides,
     } as any;
   }
@@ -83,16 +83,16 @@ describe("project MCP server trust", () => {
       mcpServers: { inherited: { disabled: true } },
     });
     const { config, trust } = await load();
-    const confirm = vi.fn();
+    const select = vi.fn();
 
     const result = await trust.applyProjectServerTrust(
       config.loadMcpConfigWithSources(undefined, cwd),
-      context({ hasUI: true, mode: "tui", ui: { confirm } }),
+      context({ hasUI: true, mode: "tui", ui: { select } }),
     );
 
     expect(result.config.mcpServers.inherited?.disabled).toBe(true);
     expect(result.blockedServers.size).toBe(0);
-    expect(confirm).not.toHaveBeenCalled();
+    expect(select).not.toHaveBeenCalled();
   });
 
   it("names the project override file for an inherited server re-enabled by project config", async () => {
@@ -102,16 +102,16 @@ describe("project MCP server trust", () => {
     const overridePath = join(cwd, ".pi", "mcp-adapter.json");
     writeJson(overridePath, { mcpServers: { inherited: { disabled: false } } });
     const { config, trust } = await load();
-    const confirm = vi.fn().mockResolvedValue(false);
+    const select = vi.fn().mockResolvedValue(undefined);
 
     await trust.applyProjectServerTrust(
       config.loadMcpConfigWithSources(undefined, cwd),
-      context({ hasUI: true, mode: "tui", ui: { confirm } }),
+      context({ hasUI: true, mode: "tui", ui: { select } }),
     );
 
-    expect(confirm).toHaveBeenCalledWith(
-      expect.any(String),
+    expect(select).toHaveBeenCalledWith(
       expect.stringContaining(`Project config: ${overridePath}\nEndpoint: "global" "server.js"`),
+      expect.any(Array),
     );
   });
 
@@ -119,21 +119,21 @@ describe("project MCP server trust", () => {
     const path = join(cwd, ".mcp.json");
     writeJson(path, { mcpServers: { local: { command: "node", args: ["one.js"] } } });
     const { config, trust } = await load();
-    const confirm = vi.fn().mockResolvedValue(true);
+    const select = vi.fn().mockResolvedValue("Allow");
 
-    let result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { confirm } }));
+    let result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { select } }));
     expect(result.blockedServers.size).toBe(0);
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(confirm).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(`Project config: ${path}\n`));
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select).toHaveBeenCalledWith(expect.stringContaining(`Project config: ${path}\n`), expect.any(Array));
 
-    result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { confirm } }));
+    result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { select } }));
     expect(result.blockedServers.size).toBe(0);
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(select).toHaveBeenCalledTimes(1);
 
     writeJson(path, { mcpServers: { local: { command: "node", args: ["two.js"] } } });
-    result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { confirm } }));
+    result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { select } }));
     expect(result.blockedServers.size).toBe(0);
-    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(select).toHaveBeenCalledTimes(2);
     expect(statSync(join(home, ".pi", "agent", "mcp-project-approvals.json")).mode & 0o777).toBe(0o600);
   });
 
@@ -167,23 +167,23 @@ describe("project MCP server trust", () => {
       writeJson(join(dir, ".mcp.json"), { mcpServers: { local: { command: "node", args: ["server.js"] } } });
     }
     const { config, trust } = await load();
-    const confirm = vi.fn().mockResolvedValue(true);
+    const select = vi.fn().mockResolvedValue("Allow");
     const open = (dir: string) => trust.applyProjectServerTrust(
       config.loadMcpConfigWithSources(undefined, dir),
-      context({ cwd: dir, hasUI: true, mode: "tui", ui: { confirm } }),
+      context({ cwd: dir, hasUI: true, mode: "tui", ui: { select } }),
     );
 
     await open(cwd);
     await open(worktree);
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(select).toHaveBeenCalledTimes(1);
     await open(container);
     await open(bareFirst);
     await open(bareSecond);
-    expect(confirm).toHaveBeenCalledTimes(3);
+    expect(select).toHaveBeenCalledTimes(3);
     await open(copied);
     await open(symlinked);
     await open(forged);
-    expect(confirm).toHaveBeenCalledTimes(6);
+    expect(select).toHaveBeenCalledTimes(6);
   });
 
   it("skips unapproved servers headlessly unless the global policy allows them", async () => {
@@ -203,14 +203,19 @@ describe("project MCP server trust", () => {
     expect((await modules.trust.applyProjectServerTrust(loaded, context())).blockedServers.size).toBe(0);
   });
 
-  it("keeps denied project servers blocked for the session", async () => {
+  it("denies on the preselected option or escape and keeps the server blocked for the session", async () => {
     writeJson(join(cwd, ".mcp.json"), { mcpServers: { local: { url: "https://example.test/mcp" } } });
     const { config, trust } = await load();
-    const confirm = vi.fn().mockResolvedValue(false);
-    const result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { confirm } }));
+    const pressEnter = vi.fn(async (_title: string, options: string[]) => options[0]);
+    const pressEscape = vi.fn(async () => undefined);
 
-    expect(result.config.mcpServers.local.disabled).toBe(true);
-    expect(result.blockedServers.get("local")?.reason).toBe("denied");
+    for (const select of [pressEnter, pressEscape]) {
+      const result = await trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), context({ hasUI: true, mode: "tui", ui: { select } }));
+      expect(select).toHaveBeenCalledTimes(1);
+      expect(result.config.mcpServers.local.disabled).toBe(true);
+      expect(result.blockedServers.get("local")?.reason).toBe("denied");
+    }
+    expect(existsSync(join(home, ".pi", "agent", "mcp-project-approvals.json"))).toBe(false);
     expect(readFileSync(join(cwd, ".mcp.json"), "utf8")).toContain("example.test");
   });
 

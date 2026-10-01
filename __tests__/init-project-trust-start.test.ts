@@ -34,8 +34,8 @@ describe("initializeMcp project trust start signal", () => {
     const cwd = join(root, "project");
     mkdirSync(cwd, { recursive: true });
     writeFileSync(join(cwd, ".mcp.json"), JSON.stringify({ mcpServers: { local: { command: "node" } } }));
-    let answer!: (value: boolean) => void;
-    const confirm = vi.fn(() => new Promise<boolean>((resolve) => { answer = resolve; }));
+    let answer!: (value: string | undefined) => void;
+    const select = vi.fn(() => new Promise<string | undefined>((resolve) => { answer = resolve; }));
     const onProjectTrustResolved = vi.fn();
     const { initializeMcp } = await import("../init.ts");
 
@@ -46,17 +46,17 @@ describe("initializeMcp project trust start signal", () => {
         hasUI: true,
         mode: "tui",
         isProjectTrusted: () => true,
-        ui: { confirm, notify: vi.fn(), setStatus: vi.fn() },
+        ui: { select, notify: vi.fn(), setStatus: vi.fn() },
         modelRegistry: {},
         signal: undefined,
       } as unknown as ExtensionContext,
       undefined,
       { onProjectTrustResolved },
     );
-    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(select).toHaveBeenCalledTimes(1));
     expect(onProjectTrustResolved).not.toHaveBeenCalled();
 
-    answer(false);
+    answer(undefined);
     await initialization;
     expect(onProjectTrustResolved).toHaveBeenCalledTimes(1);
   });
