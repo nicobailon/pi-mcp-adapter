@@ -266,7 +266,7 @@ describe("semantic search", () => {
         undefined,
         evaluator,
       );
-      await searching;
+      await Promise.race([searching, run]);
       await vi.advanceTimersByTimeAsync(100);
       expect((await run).details).toMatchObject({ error: "timeout", calls: [{ operation: "search", query: "umbrella", ok: false, error: "incomplete" }] });
     } finally {

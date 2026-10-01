@@ -654,7 +654,7 @@ describe("runMcpScript", () => {
         'await tools.fixture_echo({ value: "done" }); await tools.fixture_hang({});',
         300,
       );
-      await hanging;
+      await Promise.race([hanging, run]);
       await vi.advanceTimersByTimeAsync(300);
       const result = await run;
 

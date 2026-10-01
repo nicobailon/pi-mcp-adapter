@@ -163,7 +163,7 @@ describe("mcpScript jev.evaluate", () => {
         evaluationStarted();
       }));
       const run = runMcpScript(makeState(), `await jev.evaluate(${JSON.stringify(input)});`, 150, undefined, undefined, evaluator);
-      await evaluating;
+      await Promise.race([evaluating, run]);
       await vi.advanceTimersByTimeAsync(150);
       const result = await run;
 
