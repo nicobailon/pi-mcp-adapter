@@ -8,7 +8,9 @@ What you get with the adapter:
 
 - **Idle servers cost nothing.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. By default, the adapter starts a server when the model first calls it and stops it after 10 idle minutes. With 100 servers installed and their tools cached, that's 7.0 GB of server memory against none at session start ([measurements](#measured-with-100-servers)).
 - **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, offer prompt templates as slash commands, ask the model for a reply, and run long jobs as MCP Tasks (with `"protocolVersion": "auto"`). The built-in supports none of these.
+- **Fewer tokens on everyday calls.** The built-in runs every MCP call as a `codemode` script. The adapter's scripts are off by default, so a single lookup is one small JSON call, which cost 10–33% less in our tests. For bulk work across many records, turn on `settings.scriptMode`; without it the adapter passes every record through the model and cost up to 7× more ([measurements](#measured-token-cost)).
 - **Sign-in tokens go in your OS keychain** by default (an encrypted file is opt-in), not in a plain JSON file.
+- **Find tools by what you mean.** The built-in's `tool_search` only matches words. With a System One key, the adapter's semantic search ranks tools by meaning: in a test of 12 everyday requests across 95 tools, it put the right tool first in 10 of 11, where word search did in 5 ([Jev semantic search](scripting.md#jev-semantic-search-and-opt-in-script-evaluation)).
 - **Adding servers is easier.** Give the agent a server's URL and it installs it and checks its tools in the same session, opening sign-in first if the server needs it. Configs from Cursor, Claude Code, Codex, VS Code, and other clients can be imported with `/mcp-adapter setup`, which also adds presets.
 
 What only the built-in has: Pi's permission extensions see each MCP call as its own tool call without changes, and the session directory is sent to servers as a root.
@@ -84,3 +86,28 @@ Pi's `codemode` scripts work with both. Sign-ins made with the built-in can be i
 - **Local stdio servers only.** Closing an HTTP or `rmcp-mux` connection doesn't stop the remote service. To share one server process across Pi sessions, use [rmcp-mux](servers.md#shared-mcp-processes-with-rmcp-mux).
 - **Not a memory cap.** Calls in progress, approvals, open MCP UI pages, and keep-alive settings keep a server running ([How idle shutdown works](configuration.md#how-idle-shutdown-works)).
 - **To reproduce:** `node bench/server-memory.mjs --scenario 1,2,3 --hold-minutes 15`; the comment at its top explains each scenario.
+
+## Measured token cost
+
+Headless Pi 0.99.2 (`pi -p`) with two local test servers: an issue tracker (150 issues, 70 pull requests) and a notes service. Models: `gpt-6.1-sol` and `claude-sonnet-5`, medium thinking. Each task ran 3 times per setup, and every answer was checked against the servers' data and write log. The built-in used its default `codemode` exposure; the adapter used its defaults, and for the bulk tasks also ran with `settings.scriptMode: true`.
+
+Median cost per run, in US cents:
+
+| Task | Model | Pi 0.99.2 built-in | pi-mcp-adapter | Adapter with `scriptMode` |
+|---|---|---|---|---|
+| Look up one issue's title | GPT | 1.9 | 1.3 | |
+| | Claude | 2.1 | 1.7 | |
+| Answer a question from the docs | GPT | 1.0 | 0.7 | |
+| | Claude | 1.9 | 1.7 | |
+| Find 15 old bugs with no linked PR | GPT | 4.0 | 3.1 | 2.4 |
+| | Claude | 5.6 | 7.4 | 4.2 |
+| Close and comment on 23 stale issues | GPT | 5.7 | 8.4 | 1.9 |
+| | Claude | 2.9 | 20.7 | 3.5 |
+| Copy a 15 KB transcript into a new note | GPT | 1.7 | 7.8 | 2.8 |
+| | Claude | 4.9 | 16.1 | 4.8 |
+
+- **Single calls:** the adapter's default is one JSON call to the `mcp` tool, while the built-in writes a script for every call. With GPT, the fixed part of each turn (system prompt and tool definitions) was also smaller: 2,100 tokens against 3,133. With Claude, it was about 4,100 for both.
+- **Bulk work:** without scripts, every record passes through the model, which costs more. Turning on `scriptMode` adds about 300 (GPT) to 500 (Claude) tokens to each turn, so leave it off unless you regularly work across many records.
+- **Accuracy:** 76 of 78 runs were correct. The 2 wrong answers were Claude runs of the bug search on the adapter, one of them with scripts, which listed 3 and 5 extra issues.
+- GPT costs are as reported by the provider. Claude costs are computed from token counts at Sonnet prices: $3 per million input tokens, $3.75 for cache writes, $0.30 for cache reads, and $15 for output.
+- The test servers and runner aren't in this repository.

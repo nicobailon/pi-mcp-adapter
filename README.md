@@ -21,7 +21,9 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 Since then, Pi 0.99 added MCP support of its own, which also keeps tool definitions out of context. Installing the adapter replaces it in Pi sessions. What you get by switching:
 
 - **Install many servers without paying for idle ones.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. By default, the adapter starts a server when the model first calls it and stops it after 10 idle minutes.
+- **Fewer tokens on everyday calls.** The built-in runs every MCP call as a `codemode` script, even a single lookup. The adapter's scripts are off by default, so a lookup is one small JSON call to the `mcp` tool, which cost 10–33% less in our tests. For bulk work across many records, turn scripts on with `settings.scriptMode`; then it costs about the same as `codemode`.
 - **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, and offer prompt templates as slash commands. The built-in doesn't handle these.
+- **Find tools by what you mean.** The built-in's tool search only matches words. With a System One key, the adapter can also rank tools by meaning: in a test of 12 everyday requests across 95 tools, it put the right tool first in 10 of 11, where word search did in 5.
 - **Sign-in tokens go in your OS keychain** by default (an encrypted file is opt-in), not in a plain JSON file under `~/.pi/agent`.
 - **Adding servers is easier.** Give the agent a server's URL and it installs it and checks its tools in the same session, opening sign-in first if the server needs it, with no shell command or `/reload`. Servers already configured in Cursor, Claude Code, Codex, or VS Code can be imported with `/mcp-adapter setup`, which also adds presets such as Figma and GitHub.
 
@@ -32,7 +34,8 @@ The built-in has two things the adapter doesn't: Pi's permission extensions see 
 | Servers running | Every enabled server, for the whole session | Only servers in use; each stops after 10 idle minutes |
 | Server memory (100 installed, 3 in use) | 7.0 GB at start, 5.9 GB after 15 minutes | Only the 3 in use, then none once they're idle |
 | How the model reaches tools | Default: `codemode` scripts. Per server: direct, or loaded by `tool_search` | Default: one `mcp` proxy tool. Per server: direct, or loaded by `tool_search`. Scripts: Pi's `codemode` (add `"+codemode"` to `defaultTools`) or the adapter's `mcpScript`, both opt-in |
-| Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex, plus optional semantic search with Jev |
+| Token cost | Every call is a `codemode` script | Single lookups cost 10–33% less. For bulk work, turn on `scriptMode`; without it, bulk tasks cost up to 7× more ([measured](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md#measured-token-cost)) |
+| Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex. With a System One key, semantic search ranks tools by meaning ([setup](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md#jev-semantic-search-and-opt-in-script-evaluation)) |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
 | MCP prompts, elicitation, sampling, Tasks | No | Yes; Tasks need `"protocolVersion": "auto"` |
 | MCP UI apps | Left out | Native window or browser |
