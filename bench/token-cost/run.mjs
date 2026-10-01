@@ -10,7 +10,8 @@
 //   builtin  Pi's built-in MCP with its default codemode exposure:
 //            pi -ne -e builtin:mcp -e builtin:codemode -e builtin:tool-search
 //   adapter  this adapter with default settings (scripts off)
-//   scripts  this adapter with settings.scriptMode: true
+//   scripts  this adapter with settings.scriptMode: true, bulk tasks only
+//            (filter, batch, pipe)
 //
 // Each run is a headless `pi -p` session in its own directory under --out
 // (default: a new temp directory) with two local test servers from server.mjs:
@@ -52,6 +53,7 @@ const out = opts.out ? resolve(opts.out) : mkdtempSync(join(tmpdir(), "pi-mcp-to
 const numbers = (text) => new Set((text.match(/\d+/g) ?? []).map(Number));
 const tasks = {
   filter: {
+    bulk: true,
     prompt: "Using the tracker MCP server: find open issues labeled `bug` whose updated_at is before 2026-08-01 and that have no linking PR. A PR links an issue when its body contains `Fixes #N` or `Closes #N` (any case) and the PR is open or merged; ignore PRs that were closed without merging. Reply with only the matching issue numbers, ascending, comma-separated.",
     check: ({ answer }) => {
       const got = numbers(answer), want = new Set(truth.orphanBugs);
@@ -60,6 +62,7 @@ const tasks = {
     },
   },
   batch: {
+    bulk: true,
     prompt: "Using the tracker MCP server: close every open issue that has the `stale` label, posting the comment `Closing as stale.` on each. Then reply with how many issues you closed.",
     check: ({ log }) => {
       const closed = new Set(log.filter((e) => e.op === "close").map((e) => e.number));
@@ -67,7 +70,8 @@ const tasks = {
       const want = truth.staleOpen;
       const good = want.filter((n) => closed.has(n) && commented.has(n)).length;
       const extra = [...closed].filter((n) => !want.includes(n)).length;
-      return { ok: good === want.length && extra === 0, detail: `${good}/${want.length} closed+commented, ${extra} wrong closes` };
+      const stray = log.filter((e) => e.op === "comment" && !want.includes(e.number)).length;
+      return { ok: good === want.length && extra === 0 && stray === 0, detail: `${good}/${want.length} closed+commented, ${extra} wrong closes, ${stray} stray comments` };
     },
   },
   single: {
@@ -79,13 +83,14 @@ const tasks = {
     check: ({ answer }) => ({ ok: /\b5\b|five/i.test(answer) && answer.includes("webhooks.retry.maxAttempts"), detail: answer.slice(0, 120) }),
   },
   pipe: {
+    bulk: true,
     prompt: "Using the notes MCP server: fetch the transcript with id `standup-2026-09-28` and save its full text verbatim as a new note titled `Standup 2026-09-28`. Reply `done` when finished.",
     check: ({ log }) => {
-      const notes = log.filter((e) => e.op === "note");
+      const notes = log.filter((e) => e.op === "note" && e.title === "Standup 2026-09-28");
       const exact = notes.some((n) => n.body === truth.transcript);
       const trimmed = notes.some((n) => n.body?.trim() === truth.transcript.trim());
       const best = notes.map((n) => n.body?.length ?? 0).join(",");
-      return { ok: exact || trimmed, detail: `${notes.length} notes, exact=${exact}, lengths=[${best}] want ${truth.transcript.length}` };
+      return { ok: exact || trimmed, detail: `${notes.length} notes with the title, exact=${exact}, lengths=[${best}] want ${truth.transcript.length}` };
     },
   },
 };
@@ -96,7 +101,7 @@ const jobs = [];
 for (let run = 1; run <= Number(opts.runs); run++)
   for (const model of Object.keys(models))
     for (const task of opts.tasks.split(","))
-      for (const setup of setups) jobs.push({ id: `${model}-${task}-${setup}-${run}`, model, task, setup });
+      for (const setup of setups) if (setup !== "scripts" || tasks[task].bulk) jobs.push({ id: `${model}-${task}-${setup}-${run}`, model, task, setup });
 
 function runJob(job) {
   const dir = join(out, job.id);
@@ -154,6 +159,7 @@ const med = (xs) => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1
 console.log("\nmodel   task    setup    pass  prompt   out  turns  1st-turn  scripts  cents/run");
 for (const model of Object.keys(models)) for (const task of opts.tasks.split(",")) for (const setup of setups) {
   const g = results.filter((r) => r.model === model && r.task === task && r.setup === setup);
+  if (!g.length) continue;
   const scripts = g.reduce((a, r) => a + (r.toolCalls.codemode ?? 0) + (r.toolCalls.mcpScript ?? 0), 0);
   console.log(model.padEnd(7), task.padEnd(7), setup.padEnd(8), `${g.filter((r) => r.ok).length}/${g.length}`.padStart(4), String(med(g.map((r) => r.promptTokens))).padStart(7),
     String(med(g.map((r) => r.output))).padStart(5), String(med(g.map((r) => r.turns))).padStart(6), String(med(g.map((r) => r.firstTurnPromptTokens))).padStart(9),
