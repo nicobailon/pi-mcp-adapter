@@ -7,7 +7,7 @@ In short, the built-in is ahead on per-call permission hooks, roots, and shell c
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
 | OAuth token storage | A JSON file, `~/.pi/agent/mcp-auth.json`, created with mode 0600 ([OAuth](https://pi.dev/docs/latest/mcp#authenticate-with-oauth)) | The OS credential store: macOS Keychain, Windows Credential Manager, or Linux Secret Service. No plaintext fallback; an encrypted file store is opt-in ([Token storage](auth.md#token-storage)) |
-| When servers start and stop | Pi 0.99.2 connects every enabled server in the background when a session starts and keeps them connected until the session ends; there is no idle stop ([Diagnose connection problems](https://pi.dev/docs/latest/mcp#diagnose-connection-problems)). With 100 local test servers, all 100 were still running after 15 minutes ([measurements](../README.md#many-servers-few-running)) | On first use by default, and stopped after 10 idle minutes; calls in progress, approvals, and open MCP UI pages keep a server running. A trusted server without valid cached tools, such as a new one, connects once when a session starts, 10 at a time, to cache them, then a `lazy` server stops. Cached tools don't expire with age; server-declared TTLs still apply. `eager` and `keep-alive` servers start with the session ([How idle shutdown works](configuration.md#how-idle-shutdown-works), [Lifecycle modes](configuration.md#lifecycle-modes)) |
+| When servers start and stop | Pi 0.99.2 connects every enabled server in the background when a session starts and keeps them connected until the session ends; there is no idle stop ([Diagnose connection problems](https://pi.dev/docs/latest/mcp#diagnose-connection-problems)). With 100 local test servers, all 100 were still running after 15 minutes ([measurements](#measured-with-100-servers)) | On first use by default, and stopped after 10 idle minutes; calls in progress, approvals, and open MCP UI pages keep a server running. A trusted server without valid cached tools, such as a new one, connects once when a session starts, 10 at a time, to cache them, then a `lazy` server stops. Cached tools don't expire with age; server-declared TTLs still apply. `eager` and `keep-alive` servers start with the session ([How idle shutdown works](configuration.md#how-idle-shutdown-works), [Lifecycle modes](configuration.md#lifecycle-modes)) |
 | Config files | `~/.pi/agent/mcp.json` and `.pi/mcp.json` ([Configure servers](https://pi.dev/docs/latest/mcp#configure-servers)) | Pi's two files, plus `.mcp.json`, `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, and `mcp-adapter.json` ([File layout](configuration.md#file-layout)) |
 | Configs from other clients | Convert entries by hand ([Migrate configuration](https://pi.dev/docs/latest/mcp#migrate-configuration-from-another-client)) | `imports` reads Cursor, Claude Code, Claude Desktop, OpenCode, VS Code, Windsurf, and Codex configs; `/mcp-adapter setup` and `pi-mcp-adapter init` find them ([Import existing configs](configuration.md#import-existing-configs)) |
 | Guided setup in a session | None. `/mcp` inspects, signs in, reconnects, changes exposure, and enables or disables configured servers; new servers are added by hand or with `pi mcp add`, then `/reload`. The docs show Figma's remote server with `oauth.clientName` set to `"Claude Code"` ([Quick setup](https://pi.dev/docs/latest/mcp#quick-setup), [Authenticate with OAuth](https://pi.dev/docs/latest/mcp#authenticate-with-oauth)) | The `/mcp-adapter setup` overlay picks where new servers go, imports configs found on the machine, scaffolds a config, and adds presets: Figma (desktop) when the Figma app is installed, RepoPrompt when its MCP server is installed locally, and GitHub, Notion, Context7, DeepWiki, Parallel Search, and Chrome DevTools. Every write shows the exact file diff first ([Setup panel](configuration.md#setup-panel)) |
@@ -29,3 +29,22 @@ In short, the built-in is ahead on per-call permission hooks, roots, and shell c
 "No" means Pi 0.99.2's MCP client doesn't handle it: it declares only the `roots` capability and doesn't request prompts.
 
 Sign-ins made with Pi's built-in can be imported into the adapter; see [Import a sign-in from Pi's built-in MCP](auth.md#import-a-sign-in-from-pis-built-in-mcp).
+
+## Measured with 100 servers
+
+100 local test servers with 50 tools each, Pi 0.99.2, Node 25.2.1, Apple M4 Pro, macOS 15.6. The adapter had cached tools from an earlier session, and 3 servers were used.
+
+| | Pi 0.99.2 built-in | pi-mcp-adapter |
+|---|---|---|
+| Servers running at session start | 100 | 0 |
+| Servers running while 3 are used | 100 | 3 |
+| Servers running after the idle timeout | 100 (checked after 15 minutes) | 0 |
+| Server memory at session start | 6.5 GiB | 0 |
+| Server memory after 15 minutes | 5.5 GiB | 0 once idle servers stop |
+
+- **First session, no cached tools:** the adapter starts servers 10 at a time to read their tools and stops each one right after. The session was ready in about 2 s with 0 servers running.
+- **Starting a stopped server:** a test server took 0.19–0.27 s on its next call. The real `@modelcontextprotocol/server-everything` 2026.8.31 started in 0.11–0.15 s and used 70 MiB.
+- **Memory** is the sum of each server process's RSS. Pages shared between processes are counted in each one, so treat it as an estimate; the process counts are exact.
+- **Local stdio servers only.** Closing an HTTP or `rmcp-mux` connection doesn't stop the remote service. To share one server process across Pi sessions, use [rmcp-mux](servers.md#shared-mcp-processes-with-rmcp-mux).
+- **Not a memory cap.** Calls in progress, approvals, open MCP UI pages, and keep-alive settings keep a server running ([How idle shutdown works](configuration.md#how-idle-shutdown-works)).
+- **To reproduce:** `node bench/server-memory.mjs`; the comment at its top explains the scenarios.

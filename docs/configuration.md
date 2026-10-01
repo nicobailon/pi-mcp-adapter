@@ -134,7 +134,7 @@ When any enabled server uses `eager` or `keep-alive`, initialization also starts
 
 This applies to local stdio servers. Closing an HTTP or `rmcp-mux` connection doesn't stop the upstream service ([rmcp-mux](servers.md#shared-mcp-processes-with-rmcp-mux)).
 
-**Timing.** A server can be stopped once `idleTimeout` minutes (default 10) have passed since its last completed activity. A check runs every 30 seconds and stops idle servers one at a time, so a server stops up to about 30 seconds after the timeout, later if a check is still running. The timeout is a minimum, not an exact deadline. In the [benchmark](../README.md#many-servers-few-running), servers with `idleTimeout: 1` stopped 89 to 90 seconds after their last call. A stopped server starts again on its next call, which adds its startup time to that call.
+**Timing.** A server can be stopped once `idleTimeout` minutes (default 10) have passed since its last completed activity. A check runs every 30 seconds and stops idle servers one at a time, so a server stops up to about 30 seconds after the timeout, later if a check is still running. The timeout is a minimum, not an exact deadline. In the [benchmark](pi-builtin-comparison.md#measured-with-100-servers), servers with `idleTimeout: 1` stopped 89 to 90 seconds after their last call. A stopped server starts again on its next call, which adds its startup time to that call.
 
 **What counts as in use.** A server is never stopped while:
 
