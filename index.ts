@@ -18,6 +18,7 @@ import { formatMcpFooterStatus, formatTerminalError, getConfigPathFromArgv, norm
 import { createMcpDirectToolCallRenderer, createMcpProxyToolCallRenderer, createMcpScriptToolCallRenderer, createMcpToolResultRenderer, resolveMcpToolRenderOptions } from "./tool-result-renderer.ts";
 import { toolErrorOverride } from "./error-signal.ts";
 import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
+import { cleanupMaterializedBinaryResources } from "./tool-registrar.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { syncNamespaceProxyTools } from "./namespace-tools.ts";
 import { restoreSessionApprovalState } from "./session-approvals.ts";
@@ -1080,10 +1081,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
       currentOAuthRuntime = oauthRuntime;
       assertRuntimeGuard(guard);
-      owner.addCleanup(async () => {
-        const { cleanupMaterializedBinaryResources } = await import("./tool-registrar.ts");
-        cleanupMaterializedBinaryResources(owner.signal);
-      });
+      owner.addCleanup(() => cleanupMaterializedBinaryResources(owner.signal));
       assertRuntimeGuard(guard);
       const initialization = core.initializeMcp(pi, ctx, owner, {
         ...(programmaticConfig || options.configPath !== undefined

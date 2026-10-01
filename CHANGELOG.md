@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Ending or switching a session no longer prints `MCP: runtime cleanup failed: Cannot access 'scopedMaterializedResourceSessions' before initialization`, and temp files from binary MCP resources are removed again. Cleanup no longer loads a module during teardown. Thanks @wu546526 (#781).
 - `pi-mcp-adapter doctor` prints its report before closing connections, so a slow or failing shutdown no longer hides or delays it; a shutdown failure is reported and exits 1.
 - Connecting to Figma (desktop) while its server is off now says nothing is listening on `127.0.0.1:3845` instead of a bare `fetch failed`.
 - `/mcp-adapter setup` adds Figma (desktop) to the global config instead of writing `.mcp.json` into whatever project you opened setup from.
