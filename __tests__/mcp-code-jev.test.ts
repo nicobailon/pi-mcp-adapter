@@ -153,12 +153,24 @@ describe("mcpScript jev.evaluate", () => {
   );
 
   it("aborts pending evaluation on timeout and records a nonsecret incomplete trace", async () => {
-    const evaluator: McpScriptJevEvaluator = vi.fn((_state, _value, options) => new Promise(resolve => {
-      options.signal?.addEventListener("abort", () => resolve({ ok: false, error: { code: "aborted", message: "aborted" } }), { once: true });
-    }));
-    const result = await runMcpScript(makeState(), `await jev.evaluate(${JSON.stringify(input)});`, 150, undefined, undefined, evaluator);
+    // The deadline also covers worker startup, so it only fires once the evaluation is in flight.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let evaluationStarted!: () => void;
+      const evaluating = new Promise<void>(resolve => { evaluationStarted = resolve; });
+      const evaluator: McpScriptJevEvaluator = vi.fn((_state, _value, options) => new Promise(resolve => {
+        options.signal?.addEventListener("abort", () => resolve({ ok: false, error: { code: "aborted", message: "aborted" } }), { once: true });
+        evaluationStarted();
+      }));
+      const run = runMcpScript(makeState(), `await jev.evaluate(${JSON.stringify(input)});`, 150, undefined, undefined, evaluator);
+      await evaluating;
+      await vi.advanceTimersByTimeAsync(150);
+      const result = await run;
 
-    expect(result.details).toMatchObject({ error: "timeout", calls: [{ operation: "evaluate", ok: false, error: "incomplete" }] });
+      expect(result.details).toMatchObject({ error: "timeout", calls: [{ operation: "evaluate", ok: false, error: "incomplete" }] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("aborts unawaited evaluation on early return and owner shutdown", async () => {

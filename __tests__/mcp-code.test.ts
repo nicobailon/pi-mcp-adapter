@@ -638,19 +638,37 @@ describe("runMcpScript", () => {
   });
 
   it("keeps in-flight calls in the trace when the script times out", async () => {
-    const result = await runMcpScript(
-      state,
-      'await tools.fixture_echo({ value: "done" }); await tools.fixture_hang({});',
-      300,
-    );
-
-    expect(result.details).toMatchObject({
-      error: "timeout",
-      calls: [
-        { path: "fixture_echo", ok: true },
-        { path: "fixture_hang", ok: false, error: "incomplete" },
-      ],
+    // The deadline also covers worker startup, so it only fires once the hanging call is in flight.
+    const client = manager.getConnection("fixture")!.client;
+    const callTool = client.callTool.bind(client);
+    let hangStarted!: () => void;
+    const hanging = new Promise<void>(resolve => { hangStarted = resolve; });
+    const spy = vi.spyOn(client, "callTool").mockImplementation((params, ...rest) => {
+      if (params.name === "hang") hangStarted();
+      return callTool(params, ...rest);
     });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const run = runMcpScript(
+        state,
+        'await tools.fixture_echo({ value: "done" }); await tools.fixture_hang({});',
+        300,
+      );
+      await hanging;
+      await vi.advanceTimersByTimeAsync(300);
+      const result = await run;
+
+      expect(result.details).toMatchObject({
+        error: "timeout",
+        calls: [
+          { path: "fixture_echo", ok: true },
+          { path: "fixture_hang", ok: false, error: "incomplete" },
+        ],
+      });
+    } finally {
+      vi.useRealTimers();
+      spy.mockRestore();
+    }
   });
 
   it("returns promptly on early return and marks un-awaited calls incomplete", async () => {
