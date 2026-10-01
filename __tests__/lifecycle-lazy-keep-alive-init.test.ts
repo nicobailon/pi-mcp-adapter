@@ -371,7 +371,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     expect(state.failureMessages.get("srv")).toBe("bootstrap failed");
   });
 
-  it("leaves a failed startup connection to the reconnect loop instead of retrying it in the direct-tools bootstrap", async () => {
+  it("does not retry a failed startup connection in the direct-tools bootstrap", async () => {
     mocks.config = {
       settings: {},
       mcpServers: { srv: { command: "demo", lifecycle: "keep-alive", directTools: true } },

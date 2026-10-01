@@ -615,7 +615,7 @@ export interface ServerCacheEntry {
         source: "structuredContent" | "jsonText";
         shape: unknown;
     }>;
-    /** Startup discovery failed for this config, so the entry has no catalog; the server is tried again on first use or after a config change. */
+    /** Startup discovery failed for this config; the entry has no catalog. */
     discoveryFailed?: true;
     cachedAt: number;
 }

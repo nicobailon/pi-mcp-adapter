@@ -355,7 +355,6 @@ export async function initializeMcp(
   }
 
   const results = await parallelLimit(startupServers, 10, async ([name, definition]) => {
-    // Plain lazy servers close once their tools are captured; they start again on first use.
     const resident = (definition.lifecycle ?? "lazy") !== "lazy" || getEffectiveIdleTimeoutMinutes(state, name) === 0;
     try {
       const connection = await manager.connect(name, definition, runtimeSignal);
@@ -365,7 +364,7 @@ export async function initializeMcp(
           : `OAuth authentication required. Run /mcp-auth ${name}.`;
         return { name, definition, resident, connection: null, error, transient: false };
       }
-      // Capture before closing: the closed connection object keeps its catalog for publication below.
+      // Capture before closing; the closed connection keeps its catalog for publication below.
       captureMetadata(state, name, connection, () => cache);
       if (!resident) await manager.close(name);
       return { name, definition, resident, connection, error: null, transient: false };
@@ -389,7 +388,7 @@ export async function initializeMcp(
       const entry = state.sessionMetadata?.get(name);
       return entry ? [[name, entry]] : [];
     }
-    // Record a failed discovery so later sessions don't retry the same config; transient outages are retried.
+    // Mark a failed discovery so later sessions skip this config; transient outages stay unmarked.
     if (!error || transient || !needsDiscovery.has(name)) return [];
     const configHash = tryComputeServerHash(definition);
     return configHash ? [[name, { configHash, tools: [], resources: [], discoveryFailed: true, cachedAt: Date.now() }]] : [];
