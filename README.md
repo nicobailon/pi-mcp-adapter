@@ -18,16 +18,25 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 
 ## pi-mcp-adapter vs Pi's built-in MCP
 
-Since then, Pi 0.99 added MCP support of its own, which also keeps tool definitions out of context by default. Installing the adapter replaces the built-in in Pi sessions. The two differ here:
+Since then, Pi 0.99 added MCP support of its own, which also keeps tool definitions out of context. Installing the adapter replaces it in Pi sessions. What you get by switching:
+
+- **Install many servers without paying for idle ones.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. The adapter starts a server when the model first calls it and stops it after 10 idle minutes.
+- **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, offer prompt templates as slash commands, and run long jobs as MCP Tasks. The built-in doesn't handle these.
+- **Sign-in tokens stay in your OS keychain**, not in a JSON file under `~/.pi/agent`.
+- **Adding servers is easier.** Give the agent a server's URL and it installs it, signs you in, and checks its tools in the same session, with no shell command or `/reload`. Servers already configured in Cursor, Claude Code, Codex, or VS Code are imported, and `/mcp-adapter setup` adds presets such as Figma and GitHub.
+
+The built-in has two things the adapter doesn't: Pi's permission extensions see each MCP call as its own tool call without changes, and it sends roots (the session directory) to servers. Pi's `codemode` works with both.
 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
-| Servers running | Every enabled server starts with the session and runs until it ends | Only the servers you're using; each stops after 10 idle minutes |
+| Servers running | Every enabled server, for the whole session | Only servers in use; each stops after 10 idle minutes |
+| Server memory with 100 servers installed | 6.5 GiB at session start | None at session start; only servers in use after that |
 | How the model reaches tools | Default: `codemode` scripts. Per server: direct, or loaded by `tool_search` | Default: one `mcp` proxy tool. Per server: direct, or loaded by `tool_search`. Scripts: Pi's `codemode` (add `"+codemode"` to `defaultTools`) or the adapter's `mcpScript`, both opt-in |
 | Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex, plus optional semantic search with Jev |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
 | MCP prompts, elicitation, sampling, Tasks | No | Yes |
 | MCP UI apps | Left out | Native window or browser |
+| Add a server | `pi mcp add` in a shell, then `/reload` | Give the agent the URL: `mcp({ action: "install", url })` connects it, runs OAuth sign-in, and checks its tools in the current session |
 | Configs from Cursor, Claude Code, Codex, VS Code | Convert by hand | Imported |
 | Guided setup in a session | No; `/mcp` manages servers that are already configured | `/mcp-adapter setup` overlay: imports configs found on your machine, adds presets (Figma desktop and RepoPrompt when installed, GitHub, Notion, Context7, DeepWiki, Parallel Search, Chrome DevTools), and previews each file change before writing |
 | Ask before risky tools | Through a permission extension, which sees every MCP call | Built in (`approveTools`); permission extensions see proxy calls as the proxy tool |
@@ -35,18 +44,17 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 | Shell commands | `pi mcp add`, `remove`, `list` | `pi-mcp-adapter init`, `doctor` |
 | Transports | stdio, streamable HTTP | stdio, streamable HTTP, legacy SSE, `rmcp-mux` socket |
 
-With 100 local servers installed, their tools already cached, and 3 in use:
+Over a session, measured with 100 small local servers:
 
-| | Pi's built-in MCP | pi-mcp-adapter |
+| 100 servers installed, 3 used | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
 | Servers running at session start | 100 | 0 |
 | While you use 3 | 100 | 3 |
 | After the idle timeout (10 min) | 100 | 0 |
-| Server memory at session start | 6.5 GiB | 0 |
 
-Stopped servers stay searchable, and a stopped server starts again on its next call (0.1–0.3 s for a small local server). A server that keeps state between calls can stay up with `"lifecycle": "lazy-keep-alive"`. [Measurements and details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md#measured-with-100-servers).
+Stopping a server doesn't take its tools away: the model can still search them, and a stopped server starts again on its next call (0.1–0.3 s for a small local server). For a server that must keep state between calls, set `"lifecycle": "lazy-keep-alive"`. The first session briefly starts new servers, 10 at a time, to read their tool lists. [Measurements and details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md#measured-with-100-servers).
 
-The built-in is enough if you want permission hooks on every MCP call, roots, or `pi mcp add`. Use the adapter for many servers without keeping them all running, tokens in the OS keychain, the MCP features the built-in doesn't handle, guided setup with presets like Figma and RepoPrompt, and configs you already have from other clients. Pi's `codemode` works with both. The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
+The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
 
 When you install or update the adapter, it turns Pi's built-in MCP off in Pi's settings for you (the same switch as `pi config` → Built-in), so the two don't both run. If you remove the adapter, turn the built-in back on there ([details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp)).
 
