@@ -52,11 +52,13 @@ describe("metadata cache ttl hints", () => {
     expect(isServerCacheValid(entry(server, 1_000, 1_000), server)).toBe(false);
   });
 
-  it("never lets a declared ttl extend the default max age", () => {
+  it("does not expire entries by age alone, only by a declared ttl", () => {
     const server = definition();
 
-    expect(isServerCacheValid(entry(server, 8 * DAY_MS, 14 * DAY_MS), server)).toBe(false);
-    expect(isServerCacheValid(entry(server, 6 * DAY_MS, 14 * DAY_MS), server)).toBe(true);
+    expect(isServerCacheValid(entry(server, 30 * DAY_MS), server)).toBe(true);
+    expect(isServerCacheValid(entry(server, 8 * DAY_MS, 14 * DAY_MS), server)).toBe(true);
+    expect(isServerCacheValid(entry(server, 15 * DAY_MS, 14 * DAY_MS), server)).toBe(false);
+    expect(isServerCacheValid(entry(server, 8 * DAY_MS, 14 * DAY_MS), server, 7 * DAY_MS)).toBe(false);
   });
 
   it("does not reuse private entries from the persistent cache", () => {

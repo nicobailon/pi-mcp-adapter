@@ -10,7 +10,6 @@ import { resourceNameToToolName } from "./resource-tools.js";
 import { extractToolAnnotations, extractToolUiStreamMode, interpolateEnvRecord, interpolateEnvVars, resolveBearerToken, resolveConfigPath, resolveServerUrl, stableStringify, } from "./utils.js";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.js";
 const CACHE_VERSION = 1;
-const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export function getMetadataCachePath() {
     return getAgentPath("mcp-cache.json");
 }
@@ -125,7 +124,9 @@ export function keepOutputShapes(previous, configHash, tools) {
     });
     return kept.length > 0 ? Object.fromEntries(kept) : undefined;
 }
-export function isServerCacheValid(entry, definition, maxAgeMs = CACHE_MAX_AGE_MS, environment = process.env) {
+export function isServerCacheValid(entry, definition, 
+// 0 means no age limit: without a server-declared TTL, an entry stays valid until the next connect refreshes it.
+maxAgeMs = 0, environment = process.env) {
     let configHash;
     try {
         configHash = computeServerHash(definition, environment);

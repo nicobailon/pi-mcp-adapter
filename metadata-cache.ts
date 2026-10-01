@@ -35,7 +35,6 @@ import {
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 
 const CACHE_VERSION = 1;
-const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type { CachedPrompt, CachedResource, CachedTool, MetadataCache, ServerCacheEntry } from "./types.ts";
 
@@ -168,7 +167,8 @@ export function keepOutputShapes(
 export function isServerCacheValid(
   entry: ServerCacheEntry,
   definition: ServerEntry,
-  maxAgeMs: number = CACHE_MAX_AGE_MS,
+  // 0 means no age limit: without a server-declared TTL, an entry stays valid until the next connect refreshes it.
+  maxAgeMs: number = 0,
   environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
   let configHash: string;
