@@ -37,7 +37,7 @@ Since then, Pi 0.99 added MCP support of its own, which also keeps tool definiti
 
 The built-in is enough if you want permission hooks on every MCP call, roots, or `pi mcp add`. Use the adapter for servers that start only when used, tokens in the OS keychain, the MCP features the built-in doesn't handle, guided setup with presets like Figma and RepoPrompt, and configs you already have from other clients. Pi's `codemode` works with both. The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
 
-When you install or update the adapter, it turns Pi's built-in MCP off in `pi config` for you, so the two don't both run. If you remove the adapter, turn the built-in back on in `pi config` → Built-in ([details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp)).
+When you install or update the adapter, it turns Pi's built-in MCP off in Pi's settings for you (the same switch as `pi config` → Built-in), so the two don't both run. If you remove the adapter, turn the built-in back on there ([details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp)).
 
 ## Install
 
