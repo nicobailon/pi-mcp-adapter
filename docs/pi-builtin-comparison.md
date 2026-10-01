@@ -8,7 +8,7 @@ What you get with the adapter:
 
 - **Idle servers cost nothing.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. By default, the adapter starts a server when the model first calls it and stops it after 10 idle minutes. With 100 servers installed and their tools cached, that's 7.0 GB of server memory against none at session start ([measurements](#measured-with-100-servers)).
 - **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, offer prompt templates as slash commands, ask the model for a reply, and run long jobs as MCP Tasks (with `"protocolVersion": "auto"`). The built-in supports none of these.
-- **Fewer tokens on everyday calls.** The built-in runs every MCP call as a `codemode` script. The adapter's scripts are off by default, so a single lookup is one small JSON call, which cost 10–33% less in our tests. For bulk work across many records, turn on `settings.scriptMode`; without it the adapter passes every record through the model and cost up to 7× more ([measurements](#measured-token-cost)).
+- **Fewer tokens on everyday calls.** By default, the built-in runs every MCP call as a `codemode` script. The adapter's scripts are off by default, so a single lookup is one small JSON call, which cost 10–33% less in our tests. For bulk work across many records, turn on `settings.scriptMode`; without it the adapter passes every record through the model and cost up to 7× more ([measurements](#measured-token-cost)).
 - **Sign-in tokens go in your OS keychain** by default (an encrypted file is opt-in), not in a plain JSON file.
 - **Find tools by what you mean.** The built-in's `tool_search` only matches words. With a System One key, the adapter's semantic search ranks tools by meaning: in a test of 12 everyday requests across 95 tools, it put the right tool first in 10 of 11, where word search did in 5 ([Jev semantic search](scripting.md#jev-semantic-search-and-opt-in-script-evaluation)).
 - **Adding servers is easier.** Give the agent a server's URL and it installs it and checks its tools in the same session, opening sign-in first if the server needs it. Configs from Cursor, Claude Code, Codex, VS Code, and other clients can be imported with `/mcp-adapter setup`, which also adds presets.
@@ -106,8 +106,8 @@ Median cost per run, in US cents:
 | Copy a 15 KB transcript into a new note | GPT | 1.7 | 7.8 | 2.8 |
 | | Claude | 4.9 | 16.1 | 4.8 |
 
-- **Single calls:** the adapter's default is one JSON call to the `mcp` tool, while the built-in writes a script for every call. With GPT, the fixed part of each turn (system prompt and tool definitions) was also smaller: 2,100 tokens against 3,133. With Claude, it was about 4,100 for both.
+- **Single calls:** the adapter's default is one JSON call to the `mcp` tool, while the built-in's default writes a script for every call. With GPT, the fixed part of each turn (system prompt and tool definitions) was also smaller: 2,100 tokens against 3,133. With Claude, it was about 4,100 for both.
 - **Bulk work:** without scripts, every record passes through the model, which costs more. Turning on `scriptMode` adds about 300 (GPT) to 500 (Claude) tokens to each turn, so leave it off unless you regularly work across many records.
 - **Accuracy:** 76 of 78 runs were correct. The 2 wrong answers were Claude runs of the bug search on the adapter, one of them with scripts, which listed 3 and 5 extra issues.
 - GPT costs are as reported by the provider. Claude costs are computed from token counts at Sonnet prices: $3 per million input tokens, $3.75 for cache writes, $0.30 for cache reads, and $15 for output.
-- The test servers and runner aren't in this repository.
+- **To reproduce:** `node bench/token-cost/run.mjs`; the comment at its top explains the setups, models, and options. Model output varies between runs, so expect medians close to these, not identical.
