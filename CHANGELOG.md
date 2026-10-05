@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `/mcp-adapter setup` can add Tavily Search, an opt-in preset for web search and page extraction through Tavily's [keyless access](https://docs.tavily.com/documentation/keyless), with no account, API key, or sign-in. Usage is rate-limited. `tavily_search` and `tavily_extract` are direct tools; Tavily's other tools need an API key and stay behind the proxy. Thanks to [@lakshyaag-tavily](https://github.com/lakshyaag-tavily) for [PR #800](https://github.com/nicobailon/pi-mcp-adapter/pull/800).
+- Server entries accept `"openUi": false` to stop that server's MCP App UIs from opening; its tools still run and return inline results. Thanks to [@tekumara](https://github.com/tekumara) for [#803](https://github.com/nicobailon/pi-mcp-adapter/issues/803).
 
 ### Changed
 

@@ -231,3 +231,25 @@ describe("MCP_UI_VIEWER=none", () => {
     state.uiServer?.close("test-cleanup");
   });
 });
+
+describe("per-server openUi: false", () => {
+  it.each(["proxy", "direct"])("runs the %s tool call with an inline result and no UI session", async (path) => {
+    const { state, callTool } = makeState();
+    state.config.mcpServers.demo.openUi = false;
+    const result = path === "proxy"
+      ? await executeCall(state, "demo_app", {}, "demo")
+      : await createDirectToolExecutor(
+          () => state,
+          () => null,
+          { serverName: "demo", originalName: "app", prefixedName: "demo_app", description: "App", uiResourceUri: "ui://app" },
+        )("call-1", {}, undefined as any, () => {}, undefined as any);
+
+    expect(callTool).toHaveBeenCalledOnce();
+    expect(textOf(result)).toBe("tool output");
+    expect(result.details).not.toHaveProperty("uiOpen");
+    expect(state.uiResourceHandler.readUiResource).not.toHaveBeenCalled();
+    expect(state.uiServer).toBeNull();
+    expect(state.openBrowser).not.toHaveBeenCalled();
+    expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
+  });
+});

@@ -57,6 +57,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `includeTools` | `string[]` of tool names or glob patterns to expose (matches original names like `get_screenshot`, generated resource names like `read_figjam`, and prefixed names like `figma_get_screenshot`) |
 | `excludeTools` | `string[]` of tool names or glob patterns to hide (applied after `includeTools`) |
 | `searchKeywords` | `{ "tool-or-glob": ["keyword", ...] }` — extra keywords that boost `mcp({ search })` ranking for matching tools; never shown to the model |
+| `openUi` | Set to `false` to never open MCP App UIs for this server's tools (default: true). Its tools still run and return their results inline; sign-in and URL elicitation are unaffected |
 | `description` | What the server offers, in a sentence (same key as Pi's `mcp.json`). `mcp({ server })` shows it under the listing header, `mcp({ search })` ranks the server's tools by it like tool descriptions, and the `/mcp-adapter` panel shows it when the server is expanded. Without it, the panel shows the first line of the server's instructions. A non-string value is ignored with a warning. |
 | `debug` | Show server stderr (default: false) |
 | `trace` | Enable metadata-only JSONL protocol tracing for this server; payloads, prompts, tool arguments/results, authorization data, and URLs are never persisted |

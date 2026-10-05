@@ -305,7 +305,8 @@ export function createDirectToolExecutor(
         };
       }
 
-      const hasUi = !!spec.uiResourceUri;
+      // openUi: false runs the tool as if it declared no UI.
+      const hasUi = !!spec.uiResourceUri && state.config.mcpServers[spec.serverName]?.openUi !== false;
       uiSession = hasUi
         ? await maybeStartUiSession(state, {
             serverName: spec.serverName,

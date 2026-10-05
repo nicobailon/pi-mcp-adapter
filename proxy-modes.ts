@@ -1548,6 +1548,8 @@ export async function executeCall(
   }
 
   let uiSession: UiSessionRuntime | null = null;
+  // openUi: false runs the tool as if it declared no UI.
+  const uiResourceUri = state.config.mcpServers[serverName]?.openUi === false ? undefined : toolMeta.uiResourceUri;
   const requestOptions = withUiProgressBridge(
     state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined),
     state.ui,
@@ -1643,12 +1645,12 @@ export async function executeCall(
       };
     }
 
-    uiSession = toolMeta.uiResourceUri
+    uiSession = uiResourceUri
       ? await maybeStartUiSession(state, {
           serverName,
           toolName: toolMeta.originalName,
           toolArgs: normalizedArgs,
-          uiResourceUri: toolMeta.uiResourceUri,
+          uiResourceUri,
           ...(toolMeta.uiStreamMode !== undefined ? { streamMode: toolMeta.uiStreamMode } : {}),
           ...(signal ? { signal } : {}),
           onNeedsAuth: recoverAuthConnection,
@@ -1685,7 +1687,7 @@ export async function executeCall(
     );
     if (!result.isError) recordOutput(result as Record<string, unknown>);
 
-    if (toolMeta.uiResourceUri) {
+    if (uiResourceUri) {
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
     }
 
@@ -1695,7 +1697,7 @@ export async function executeCall(
       return { content: [], details: { mode: "call", ...callIdentity } };
     }
 
-    if (toolMeta.uiResourceUri) {
+    if (uiResourceUri) {
       if (result.isError) {
         const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal);
         const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
