@@ -16,9 +16,9 @@ const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf
 };
 
 const hostPeerPackages = {
-  "@earendil-works/pi-ai": { peer: "^0.84.1 || ^0.85.0 || ^0.86.0 || ^0.87.0 || ^0.99.0 || ^1.0.0", dev: "1.0.0" },
-  "@earendil-works/pi-tui": { peer: "*", dev: "1.0.0" },
-  "typebox": { peer: "*", dev: "1.3.27" },
+  "@earendil-works/pi-ai": { peer: "^0.84.1 || ^0.85.0 || ^0.86.0 || ^0.87.0 || ^0.99.0 || ^1.0.0", dev: "1.0.0", optional: true },
+  "@earendil-works/pi-tui": { peer: "*", dev: "1.0.0", optional: false },
+  "typebox": { peer: "*", dev: "1.3.27", optional: false },
 };
 
 describe("package.json files", () => {
@@ -133,14 +133,27 @@ describe("package.json dependency policy", () => {
     expect(packageJson.dependencies?.["fs-native-extensions"]).toBeUndefined();
   });
 
-  it("treats Pi host packages as optional peers with exact dev pins", () => {
+  it("declares Pi host packages as peers with exact dev pins", () => {
     const entries = Object.entries(hostPeerPackages);
 
     for (const [name, versions] of entries) {
       expect(packageJson.peerDependencies?.[name]).toBe(versions.peer);
-      expect(packageJson.peerDependenciesMeta?.[name]?.optional).toBe(true);
+      expect(packageJson.peerDependenciesMeta?.[name]?.optional ?? false).toBe(versions.optional);
       expect(packageJson.dependencies?.[name]).toBeUndefined();
       expect(packageJson.devDependencies?.[name]).toBe(versions.dev);
+    }
+  });
+
+  // Hosts that import the package outside Pi's extension loader resolve peers with Node, so a peer
+  // imported at runtime cannot be optional. Type-only peers stay optional to skip their install.
+  it("marks a Pi host peer optional only when shipped source imports it for types alone", () => {
+    const shippedSources = (packageJson.files ?? [])
+      .filter((file) => file.endsWith(".ts"))
+      .map((file) => readFileSync(join(repoRoot, file), "utf-8"));
+
+    for (const [name, versions] of Object.entries(hostPeerPackages)) {
+      const runtimeImport = new RegExp(`^import\\s+(?!type\\s)[^;]*?from\\s+"${name}";`, "m");
+      expect(shippedSources.some((source) => runtimeImport.test(source)), name).toBe(!versions.optional);
     }
   });
 

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `pi -p` no longer hangs after replying when a kept-alive HTTP server uses a `bearerToken` command or `auth.provider`: closing the server now ends its open event stream. Thanks to [@nguyentamdat](https://github.com/nguyentamdat) for [PR #802](https://github.com/nicobailon/pi-mcp-adapter/pull/802).
+- Apps that import the adapter directly, outside Pi's extension loader, no longer fail with `Cannot find package '@earendil-works/pi-tui'`. `@earendil-works/pi-tui` and `typebox` are now required peers because the adapter imports them at runtime, so npm installs them for those apps. Pi's own package installs skip peers and are unchanged; `@earendil-works/pi-ai` is only used for types and stays optional. Thanks to [@dannote](https://github.com/dannote) for [#805](https://github.com/nicobailon/pi-mcp-adapter/issues/805).
 
 ## [5.0.0] - 2026-10-01
 
