@@ -148,11 +148,16 @@ describe("package.json dependency policy", () => {
   // imported at runtime cannot be optional. Type-only peers stay optional to skip their install.
   it("marks a Pi host peer optional only when shipped source imports it for types alone", () => {
     const shippedSources = (packageJson.files ?? [])
-      .filter((file) => file.endsWith(".ts"))
+      .filter((file) => /\.(?:ts|js|mjs|cjs)$/.test(file))
       .map((file) => readFileSync(join(repoRoot, file), "utf-8"));
 
     for (const [name, versions] of Object.entries(hostPeerPackages)) {
-      const runtimeImport = new RegExp(`^import\\s+(?!type\\s)[^;]*?from\\s+"${name}";`, "m");
+      const specifier = `["']${name}(?:/[^"']*)?["']`;
+      const runtimeImport = new RegExp([
+        `^\\s*(?:import|export)\\s+(?!type\\s)[^;]*?from\\s+${specifier}`,
+        `^\\s*import\\s+${specifier}`,
+        `\\b(?:import|require)\\(\\s*${specifier}\\s*\\)`,
+      ].join("|"), "m");
       expect(shippedSources.some((source) => runtimeImport.test(source)), name).toBe(!versions.optional);
     }
   });
