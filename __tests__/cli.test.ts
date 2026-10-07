@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -522,10 +522,10 @@ describe("cli doctor", () => {
     return { home, project, agentDir };
   }
 
-  function doctor(args: string[], { home, project, agentDir }: ReturnType<typeof setup>, env: NodeJS.ProcessEnv = {}) {
+  function doctor(args: string[], { home, project, agentDir }: ReturnType<typeof setup>, env: NodeJS.ProcessEnv = {}, cli = cliPath) {
     const { PI_PACKAGE_DIR: _packageDir, ...inherited } = process.env;
     return new Promise<{ code: number | null; stdout: string; stderr: string }>((done, fail) => {
-      execFile(process.execPath, [cliPath, "doctor", ...args], {
+      execFile(process.execPath, [cli, "doctor", ...args], {
         cwd: project,
         env: { ...inherited, HOME: home, PI_CODING_AGENT_DIR: agentDir, ...env },
         timeout: 30_000,
@@ -636,6 +636,7 @@ describe("cli doctor", () => {
     const marker = join(tmpdir(), `pi-mcp-doctor-ran-${process.pid}-${Date.now()}`);
     const projectServer = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`] };
     const context = setup({ mcpServers: {} }, { mcpServers: { project: projectServer } });
+    writeJson(join(context.project, ".pi", "settings.json"), {});
 
     const untrusted = await doctor([], context);
     expect(untrusted.code).toBe(0);
@@ -647,6 +648,38 @@ describe("cli doctor", () => {
     expect(unapproved.stdout).toContain("project: blocked — blocked: project server approval required");
 
     expect(existsSync(marker)).toBe(false);
+  });
+
+  it("trusts a project without trust-requiring Pi resources, as a Pi session does", async () => {
+    const projectServer = { command: process.execPath, args: [resolve("__tests__/fixtures/tools-only-server.mjs")] };
+    const context = setup({ settings: { projectServers: "allow" }, mcpServers: {} }, { mcpServers: { project: projectServer } });
+
+    const result = await doctor([], context);
+
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("project: ok, 1 tool");
+  });
+
+  it.skipIf(process.platform === "win32")("reads project trust from the Pi behind PATH when Pi doesn't resolve from the CLI", async () => {
+    const adapter = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-adapter-"));
+    writeJson(join(adapter, "package.json"), { type: "module" });
+    copyFileSync(cliPath, join(adapter, "cli.js"));
+    symlinkSync(resolve("dist"), join(adapter, "dist"));
+    mkdirSync(join(adapter, "node_modules"));
+    symlinkSync(resolve("node_modules/strip-json-comments"), join(adapter, "node_modules", "strip-json-comments"));
+    const core = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-core-"));
+    writeJson(join(core, "package.json"), { name: "@earendil-works/pi-coding-agent", type: "module", exports: { ".": { import: "./dist/index.js" } } });
+    mkdirSync(join(core, "dist"));
+    writeFileSync(join(core, "dist", "index.js"), "export const hasTrustRequiringProjectResources = () => false;\n");
+    writeFileSync(join(core, "dist", "pi"), "#!/bin/sh\necho 1.0.4\n", { mode: 0o755 });
+    const bin = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-bin-"));
+    symlinkSync(join(core, "dist", "pi"), join(bin, "pi"));
+    const context = setup({ mcpServers: {} }, { mcpServers: { project: { command: "unused" } } });
+
+    const result = await doctor([], context, { PATH: `${bin}:${process.env.PATH}` }, join(adapter, "cli.js"));
+
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("project: blocked — blocked: project server approval required");
   });
 
   it("prints JSON without configured header, token, env, or URL query values", async () => {
