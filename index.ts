@@ -1342,7 +1342,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
 
     if (generation !== lifecycleGeneration || !owner.isActive()) return;
-    if (!programmaticConfig && piSupportsMcp(pi)) {
+    // An explicit config path marks a one-off process; Pi already skips its built-in for it because /mcp is ours.
+    if (!programmaticConfig && earlyConfigPath === undefined && piSupportsMcp(pi)) {
       const report = (message: string, level: "info" | "warning") => {
         if (generation !== lifecycleGeneration || !owner.isActive()) return;
         if (ctx.hasUI) ctx.ui.notify(message, level);

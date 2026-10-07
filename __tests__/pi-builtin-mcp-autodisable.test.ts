@@ -35,11 +35,11 @@ describe("turning off Pi's built-in MCP", () => {
   const readSettings = () => JSON.parse(readFileSync(settingsPath, "utf-8"));
   const handledVersion = () => loadOnboardingState().piBuiltinMcpHandledVersion;
 
-  async function startSession(options: { config?: object; piMcp?: boolean } = {}) {
+  async function startSession(options: { config?: object; configPath?: string; piMcp?: boolean } = {}) {
     const { createMcpAdapter } = await import("../index.ts");
     const handlers = new Map<string, (...args: any[]) => unknown>();
     const notify = vi.fn();
-    createMcpAdapter(options.config ? { config: options.config as any } : {})({
+    createMcpAdapter(options.config ? { config: options.config as any } : options.configPath ? { configPath: options.configPath } : {})({
       registerTool: vi.fn(),
       unregisterTool: vi.fn(() => true),
       registerFlag: vi.fn(),
@@ -115,6 +115,24 @@ describe("turning off Pi's built-in MCP", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     expect(() => readFileSync(settingsPath)).toThrow();
+    expect(handledVersion()).toBeUndefined();
+  }, 20_000);
+
+  it("leaves Pi's settings alone for a process given an explicit config path", async () => {
+    const configPath = join(root, "one-off.json");
+    writeFileSync(configPath, JSON.stringify({ mcpServers: {} }));
+    writeSettings({ theme: "dark" });
+    const originalArgv = [...process.argv];
+    process.argv.push("--mcp-config", configPath);
+    try {
+      await startSession();
+    } finally {
+      process.argv.splice(0, process.argv.length, ...originalArgv);
+    }
+    await startSession({ configPath });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(readSettings()).toEqual({ theme: "dark" });
     expect(handledVersion()).toBeUndefined();
   }, 20_000);
 });
