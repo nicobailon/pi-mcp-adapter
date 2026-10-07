@@ -32,7 +32,14 @@ function validateApiKey(value) {
     return value;
 }
 /**
- * Constrains the operator-supplied endpoint to an absolute HTTPS URL without credentials, query, or fragment, so
+ * The endpoint receives the API key and judgment payload, so plaintext http is allowed only where it cannot leave the
+ * machine: literal loopback names and addresses, never names that merely resolve to loopback.
+ */
+function isLoopbackHostname(hostname) {
+    return hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+}
+/**
+ * Constrains the operator-supplied endpoint to an absolute HTTPS (or loopback HTTP) URL without credentials, query, or fragment, so
  * the pinned fetch can match it exactly and a stray value cannot redirect requests or smuggle a query string.
  */
 function parseEndpoint(raw, label) {
@@ -49,8 +56,9 @@ function parseEndpoint(raw, label) {
     catch {
         throw new Error(`${label} must be an absolute URL`);
     }
-    if (url.protocol !== "https:")
-        throw new Error(`${label} must use https`);
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHostname(url.hostname))) {
+        throw new Error(`${label} must use https, except http on localhost, 127.0.0.0/8, or [::1]`);
+    }
     if (url.username !== "" || url.password !== "")
         throw new Error(`${label} must not embed credentials`);
     if (url.search !== "")

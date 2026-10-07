@@ -116,6 +116,28 @@ describe("System One endpoint and credential storage", () => {
     }
   });
 
+  it("allows plain http only for a loopback endpoint", () => {
+    expect(endpointOf("http://localhost:8080/v1/systemone")).toEqual({ href: "http://localhost:8080/v1/systemone", origin: "http://localhost:8080", path: "/v1/systemone" });
+    expect(endpointOf("http://127.0.0.1:8080/v1/systemone").origin).toBe("http://127.0.0.1:8080");
+    expect(endpointOf("http://127.42.0.9/v1/systemone").origin).toBe("http://127.42.0.9");
+    expect(endpointOf("http://[::1]:8080/v1/systemone").origin).toBe("http://[::1]:8080");
+    const rejected = [
+      "http://0.0.0.0:8080/v1/systemone",
+      "http://192.168.1.10:8080/v1/systemone",
+      "http://api.localhost/v1/systemone",
+      "http://127.0.0.1.nip.io/v1/systemone",
+      "http://[::ffff:127.0.0.1]/v1/systemone",
+      "http://localhost:8080/",
+    ];
+    for (const value of rejected) {
+      expect(resolveJevEndpoint({ SYSTEMONE_ENDPOINT: value } as NodeJS.ProcessEnv)).toMatchObject({ status: "unavailable" });
+    }
+    expect(resolveJevEndpoint({ SYSTEMONE_ENDPOINT: "http://example.com/v1/systemone" } as NodeJS.ProcessEnv)).toEqual({
+      status: "unavailable",
+      message: "SYSTEMONE_ENDPOINT must use https, except http on localhost, 127.0.0.0/8, or [::1]",
+    });
+  });
+
   it("disables credentials entirely when the configured endpoint is invalid", () => {
     setTestSecureKeyringEntry(JEV_KEYRING_SERVICE, JEV_KEYRING_ACCOUNT, JSON.stringify({ version: 1, provider: "typesafe", origin: TYPESAFE_API_ORIGIN, apiKey: "stored-secret" }));
     expect(resolveJevCredential({ SYSTEMONE_ENDPOINT: "http://evil.test/x" } as NodeJS.ProcessEnv)).toMatchObject({ status: "unavailable" });

@@ -40,12 +40,13 @@ System One decisions are the same API at different origins, so pointing at anoth
 | OpenCode Zen | `https://opencode.ai/zen/v1/systemone` | `jev-1.13` |
 | Command Code | `https://api.commandcode.ai/provider/v1/systemone` | `typesafe/jev` |
 | OpenRouter | `https://openrouter.ai/api/alpha/decisions` | `typesafe/jev-1.13` |
+| Local server | `http://127.0.0.1:8080/v1/systemone` | the model your server serves |
 
 These are example configurations, subject to each provider's current documentation ([OpenCode Zen](https://opencode.ai/docs/zen/), [Command Code](https://commandcode.ai/docs/provider), [OpenRouter](https://openrouter.ai/docs/guides/community/jev), [TypeSafe](https://docs.typesafe.ai/)).
 
 With `SYSTEMONE_ENDPOINT` pointed at OpenRouter, an existing `OPENROUTER_API_KEY` works as the key and the model defaults to `typesafe/jev-1.13`. `OPENROUTER_API_KEY` is never sent to any other endpoint, and `SYSTEMONE_API_KEY` takes precedence over it.
 
-The endpoint must be an absolute `https` URL with a path. A set-but-invalid `SYSTEMONE_ENDPOINT` disables Jev instead of falling back to the default. Treat the endpoint as trusted configuration: it receives the API key and the judgment payload. Credentials are stored per endpoint, so switching endpoints does not overwrite a saved key. Set the model with:
+The endpoint must be an absolute `https` URL with a path; plain `http` is accepted only on `localhost`, `127.0.0.0/8`, or `[::1]`, so the key and payload never leave the machine unencrypted. A local server that ignores keys still needs some non-empty `SYSTEMONE_API_KEY`, because Jev does not run without a key. A set-but-invalid `SYSTEMONE_ENDPOINT` disables Jev instead of falling back to the default. Treat the endpoint as trusted configuration: it receives the API key and the judgment payload. Credentials are stored per endpoint, so switching endpoints does not overwrite a saved key. Set the model with:
 
 ```json
 { "settings": { "jev": { "model": "jev-1.13" } } }
