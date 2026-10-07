@@ -500,14 +500,23 @@ async function importPiCore() {
         }
       });
     if (!bin) throw err;
+    const isPiCore = (dir) => {
+      const file = path.join(dir, "package.json");
+      return fs.existsSync(file) && JSON.parse(fs.readFileSync(file, "utf8")).name === PI_CORE_PACKAGE;
+    };
     let root;
-    // npm links bin/pi into the package; Windows npm puts pi.cmd beside the prefix's node_modules.
-    for (let dir = path.dirname(fs.realpathSync(bin)); !root; dir = path.dirname(dir)) {
-      const own = path.join(dir, "package.json");
-      if (fs.existsSync(own) && JSON.parse(fs.readFileSync(own, "utf8")).name === PI_CORE_PACKAGE) root = dir;
-      else if (fs.existsSync(path.join(dir, "node_modules", PI_CORE_PACKAGE, "package.json"))) root = path.join(dir, "node_modules", PI_CORE_PACKAGE);
-      else if (path.dirname(dir) === dir) throw err;
+    if (/\.(cmd|ps1)$/i.test(bin)) {
+      // Windows npm shims sit beside the prefix's node_modules and name the package they launch.
+      const shimmed = path.join(path.dirname(bin), "node_modules", PI_CORE_PACKAGE);
+      if (/node_modules[\\/]@earendil-works[\\/]pi-coding-agent[\\/]/i.test(fs.readFileSync(bin, "utf8")) && isPiCore(shimmed)) root = shimmed;
+    } else {
+      // npm links bin/pi to a file inside Pi's package; only the package that owns that file counts.
+      for (let dir = path.dirname(fs.realpathSync(bin)); !root; dir = path.dirname(dir)) {
+        if (isPiCore(dir)) root = dir;
+        else if (path.dirname(dir) === dir) break;
+      }
     }
+    if (!root) throw err;
     const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     const target = pkg.exports?.["."];
     const entry = typeof target === "string" ? target : target?.import ?? pkg.main;
@@ -552,15 +561,11 @@ async function runDoctor(argv, log, error) {
   if (loaded.projectServers.size > 0) {
     try {
       const pi = await importPiCore();
-      // Mirrors Pi's resolveProjectTrusted for a plain non-interactive session. Older Pi without
-      // hasTrustRequiringProjectResources gets the stricter stored-decision check.
+      // Past this check Pi first runs project_trust extension handlers, which doctor can't, so only a stored "trusted" decision counts.
       if (typeof pi.hasTrustRequiringProjectResources === "function" && !pi.hasTrustRequiringProjectResources(cwd)) {
         projectTrusted = true;
       } else {
-        const dir = agentDir.getAgentDir();
-        const decision = new pi.ProjectTrustStore(dir).get(cwd);
-        projectTrusted = decision === true
-          || (decision == null && pi.SettingsManager?.create(cwd, dir, { projectTrusted: false }).getDefaultProjectTrust?.() === "always");
+        projectTrusted = new pi.ProjectTrustStore(agentDir.getAgentDir()).get(cwd) === true;
       }
     } catch (err) {
       error(`Could not read Pi's project trust, so project servers are treated as untrusted: ${utils.formatTerminalError(err)}`);

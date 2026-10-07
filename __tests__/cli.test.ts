@@ -660,26 +660,48 @@ describe("cli doctor", () => {
     expect(result.stdout).toContain("project: ok, 1 tool");
   });
 
-  it.skipIf(process.platform === "win32")("reads project trust from the Pi behind PATH when Pi doesn't resolve from the CLI", async () => {
+  // A copy of the CLI where Pi doesn't resolve, as when the adapter is installed as a Pi package.
+  function cliWithoutPi() {
     const adapter = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-adapter-"));
     writeJson(join(adapter, "package.json"), { type: "module" });
     copyFileSync(cliPath, join(adapter, "cli.js"));
     symlinkSync(resolve("dist"), join(adapter, "dist"));
     mkdirSync(join(adapter, "node_modules"));
     symlinkSync(resolve("node_modules/strip-json-comments"), join(adapter, "node_modules", "strip-json-comments"));
-    const core = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-core-"));
+    return join(adapter, "cli.js");
+  }
+
+  function fakePiCore(core: string) {
     writeJson(join(core, "package.json"), { name: "@earendil-works/pi-coding-agent", type: "module", exports: { ".": { import: "./dist/index.js" } } });
     mkdirSync(join(core, "dist"));
     writeFileSync(join(core, "dist", "index.js"), "export const hasTrustRequiringProjectResources = () => false;\n");
+  }
+
+  it.skipIf(process.platform === "win32")("reads project trust from the Pi behind PATH when Pi doesn't resolve from the CLI", async () => {
+    const core = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-core-"));
+    fakePiCore(core);
     writeFileSync(join(core, "dist", "pi"), "#!/bin/sh\necho 1.0.4\n", { mode: 0o755 });
     const bin = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-bin-"));
     symlinkSync(join(core, "dist", "pi"), join(bin, "pi"));
     const context = setup({ mcpServers: {} }, { mcpServers: { project: { command: "unused" } } });
 
-    const result = await doctor([], context, { PATH: `${bin}:${process.env.PATH}` }, join(adapter, "cli.js"));
+    const result = await doctor([], context, { PATH: `${bin}:${process.env.PATH}` }, cliWithoutPi());
 
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("project: blocked — blocked: project server approval required");
+  });
+
+  it.skipIf(process.platform === "win32")("ignores a Pi package that doesn't own the pi on PATH", async () => {
+    const prefix = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-prefix-"));
+    fakePiCore(join(prefix, "node_modules", "@earendil-works", "pi-coding-agent"));
+    mkdirSync(join(prefix, "bin"));
+    writeFileSync(join(prefix, "bin", "pi"), "#!/bin/sh\necho 1.0.4\n", { mode: 0o755 });
+    const context = setup({ mcpServers: {} }, { mcpServers: { project: { command: "unused" } } });
+
+    const result = await doctor([], context, { PATH: `${join(prefix, "bin")}:${process.env.PATH}` }, cliWithoutPi());
+
+    expect(result.stderr).toContain("Could not read Pi's project trust");
+    expect(result.stdout).toContain("project: blocked — blocked by project trust");
   });
 
   it("prints JSON without configured header, token, env, or URL query values", async () => {
