@@ -1062,17 +1062,9 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
   }
   let text = `${server} (${toolNames.length} tools${cachedNote}):${descriptionText}\n\n`;
 
-  const descMap = new Map<string, string>();
-  if (metadata) {
-    for (const m of metadata) {
-      descMap.set(m.name, m.description);
-    }
-  }
-
-  for (const tool of toolNames) {
-    const desc = descMap.get(tool) ?? "";
-    const truncated = truncateAtWord(desc, 50);
-    text += `- ${tool}`;
+  for (const toolMeta of metadata ?? []) {
+    const truncated = truncateAtWord(toolMeta.description, 50);
+    text += `- ${toolMeta.name}${formatParameterNames(toolMeta)}`;
     if (truncated) text += ` - ${truncated}`;
     text += "\n";
   }
@@ -1083,6 +1075,30 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     content: [{ type: "text" as const, text: text.trim() }],
     details: { mode: "list", server, tools: toolNames, count: toolNames.length, hasInstructions: Boolean(instructions) },
   };
+}
+
+const PARAMETER_NAME_UNREADABLE_KEYWORDS = ["$ref", "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentRequired", "dependentSchemas", "dependencies"];
+
+/** Top-level parameter names, required first, e.g. `(query, limit?)`; empty when the schema can't be read. */
+function formatParameterNames(toolMeta: ToolMetadata): string {
+  if (toolMeta.resourceUri) return "()";
+  const schema = toolMeta.inputSchema;
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return "";
+  // Composed or conditional schemas can add properties or requirements that a top-level read would miss.
+  if (PARAMETER_NAME_UNREADABLE_KEYWORDS.some(keyword => Object.hasOwn(schema, keyword))) return "";
+  const { properties, required } = schema as { properties?: unknown; required?: unknown };
+  if (required !== undefined && !Array.isArray(required)) return "";
+  if (properties !== undefined && (!properties || typeof properties !== "object" || Array.isArray(properties))) return "";
+  const requiredNames = (required ?? []).filter((name): name is string => typeof name === "string");
+  if (properties === undefined && requiredNames.length === 0 && (schema as { type?: unknown }).type !== "object") return "";
+  const names = properties ? Object.keys(properties) : [];
+  const requiredSet = new Set(requiredNames);
+  const ordered = [
+    ...names.filter(name => requiredSet.has(name)),
+    ...requiredNames.filter(name => !names.includes(name)),
+    ...names.filter(name => !requiredSet.has(name)).map(name => `${name}?`),
+  ];
+  return `(${[...new Set(ordered)].join(", ")})`;
 }
 
 export function executeInstructions(state: McpExtensionState, server: string): ProxyToolResult {

@@ -259,6 +259,109 @@ describe("proxy discovery", () => {
     );
   });
 
+  it("lists each tool's parameter names with required ones first", () => {
+    const state = createState();
+    state.toolMetadata.set("demo", [
+      {
+        name: "demo_records",
+        originalName: "records",
+        description: "List records",
+        inputSchema: {
+          type: "object",
+          properties: { limit: { type: "number" }, query: { type: "string" }, offset: { type: "number" } },
+          required: ["query"],
+        },
+      },
+      { name: "demo_ping", originalName: "ping", description: "Ping", inputSchema: { type: "object" } },
+      { name: "demo_untyped", originalName: "untyped", description: "No schema" },
+      { name: "demo_readme", originalName: "readme", description: "Read the readme", resourceUri: "demo://readme" },
+    ]);
+
+    const lines = executeList(state, "demo").content[0].text.split("\n").filter(line => line.startsWith("- "));
+
+    expect(lines).toEqual([
+      "- demo_records(query, limit?, offset?) - List records",
+      "- demo_ping() - Ping",
+      "- demo_untyped - No schema",
+      "- demo_readme() - Read the readme",
+    ]);
+  });
+
+  it("lists required names that the schema does not declare in properties", () => {
+    const state = createState();
+    state.toolMetadata.set("demo", [
+      { name: "demo_required_only", originalName: "required_only", description: "Required only", inputSchema: { type: "object", required: ["query"] } },
+      {
+        name: "demo_required_outside",
+        originalName: "required_outside",
+        description: "Required outside properties",
+        inputSchema: { type: "object", properties: { limit: {} }, required: ["query"] },
+      },
+    ]);
+
+    const lines = executeList(state, "demo").content[0].text.split("\n").filter(line => line.startsWith("- "));
+
+    expect(lines).toEqual([
+      "- demo_required_only(query) - Required only",
+      "- demo_required_outside(query, limit?) - Required outside properties",
+    ]);
+  });
+
+  it("omits parameter names when composed or conditional schema keywords could change them", () => {
+    const state = createState();
+    state.toolMetadata.set("demo", [
+      {
+        name: "demo_all_of_required",
+        originalName: "all_of_required",
+        description: "Required in allOf",
+        inputSchema: { type: "object", properties: { query: { type: "string" } }, allOf: [{ required: ["query"] }] },
+      },
+      {
+        name: "demo_all_of_properties",
+        originalName: "all_of_properties",
+        description: "Properties in allOf",
+        inputSchema: { type: "object", allOf: [{ properties: { query: { type: "string" } }, required: ["query"] }] },
+      },
+      {
+        name: "demo_ref",
+        originalName: "ref",
+        description: "Root ref",
+        inputSchema: { $ref: "#/$defs/Input", $defs: { Input: { type: "object", properties: { query: { type: "string" } } } } },
+      },
+      {
+        name: "demo_conditional",
+        originalName: "conditional",
+        description: "Conditional requirement",
+        inputSchema: {
+          type: "object",
+          properties: { mode: { type: "string" }, query: { type: "string" } },
+          if: { properties: { mode: { const: "search" } } },
+          then: { required: ["query"] },
+        },
+      },
+      {
+        name: "demo_dependent",
+        originalName: "dependent",
+        description: "Dependent requirement",
+        inputSchema: {
+          type: "object",
+          properties: { start: { type: "string" }, end: { type: "string" } },
+          dependentRequired: { start: ["end"] },
+        },
+      },
+    ]);
+
+    const lines = executeList(state, "demo").content[0].text.split("\n").filter(line => line.startsWith("- "));
+
+    expect(lines).toEqual([
+      "- demo_all_of_required - Required in allOf",
+      "- demo_all_of_properties - Properties in allOf",
+      "- demo_ref - Root ref",
+      "- demo_conditional - Conditional requirement",
+      "- demo_dependent - Dependent requirement",
+    ]);
+  });
+
   describe.each(["global", "server"] as const)("%s toolPrefix discovery", scope => {
     it.each([
       ["server", "demo-mcp_search"],

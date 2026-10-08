@@ -31,6 +31,8 @@ When a server declares MCP tool annotations, `describe` adds a `Hints:` line suc
 
 When `includeSchemas` is enabled, search and describe render common JSON Schema parameters as compact TypeScript shapes like `{ query: string; limit?: number; }`, with the older schema formatter retained as a fallback for unsupported schemas.
 
+`mcp({ server: "name" })` lists each tool's top-level parameter names after its name, required ones first, such as `- search(query, limit?) - ...`. Types and nested fields stay in `describe`. A tool whose schema has no properties shows `()`. A tool with no schema, or one whose top level uses `$ref`, `allOf`, `anyOf`, `oneOf`, `not`, `if`/`then`/`else`, or dependent requirements, shows no parentheses, because those can add parameters or requirements the list would miss.
+
 Most tools declare no output schema. After such a tool returns structured content or a JSON text result, `describe` (and `tools.describe` in `mcpScript`) also shows the output shape seen so far: field names and types only, never values, labeled as observed, not a contract. A wide object that appears more than once, such as a user under `user`, `assignee`, and `assignees`, is written once as a named type. With `scriptMode` on, shapes are also saved in `mcp-cache.json`, so later sessions can write a script without calling the tool first. A shape is used only while the tool's description and input schema stay the same, and a saved one is dropped when they or the server's config change.
 
 When an `mcpScript` run throws, times out, or returns `[]`, `{}`, `null`, `""`, or nothing, its result ends with the shapes seen from the schemaless tools it called, so the model can fix a wrong field guess without a separate look at the data.

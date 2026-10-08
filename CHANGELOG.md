@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `mcp({ server })` now shows each tool's parameter names, required ones first, as in `- get_record(record_id, fields?) - ...`. Models that listed a server's tools and then called one used to guess argument names, such as `id` for `record_id`, and spend a turn on the validation error. Types and nested fields are still only in `describe`.
+
 ### Fixed
 
 - `SYSTEMONE_ENDPOINT` can now point at a System One server on your own machine, such as `http://127.0.0.1:8080/v1/systemone`. Plain `http` used to be rejected everywhere; it is now accepted on `localhost`, `127.0.0.0/8`, and `[::1]`, and every other endpoint still needs `https`. A local server that ignores keys still needs a non-empty `SYSTEMONE_API_KEY`. Thanks to [@amchen2310](https://github.com/amchen2310) for reporting it in [#810](https://github.com/nicobailon/pi-mcp-adapter/issues/810).
