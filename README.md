@@ -41,7 +41,7 @@ The built-in has two things the adapter doesn't: Pi's permission extensions see 
 | MCP UI apps | Left out | Native window or browser |
 | Add a server | `pi mcp add` in a shell, then `/reload` | Give the agent the URL: `mcp({ action: "install", url })` connects it and checks its tools in the current session; for an OAuth server it opens sign-in first and checks the tools once you approve |
 | Configs from Cursor, Claude Code, Codex, VS Code | Convert by hand | Imported |
-| Guided setup in a session | No; `/mcp` manages servers that are already configured | `/mcp-adapter setup` overlay: imports configs found on your machine, adds presets (Figma desktop and RepoPrompt when installed, GitHub, Notion, Context7, DeepWiki, Parallel Search, Tavily Search, Chrome DevTools), and previews each file change before writing |
+| Guided setup in a session | No; `/mcp` manages servers that are already configured | `/mcp-adapter setup` overlay: imports configs found on your machine, adds presets (Figma desktop and RepoPrompt when installed, GitHub, Notion, Context7, DeepWiki, Parallel Search, Tavily Search, Cohesivity, Chrome DevTools), and previews each file change before writing |
 | Ask before risky tools | Through a permission extension, which sees every MCP call | Built in (`approveTools`); permission extensions see proxy calls as the proxy tool |
 | Roots (session directory sent to servers) | Yes | No |
 | Shell commands | `pi mcp add`, `remove`, `list` | `pi-mcp-adapter init`, `doctor` |

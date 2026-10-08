@@ -70,6 +70,12 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
     },
   },
   {
+    id: "cohesivity",
+    name: "Cohesivity",
+    summary: "Set up a backend (Postgres, hosting, email, storage) without an account.",
+    entry: { url: "https://cohesivity.ai/mcp", protocolVersion: "auto" },
+  },
+  {
     id: "notion",
     name: "Notion",
     summary: "Search and work with your Notion workspace.",

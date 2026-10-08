@@ -2256,6 +2256,20 @@ describe("config discovery", () => {
     });
   });
 
+  it("places the Cohesivity preset directly after Tavily Search with no credentials", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pi-mcp-cohesivity-preset-")), "mcp.json");
+    const { KNOWN_SERVER_PRESETS, writeSharedServerEntry } = await import("../config.ts");
+    const tavilyIndex = KNOWN_SERVER_PRESETS.findIndex(({ id }) => id === "tavily-search");
+    const preset = KNOWN_SERVER_PRESETS[tavilyIndex + 1]!;
+
+    expect(preset.id).toBe("cohesivity");
+    expect(preset.entry).toEqual({ url: "https://cohesivity.ai/mcp", protocolVersion: "auto" });
+    writeSharedServerEntry(path, preset.id, preset.entry);
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({
+      mcpServers: { cohesivity: preset.entry },
+    });
+  });
+
   it("uses automatic protocol negotiation for remote known-server presets", async () => {
     const { KNOWN_SERVER_PRESETS } = await import("../config.ts");
     for (const preset of KNOWN_SERVER_PRESETS.filter(({ entry }) => entry.url)) {

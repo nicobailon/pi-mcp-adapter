@@ -82,6 +82,24 @@ describe("mcp setup panel theme and component rendering", () => {
     panel.dispose();
   });
 
+  it("shows Cohesivity directly below Tavily Search in the add-server list", () => {
+    const panel = createMcpSetupPanel(
+      createDiscovery(),
+      createCallbacks(),
+      { mode: "setup", onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false } },
+      { requestRender: () => {}, terminal: { rows: 60 } },
+      () => {},
+    );
+
+    const lines = panel.render(200).map(stripAnsi);
+    const tavilyIndex = lines.findIndex((line) => line.includes("Tavily Search"));
+    expect(tavilyIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[tavilyIndex + 1]).toContain("Cohesivity");
+    moveCursorTo(panel, "Cohesivity");
+    expect(panel.render(200).map(stripAnsi).join("\n")).toContain("without an account.");
+    panel.dispose();
+  });
+
   it("shows preview errors without breaking setup or import rendering", () => {
     const discovery = createDiscovery();
     discovery.imports = [{ kind: "cursor", path: "/tmp/cursor-mcp.json", serverCount: 1 }];
