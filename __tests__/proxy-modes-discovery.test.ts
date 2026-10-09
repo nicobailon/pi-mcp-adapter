@@ -297,6 +297,12 @@ describe("proxy discovery", () => {
         description: "Required outside properties",
         inputSchema: { type: "object", properties: { limit: {} }, required: ["query"] },
       },
+      {
+        name: "demo_suffix_collision",
+        originalName: "suffix_collision",
+        description: "Name ends in a question mark",
+        inputSchema: { type: "object", properties: { "query?": {}, query: {} }, required: ["query?", "query?"] },
+      },
     ]);
 
     const lines = executeList(state, "demo").content[0].text.split("\n").filter(line => line.startsWith("- "));
@@ -304,6 +310,7 @@ describe("proxy discovery", () => {
     expect(lines).toEqual([
       "- demo_required_only(query) - Required only",
       "- demo_required_outside(query, limit?) - Required outside properties",
+      "- demo_suffix_collision(query?, query?) - Name ends in a question mark",
     ]);
   });
 

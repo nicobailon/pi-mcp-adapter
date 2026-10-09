@@ -1089,16 +1089,15 @@ function formatParameterNames(toolMeta: ToolMetadata): string {
   const { properties, required } = schema as { properties?: unknown; required?: unknown };
   if (required !== undefined && !Array.isArray(required)) return "";
   if (properties !== undefined && (!properties || typeof properties !== "object" || Array.isArray(properties))) return "";
-  const requiredNames = (required ?? []).filter((name): name is string => typeof name === "string");
-  if (properties === undefined && requiredNames.length === 0 && (schema as { type?: unknown }).type !== "object") return "";
+  const requiredSet = new Set((required ?? []).filter((name): name is string => typeof name === "string"));
+  if (properties === undefined && requiredSet.size === 0 && (schema as { type?: unknown }).type !== "object") return "";
   const names = properties ? Object.keys(properties) : [];
-  const requiredSet = new Set(requiredNames);
   const ordered = [
     ...names.filter(name => requiredSet.has(name)),
-    ...requiredNames.filter(name => !names.includes(name)),
+    ...[...requiredSet].filter(name => !names.includes(name)),
     ...names.filter(name => !requiredSet.has(name)).map(name => `${name}?`),
   ];
-  return `(${[...new Set(ordered)].join(", ")})`;
+  return `(${ordered.join(", ")})`;
 }
 
 export function executeInstructions(state: McpExtensionState, server: string): ProxyToolResult {

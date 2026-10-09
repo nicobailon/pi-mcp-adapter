@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `mcp({ server })` now shows each tool's parameter names, required ones first, as in `- get_record(record_id, fields?) - ...`. Models that listed a server's tools and then called one used to guess argument names, such as `id` for `record_id`, and spend a turn on the validation error. Types and nested fields are still only in `describe`.
+- `mcp({ server })` now shows each tool's parameter names, required ones first, as in `- get_record(record_id, fields?) - ...`. Models that listed a server's tools and then called one used to guess argument names, such as `id` for `record_id`, and spend a turn on the validation error. Types and nested fields are still only in `describe`. Thanks to [@rakesh-vs](https://github.com/rakesh-vs) for [PR #817](https://github.com/nicobailon/pi-mcp-adapter/pull/817).
 
 ### Fixed
 
