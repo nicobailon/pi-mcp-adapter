@@ -175,8 +175,8 @@ describe("package.json dependency policy", () => {
     );
     expect(productionLegacySdk).toEqual([]);
     expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBeUndefined();
-    expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBe("2.0.0");
-    expect(packageJson.dependencies?.["@modelcontextprotocol/core"]).toBe("2.0.0");
+    expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBe("2.3.1");
+    expect(packageJson.dependencies?.["@modelcontextprotocol/core"]).toBe("2.3.1");
     expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
   });
 });

@@ -182,8 +182,8 @@
     "dist"
   ],
   "dependencies": {
-    "@modelcontextprotocol/client": "2.0.0",
-    "@modelcontextprotocol/core": "2.0.0",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/core": "2.3.1",
     "@modelcontextprotocol/ext-tasks": "^0.1.0",
     "@napi-rs/keyring": "^2.1.0",
     "@typesafe-ai/sdk": "0.6.0",

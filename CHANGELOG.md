@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Running Pi with `--mcp-config <file>` (or giving `createMcpAdapter()` a `configPath`) no longer adds `"-builtin:mcp"` to Pi's user `settings.json`. A one-off process like `pi -e <adapter> --mcp-config <file> -p ...` doesn't need it, because Pi already leaves its built-in MCP out of that process. Installed adapters without an explicit config path still turn the built-in off as before. Thanks to [@deniskern](https://github.com/deniskern) for reporting it in [#811](https://github.com/nicobailon/pi-mcp-adapter/issues/811).
 - `pi-mcp-adapter doctor` no longer reports project servers as blocked by project trust when a Pi session in the same directory would trust the project. It now loads Pi from the `pi` on PATH when the adapter is installed as a Pi package, and it trusts a project with no trust-requiring Pi resources, as Pi does. Thanks to [@felipe-saavedra](https://github.com/felipe-saavedra) for reporting it in [#809](https://github.com/nicobailon/pi-mcp-adapter/issues/809).
 
+### Security
+
+- The MCP client packages are now 2.3.1, which fixes [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h). With 2.0.0, a malicious or compromised MCP server could name its own authorization server and receive the refresh token and client secret saved from an earlier sign-in. Thanks to [@cash-flow-king](https://github.com/cash-flow-king) for reporting it in [#816](https://github.com/nicobailon/pi-mcp-adapter/issues/816).
+
 ## [5.1.0] - 2026-10-05
 
 ### Highlights
