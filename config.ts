@@ -54,6 +54,7 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
     summary: "Search the web and fetch pages without an API key.",
     entry: {
       url: "https://search.parallel.ai/mcp",
+      headers: { "User-Agent": "pi-mcp-adapter" },
       protocolVersion: "auto",
       directTools: true,
     },

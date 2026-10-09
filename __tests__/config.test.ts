@@ -2263,6 +2263,7 @@ describe("config discovery", () => {
     }
     expect(KNOWN_SERVER_PRESETS.find(({ id }) => id === "parallel-search")?.entry).toEqual({
       url: "https://search.parallel.ai/mcp",
+      headers: { "User-Agent": "pi-mcp-adapter" },
       protocolVersion: "auto",
       directTools: true,
     });
