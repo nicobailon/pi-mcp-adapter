@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- The MCP client packages are now 2.3.1, which fixes [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h). With 2.0.0, a malicious or compromised MCP server could name its own authorization server and receive the refresh token and client secret saved from an earlier sign-in. Thanks to [@cash-flow-king](https://github.com/cash-flow-king) for reporting it in [#816](https://github.com/nicobailon/pi-mcp-adapter/issues/816).
+- The MCP client packages are now 2.3.1, which fixes [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h). With 2.0.0, a malicious or compromised MCP server could name its own authorization server and receive the refresh token and client secret saved from an earlier sign-in. With this SDK, a server URL that redirects to a different origin is no longer followed, so configure the final URL instead; a redirect from `http` to `https` on the same host still works. Thanks to [@cash-flow-king](https://github.com/cash-flow-king) for reporting it in [#816](https://github.com/nicobailon/pi-mcp-adapter/issues/816) and to [@rakesh-vs](https://github.com/rakesh-vs) for [PR #819](https://github.com/nicobailon/pi-mcp-adapter/pull/819).
 
 ## [5.1.0] - 2026-10-05
 
