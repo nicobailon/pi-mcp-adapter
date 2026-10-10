@@ -26,6 +26,8 @@ import { syncNamespaceProxyTools } from "./namespace-tools.ts";
 import { restoreSessionApprovalState } from "./session-approvals.ts";
 import { createRetryableLoader } from "./lazy-loader.ts";
 import { toToolParameters } from "./tool-parameters.ts";
+import { readPanelOpenKeys } from "./panel-keys.ts";
+import { getAgentPath } from "./agent-dir.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
 export type { ServerEntry } from "./types.ts";
@@ -1721,6 +1723,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   registerMcpCommand("mcp-adapter");
   // /mcp at load replaces Pi 0.99+'s built-in MCP; a supplied config doesn't read Pi's files, so it keeps the built-in.
   if (!programmaticConfig || !piSupportsMcp(pi)) registerMcpCommand("mcp");
+  // Opt-in `mcp.panel.open` keys open the panel without touching the editor draft.
+  // Shortcut handlers get no reload(), so dispatch the command: its context has one.
+  if (!programmaticConfig) {
+    for (const key of readPanelOpenKeys(getAgentPath("keybindings.json"))) {
+      pi.registerShortcut(key, {
+        description: "Open the MCP panel",
+        handler: () => pi.sendUserMessage("/mcp-adapter", { expandPromptTemplates: true }),
+      });
+    }
+  }
 
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",

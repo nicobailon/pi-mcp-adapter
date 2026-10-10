@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- You can open the MCP panel from a key you choose, so turning a server on or off no longer means clearing the prompt you are typing. Bind `mcp.panel.open` in Pi's `keybindings.json`, for example `{ "mcp.panel.open": "alt+m" }`. There is no default key. Thanks to [@Milor123](https://github.com/Milor123) for [#822](https://github.com/nicobailon/pi-mcp-adapter/issues/822).
+
 ## [5.2.0] - 2026-10-09
 
 ### Highlights
