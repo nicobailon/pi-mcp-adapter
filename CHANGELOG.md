@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - You can open the MCP panel from a key you choose, so turning a server on or off no longer means clearing the prompt you are typing. Bind `mcp.panel.open` in Pi's `keybindings.json`, for example `{ "mcp.panel.open": "alt+m" }`. There is no default key. Thanks to [@Milor123](https://github.com/Milor123) for [#822](https://github.com/nicobailon/pi-mcp-adapter/issues/822).
 
+### Changed
+
+- The Parallel Search preset in `/mcp setup` now sends `User-Agent: pi-mcp-adapter`, so Parallel can see traffic from this project. It is a fixed project name with no user or install details. Existing `mcp.json` entries are unchanged. Thanks to [@georgeatparallel](https://github.com/georgeatparallel) for [#821](https://github.com/nicobailon/pi-mcp-adapter/pull/821).
+
 ## [5.2.0] - 2026-10-09
 
 ### Highlights
