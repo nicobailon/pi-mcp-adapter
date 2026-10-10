@@ -63,6 +63,7 @@ function createPi(registered: Array<{ name: string; config: Record<string, unkno
     unregisterTool: vi.fn(() => true),
     registerFlag: vi.fn(),
     registerCommand: vi.fn(),
+    registerShortcut: vi.fn(),
     on: vi.fn((event: string, handler: (...args: any[]) => unknown) => {
       handlers.set(event, handler);
     }),

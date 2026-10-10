@@ -77,6 +77,7 @@ function createPi(events: ReturnType<typeof createEventBus>) {
     unregisterTool: vi.fn(() => true),
     registerFlag: vi.fn(),
     registerCommand: vi.fn(),
+    registerShortcut: vi.fn(),
     on: vi.fn((event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler)),
     events,
     getAllTools: vi.fn(() => []),

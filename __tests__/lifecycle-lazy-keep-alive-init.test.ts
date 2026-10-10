@@ -322,6 +322,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
       registerTool: vi.fn((tool: any) => registeredTools.set(tool.name, tool)),
       registerFlag: vi.fn(),
       registerCommand: vi.fn(),
+      registerShortcut: vi.fn(),
       on: vi.fn((event: string, handler: (...args: any[]) => unknown) => handlers.set(event, handler)),
       getAllTools: vi.fn(() => []),
       getActiveTools: vi.fn(() => ["mcp"]),
