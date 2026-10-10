@@ -18,20 +18,23 @@ describe("mcp.panel.open keybinding", () => {
     rmSync(agentDir, { recursive: true, force: true });
   });
 
-  function load(keybindings?: string) {
+  function load(keybindings?: string, options?: Parameters<typeof createMcpAdapter>[0]) {
     if (keybindings !== undefined) writeFileSync(join(agentDir, "keybindings.json"), keybindings);
     const fns = new Map<PropertyKey, ReturnType<typeof vi.fn>>();
     const pi = new Proxy({ events: { on: vi.fn(), emit: vi.fn() }, getFlag: () => undefined } as Record<PropertyKey, unknown>, {
       get: (target, key) => target[key] ?? fns.get(key) ?? fns.set(key, vi.fn()).get(key),
     });
-    createMcpAdapter()(pi as never);
+    createMcpAdapter(options)(pi as never);
     return pi as Record<string, ReturnType<typeof vi.fn>>;
   }
 
-  it("opens the panel through /mcp-adapter from each configured key", async () => {
-    const pi = load(JSON.stringify({ "mcp.panel.open": ["alt+m", "ctrl+shift+m"] }));
+  it.each([
+    ["one key", "alt+m", ["alt+m"]],
+    ["a list of keys", ["alt+m", "ctrl+shift+m"], ["alt+m", "ctrl+shift+m"]],
+  ])("opens the panel through /mcp-adapter from %s", async (_case, binding, keys) => {
+    const pi = load(JSON.stringify({ "mcp.panel.open": binding }));
 
-    expect(pi.registerShortcut.mock.calls.map(([key]) => key)).toEqual(["alt+m", "ctrl+shift+m"]);
+    expect(pi.registerShortcut.mock.calls.map(([key]) => key)).toEqual(keys);
     await pi.registerShortcut.mock.calls[0][1].handler({});
     expect(pi.sendUserMessage).toHaveBeenCalledWith("/mcp-adapter", { expandPromptTemplates: true });
   });
@@ -43,5 +46,10 @@ describe("mcp.panel.open keybinding", () => {
     ["a malformed file", "{ not json"],
   ])("registers no shortcut with %s", (_case, keybindings) => {
     expect(load(keybindings).registerShortcut).not.toHaveBeenCalled();
+  });
+
+  it("registers no shortcut when the host supplies the config", () => {
+    const pi = load(JSON.stringify({ "mcp.panel.open": "alt+m" }), { config: { mcpServers: {} } });
+    expect(pi.registerShortcut).not.toHaveBeenCalled();
   });
 });
