@@ -186,13 +186,19 @@ describe("project MCP server trust", () => {
     expect(select).toHaveBeenCalledTimes(6);
   });
 
-  it("skips unapproved servers headlessly unless the global policy allows them", async () => {
+  it.each([
+    { hasUI: false, mode: "print" },
+    { hasUI: true, mode: "rpc" },
+  ])("skips unapproved servers without a dialog in $mode mode unless the global policy allows them", async (session) => {
     writeJson(join(cwd, ".mcp.json"), { settings: { projectServers: "allow" }, mcpServers: { local: { command: "node" } } });
     let modules = await load();
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const select = vi.fn();
     let loaded = modules.config.loadMcpConfigWithSources(undefined, cwd);
     expect(loaded.projectServerPolicy).toBe("ask");
-    expect((await modules.trust.applyProjectServerTrust(loaded, context())).blockedServers.has("local")).toBe(true);
+    const blocked = (await modules.trust.applyProjectServerTrust(loaded, context({ ...session, ui: { select } }))).blockedServers;
+    expect(blocked.get("local")?.reason).toBe("approval-required");
+    expect(select).not.toHaveBeenCalled();
     expect(warning).toHaveBeenCalledWith(expect.stringContaining("Ignoring settings.projectServers"));
 
     writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { settings: { projectServers: "allow" }, mcpServers: {} });
@@ -200,7 +206,8 @@ describe("project MCP server trust", () => {
     modules = await load();
     loaded = modules.config.loadMcpConfigWithSources(undefined, cwd);
     expect(loaded.projectServerPolicy).toBe("allow");
-    expect((await modules.trust.applyProjectServerTrust(loaded, context())).blockedServers.size).toBe(0);
+    expect((await modules.trust.applyProjectServerTrust(loaded, context({ ...session, ui: { select } }))).blockedServers.size).toBe(0);
+    expect(select).not.toHaveBeenCalled();
   });
 
   it("denies on the preselected option or escape and keeps the server blocked for the session", async () => {

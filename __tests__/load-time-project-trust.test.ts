@@ -114,7 +114,7 @@ describe("load-time initialization with project server overrides", () => {
     await pi.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, {
       cwd,
       hasUI: true,
-      mode: "rpc",
+      mode: "tui",
       isProjectTrusted: () => true,
       ui: { select, notify: vi.fn(), setStatus: vi.fn(), theme: undefined },
       modelRegistry: {},
