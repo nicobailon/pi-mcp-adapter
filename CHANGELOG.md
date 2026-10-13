@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Pi in RPC mode no longer hangs at startup in a project with an unapproved project server or an unimported Pi sign-in. The adapter asked in a dialog, but Pi reads RPC input only after startup, so no answer could arrive and hosts such as Paseo saw Pi never respond. RPC sessions now skip unapproved project servers as the docs describe, and `"projectServers": "allow"` admits them. The approval and sign-in import dialogs appear only in the interactive TUI.
+- Pi in RPC mode no longer hangs at startup in a project with an unapproved project server or an unimported Pi sign-in. The adapter asked in a dialog, but Pi reads RPC input only after startup, so no answer could arrive and hosts such as Paseo saw Pi never respond. RPC sessions now skip unapproved project servers as the docs describe, and `"projectServers": "allow"` admits them. The approval and sign-in import dialogs appear only in the interactive TUI. Thanks to [@itssimon](https://github.com/itssimon) for [#825](https://github.com/nicobailon/pi-mcp-adapter/pull/825).
 
 ## [5.2.0] - 2026-10-09
 
