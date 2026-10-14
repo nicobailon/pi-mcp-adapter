@@ -2013,6 +2013,33 @@ describe("config discovery", () => {
     });
   });
 
+  it("imports OpenCode V1 local servers that use env instead of environment", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-env-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-env-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { imports: ["opencode"], mcpServers: {} });
+    writeJson(join(home, ".config", "opencode", "opencode.json"), {
+      mcp: {
+        calendar: {
+          type: "local",
+          command: ["/usr/bin/google-calendar-mcp"],
+          enabled: true,
+          env: { GOOGLE_OAUTH_CREDENTIALS: "/home/me/.config/gcp-oauth.keys.json" },
+        },
+      },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers).toEqual({
+      calendar: {
+        command: "/usr/bin/google-calendar-mcp",
+        args: [],
+        env: { GOOGLE_OAUTH_CREDENTIALS: "/home/me/.config/gcp-oauth.keys.json" },
+      },
+    });
+  });
+
   it("imports OpenCode v2 project servers through host discovery", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-v2-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-v2-project-"));

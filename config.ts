@@ -1385,6 +1385,24 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 
+/** OpenCode V1 uses `env`; some configs use `environment`. Prefer `env` when both are set. */
+function readOpenCodeEnv(raw: Record<string, unknown>): Record<string, string> | undefined {
+  return toStringRecord(raw.env) ?? toStringRecord(raw.environment);
+}
+
+function deleteOpenCodeEnvFields(target: Record<string, unknown>): void {
+  delete target.env;
+  delete target.environment;
+}
+
+function mergeOpenCodeEnvFields(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>,
+): Record<string, string> | undefined {
+  const merged = { ...readOpenCodeEnv(base), ...readOpenCodeEnv(override) };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 function mergeOpenCodeConfigs(base: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
   const baseMcp = base.mcp;
   const nextMcp = next.mcp;
@@ -1402,7 +1420,7 @@ function mergeOpenCodeConfigs(base: Record<string, unknown>, next: Record<string
         const safeBase = { ...(baseEntry as Record<string, unknown>) };
         const override = nextEntry as Record<string, unknown>;
         if (typeof override.type === "string" && override.type !== safeBase.type) {
-          for (const field of ["command", "environment", "cwd", "url", "headers", "oauth"]) delete safeBase[field];
+          for (const field of ["command", "env", "environment", "cwd", "url", "headers", "oauth"]) delete safeBase[field];
         }
         if (typeof override.url === "string" && override.url !== safeBase.url) {
           delete safeBase.headers;
@@ -1414,13 +1432,16 @@ function mergeOpenCodeConfigs(base: Record<string, unknown>, next: Record<string
             || override.command.length !== baseCommand.length
             || override.command.some((value, index) => value !== baseCommand[index]);
           if (commandChanged) {
-            delete safeBase.environment;
+            deleteOpenCodeEnvFields(safeBase);
             delete safeBase.cwd;
           }
         }
 
         const mergedEntry = { ...safeBase, ...override };
-        for (const field of ["environment", "headers", "oauth"]) {
+        const mergedEnv = mergeOpenCodeEnvFields(safeBase, override);
+        deleteOpenCodeEnvFields(mergedEntry);
+        if (mergedEnv) mergedEntry.env = mergedEnv;
+        for (const field of ["headers", "oauth"]) {
           const baseField = safeBase[field];
           const nextField = override[field];
           if (
@@ -1478,7 +1499,7 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
       if (raw.enabled === false || raw.disabled === true) continue;
 
       if (raw.type === "local" && Array.isArray(raw.command) && raw.command.length > 0 && raw.command.every((value): value is string => typeof value === "string")) {
-        const env = toStringRecord(raw.environment);
+        const env = readOpenCodeEnv(raw);
         const command = raw.command[0];
         if (command === undefined) continue;
         const mapped: ServerEntry = {
