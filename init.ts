@@ -120,7 +120,7 @@ export async function initializeMcp(
   const configPath = options.config !== undefined
     ? undefined
     : options.configPath ?? (pi.getFlag("mcp-config") as string | undefined);
-  const projectServersFlag = pi.getFlag("mcp-project-servers");
+  const projectServersFlag = options.config !== undefined ? undefined : pi.getFlag("mcp-project-servers");
   if (projectServersFlag !== undefined && projectServersFlag !== "allow") {
     console.warn(`Ignoring --mcp-project-servers ${JSON.stringify(projectServersFlag)}; the only accepted value is "allow"`);
   }
