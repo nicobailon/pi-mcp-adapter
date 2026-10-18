@@ -102,6 +102,17 @@ export const MCP_RUNTIME_REGISTER_VERSION = 1 as const;
 export const MCP_RUNTIME_SNAPSHOT_EVENT = "pi-mcp-adapter:runtime-snapshot:v1" as const;
 export const MCP_RUNTIME_SNAPSHOT_VERSION = 1 as const;
 
+export const MCP_CLIENT_BRIDGE_EVENT = "pi-mcp-adapter:client-bridge:v1" as const;
+export const MCP_CLIENT_BRIDGE_VERSION = 1 as const;
+export interface McpClientBridgeRequest {
+  version: typeof MCP_CLIENT_BRIDGE_VERSION;
+  operation: "manifest" | "dispatch";
+  context?: ExtensionContext;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: Promise<unknown>;
+}
+
 export type McpRuntimeRegistrationResult =
   | { ok: true; registration: McpServerRegistration }
   | { ok: false; error: Error };
@@ -920,6 +931,116 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   };
   runtimeRegistrars.set(pi, registerAdapterServer);
   runtimeSnapshotters.set(pi, getRuntimeServerSnapshot);
+  pi.events.on(MCP_CLIENT_BRIDGE_EVENT, (rawRequest: unknown) => {
+    if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
+    const request = rawRequest as McpClientBridgeRequest;
+    if (request.result !== undefined) return;
+    if (request.version !== MCP_CLIENT_BRIDGE_VERSION) {
+      request.result = Promise.reject(new Error("Unsupported MCP client bridge version"));
+      return;
+    }
+    request.result = (async () => {
+      if (!request.context) throw new Error("MCP adapter session context is required");
+      const active = await ensureSessionRuntime(request.context);
+      if (!active || state !== active || active.owner !== currentOwner || !currentOwner?.isActive()) {
+        throw new Error("MCP adapter session is unavailable");
+      }
+      const encodeCapability = (server: string, capability: string): string =>
+        `mcp1:${encodeURIComponent(server)}:${encodeURIComponent(capability)}`;
+      const decodeCapability = (encoded: string): [string, string] | undefined => {
+        const match = /^mcp1:([^:]*):([^:]*)$/.exec(encoded);
+        if (!match || match[1] === undefined || match[2] === undefined) return undefined;
+        try {
+          const tuple: [string, string] = [decodeURIComponent(match[1]), decodeURIComponent(match[2])];
+          if (!tuple[0] || !tuple[1] || encodeCapability(...tuple) !== encoded) return undefined;
+          return tuple;
+        } catch {
+          return undefined;
+        }
+      };
+      const servers = Object.entries(active.config.mcpServers)
+        .filter(([, definition]) => !isServerDisabled(definition));
+      if (request.operation === "manifest") {
+        const tools: Array<Record<string, unknown>> = [];
+        const resources: Array<Record<string, unknown>> = [];
+        const prompts: Array<Record<string, unknown>> = [];
+        for (const [serverName, definition] of servers) {
+          try {
+            const connection = await active.manager.connect(serverName, definition);
+            const [listedTools, listedResources, listedPrompts] = await Promise.all([
+              connection.client.listTools(),
+              connection.client.listResources(),
+              connection.client.listPrompts(),
+            ]);
+            for (const tool of listedTools.tools) tools.push({
+              name: encodeCapability(serverName, tool.name),
+              description: tool.description ?? "",
+              inputSchema: tool.inputSchema,
+            });
+            for (const resource of listedResources.resources) resources.push({
+              uri: encodeCapability(serverName, resource.uri),
+              name: `${serverName}: ${resource.name}`,
+              description: resource.description ?? "",
+              mimeType: resource.mimeType ?? "text/plain",
+            });
+            for (const prompt of listedPrompts.prompts) prompts.push({
+              name: encodeCapability(serverName, prompt.name),
+              description: prompt.description ?? "",
+              arguments: prompt.arguments ?? [],
+            });
+          } catch {
+            // A server's connection or metadata failure must not hide other servers.
+            continue;
+          }
+        }
+        return { tools, resources, prompts };
+      }
+      if (request.operation !== "dispatch" || !request.method) {
+        throw new Error("Unsupported MCP bridge operation");
+      }
+      if (
+        request.method !== "tools/call" &&
+        request.method !== "resources/read" &&
+        request.method !== "prompts/get"
+      ) {
+        throw new Error("Unsupported MCP bridge method");
+      }
+      if (request.params !== undefined &&
+        (typeof request.params !== "object" || request.params === null || Array.isArray(request.params))) {
+        throw new Error("MCP bridge params must be an object");
+      }
+      const params = request.params ?? {};
+      const field = request.method === "resources/read" ? "uri" : "name";
+      const encoded = params[field];
+      if (typeof encoded !== "string") throw new Error("Invalid MCP bridge capability");
+      const decoded = decodeCapability(encoded);
+      if (!decoded) throw new Error("Invalid MCP bridge capability");
+      const [serverName, capability] = decoded;
+      const definition = active.config.mcpServers[serverName];
+      if (!definition || isServerDisabled(definition)) throw new Error("MCP server is unavailable");
+      const connection = await active.manager.connect(serverName, definition);
+      if (request.method === "tools/call") {
+        if (params.arguments !== undefined && (typeof params.arguments !== "object" || params.arguments === null || Array.isArray(params.arguments))) {
+          throw new Error("Tool arguments must be an object");
+        }
+        return connection.client.callTool(
+          { name: capability, arguments: (params.arguments as Record<string, unknown> | undefined) ?? {} },
+          active.manager.getRequestOptions(serverName),
+        );
+      }
+      if (request.method === "resources/read") return active.manager.readResource(serverName, capability);
+      if (request.method === "prompts/get") {
+        if (params.arguments !== undefined && (typeof params.arguments !== "object" || params.arguments === null || Array.isArray(params.arguments))) {
+          throw new Error("Prompt arguments must be an object");
+        }
+        if (params.arguments && Object.values(params.arguments as Record<string, unknown>).some(value => typeof value !== "string")) {
+          throw new Error("Prompt argument values must be strings");
+        }
+        return active.manager.getPrompt(serverName, capability, params.arguments as Record<string, string> | undefined);
+      }
+      throw new Error("Unsupported MCP bridge method");
+    })();
+  });
   pi.events.on(MCP_RUNTIME_REGISTER_EVENT, (rawRequest: unknown) => {
     if (typeof rawRequest !== "object" || rawRequest === null || Array.isArray(rawRequest)) return;
     const request = rawRequest as McpRuntimeRegistrationRequest;

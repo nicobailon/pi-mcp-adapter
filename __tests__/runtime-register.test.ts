@@ -136,6 +136,17 @@ function createState() {
     manager: {
       getAllConnections: () => new Map(),
       getConnection: vi.fn(() => undefined),
+      connect: vi.fn(async () => ({
+        client: {
+          listTools: vi.fn().mockResolvedValue({ tools: [{ name: "tool__part", description: "desc", inputSchema: { type: "object" } }] }),
+          listResources: vi.fn().mockResolvedValue({ resources: [{ uri: "urn:a::b", name: "resource" }] }),
+          listPrompts: vi.fn().mockResolvedValue({ prompts: [{ name: "prompt__part", arguments: [] }] }),
+          callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "called" }] }),
+        },
+      })),
+      getRequestOptions: vi.fn(() => undefined),
+      readResource: vi.fn().mockResolvedValue({ contents: [] }),
+      getPrompt: vi.fn().mockResolvedValue({ messages: [] }),
       close: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {
@@ -219,6 +230,72 @@ describe("runtime MCP server registration", () => {
     mocks.resolveDirectTools.mockReturnValue([]);
     mocks.getConfigPathFromArgv.mockReturnValue(undefined);
     mocks.truncateAtWord.mockImplementation((text: string) => text);
+  });
+
+  it("bridges manifest and calls for a session that initializes on demand", async () => {
+    const state = createState();
+    state.config.mcpServers = { "my server.with.dot": { url: "https://configured.test/mcp" } };
+    mocks.initializeMcp.mockImplementation(async (_pi, _ctx, owner) => {
+      state.owner = owner;
+      return state;
+    });
+    const { default: mcpAdapter, MCP_CLIENT_BRIDGE_EVENT } = await import("../index.ts");
+    const events = createEventBus();
+    const { api } = createPi(events);
+    mcpAdapter(api);
+    const context = { cwd: "/tmp/workspace" };
+
+    const manifestRequest: any = { version: 1, operation: "manifest", context };
+    events.emit(MCP_CLIENT_BRIDGE_EVENT, manifestRequest);
+    const manifest = await manifestRequest.result;
+    const toolId = "mcp1:my%20server.with.dot:tool__part";
+    expect(manifest.tools[0].name).toBe(toolId);
+    expect(manifest.resources[0].uri).toBe("mcp1:my%20server.with.dot:urn%3Aa%3A%3Ab");
+    expect(manifest.prompts[0].name).toBe("mcp1:my%20server.with.dot:prompt__part");
+
+    const dispatchRequest: any = {
+      version: 1,
+      operation: "dispatch",
+      context,
+      method: "tools/call",
+      params: { name: toolId, arguments: { q: "ok" } },
+    };
+    events.emit(MCP_CLIENT_BRIDGE_EVENT, dispatchRequest);
+    await expect(dispatchRequest.result).resolves.toMatchObject({ content: [{ text: "called" }] });
+    expect(state.manager.connect).toHaveBeenCalledWith("my server.with.dot", expect.anything());
+  });
+
+  it("continues manifest discovery when one server fails to connect", async () => {
+    const state = createState();
+    state.config.mcpServers = {
+      broken: { url: "https://broken.test/mcp" },
+      healthy: { url: "https://healthy.test/mcp" },
+    };
+    state.manager.connect.mockImplementation(async (name: string) => {
+      if (name === "broken") throw new Error("connection failed");
+      return {
+        client: {
+          listTools: vi.fn().mockResolvedValue({
+            tools: [{ name: "healthy_tool", description: "kept", inputSchema: { type: "object" } }],
+          }),
+          listResources: vi.fn().mockResolvedValue({ resources: [] }),
+          listPrompts: vi.fn().mockResolvedValue({ prompts: [] }),
+        },
+      };
+    });
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter, MCP_CLIENT_BRIDGE_EVENT } = await import("../index.ts");
+    const events = createEventBus();
+    const { api } = createPi(events);
+    mcpAdapter(api);
+
+    const request: any = { version: 1, operation: "manifest", context: { cwd: "/tmp/workspace" } };
+    events.emit(MCP_CLIENT_BRIDGE_EVENT, request);
+    await expect(request.result).resolves.toMatchObject({
+      tools: [{ name: "mcp1:healthy:healthy_tool", description: "kept", inputSchema: { type: "object" } }],
+      resources: [],
+      prompts: [],
+    });
   });
 
   it("throws when no adapter is installed for the Pi instance", async () => {
