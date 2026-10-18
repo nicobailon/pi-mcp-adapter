@@ -192,7 +192,7 @@ function describeServer(definition) {
         return definition.socket;
     return "(no command or endpoint)";
 }
-export async function applyProjectServerTrust(loaded, ctx) {
+export async function applyProjectServerTrust(loaded, ctx, options = {}) {
     const config = { ...loaded.config, mcpServers: { ...loaded.config.mcpServers } };
     const blockedServers = new Map();
     if (loaded.projectServers.size === 0)
@@ -200,6 +200,7 @@ export async function applyProjectServerTrust(loaded, ctx) {
     const projectTrusted = isProjectTrusted(ctx);
     // RPC sessions also have a UI, but Pi reads RPC input only after session_start, so a dialog here never resolves.
     const interactive = ctx.hasUI && ctx.mode === "tui";
+    const allowUnapproved = options.allowUnapproved === true || (!interactive && loaded.projectServerPolicy === "allow");
     const projectRoot = projectApprovalScope(ctx.cwd);
     const approvals = loadApprovals();
     for (const [name, source] of loaded.projectServers) {
@@ -207,7 +208,7 @@ export async function applyProjectServerTrust(loaded, ctx) {
         if (!definition || isServerDisabled(definition))
             continue;
         const approved = isApproved(approvals, projectRoot, name, definition);
-        if (projectTrusted && (approved || (!interactive && loaded.projectServerPolicy === "allow")))
+        if (projectTrusted && (approved || allowUnapproved))
             continue;
         let reason;
         if (!projectTrusted) {
@@ -228,8 +229,8 @@ export async function applyProjectServerTrust(loaded, ctx) {
     }
     return { config, blockedServers };
 }
-export function applyProjectServerTrustToConfig(config, ctx) {
-    return applyProjectServerTrust(asLoadedConfig(config), ctx);
+export function applyProjectServerTrustToConfig(config, ctx, options = {}) {
+    return applyProjectServerTrust(asLoadedConfig(config), ctx, options);
 }
 /** Remove project-derived servers before an ExtensionContext exists. */
 export function excludeProjectServersAtLoadTime(loadedOrConfig) {

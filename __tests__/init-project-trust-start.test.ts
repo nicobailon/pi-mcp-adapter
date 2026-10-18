@@ -13,6 +13,7 @@ vi.mock("../server-manager.ts", () => ({
     this.getConnection = vi.fn();
     this.connect = vi.fn();
   }),
+  isTransientHttpConnectError: () => false,
 }));
 
 describe("initializeMcp project trust start signal", () => {
@@ -59,5 +60,32 @@ describe("initializeMcp project trust start signal", () => {
     answer(undefined);
     await initialization;
     expect(onProjectTrustResolved).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { trusted: true, disabled: undefined },
+    { trusted: false, disabled: true },
+  ])("--mcp-project-servers allow admits project servers without a dialog only in a trusted project (trusted: $trusted)", async ({ trusted, disabled }) => {
+    const cwd = join(root, "project");
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(join(cwd, ".mcp.json"), JSON.stringify({ mcpServers: { local: { command: "node" } } }));
+    const select = vi.fn();
+    const { initializeMcp } = await import("../init.ts");
+
+    const state = await initializeMcp(
+      { getFlag: (name: string) => name === "mcp-project-servers" ? "allow" : undefined } as unknown as ExtensionAPI,
+      {
+        cwd,
+        hasUI: true,
+        mode: "tui",
+        isProjectTrusted: () => trusted,
+        ui: { select, notify: vi.fn(), setStatus: vi.fn() },
+        modelRegistry: {},
+        signal: undefined,
+      } as unknown as ExtensionContext,
+    );
+
+    expect(select).not.toHaveBeenCalled();
+    expect(state.config.mcpServers.local?.disabled).toBe(disabled);
   });
 });

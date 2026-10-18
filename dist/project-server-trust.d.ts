@@ -19,7 +19,11 @@ export declare function approveProjectServer(cwd: string, serverName: string, de
  * adapter edit never creates one.
  */
 export declare function keepProjectServerApprovals(ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">, before: McpConfig, after: McpConfig, serverNames: Iterable<string>): void;
-export declare function applyProjectServerTrust(loaded: LoadedMcpConfig, ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "mode" | "ui" | "isProjectTrusted">): Promise<ProjectTrustResult>;
-export declare function applyProjectServerTrustToConfig(config: McpConfig, ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "mode" | "ui" | "isProjectTrusted">): Promise<ProjectTrustResult>;
+export declare function applyProjectServerTrust(loaded: LoadedMcpConfig, ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "mode" | "ui" | "isProjectTrusted">, options?: {
+    allowUnapproved?: boolean;
+}): Promise<ProjectTrustResult>;
+export declare function applyProjectServerTrustToConfig(config: McpConfig, ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "mode" | "ui" | "isProjectTrusted">, options?: {
+    allowUnapproved?: boolean;
+}): Promise<ProjectTrustResult>;
 /** Remove project-derived servers before an ExtensionContext exists. */
 export declare function excludeProjectServersAtLoadTime(loadedOrConfig: LoadedMcpConfig | McpConfig): McpConfig;

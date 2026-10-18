@@ -1055,6 +1055,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     description: "Path to MCP config file",
     type: "string",
   });
+  pi.registerFlag("mcp-project-servers", {
+    description: "Set to \"allow\" to start unapproved project MCP servers in a trusted project without asking, for this process only",
+    type: "string",
+  });
 
   function startInitialization(
     ctx: ExtensionContext,

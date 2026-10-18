@@ -120,6 +120,10 @@ export async function initializeMcp(
   const configPath = options.config !== undefined
     ? undefined
     : options.configPath ?? (pi.getFlag("mcp-config") as string | undefined);
+  const projectServersFlag = pi.getFlag("mcp-project-servers");
+  if (projectServersFlag !== undefined && projectServersFlag !== "allow") {
+    console.warn(`Ignoring --mcp-project-servers ${JSON.stringify(projectServersFlag)}; the only accepted value is "allow"`);
+  }
   const cwd = ctx.cwd;
   const hasUI = ctx.hasUI;
   const mode = ctx.mode;
@@ -147,7 +151,7 @@ export async function initializeMcp(
     ? { config: resolveConfiguredClaudePluginMcp(cloneMcpConfig(options.config), cwd), blockedServers: new Map() }
     : options.excludeProjectServers
       ? { config: excludeProjectServersAtLoadTime(loadMcpConfig(configPath, cwd)), blockedServers: new Map() }
-      : await applyProjectServerTrustToConfig(loadMcpConfig(configPath, cwd), ctx);
+      : await applyProjectServerTrustToConfig(loadMcpConfig(configPath, cwd), ctx, { allowUnapproved: projectServersFlag === "allow" });
   options.onProjectTrustResolved?.();
   const config = trustResult.config;
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd, config.settings?.oauthCredentialStore);

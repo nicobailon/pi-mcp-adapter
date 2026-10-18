@@ -225,6 +225,7 @@ function describeServer(definition: ServerDefinition): string {
 export async function applyProjectServerTrust(
   loaded: LoadedMcpConfig,
   ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "mode" | "ui" | "isProjectTrusted">,
+  options: { allowUnapproved?: boolean } = {},
 ): Promise<ProjectTrustResult> {
   const config: McpConfig = { ...loaded.config, mcpServers: { ...loaded.config.mcpServers } };
   const blockedServers = new Map<string, ProjectServerBlock>();
@@ -233,6 +234,7 @@ export async function applyProjectServerTrust(
   const projectTrusted = isProjectTrusted(ctx);
   // RPC sessions also have a UI, but Pi reads RPC input only after session_start, so a dialog here never resolves.
   const interactive = ctx.hasUI && ctx.mode === "tui";
+  const allowUnapproved = options.allowUnapproved === true || (!interactive && loaded.projectServerPolicy === "allow");
   const projectRoot = projectApprovalScope(ctx.cwd);
   const approvals = loadApprovals();
 
@@ -240,7 +242,7 @@ export async function applyProjectServerTrust(
     const definition = config.mcpServers[name];
     if (!definition || isServerDisabled(definition)) continue;
     const approved = isApproved(approvals, projectRoot, name, definition);
-    if (projectTrusted && (approved || (!interactive && loaded.projectServerPolicy === "allow"))) continue;
+    if (projectTrusted && (approved || allowUnapproved)) continue;
 
     let reason: ProjectServerBlockReason;
     if (!projectTrusted) {
@@ -266,8 +268,9 @@ export async function applyProjectServerTrust(
 export function applyProjectServerTrustToConfig(
   config: McpConfig,
   ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "mode" | "ui" | "isProjectTrusted">,
+  options: { allowUnapproved?: boolean } = {},
 ): Promise<ProjectTrustResult> {
-  return applyProjectServerTrust(asLoadedConfig(config), ctx);
+  return applyProjectServerTrust(asLoadedConfig(config), ctx, options);
 }
 
 /** Remove project-derived servers before an ExtensionContext exists. */
