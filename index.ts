@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
+import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type McpPrompt, type McpResource, type McpTool, type PromptMetadata, type ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
@@ -941,8 +941,27 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     request.result = (async () => {
       if (!request.context) throw new Error("MCP adapter session context is required");
+      const getSessionManager = (context: ExtensionContext | null | undefined) => {
+        try {
+          return context?.sessionManager;
+        } catch {
+          return undefined;
+        }
+      };
+      const requestSessionManager = getSessionManager(request.context);
+      if (!requestSessionManager) throw new Error("MCP adapter session context is unavailable");
+      const currentSessionManager = state?.sessionManager ?? getSessionManager(sessionCtx);
+      if (currentSessionManager && currentSessionManager !== requestSessionManager) {
+        throw new Error("MCP adapter request belongs to an inactive Pi session");
+      }
       const active = await ensureSessionRuntime(request.context);
-      if (!active || state !== active || active.owner !== currentOwner || !currentOwner?.isActive()) {
+      if (
+        !active ||
+        active.sessionManager !== requestSessionManager ||
+        state !== active ||
+        active.owner !== currentOwner ||
+        !currentOwner?.isActive()
+      ) {
         throw new Error("MCP adapter session is unavailable");
       }
       const encodeCapability = (server: string, capability: string): string =>
@@ -967,23 +986,56 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         for (const [serverName, definition] of servers) {
           try {
             const connection = await active.manager.connect(serverName, definition);
-            const [listedTools, listedResources, listedPrompts] = await Promise.all([
-              connection.client.listTools(),
-              connection.client.listResources(),
-              connection.client.listPrompts(),
-            ]);
-            for (const tool of listedTools.tools) tools.push({
+            const capabilities = connection.client.getServerCapabilities?.();
+            const requestOptions = active.manager.getRequestOptions(serverName);
+            const listedTools: McpTool[] = [];
+            const listedResources: McpResource[] = [];
+            const listedPrompts: McpPrompt[] = [];
+
+            active.manager.touch(serverName);
+            active.manager.incrementInFlight(serverName);
+            try {
+              if (capabilities?.tools) {
+                let cursor: string | undefined;
+                do {
+                  const page = await connection.client.listTools(cursor ? { cursor } : undefined, requestOptions);
+                  listedTools.push(...page.tools);
+                  cursor = page.nextCursor;
+                } while (cursor);
+              }
+              if (capabilities?.resources) {
+                let cursor: string | undefined;
+                do {
+                  const page = await connection.client.listResources(cursor ? { cursor } : undefined, requestOptions);
+                  listedResources.push(...page.resources);
+                  cursor = page.nextCursor;
+                } while (cursor);
+              }
+              if (capabilities?.prompts) {
+                let cursor: string | undefined;
+                do {
+                  const page = await connection.client.listPrompts(cursor ? { cursor } : undefined, requestOptions);
+                  listedPrompts.push(...page.prompts);
+                  cursor = page.nextCursor;
+                } while (cursor);
+              }
+            } finally {
+              active.manager.decrementInFlight(serverName);
+              active.manager.touch(serverName);
+            }
+
+            for (const tool of listedTools) tools.push({
               name: encodeCapability(serverName, tool.name),
               description: tool.description ?? "",
               inputSchema: tool.inputSchema,
             });
-            for (const resource of listedResources.resources) resources.push({
+            for (const resource of listedResources) resources.push({
               uri: encodeCapability(serverName, resource.uri),
               name: `${serverName}: ${resource.name}`,
               description: resource.description ?? "",
               mimeType: resource.mimeType ?? "text/plain",
             });
-            for (const prompt of listedPrompts.prompts) prompts.push({
+            for (const prompt of listedPrompts) prompts.push({
               name: encodeCapability(serverName, prompt.name),
               description: prompt.description ?? "",
               arguments: prompt.arguments ?? [],
@@ -1023,10 +1075,17 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         if (params.arguments !== undefined && (typeof params.arguments !== "object" || params.arguments === null || Array.isArray(params.arguments))) {
           throw new Error("Tool arguments must be an object");
         }
-        return connection.client.callTool(
-          { name: capability, arguments: (params.arguments as Record<string, unknown> | undefined) ?? {} },
-          active.manager.getRequestOptions(serverName),
-        );
+        active.manager.touch(serverName);
+        active.manager.incrementInFlight(serverName);
+        try {
+          return await connection.client.callTool(
+            { name: capability, arguments: (params.arguments as Record<string, unknown> | undefined) ?? {} },
+            active.manager.getRequestOptions(serverName),
+          );
+        } finally {
+          active.manager.decrementInFlight(serverName);
+          active.manager.touch(serverName);
+        }
       }
       if (request.method === "resources/read") return active.manager.readResource(serverName, capability);
       if (request.method === "prompts/get") {

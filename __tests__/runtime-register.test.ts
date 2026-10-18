@@ -138,6 +138,7 @@ function createState() {
       getConnection: vi.fn(() => undefined),
       connect: vi.fn(async () => ({
         client: {
+          getServerCapabilities: vi.fn(() => ({ tools: {}, resources: {}, prompts: {} })),
           listTools: vi.fn().mockResolvedValue({ tools: [{ name: "tool__part", description: "desc", inputSchema: { type: "object" } }] }),
           listResources: vi.fn().mockResolvedValue({ resources: [{ uri: "urn:a::b", name: "resource" }] }),
           listPrompts: vi.fn().mockResolvedValue({ prompts: [{ name: "prompt__part", arguments: [] }] }),
@@ -145,6 +146,9 @@ function createState() {
         },
       })),
       getRequestOptions: vi.fn(() => undefined),
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
       readResource: vi.fn().mockResolvedValue({ contents: [] }),
       getPrompt: vi.fn().mockResolvedValue({ messages: [] }),
       close: vi.fn().mockResolvedValue(undefined),
@@ -161,11 +165,18 @@ function createState() {
     oauthRuntime: { signal: new AbortController().signal },
     failureTracker: new Map(),
     uiResourceHandler: {},
-    consentManager: {},
+    consentManager: {
+      clear: vi.fn(),
+      restoreDecision: vi.fn(),
+    },
     uiServer: null,
     completedUiSessions: [],
     openBrowser: vi.fn(),
   } as any;
+}
+
+function createSessionManager() {
+  return { getBranch: vi.fn(() => []) };
 }
 
 function createEventBus() {
@@ -235,15 +246,17 @@ describe("runtime MCP server registration", () => {
   it("bridges manifest and calls for a session that initializes on demand", async () => {
     const state = createState();
     state.config.mcpServers = { "my server.with.dot": { url: "https://configured.test/mcp" } };
-    mocks.initializeMcp.mockImplementation(async (_pi, _ctx, owner) => {
+    const sessionManager = createSessionManager();
+    mocks.initializeMcp.mockImplementation(async (_pi, context, owner) => {
       state.owner = owner;
+      state.sessionManager = context.sessionManager;
       return state;
     });
     const { default: mcpAdapter, MCP_CLIENT_BRIDGE_EVENT } = await import("../index.ts");
     const events = createEventBus();
     const { api } = createPi(events);
     mcpAdapter(api);
-    const context = { cwd: "/tmp/workspace" };
+    const context = { cwd: "/tmp/workspace", sessionManager };
 
     const manifestRequest: any = { version: 1, operation: "manifest", context };
     events.emit(MCP_CLIENT_BRIDGE_EVENT, manifestRequest);
@@ -263,39 +276,138 @@ describe("runtime MCP server registration", () => {
     events.emit(MCP_CLIENT_BRIDGE_EVENT, dispatchRequest);
     await expect(dispatchRequest.result).resolves.toMatchObject({ content: [{ text: "called" }] });
     expect(state.manager.connect).toHaveBeenCalledWith("my server.with.dot", expect.anything());
+    expect(state.manager.incrementInFlight).toHaveBeenCalledWith("my server.with.dot");
+    expect(state.manager.decrementInFlight).toHaveBeenCalledWith("my server.with.dot");
   });
 
   it("continues manifest discovery when one server fails to connect", async () => {
     const state = createState();
+    const healthyClient = {
+      getServerCapabilities: vi.fn(() => ({ tools: {} })),
+      listTools: vi.fn().mockResolvedValue({
+        tools: [{ name: "healthy_tool", description: "kept", inputSchema: { type: "object" } }],
+      }),
+      listResources: vi.fn(() => Promise.reject(new Error("resources/list is unsupported"))),
+      listPrompts: vi.fn(() => Promise.reject(new Error("prompts/list is unsupported"))),
+    };
     state.config.mcpServers = {
       broken: { url: "https://broken.test/mcp" },
       healthy: { url: "https://healthy.test/mcp" },
     };
     state.manager.connect.mockImplementation(async (name: string) => {
       if (name === "broken") throw new Error("connection failed");
-      return {
-        client: {
-          listTools: vi.fn().mockResolvedValue({
-            tools: [{ name: "healthy_tool", description: "kept", inputSchema: { type: "object" } }],
-          }),
-          listResources: vi.fn().mockResolvedValue({ resources: [] }),
-          listPrompts: vi.fn().mockResolvedValue({ prompts: [] }),
-        },
-      };
+      return { client: healthyClient } as any;
     });
-    mocks.initializeMcp.mockResolvedValue(state);
+    const sessionManager = createSessionManager();
+    mocks.initializeMcp.mockImplementation(async (_pi, context, owner) => {
+      state.owner = owner;
+      state.sessionManager = context.sessionManager;
+      return state;
+    });
     const { default: mcpAdapter, MCP_CLIENT_BRIDGE_EVENT } = await import("../index.ts");
     const events = createEventBus();
     const { api } = createPi(events);
     mcpAdapter(api);
 
-    const request: any = { version: 1, operation: "manifest", context: { cwd: "/tmp/workspace" } };
+    const request: any = {
+      version: 1,
+      operation: "manifest",
+      context: { cwd: "/tmp/workspace", sessionManager },
+    };
     events.emit(MCP_CLIENT_BRIDGE_EVENT, request);
     await expect(request.result).resolves.toMatchObject({
       tools: [{ name: "mcp1:healthy:healthy_tool", description: "kept", inputSchema: { type: "object" } }],
       resources: [],
       prompts: [],
     });
+    expect(healthyClient.listResources).not.toHaveBeenCalled();
+    expect(healthyClient.listPrompts).not.toHaveBeenCalled();
+  });
+
+  it("lists every page for each advertised capability", async () => {
+    const state = createState();
+    state.config.mcpServers = { paginated: { url: "https://configured.test/mcp" } };
+    const client = {
+      getServerCapabilities: vi.fn(() => ({ tools: {}, resources: {}, prompts: {} })),
+      listTools: vi.fn()
+        .mockResolvedValueOnce({ tools: [{ name: "tool-one" }], nextCursor: "tools-next" })
+        .mockResolvedValueOnce({ tools: [{ name: "tool-two" }] }),
+      listResources: vi.fn()
+        .mockResolvedValueOnce({ resources: [{ uri: "urn:one", name: "one" }], nextCursor: "resources-next" })
+        .mockResolvedValueOnce({ resources: [{ uri: "urn:two", name: "two" }] }),
+      listPrompts: vi.fn()
+        .mockResolvedValueOnce({ prompts: [{ name: "prompt-one" }], nextCursor: "prompts-next" })
+        .mockResolvedValueOnce({ prompts: [{ name: "prompt-two" }] }),
+    };
+    state.manager.connect.mockResolvedValue({ client } as any);
+    const sessionManager = createSessionManager();
+    mocks.initializeMcp.mockImplementation(async (_pi, context, owner) => {
+      state.owner = owner;
+      state.sessionManager = context.sessionManager;
+      return state;
+    });
+    const { default: mcpAdapter, MCP_CLIENT_BRIDGE_EVENT } = await import("../index.ts");
+    const events = createEventBus();
+    const { api } = createPi(events);
+    mcpAdapter(api);
+
+    const request: any = {
+      version: 1,
+      operation: "manifest",
+      context: { cwd: "/tmp/workspace", sessionManager },
+    };
+    events.emit(MCP_CLIENT_BRIDGE_EVENT, request);
+    const manifest = await request.result;
+
+    expect(manifest.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      "mcp1:paginated:tool-one",
+      "mcp1:paginated:tool-two",
+    ]);
+    expect(manifest.resources.map((resource: { uri: string }) => resource.uri)).toEqual([
+      "mcp1:paginated:urn%3Aone",
+      "mcp1:paginated:urn%3Atwo",
+    ]);
+    expect(manifest.prompts.map((prompt: { name: string }) => prompt.name)).toEqual([
+      "mcp1:paginated:prompt-one",
+      "mcp1:paginated:prompt-two",
+    ]);
+    expect(client.listTools).toHaveBeenNthCalledWith(2, { cursor: "tools-next" }, undefined);
+    expect(client.listResources).toHaveBeenNthCalledWith(2, { cursor: "resources-next" }, undefined);
+    expect(client.listPrompts).toHaveBeenNthCalledWith(2, { cursor: "prompts-next" }, undefined);
+  });
+
+  it("rejects client bridge requests from a stale Pi session", async () => {
+    const state = createState();
+    state.config.mcpServers = { configured: { url: "https://configured.test/mcp" } };
+    const activeSessionManager = createSessionManager();
+    mocks.initializeMcp.mockImplementation(async (_pi, context, owner) => {
+      state.owner = owner;
+      state.sessionManager = context.sessionManager;
+      return state;
+    });
+    const { default: mcpAdapter, MCP_CLIENT_BRIDGE_EVENT } = await import("../index.ts");
+    const events = createEventBus();
+    const { api } = createPi(events);
+    mcpAdapter(api);
+
+    const activeRequest: any = {
+      version: 1,
+      operation: "manifest",
+      context: { cwd: "/tmp/current", sessionManager: activeSessionManager },
+    };
+    events.emit(MCP_CLIENT_BRIDGE_EVENT, activeRequest);
+    await activeRequest.result;
+
+    const staleRequest: any = {
+      version: 1,
+      operation: "dispatch",
+      context: { cwd: "/tmp/old", sessionManager: createSessionManager() },
+      method: "tools/call",
+      params: { name: "mcp1:configured:tool" },
+    };
+    events.emit(MCP_CLIENT_BRIDGE_EVENT, staleRequest);
+    await expect(staleRequest.result).rejects.toThrow("inactive Pi session");
+    expect(state.manager.connect).toHaveBeenCalledTimes(1);
   });
 
   it("throws when no adapter is installed for the Pi instance", async () => {
