@@ -19,6 +19,7 @@ import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supports
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
+import { callToolAnsweringExecutorPauses } from "./executor-pauses.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, type RankedToolMatch } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -1700,20 +1701,26 @@ export async function executeCall(
       serverName,
       async (conn) => {
         await state.manager.ensureListen?.(serverName, conn);
-        if (conn.taskSession) {
-          return await callToolViaTaskSession(conn.taskSession, {
-            name: toolMeta.originalName,
-            args: normalizedArgs ?? {},
-            meta: requestMeta,
-            signal: ownedSignal,
-            requestTimeoutMs: requestOptions?.timeout,
-          }) as unknown as ClientCallToolResult;
-        }
-        return abortable(callToolPausingForElicitation(conn.client, {
-          name: toolMeta.originalName,
-          arguments: normalizedArgs,
-          _meta: requestMeta,
-        }, requestOptions), ownedSignal);
+        return callToolAnsweringExecutorPauses({
+          conn,
+          manager: state.manager,
+          serverName,
+          params: { name: toolMeta.originalName, arguments: normalizedArgs, _meta: requestMeta },
+          requestOptions,
+          signal: ownedSignal,
+          call: async (params, options) => {
+            if (conn.taskSession) {
+              return await callToolViaTaskSession(conn.taskSession, {
+                name: params.name,
+                args: params.arguments ?? {},
+                meta: params._meta,
+                signal: ownedSignal,
+                requestTimeoutMs: options?.timeout,
+              }) as unknown as ClientCallToolResult;
+            }
+            return abortable(callToolPausingForElicitation(conn.client, params, options), ownedSignal);
+          },
+        });
       },
     );
     if (!result.isError) recordOutput(result as Record<string, unknown>);

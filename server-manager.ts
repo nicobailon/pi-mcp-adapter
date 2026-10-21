@@ -19,6 +19,8 @@ import {
   type McpSubscription,
   type SubscriptionFilter,
   type CacheableRequestOptions,
+  type ElicitRequestFormParams,
+  type ElicitResult,
   type RequestOptions,
   RegistrationRejectedError,
   type UrlElicitationRequiredError,
@@ -60,8 +62,10 @@ import { appendServerLogMessage } from "./server-log.ts";
 import { getAgentPath } from "./agent-dir.ts";
 import {
   handleElicitationRequest,
+  handleFormElicitation,
   handleUrlElicitation,
   registerElicitationHandler,
+  whileAdapterPromptOpen,
   type ServerElicitationConfig,
 } from "./elicitation-handler.ts";
 import { attachTaskSession, type RawRequestChannel } from "./mcp-tasks.ts";
@@ -425,6 +429,20 @@ export class McpServerManager {
 
   setElicitationConfig(config: ServerElicitationConfig | undefined): void {
     this.elicitationConfig = config;
+  }
+
+  /** Shows a server-supplied MCP form with Pi's dialogs. Undefined when this session cannot prompt. */
+  async promptFormElicitation(
+    name: string,
+    params: ElicitRequestFormParams,
+    signal?: AbortSignal,
+  ): Promise<ElicitResult | undefined> {
+    const config = this.elicitationConfig;
+    if (!config) return undefined;
+    return whileAdapterPromptOpen(
+      this.connections.get(name)?.client,
+      () => handleFormElicitation({ ...config, serverName: name }, params, signal),
+    );
   }
 
   setRuntimeSignal(signal: AbortSignal | undefined): void {

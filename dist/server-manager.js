@@ -20,7 +20,7 @@ import { getBearerTokenForUrl } from "./mcp-bearer-store.js";
 import { handleSamplingRequest, registerSamplingHandler } from "./sampling-handler.js";
 import { appendServerLogMessage } from "./server-log.js";
 import { getAgentPath } from "./agent-dir.js";
-import { handleElicitationRequest, handleUrlElicitation, registerElicitationHandler, } from "./elicitation-handler.js";
+import { handleElicitationRequest, handleFormElicitation, handleUrlElicitation, registerElicitationHandler, whileAdapterPromptOpen, } from "./elicitation-handler.js";
 import { attachTaskSession } from "./mcp-tasks.js";
 import { interpolateEnvVars, expandHomePath, providerAuthUrlError, resolveBearerToken, resolveCommandSecretsRecord, resolveConfigPath, resolveServerUrl, } from "./utils.js";
 import { abortable, throwIfAborted } from "./abort.js";
@@ -272,6 +272,13 @@ export class McpServerManager {
     }
     setElicitationConfig(config) {
         this.elicitationConfig = config;
+    }
+    /** Shows a server-supplied MCP form with Pi's dialogs. Undefined when this session cannot prompt. */
+    async promptFormElicitation(name, params, signal) {
+        const config = this.elicitationConfig;
+        if (!config)
+            return undefined;
+        return whileAdapterPromptOpen(this.connections.get(name)?.client, () => handleFormElicitation({ ...config, serverName: name }, params, signal));
     }
     setRuntimeSignal(signal) {
         this.runtimeSignal = signal;

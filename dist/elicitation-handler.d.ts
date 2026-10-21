@@ -12,6 +12,12 @@ export interface ElicitationHandlerOptions {
 export type ServerElicitationConfig = Omit<ElicitationHandlerOptions, "serverName" | "onUrlAccepted">;
 export declare function registerElicitationHandler(client: Client, options: ElicitationHandlerOptions): void;
 /**
+ * Runs a prompt the adapter opens itself for a server (such as an Executor approval) with the
+ * same deadline pause a server-initiated elicitation gets, so concurrent calls on that client
+ * do not time out while the user reads the dialog.
+ */
+export declare function whileAdapterPromptOpen<T>(client: Client | undefined, run: () => Promise<T>): Promise<T>;
+/**
  * Calls a tool with the request timeout counting only time the user is not
  * answering an elicitation prompt from the same server. The SDK's own timer
  * cannot be paused, so it is pushed out of the way and the deadline aborts the

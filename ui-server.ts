@@ -25,6 +25,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionReco
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
+import { callToolAnsweringExecutorPauses } from "./executor-pauses.ts";
 import { extractUiToolVisibility, isUiToolCallableByApp, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
@@ -537,15 +538,25 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           const callTool = async (conn: ServerConnection) => {
             await options.manager.ensureListen?.(options.serverName, conn);
             const requestOptions = options.manager.getRequestOptions?.(options.serverName);
-            if (conn.taskSession) {
-              return callToolViaTaskSession(conn.taskSession, {
-                name: callArgs.name,
-                args: callArgs.arguments,
-                requestTimeoutMs: requestOptions?.timeout,
-                signal: requestOptions?.signal,
-              });
-            }
-            return callToolPausingForElicitation(conn.client, callArgs, requestOptions);
+            return callToolAnsweringExecutorPauses({
+              conn,
+              manager: options.manager,
+              serverName: options.serverName,
+              params: callArgs,
+              requestOptions,
+              signal: requestOptions?.signal,
+              call: async (params, callOptions) => {
+                if (conn.taskSession) {
+                  return callToolViaTaskSession(conn.taskSession, {
+                    name: params.name,
+                    args: params.arguments ?? {},
+                    requestTimeoutMs: callOptions?.timeout,
+                    signal: callOptions?.signal,
+                  });
+                }
+                return callToolPausingForElicitation(conn.client, params, callOptions);
+              },
+            });
           };
           const result = options.config
             ? await withSessionRecovery(

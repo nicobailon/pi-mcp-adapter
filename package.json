@@ -129,6 +129,7 @@
     "session-recovery.ts",
     "sampling-handler.ts",
     "elicitation-handler.ts",
+    "executor-pauses.ts",
     "tool-registrar.ts",
     "tool-result-renderer.ts",
     "mcp-output-guard.ts",

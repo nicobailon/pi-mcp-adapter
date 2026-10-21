@@ -50,6 +50,16 @@ export function registerElicitationHandler(client: Client, options: ElicitationH
     whilePromptOpen(state, () => handleElicitationRequest(options, request)));
 }
 
+/**
+ * Runs a prompt the adapter opens itself for a server (such as an Executor approval) with the
+ * same deadline pause a server-initiated elicitation gets, so concurrent calls on that client
+ * do not time out while the user reads the dialog.
+ */
+export async function whileAdapterPromptOpen<T>(client: Client | undefined, run: () => Promise<T>): Promise<T> {
+  const state = client && promptPauses.get(client);
+  return state ? whilePromptOpen(state, run) : run();
+}
+
 async function whilePromptOpen<T>(state: PromptPause, run: () => Promise<T>): Promise<T> {
   if (state.open++ === 0) for (const deadline of state.deadlines) deadline.pause();
   try {
