@@ -4427,7 +4427,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       return () => [...active];
     }
 
-    async function bootPi099(specs?: unknown[], config: Record<string, any> = searchConfig) {
+    async function bootPi099(specs?: unknown[], config: Record<string, any> = searchConfig, pi099 = true) {
       if (specs) mocks.resolveDirectTools.mockReturnValue(specs);
       const state = createState();
       state.config = config;
@@ -4435,14 +4435,16 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       mocks.initializeMcp.mockResolvedValue(state);
       const { default: mcpAdapter } = await import("../index.ts");
       const { api, handlers } = createPi({ unregisterTool: false });
-      api.registerMcpServer = vi.fn();
-      api.getMcpServers = vi.fn(() => []);
+      if (pi099) {
+        api.registerMcpServer = vi.fn();
+        api.getMcpServers = vi.fn(() => []);
+      }
       const activeTools = trackPiToolExposure(api);
       mcpAdapter(api);
       await handlers.get("session_start")?.({}, {});
       await Promise.resolve();
       await Promise.resolve();
-      return { api, handlers, activeTools, proxyTool: registeredTool(api, "mcp") };
+      return { api, handlers, state, activeTools, proxyTool: registeredTool(api, "mcp") };
     }
 
     it("registers search-mode tools inactive and deferred, with their server's namespace, annotations and a CallToolResult output schema", async () => {
@@ -4558,6 +4560,113 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(ok.structuredContent).not.toHaveProperty("isError");
       expect(failed.structuredContent).toEqual({ content: text("Error: boom"), isError: true });
       expect(mocks.createDirectToolExecutor).toHaveBeenCalledWith(expect.any(Function), expect.any(Function), expect.objectContaining({ prefixedName: "demo_alpha" }), true);
+    });
+
+    const echoTool = {
+      name: "echo",
+      outputSchema: { type: "object", properties: { value: { type: "string" } } },
+      annotations: { title: "Echo", destructiveHint: true },
+    };
+
+    async function bootCached(servers: Record<string, [Record<string, unknown>, unknown[]]>, settings: Record<string, unknown> = {}, pi099 = true) {
+      const { resolveDirectTools } = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
+      mocks.resolveDirectTools.mockImplementation(resolveDirectTools);
+      const entries = Object.entries(servers);
+      mocks.loadMetadataCache.mockReturnValue({
+        version: 1,
+        servers: Object.fromEntries(entries.map(([name, [definition, tools]]) => [name, cacheEntry(definition, { tools })])),
+      });
+      const config = { settings: { scriptMode: false, ...settings }, mcpServers: Object.fromEntries(entries.map(([name, [definition]]) => [name, definition])) };
+      return { config, ...(await bootPi099(undefined, config, pi099)) };
+    }
+
+    const registrations = (api: any, name: string) => api.registerTool.mock.calls.map((call: any[]) => call[0]).filter((tool: { name: string }) => tool.name === name);
+
+    it("registers every cached tool without a direct registration as a deferred mcp__<server>__<tool> tool, and declares none", async () => {
+      const { api, activeTools } = await bootCached({
+        direct: [{ command: "d", directTools: true }, [{ name: "find" }]],
+        picked: [{ command: "p", directTools: ["a"] }, [{ name: "a" }, { name: "b" }]],
+        proxy: [{ command: "x", excludeTools: ["secret"] }, [echoTool, { name: "secret" }, { name: "widget", uiVisibility: ["app"] }]],
+        off: [{ command: "o", disabled: true }, [{ name: "echo" }]],
+      });
+
+      expect(registeredTool(api, "mcp__proxy__echo")).toMatchObject({
+        exposure: "deferred",
+        namespace: { name: "mcp__proxy" },
+        annotations: { destructiveHint: true },
+        outputSchema: { properties: { structuredContent: echoTool.outputSchema }, required: ["content"] },
+      });
+      expect(registeredTool(api, "mcp__proxy__echo").annotations).not.toHaveProperty("title");
+      expect(registeredTool(api, "mcp__picked__b")).toMatchObject({ exposure: "deferred" });
+      for (const name of ["mcp__proxy__secret", "mcp__proxy__widget", "mcp__off__echo", "mcp__direct__find", "mcp__picked__a"]) {
+        expect(registrations(api, name)).toEqual([]);
+      }
+      expect(registrations(api, "direct_find")).toHaveLength(1);
+      expect(registeredTool(api, "direct_find")).not.toHaveProperty("exposure");
+      expect(activeTools()).toEqual(["bash", "mcp", "direct_find", "picked_a", "mcp__proxy"]);
+      expect(api.setActiveTools.mock.calls.flatMap(([next]: [string[]]) => next).filter((name: string) => /^mcp__\w+__\w+$/.test(name))).toEqual([]);
+    });
+
+    it("re-registers the deferred tools of a disabled or removed server as hidden", async () => {
+      const { api, config, proxyTool } = await bootCached({ proxy: [{ command: "x" }, [echoTool]], gone: [{ command: "g" }, [{ name: "run" }]] });
+      (config.mcpServers.proxy as Record<string, unknown>).disabled = true;
+      delete config.mcpServers.gone;
+      mocks.executeConnect.mockResolvedValue({ content: [{ type: "text", text: "connected" }] });
+
+      await proxyTool.execute("c1", { connect: "proxy" });
+
+      for (const name of ["mcp__proxy__echo", "mcp__gone__run"]) {
+        const registered = registrations(api, name);
+        expect(registered.at(-1)).toMatchObject({ exposure: "hidden", execute: registered[0].execute });
+      }
+    });
+
+    it("keeps deferred tools registered through failure backoff, and gives a backed-off direct server's tools none", async () => {
+      const { api, state, activeTools } = await bootCached({
+        direct: [{ command: "d", directTools: true, lifecycle: "eager" }, [{ name: "find" }]],
+        proxy: [{ command: "x" }, [echoTool]],
+      });
+      await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+      const before = api.registerTool.mock.calls.length;
+      state.failureTracker.set("direct", Date.now());
+      state.failureTracker.set("proxy", Date.now());
+
+      state.onToolMetadataUpdated("proxy", "failure-backoff-started");
+
+      expect(activeTools()).not.toContain("direct_find");
+      const registeredSince = api.registerTool.mock.calls.slice(before).map((call: any[]) => call[0].name);
+      expect(registeredSince.filter((name: string) => name.startsWith("mcp__proxy__") || name.startsWith("mcp__direct__"))).toEqual([]);
+      expect(registrations(api, "mcp__proxy__echo")).toMatchObject([{ exposure: "deferred" }]);
+    });
+
+    it("registers no deferred tools with MCP_DIRECT_TOOLS=__none__", async () => {
+      vi.stubEnv("MCP_DIRECT_TOOLS", "__none__");
+      try {
+        const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] });
+        expect(registrations(api, "mcp__proxy__echo")).toEqual([]);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("freezes the deferred surface with settings.freezeDirectTools", async () => {
+      const { api, config, state } = await bootCached({ proxy: [{ command: "x", lifecycle: "eager" }, [echoTool]] }, { freezeDirectTools: true });
+      await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+      mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: cacheEntry(config.mcpServers.proxy!, { tools: [echoTool, { name: "late" }] }) } });
+
+      state.onToolMetadataUpdated("proxy", "tools-changed");
+
+      expect(registrations(api, "mcp__proxy__echo")).toHaveLength(1);
+      expect(registrations(api, "mcp__proxy__late")).toEqual([]);
+    });
+
+    it("registers nothing new before Pi 0.99, and the proxy keeps its exact key list", async () => {
+      const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] }, {}, false);
+
+      expect(api.registerTool.mock.calls.map((call: any[]) => call[0].name).filter((name: string) => name.startsWith("mcp__proxy__"))).toEqual([]);
+      expect(Object.keys(registeredTool(api, "mcp"))).toEqual(
+        ["name", "label", "description", "promptSnippet", "renderShell", "renderCall", "parameters", "renderResult", "execute"],
+      );
     });
   });
 });

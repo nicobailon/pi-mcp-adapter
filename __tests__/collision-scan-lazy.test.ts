@@ -7,6 +7,7 @@ import {
   type ServerEntry,
 } from "../types.ts";
 import { buildProxyDescription, resolveDirectTools } from "../direct-tools.ts";
+import { resolveDeferredToolSpecs } from "../deferred-tool-surface.ts";
 import { computeServerHash, createCachedToolSelectorCandidateIndex, reconstructToolMetadata } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 
@@ -102,6 +103,15 @@ describe("cross-server collision scan is skipped without tool filters", () => {
   it("resolveDirectTools builds filtered candidates once", () => {
     const { config, cache } = makeLargeFilteredConfig(40, { directTools: true });
     resolveDirectTools(config, cache, "server");
+    expect(mockedGetToolNameCandidates).toHaveBeenCalledTimes(40);
+  });
+
+  it("resolveDeferredToolSpecs generates no candidates without filters and filtered ones once", () => {
+    const { config, cache } = makeTwoServerConfig();
+    resolveDeferredToolSpecs(config, cache, { names: new Set(), directTools: [] });
+    expect(mockedGetToolNameCandidates).not.toHaveBeenCalled();
+    const filtered = makeLargeFilteredConfig(40);
+    resolveDeferredToolSpecs(filtered.config, filtered.cache, { names: new Set(), directTools: [] });
     expect(mockedGetToolNameCandidates).toHaveBeenCalledTimes(40);
   });
 

@@ -1,5 +1,5 @@
 import { Check, Errors } from "typebox/value";
-import type { DirectToolSpec, McpConfig, ToolPrefix, ToolSelectorCandidateIndex } from "./types.ts";
+import type { DirectToolSpec, McpConfig, ServerCacheEntry, ServerEntry, ToolPrefix, ToolSelectorCandidateIndex } from "./types.ts";
 import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
@@ -69,6 +69,88 @@ export function prepareDirectToolArguments(inputSchema: unknown, args: unknown):
   return candidate;
 }
 
+function createSelectorCandidateIndex(config: McpConfig, cache: MetadataCache, prefix: ToolPrefix): ToolSelectorCandidateIndex {
+  const candidates = new Set<string>();
+  for (const [otherServerName, otherDefinition] of Object.entries(config.mcpServers)) {
+    const otherCache = cache.servers[otherServerName];
+    if (!otherCache || !isServerCacheValid(otherCache, otherDefinition) || isServerDisabled(otherDefinition)) continue;
+    const otherPrefix = resolveToolPrefix(otherDefinition, prefix);
+    for (const otherTool of otherCache.tools ?? []) {
+      if (!isUiToolVisibleToModel(otherTool.uiVisibility)) continue;
+      for (const candidate of getToolNameCandidates(otherTool.name, otherServerName, otherPrefix, false)) candidates.add(candidate);
+    }
+    if (otherDefinition.exposeResources !== false) {
+      for (const resource of otherCache.resources ?? []) {
+        const baseName = `read_${resourceNameToToolName(resource.name)}`;
+        for (const candidate of getToolNameCandidates(baseName, otherServerName, otherPrefix, false)) candidates.add(candidate);
+      }
+    }
+  }
+  return createToolSelectorCandidateIndex(candidates);
+}
+
+/** Builds the cross-server includeTools/excludeTools candidate index once, and only for a server that has filters. */
+export function createServerSelectorIndexResolver(config: McpConfig, cache: MetadataCache, prefix: ToolPrefix): (definition: ServerEntry) => ToolSelectorCandidateIndex | undefined {
+  let index: ToolSelectorCandidateIndex | undefined;
+  return (definition) => {
+    const hasToolFilters =
+      (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
+      (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
+    if (!hasToolFilters) return undefined;
+    index ??= createSelectorCandidateIndex(config, cache, prefix);
+    return index;
+  };
+}
+
+/**
+ * The model-visible tools and resource tools of one enabled server with valid
+ * cached metadata, after `selection` and includeTools/excludeTools. App-only UI
+ * tools never qualify.
+ */
+export function resolveServerToolSpecs(
+  serverName: string,
+  definition: ServerEntry,
+  serverCache: ServerCacheEntry,
+  prefix: ToolPrefix,
+  selection: true | string[],
+  selectorIndex: ToolSelectorCandidateIndex | undefined,
+  lazy = false,
+): DirectToolSpec[] {
+  const specs: DirectToolSpec[] = [];
+  for (const tool of serverCache.tools ?? []) {
+    if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
+    if (selection !== true && !selection.includes(tool.name)) continue;
+    if (!isToolAllowed(tool.name, serverName, prefix, definition.includeTools, definition.excludeTools, selectorIndex)) continue;
+    specs.push({
+      ...(lazy ? { lazy: true } : {}),
+      serverName,
+      originalName: tool.name,
+      prefixedName: formatToolName(tool.name, serverName, prefix),
+      description: tool.description ?? "",
+      ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+      ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
+      ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
+    });
+  }
+
+  if (definition.exposeResources !== false) {
+    for (const resource of serverCache.resources ?? []) {
+      const baseName = `read_${resourceNameToToolName(resource.name)}`;
+      if (selection !== true && !selection.includes(baseName)) continue;
+      if (!isToolAllowed(baseName, serverName, prefix, definition.includeTools, definition.excludeTools, selectorIndex)) continue;
+      specs.push({
+        ...(lazy ? { lazy: true } : {}),
+        serverName,
+        originalName: baseName,
+        prefixedName: formatToolName(baseName, serverName, prefix),
+        description: resource.description ?? `Read resource: ${resource.uri}`,
+        resourceUri: resource.uri,
+      });
+    }
+  }
+  return specs;
+}
+
 export function resolveDirectTools(
   config: McpConfig,
   cache: MetadataCache | null,
@@ -82,7 +164,7 @@ export function resolveDirectTools(
 
   const envSelection = envOverride ? parseDirectToolSelectors(envOverride) : null;
   const globalDirect = config.settings?.directTools;
-  let selectorCandidateIndex: ToolSelectorCandidateIndex | undefined;
+  const selectorIndexFor = createServerSelectorIndexResolver(config, cache, prefix);
 
   for (const [serverName, definition] of Object.entries(config.mcpServers)) {
     if (isServerDisabled(definition)) continue;
@@ -113,69 +195,12 @@ export function resolveDirectTools(
     if (!toolFilter) continue;
 
     const effectivePrefix = resolveToolPrefix(definition, prefix);
-    const hasToolFilters =
-      (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
-      (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
-    if (hasToolFilters && !selectorCandidateIndex) {
-      const candidates = new Set<string>();
-      for (const [otherServerName, otherDefinition] of Object.entries(config.mcpServers)) {
-        const otherCache = cache.servers[otherServerName];
-        if (!otherCache || !isServerCacheValid(otherCache, otherDefinition) || isServerDisabled(otherDefinition)) continue;
-        const otherPrefix = resolveToolPrefix(otherDefinition, prefix);
-        for (const otherTool of otherCache.tools ?? []) {
-          if (!isUiToolVisibleToModel(otherTool.uiVisibility)) continue;
-          for (const candidate of getToolNameCandidates(otherTool.name, otherServerName, otherPrefix, false)) candidates.add(candidate);
-        }
-        if (otherDefinition.exposeResources !== false) {
-          for (const resource of otherCache.resources ?? []) {
-            const baseName = `read_${resourceNameToToolName(resource.name)}`;
-            for (const candidate of getToolNameCandidates(baseName, otherServerName, otherPrefix, false)) candidates.add(candidate);
-          }
-        }
-      }
-      selectorCandidateIndex = createToolSelectorCandidateIndex(candidates);
-    }
-
-    for (const tool of serverCache.tools ?? []) {
-      if (!isUiToolVisibleToModel(tool.uiVisibility)) continue;
-      if (toolFilter !== true && !toolFilter.includes(tool.name)) continue;
-      if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex)) continue;
-      const prefixedName = formatToolName(tool.name, serverName, effectivePrefix);
-      if (BUILTIN_NAMES.has(prefixedName)) {
-        console.warn(`MCP: skipping direct tool "${prefixedName}" (collides with builtin)`);
+    for (const spec of resolveServerToolSpecs(serverName, definition, serverCache, effectivePrefix, toolFilter, selectorIndexFor(definition), lazy)) {
+      if (BUILTIN_NAMES.has(spec.prefixedName)) {
+        console.warn(`MCP: skipping direct ${spec.resourceUri !== undefined ? "resource " : ""}tool "${spec.prefixedName}" (collides with builtin)`);
         continue;
       }
-      specs.push({
-        ...(lazy ? { lazy: true } : {}),
-        serverName,
-        originalName: tool.name,
-        prefixedName,
-        description: tool.description ?? "",
-        ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
-        ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
-        ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
-      });
-    }
-
-    if (definition.exposeResources !== false) {
-      for (const resource of serverCache.resources ?? []) {
-        const baseName = `read_${resourceNameToToolName(resource.name)}`;
-        if (toolFilter !== true && !toolFilter.includes(baseName)) continue;
-        if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex)) continue;
-        const prefixedName = formatToolName(baseName, serverName, effectivePrefix);
-        if (BUILTIN_NAMES.has(prefixedName)) {
-          console.warn(`MCP: skipping direct resource tool "${prefixedName}" (collides with builtin)`);
-          continue;
-        }
-        specs.push({
-          ...(lazy ? { lazy: true } : {}),
-          serverName,
-          originalName: baseName,
-          prefixedName,
-          description: resource.description ?? `Read resource: ${resource.uri}`,
-          resourceUri: resource.uri,
-        });
-      }
+      specs.push(spec);
     }
   }
 

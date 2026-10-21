@@ -12,6 +12,8 @@ import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectServer, excludeProjectServersAtLoadTime, hasProjectServerDefinitions } from "./project-server-trust.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
+import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
+import { namespaceProxyName } from "./mcp-references.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, withSessionMetadata, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
@@ -394,6 +396,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // On Pi 0.99+ search-mode tools are Pi deferred tools, whose activation Pi owns.
   const deferSearchTools = piSupportsMcp(pi);
   const deferredToolDefinitions = new Map<string, Record<string, unknown>>();
+  // Pi 0.99+: cached tools with no direct or search-mode registration, as Pi deferred tools, by Pi name.
+  const registeredDeferredTools = new Map<string, string>();
+  // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
+  const registeredToolNames = new Map<string, string>();
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
   const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
   const renderMcpToolResult = createMcpToolResultRenderer(toolRenderOptions);
@@ -436,9 +442,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     });
   }
 
-  // The fields Pi's built-in MCP registers its tools with (extensions/mcp/tools.js).
   function deferredToolFields(spec: DirectToolSpec, config: McpConfig, cache: MetadataCache | null): Record<string, unknown> | undefined {
     if (!deferSearchTools || !spec.lazy) return undefined;
+    return piDeferredToolFields(spec, config, cache);
+  }
+
+  // The fields Pi's built-in MCP registers its tools with (extensions/mcp/tools.js).
+  function piDeferredToolFields(spec: DirectToolSpec, config: McpConfig, cache: MetadataCache | null): Record<string, unknown> {
     const serverCache = cache?.servers[spec.serverName];
     const tool = spec.resourceUri ? undefined : serverCache?.tools?.find((candidate) => candidate.name === spec.originalName);
     const description = config.mcpServers[spec.serverName]?.description?.trim();
@@ -447,7 +457,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     return {
       exposure: "deferred",
       namespace: {
-        name: `mcp__${spec.serverName.replace(/-/g, "_")}`,
+        name: namespaceProxyName(spec.serverName),
         ...(description ? { description } : {}),
         ...(instructions ? { instructions } : {}),
       },
@@ -474,10 +484,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (reportedNames.size === 0) reportedDirectToolNamesByServer.delete(serverName);
   }
 
-  function registerDirectTool(spec: DirectToolSpec, config: McpConfig, deferred: Record<string, unknown> | undefined): void {
-    finalizationRegistrations?.add(spec.prefixedName);
+  function registerDirectTool(spec: DirectToolSpec, config: McpConfig, deferred: Record<string, unknown> | undefined, name = spec.prefixedName): void {
+    finalizationRegistrations?.add(name);
     const definition = {
-      name: spec.prefixedName,
+      name,
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
@@ -509,7 +519,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         return executor(toolCallId, params, signal, onUpdate, ctx);
       },
       renderShell: toolRenderShell,
-      renderCall: createMcpDirectToolCallRenderer(spec.prefixedName, toolRenderOptions),
+      renderCall: createMcpDirectToolCallRenderer(name, toolRenderOptions),
       renderResult: renderMcpToolResult,
     };
     if (deferred) {
@@ -517,8 +527,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       definition.execute = async (...args) => toCallToolResult(await run(...args));
     }
     callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)(definition));
-    if (deferred) deferredToolDefinitions.set(spec.prefixedName, definition);
-    else deferredToolDefinitions.delete(spec.prefixedName);
+    if (deferred) deferredToolDefinitions.set(name, definition);
+    else deferredToolDefinitions.delete(name);
   }
 
   // Pi registers a tool active. A lazy tool must not stay that way: hold every
@@ -678,6 +688,51 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     return { specs, reservedDirectNames, activeDirectNames: nextNames, added, updated, deactivated };
   }
 
+  // A server in failure backoff withdraws its direct tools; they must not move to the deferred surface meanwhile.
+  function directToolsIgnoringBackoff(config: McpConfig, cache: MetadataCache | null, emitted: DirectToolSpec[]): DirectToolSpec[] {
+    if (activeFailureServers().size === 0) return emitted;
+    return resolveDirectTools(config, cache, config.settings?.toolPrefix ?? "server", envDirectToolOverride, new Set(), new Set());
+  }
+
+  // Pi 0.99+ only. Runs after syncDirectTools, whose names it must not take, and before the namespace proxies.
+  function syncDeferredTools(config: McpConfig, cache: MetadataCache | null, reservedDirectNames: ReadonlySet<string>, directSpecs: DirectToolSpec[]): void {
+    const specs: DeferredToolSpec[] = deferSearchTools && envRaw !== "__none__"
+      ? resolveDeferredToolSpecs(config, cache, {
+        names: new Set([...reservedDirectNames, ...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName)]),
+        directTools: directToolsIgnoringBackoff(config, cache, directSpecs),
+      })
+      : [];
+    const nextNames = new Set<string>();
+    for (const spec of specs) {
+      nextNames.add(spec.name);
+      const fields = piDeferredToolFields(spec, config, cache);
+      const fingerprint = directToolFingerprint(spec) + JSON.stringify(fields);
+      if (registeredDeferredTools.get(spec.name) === fingerprint) continue;
+      registerDirectTool(spec, config, fields, spec.name);
+      finalizationGuard?.();
+      registeredDeferredTools.set(spec.name, fingerprint);
+    }
+    const removed = [...registeredDeferredTools.keys()].filter((name) => !nextNames.has(name));
+    for (const name of removed) registeredDeferredTools.delete(name);
+    // A direct tool registered under a removed name this sync owns it now.
+    deactivateTools(removed.filter((name) => !registeredDirectTools.has(name)));
+
+    registeredToolNames.clear();
+    for (const spec of directSpecs) registeredToolNames.set(deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri), spec.prefixedName);
+    for (const spec of specs) registeredToolNames.set(deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri), spec.name);
+  }
+
+  /** The Pi tool name a cached MCP tool or resource tool is registered under, direct or deferred. */
+  function registeredDeferredName(serverName: string, originalName: string, resourceUri?: string): string | undefined {
+    return registeredToolNames.get(deferredToolKey(serverName, originalName, resourceUri));
+  }
+
+  /** Re-syncs the tool surface from cached metadata; never connects, and a frozen surface stays frozen. */
+  async function ensureDeferredRegistered(serverName: string): Promise<void> {
+    if (directToolsFrozen || !state?.config.mcpServers[serverName]) return;
+    syncToolSurface();
+  }
+
   function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false | "search">): void {
     if (!state) return;
     for (const [serverName, value] of changes) {
@@ -693,6 +748,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const config = state?.config ?? earlyConfig;
     const cache = withSessionMetadata(loadMetadataCache(), config, state?.sessionMetadata);
     const result = syncDirectTools(config, cache);
+    syncDeferredTools(config, cache, result.reservedDirectNames, result.specs);
     if (state) {
       const directToolCounts = state.directToolCounts ?? new Map<string, number>();
       directToolCounts.clear();
@@ -1203,6 +1259,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             registeredDirectToolServers.delete(name);
             registeredDirectToolVersions.delete(name);
             registeredNamespaceProxyTools.delete(name);
+            registeredDeferredTools.delete(name);
+          }
+          for (const [key, name] of registeredToolNames) {
+            if (registeredDuringFinalization.has(name)) registeredToolNames.delete(key);
           }
           if (registeredDuringFinalization.has("mcp")) {
             proxyToolRegistered = false;
@@ -1368,6 +1428,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (deferredSnapshot) {
         const { config, cache, enabledServerCount } = deferredSnapshot;
         const directResult = syncDirectTools(config, cache);
+        syncDeferredTools(config, cache, directResult.reservedDirectNames, directResult.specs);
         syncProxyTool(config, cache, directResult.specs);
         syncNamespaceTools(config, cache, directResult.reservedDirectNames, directResult.activeDirectNames);
         // Pi cannot unregister commands. Wait until cwd is authoritative, and
@@ -2341,6 +2402,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   const initialDirectResult = syncDirectTools(earlyConfig, earlyCache);
+  syncDeferredTools(earlyConfig, earlyCache, initialDirectResult.reservedDirectNames, initialDirectResult.specs);
   syncProxyTool(earlyConfig, earlyCache, initialDirectResult.specs);
   // Register namespace-proxy tools eagerly so tool-groups/slow-mode can validate
   // `mcp:<server>` references on the first session_start turn. Without this

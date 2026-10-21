@@ -103,6 +103,7 @@
     "proxy-modes.ts",
     "direct-tools.ts",
     "direct-tool-surface.ts",
+    "deferred-tool-surface.ts",
     "lazy-loader.ts",
     "namespace-tools.ts",
     "mcp-references.ts",
