@@ -7,7 +7,7 @@ import { getServerPrefix, getToolNameCandidates, isServerDisabled, parseUiPrompt
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure, repageExecutorCatalog, cacheExecutorSignature } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { buildToolMetadata, executorAppToolsLine, executorCatalogOf, getToolNames, formatSchema, isPlainTypeSchema, ownTools } from "./tool-metadata.ts";
+import { buildToolMetadata, cacheReader, executorAppToolsLine, executorCatalogOf, getToolNames, formatSchema, isPlainTypeSchema, ownTools } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import { getObservedOutput, observedOutputRecorder, renderOutputShape } from "./output-shape.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
@@ -22,7 +22,7 @@ import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses } from "./executor-pauses.ts";
 import { executorCallParams, executorUnknownToolMatches, executorUnknownToolText, unwrapExecutorCallResult } from "./executor-app-tools.ts";
 import { canonicalPath } from "./executor-accounts.ts";
-import { describeExecutorAppTool, isExecutorCatalogConnection } from "./executor-catalog.ts";
+import { describeExecutorAppTool, isExecutorCatalogConnection, isExecutorCatalogEntry } from "./executor-catalog.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, scoreToolMatch, type RankedToolMatch } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -810,10 +810,14 @@ async function findExecutorAppToolAfterRepage(
 ): Promise<{ server: string; tool: ToolMetadata } | undefined> {
   const path = canonicalPath(toolName);
   if (!path.includes(".")) return undefined;
+  const readCache = cacheReader();
   const isExecutorServer = (name: string) => {
+    if (state.toolMetadata.get(name)?.some(tool => tool.executorPath !== undefined)) return true;
     const connection = state.manager.getConnection(name);
-    return state.toolMetadata.get(name)?.some(tool => tool.executorPath !== undefined) === true
-      || (connection?.status === "connected" && isExecutorCatalogConnection(connection));
+    if (connection?.status === "connected") return isExecutorCatalogConnection(connection);
+    // A server that isn't connected, even one whose cached catalog is empty: its cached listing says.
+    const entry = state.sessionMetadata?.get(name) ?? readCache()?.servers[name];
+    return entry !== undefined && isExecutorCatalogEntry(entry);
   };
   const servers = serverName !== undefined
     ? [serverName]

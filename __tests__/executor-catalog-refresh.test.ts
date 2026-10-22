@@ -217,6 +217,24 @@ describe("Executor app catalog refresh", () => {
     });
   }, 40_000);
 
+  it("connects a lazy Executor whose cached catalog is empty and pages it again for a path it now has", async () => {
+    const root = await agentDir();
+    await withSession(root, {}, async ({ session }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+    });
+    await vi.waitFor(async () => expect(await cachedCatalog(root)).toBeDefined());
+    const cache = JSON.parse(await readFile(join(root, "mcp-cache.json"), "utf8"));
+    // As if Executor had no apps when it was paged, and gained one since.
+    cache.servers.executor.executorApps = { tools: [], total: 0, cap: 1000, fetchedAt: Date.now() };
+    await writeFile(join(root, "mcp-cache.json"), JSON.stringify(cache));
+
+    await withSession(root, { lifecycle: "lazy" }, async ({ call }) => {
+      const result = await call("mcp", { tool: "alpha.tool_001", args: { id: "7" } });
+      expect(textOf(result)).toBe("tools.alpha.tool_001 record 7");
+      expect(await passes(root)).toBe(2);
+    });
+  }, 30_000);
+
   it("shows a lazy server's cached unavailable apps in /mcp-adapter without connecting it", async () => {
     const root = await agentDir();
     const server = { env: { EXECUTOR_CATALOG_UNAVAILABLE: "delta" } };
