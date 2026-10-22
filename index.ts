@@ -14,8 +14,8 @@ import { approveProjectScriptTool, approveProjectServer, describeBlockedScriptTo
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
 import { findScriptTool, nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolNameConflict, scriptToolOwnerKey, type ScriptToolReservation, type ScriptToolSpec } from "./script-tool-surface.ts";
-import { buildScriptToolSavePrompt, checkScriptToolCode, checkScriptToolSave, writeScriptToolSave } from "./script-tool-save.ts";
 import { parseScriptTools } from "./script-tools.ts";
+import { buildScriptToolSavePrompt, checkScriptToolCode, checkScriptToolSave, scriptToolSaveChange, writeScriptToolSave } from "./script-tool-save.ts";
 import { namespaceProxyName } from "./mcp-references.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, withSessionMetadata, type MetadataCache } from "./metadata-cache.ts";
@@ -2592,15 +2592,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (code === undefined) return declined();
     const codeRefusal = checkScriptToolCode(name, code);
     if (codeRefusal) return result(codeRefusal.message, { error: codeRefusal.error });
+    const approvedButFailed = (message: string) => `The script tool was approved, but could not be saved: ${message}`;
+    let changed: string | undefined;
     try {
       await withFileMutationQueue(configPath, async () => {
         throwIfStopped();
-        writeScriptToolSave({ ...checked, code });
+        // The operator approved the files as the summary showed them.
+        changed = scriptToolSaveChange(checked);
+        if (changed === undefined) writeScriptToolSave({ ...checked, code });
       });
     } catch (error) {
       if (signal?.aborted || (saveOwner && !saveOwner.isActive())) throw error;
-      return failed(error, (message) => `The script tool was approved, but could not be saved: ${message}`);
+      return failed(error, approvedButFailed);
     }
+    if (changed !== undefined) return failed(changed, approvedButFailed);
 
     const entry = { ...checked.entry, file: scriptPath };
     if (target === "project" && targetState.blockedScriptTools !== undefined) {

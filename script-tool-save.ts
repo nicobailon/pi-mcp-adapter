@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { buildUnifiedDiff, getPiGlobalConfigPath, getProjectPiConfigPath, previewScriptToolEntry, writeScriptToolEntry } from "./config.ts";
@@ -51,6 +52,15 @@ export interface ScriptToolSavePlan extends ScriptToolSaveTarget {
   code: string;
   /** Set when the loaded config already has the name or the script file exists. */
   overwrite?: { entry?: ScriptToolDefinition; scriptExisted: boolean };
+  /** What the operator is shown as replaced, checked again just before the write. */
+  baseline: ScriptToolSaveBaseline;
+}
+
+interface ScriptToolSaveBaseline {
+  /** The SHA-256 of the script file, when there is one. */
+  scriptHash?: string;
+  /** The target config file's entry for the name, as JSON, when it has one. */
+  configEntry?: string;
 }
 
 const OPTIONS_PREFIX = "// @options:";
@@ -138,15 +148,16 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
   }
   // Renaming over a symlink would replace the link, so only a regular file is replaced.
   if (existing && !existing.isFile()) return saveFailed(name, `${target.scriptPath} is not a regular file`);
+  let baseline: ScriptToolSaveBaseline;
   try {
-    previewScriptToolEntry(target.configPath, name, entry);
+    baseline = readBaseline(target.configPath, target.scriptPath, name, entry);
   } catch (error) {
     return saveFailed(name, errorMessage(error));
   }
   const existingEntry = request.scriptTools?.[name];
   const scriptExisted = existing !== undefined;
   return {
-    ok: true, name, target: request.target, ...target, entry, code,
+    ok: true, name, target: request.target, ...target, entry, code, baseline,
     ...(existingEntry || scriptExisted ? { overwrite: { ...(existingEntry ? { entry: existingEntry } : {}), scriptExisted } } : {}),
   };
 }
@@ -155,10 +166,31 @@ function countLines(text: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
-function hasEntry(configText: string, name: string): boolean {
-  if (configText === "") return false;
+function entryText(configText: string, name: string): string | undefined {
+  if (configText === "") return undefined;
   const scriptTools = (JSON.parse(configText) as Record<string, unknown>).scriptTools;
-  return isRecord(scriptTools) && Object.hasOwn(scriptTools, name);
+  return isRecord(scriptTools) && Object.hasOwn(scriptTools, name) ? JSON.stringify(scriptTools[name]) : undefined;
+}
+
+// Throws when the config or the script cannot be read.
+function readBaseline(configPath: string, scriptPath: string, name: string, entry: ScriptToolDefinition): ScriptToolSaveBaseline {
+  const configEntry = entryText(previewScriptToolEntry(configPath, name, entry).beforeText, name);
+  const script = lstatSync(scriptPath, { throwIfNoEntry: false }) ? readFileSync(scriptPath) : undefined;
+  return {
+    ...(script ? { scriptHash: createHash("sha256").update(script).digest("hex") } : {}),
+    ...(configEntry !== undefined ? { configEntry } : {}),
+  };
+}
+
+/**
+ * Why the save must not be written now, or undefined: the script file or the target file's entry
+ * changed after the operator was shown them. Throws when either cannot be read.
+ */
+export function scriptToolSaveChange(plan: ScriptToolSavePlan): string | undefined {
+  const now = readBaseline(plan.configPath, plan.scriptPath, plan.name, plan.entry);
+  return now.scriptHash === plan.baseline.scriptHash && now.configEntry === plan.baseline.configEntry
+    ? undefined
+    : "the script file or its config entry changed after you approved the save, so nothing was written";
 }
 
 /** The summary the operator approves before reviewing the script: both files, the config diff and any script diff. */
@@ -166,7 +198,7 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
   const preview = previewScriptToolEntry(plan.configPath, plan.name, plan.entry);
   const scriptExisted = plan.overwrite?.scriptExisted === true;
   const lineCount = countLines(plan.code);
-  const configState = !preview.existed ? "new file" : hasEntry(preview.beforeText, plan.name) ? "entry replaced" : "new entry";
+  const configState = !preview.existed ? "new file" : entryText(preview.beforeText, plan.name) !== undefined ? "entry replaced" : "new entry";
   const lines = [
     `Save script tool "${plan.name}" as ${SCRIPT_TOOL_NAMESPACE}__${plan.name}?`,
     "",

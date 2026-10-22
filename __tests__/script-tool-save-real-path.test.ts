@@ -271,4 +271,22 @@ describe("mcp({ action: \"save-script\" }) in a real session", () => {
       expect(existsSync(scriptPath)).toBe(false);
     });
   }, 30_000);
+
+  it("writes nothing when the script file changed after the operator approved the save", async () => {
+    await withSession(async ({ session, ui, configPath, scriptPath }) => {
+      const before = readFileSync(configPath);
+      ui.editor.mockImplementationOnce(async (_title: string, prefill: string) => {
+        await mkdir(join(scriptPath, ".."), { recursive: true });
+        await writeFile(scriptPath, "return 'written meanwhile';");
+        return prefill;
+      });
+      const result = await save(session, "save-1");
+
+      const message = "the script file or its config entry changed after you approved the save, so nothing was written";
+      expect(textOf(result)).toBe(`The script tool was approved, but could not be saved: ${message}`);
+      expect(result.details).toEqual({ mode: "save-script", name: "greet", error: "script_save_failed", message });
+      expect(readFileSync(scriptPath, "utf8")).toBe("return 'written meanwhile';");
+      expect(readFileSync(configPath)).toEqual(before);
+    });
+  }, 30_000);
 });

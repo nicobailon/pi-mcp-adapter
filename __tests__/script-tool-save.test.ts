@@ -120,6 +120,7 @@ describe("checkScriptToolSave", () => {
       file: "mcp-scripts/stale_issues.js",
       entry: { description: "List stale issues", file: "mcp-scripts/stale_issues.js", inputSchema: SCHEMA },
       code: CODE,
+      baseline: {},
     });
   });
 
