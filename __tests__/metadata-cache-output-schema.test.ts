@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadMetadataCache, reconstructToolMetadata, saveMetadataCache, serializeTools } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
-import { runMcpScript } from "../mcp-code.ts";
+import { executeDescribe } from "../proxy-modes.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { McpTool, ServerCacheEntry } from "../types.ts";
@@ -50,13 +50,13 @@ describe("cached output schema discovery", () => {
         config: { settings: {}, mcpServers: { demo: definition } },
         toolMetadata: new Map([["demo", cached]]), failureTracker: new Map(),
       } as McpExtensionState;
-      const result = await runMcpScript(state, 'return await tools.describe({ path: "demo_info" });');
-      const text = result.content.filter(block => block.type === "text").at(-1)!;
-      const descriptor = JSON.parse(text.text);
-      expect(descriptor).toEqual({
-        path: "demo_info", name: "info", server: "demo", inputTypeScript: "{}",
-        ...(outputSchema !== undefined ? { outputSchema, outputSchemaTarget: "data.structuredContent" } : {}),
-      });
+      const result = executeDescribe(state, "demo_info");
+      expect(result.content[0]!.text).toContain("Server: demo\n");
+      expect(result.content[0]!.text).toContain("\nShape:\n{}");
+      expect(result.details.server).toBe("demo");
+      expect(result.details.tool).toMatchObject({ name: "demo_info", originalName: "info", inputSchema: { type: "object" } });
+      if (outputSchema === undefined) expect(result.details.tool).not.toHaveProperty("outputSchema");
+      else expect(result.details.tool.outputSchema).toEqual(outputSchema);
     }
   });
 });

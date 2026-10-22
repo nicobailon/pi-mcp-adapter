@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { SdkErrorCode, SdkHttpError, type RequestOptions } from "@modelcontextprotocol/client";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { callToolAnsweringExecutorPauses } from "../executor-pauses.ts";
-import { runMcpScript } from "../mcp-code.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { McpServerManager, type ServerConnection } from "../server-manager.ts";
 import { withSessionRecovery } from "../session-recovery.ts";
@@ -133,7 +132,7 @@ describe("Executor pauses", () => {
     expect(await resumes()).toEqual([{ requestId: "apr_1", response: { action: "accept" } }]);
   });
 
-  it.each(["direct", "mcpScript"] as const)("answers the pause on the %s path", async (path) => {
+  it.each(["direct", "proxy"] as const)("answers the pause on the %s path", async (path) => {
     const { state, ui } = await connectExecutor({ select: ["Continue"] });
 
     const result = path === "direct"
@@ -144,7 +143,7 @@ describe("Executor pauses", () => {
           description: "Executor call",
           inputSchema: { type: "object", properties: {} },
         })("call-1", {}, undefined, undefined, undefined as never)
-      : await runMcpScript(state, 'return await tools.call("executor_call", {});');
+      : await executeCall(state, "executor_call", {});
 
     expect(textOf(result)).toContain("email sent");
     expect(textOf(result)).not.toMatch(/apr_|requestId/);

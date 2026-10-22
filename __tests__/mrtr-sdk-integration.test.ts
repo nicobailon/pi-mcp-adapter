@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { getInputRequiredNeedsUiDetails } from "../errors.ts";
 import { executeCall } from "../proxy-modes.ts";
-import { runMcpScript } from "../mcp-code.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { DirectToolSpec, ToolMetadata } from "../types.ts";
@@ -290,23 +289,18 @@ describe("MCP 2026-07-28 SDK-native multi-round input flows", () => {
     });
   });
 
-  it("keeps the shaped error in mcpScript's existing failure envelope", async () => {
+  it("keeps the shaped error when the proxy resolves the tool from its name alone", async () => {
     const { state } = await createConnectedState();
 
-    const result = await runMcpScript(state, 'return await tools.call("mrtr_needs_ui", {});');
-    const payload = JSON.parse(textOf(result));
+    const result = await executeCall(state, "mrtr_needs_ui", {});
 
-    expect(payload).toMatchObject({
-      ok: false,
-      error: {
-        code: "input_required_needs_ui",
-        message: expect.stringContaining("Run this call in an interactive Pi session"),
-      },
-    });
     expect(result.details).toMatchObject({
-      mode: "script",
-      calls: [{ path: "mrtr_needs_ui", ok: false, error: "input_required_needs_ui" }],
+      error: "input_required_needs_ui",
+      server: "mrtr",
+      tool: "needs_ui",
+      inputMethod: "elicitation/create",
     });
+    expect(textOf(result)).toContain("Run this call in an interactive Pi session");
   });
 
   it("settles an aborted proxy call while embedded input is pending and never retries", async () => {
