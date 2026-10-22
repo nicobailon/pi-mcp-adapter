@@ -155,6 +155,7 @@ describe("checkScriptToolSave", () => {
     ["the script path is a symlink", (configPath: string, scriptPath: string) => { mkdirSync(dirname(scriptPath)); symlinkSync(configPath, scriptPath); }, (scriptPath: string) => `${scriptPath} is not a regular file`],
     ["the config is malformed", (configPath: string) => writeFileSync(configPath, "{ malformed"), (_scriptPath: string, configPath: string) => `Failed to read MCP config at ${configPath}: `],
     ["the config's scriptTools is not an object", (configPath: string) => writeFileSync(configPath, '{"scriptTools": []}'), (_scriptPath: string, configPath: string) => `Failed to update MCP config at ${configPath}: scriptTools must be an object`],
+    ["the script file is larger than 1 MiB", (_configPath: string, scriptPath: string) => { mkdirSync(dirname(scriptPath)); writeFileSync(scriptPath, "x".repeat(MAX_SCRIPT_BYTES + 1)); }, (scriptPath: string) => `${scriptPath} is larger than 1 MiB`],
   ])("refuses as script_save_failed when %s, writing nothing", (_kind, arrange, reason) => {
     const configPath = join(agentDir, "mcp-adapter.json");
     const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
@@ -236,6 +237,28 @@ describe("buildScriptToolSavePrompt", () => {
       "--- before", "+++ after", "@@ -148,7 +148,7 @@",
       "  return 147;", "  return 148;", "  return 149;", "- return 150;", "+ return 'changed';", "  return 151;", "  return 152;", "  return 153;",
     ]);
+  });
+
+  it("says a diff is too large to show instead of computing it, so 30,000 lines each side can't exhaust memory", () => {
+    const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
+    mkdirSync(dirname(scriptPath), { recursive: true });
+    writeFileSync(scriptPath, Array.from({ length: 30_000 }, (_, i) => `// old ${i}`).join("\n"));
+    const code = Array.from({ length: 30_000 }, (_, i) => `return ${i};`).join("\n");
+
+    const started = Date.now();
+    const prompt = buildScriptToolSavePrompt(plan({}, { code }));
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(prompt.endsWith("Script change:\n30000 lines replaced by 30000 lines; too large to show here. Review the new script in the editor.")).toBe(true);
+  });
+
+  it("cuts a diff of one-line 1 MiB scripts to a few kilobytes", () => {
+    const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
+    mkdirSync(dirname(scriptPath), { recursive: true });
+    writeFileSync(scriptPath, "a".repeat(MAX_SCRIPT_BYTES - 100));
+
+    const prompt = buildScriptToolSavePrompt(plan({}, { code: "b".repeat(MAX_SCRIPT_BYTES - 100) }));
+    expect(Buffer.byteLength(prompt)).toBeLessThan(20 * 1024);
+    expect(prompt).toMatch(/Script change:\n--- before\n\+\+\+ after\n@@ -1,1 \+1,1 @@\n- a+…\n… \(1 more line\)$/);
   });
 
   it("leaves out the rewrite sentence for a file the writer would reproduce, and warns a project save about later script edits", () => {

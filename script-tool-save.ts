@@ -67,6 +67,11 @@ const OPTIONS_PREFIX = "// @options:";
 // `target` is read by the save action itself.
 const SAVE_ARGS = new Set(["name", "description", "code", "inputSchema", "target"]);
 const MAX_DIFF_LINES = 60;
+// Each diff in the summary is cut here too, so a minified script can't make a huge dialog; the two
+// diffs stay within 16 KB.
+const MAX_DIFF_BYTES = 8 * 1024;
+// The diff's LCS table has a cell per pair of lines; past this it would take too long or run out of memory.
+const MAX_DIFF_CELLS = 4_000_000;
 const DIFF_CONTEXT = 3;
 const MISSING_INPUT = 'save-script requires args with name, description and code. Example: mcp({ action: "save-script", args: { name: "stale_issues", description: "...", code: "..." } })';
 
@@ -148,6 +153,8 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
   }
   // Renaming over a symlink would replace the link, so only a regular file is replaced.
   if (existing && !existing.isFile()) return saveFailed(name, `${target.scriptPath} is not a regular file`);
+  // A script tool doesn't run a file this large either, and reading it to diff could take too long.
+  if (existing && existing.size > MAX_SCRIPT_BYTES) return saveFailed(name, `${target.scriptPath} is larger than 1 MiB`);
   let baseline: ScriptToolSaveBaseline;
   try {
     baseline = readBaseline(target.configPath, target.scriptPath, name, entry);
@@ -163,7 +170,7 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
 }
 
 function countLines(text: string): number {
-  return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+  return text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
 function entryText(configText: string, name: string): string | undefined {
@@ -217,7 +224,7 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
   if (plan.target === "project") {
     lines.push("", "Approving a project script tool covers its entry, not the script. The script file can change without asking you again.");
   }
-  lines.push("", "Config change:", ...boundedDiff(preview.beforeText, preview.afterText));
+  lines.push("", "Config change:", ...boundedDiff(preview.beforeText, preview.afterText, `Only the "${plan.name}" entry in scriptTools changes.`));
   if (scriptExisted) {
     let before: string;
     try {
@@ -225,15 +232,32 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
     } catch (error) {
       throw new Error(`Failed to read script tool file at ${plan.scriptPath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
-    lines.push("", "Script change:", ...boundedDiff(before, plan.code));
+    lines.push("", "Script change:", ...boundedDiff(before, plan.code, "Review the new script in the editor."));
   }
   return lines.join("\n");
 }
 
-function boundedDiff(before: string, after: string): string[] {
+/** A context diff cut to MAX_DIFF_LINES lines and MAX_DIFF_BYTES, or one line when it is too large to compute. */
+function boundedDiff(before: string, after: string, tooLargeHint: string): string[] {
+  const rows = countLines(before);
+  const cols = countLines(after);
+  if ((rows + 1) * (cols + 1) > MAX_DIFF_CELLS) {
+    return [`${rows} lines replaced by ${cols} lines; too large to show here. ${tooLargeHint}`];
+  }
   const diff = buildUnifiedDiff(before, after, { context: DIFF_CONTEXT }).split("\n");
-  if (diff.length <= MAX_DIFF_LINES) return diff;
-  return [...diff.slice(0, MAX_DIFF_LINES), `… (${diff.length - MAX_DIFF_LINES} more lines)`];
+  const shown: string[] = [];
+  let bytes = 0;
+  for (const line of diff) {
+    if (shown.length === MAX_DIFF_LINES || bytes >= MAX_DIFF_BYTES) break;
+    const room = MAX_DIFF_BYTES - bytes;
+    // A multi-byte character cut in half decodes to U+FFFD, which is dropped.
+    const cut = Buffer.byteLength(line) > room ? `${Buffer.from(line).subarray(0, room).toString().replace(/�$/, "")}…` : line;
+    shown.push(cut);
+    bytes += Buffer.byteLength(cut) + 1;
+  }
+  const hidden = diff.length - shown.length;
+  if (hidden > 0) shown.push(`… (${hidden} more ${hidden === 1 ? "line" : "lines"})`);
+  return shown;
 }
 
 // Another save may have written into the directory meanwhile, and then it stays.
