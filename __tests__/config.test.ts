@@ -2680,7 +2680,8 @@ describe("scriptTools", () => {
     });
     writeJson(projectPath, { scriptTools: { close_stale: { description: "Project close", file: "./project.js" } } });
 
-    const { getScriptToolIssues, loadMcpConfig } = await import("../config.ts");
+    const { loadMcpConfig } = await import("../config.ts");
+    const { loadedScriptToolIssues } = await import("../project-server-trust.ts");
     const config = loadMcpConfig(undefined, project);
 
     expect(config.mcpServers.docs).toEqual({ url: "https://docs.test/mcp" });
@@ -2688,7 +2689,7 @@ describe("scriptTools", () => {
       close_stale: { description: "Project close", file: join(project, ".pi", "project.js") },
       triage: { description: "Triage", file: join(home, ".pi", "agent", "triage.js") },
     });
-    expect(getScriptToolIssues(project)).toEqual([]);
+    expect(loadedScriptToolIssues(config)).toEqual([]);
   });
 
   it("drops each bad entry with the config path, its name and the reason, and keeps the file's servers", async () => {
@@ -2713,7 +2714,8 @@ describe("scriptTools", () => {
       },
     });
 
-    const { getLegacyMcpMigrationNotices, getScriptToolIssues, loadMcpConfig } = await import("../config.ts");
+    const { getLegacyMcpMigrationNotices, loadMcpConfig } = await import("../config.ts");
+    const { loadedScriptToolIssues } = await import("../project-server-trust.ts");
     const config = loadMcpConfig(undefined, project);
 
     expect(config.mcpServers.docs).toEqual({ url: "https://docs.test/mcp" });
@@ -2722,7 +2724,7 @@ describe("scriptTools", () => {
     const dropped = (name: string, reason: string) => `${globalPath}: script tool ${JSON.stringify(name)} was not loaded — ${reason}.`;
     const badName = "its name must start with a lowercase letter and have only lowercase letters, digits and underscores, at most 48 characters";
     const objectSchema = 'inputSchema must be a JSON Schema object with "type": "object"';
-    expect(getScriptToolIssues(project)).toEqual([
+    expect(loadedScriptToolIssues(config)).toEqual([
       dropped("Close-Stale", badName),
       dropped(`a${"b".repeat(48)}`, badName),
       dropped("not_object", "it must be an object"),
@@ -2743,12 +2745,13 @@ describe("scriptTools", () => {
   it("reports a scriptTools block that is not an object, and keeps the file's servers", async () => {
     writeJson(projectPath, { mcpServers: { docs: { url: "https://docs.test/mcp" } }, scriptTools: ["close_stale"] });
 
-    const { getScriptToolIssues, loadMcpConfig } = await import("../config.ts");
+    const { loadMcpConfig } = await import("../config.ts");
+    const { loadedScriptToolIssues } = await import("../project-server-trust.ts");
     const config = loadMcpConfig(undefined, project);
 
     expect(config.mcpServers.docs).toEqual({ url: "https://docs.test/mcp" });
     expect(config.scriptTools).toBeUndefined();
-    expect(getScriptToolIssues(project)).toEqual([
+    expect(loadedScriptToolIssues(config)).toEqual([
       `${projectPath}: scriptTools was not loaded — it must be an object that maps tool names to script tools.`,
     ]);
   });
@@ -2791,9 +2794,11 @@ describe("scriptTools", () => {
     });
 
     try {
-      const { getScriptToolIssues, loadMcpConfig } = await import("../config.ts");
-      expect(Object.keys(loadMcpConfig(undefined, project).scriptTools ?? {})).toEqual(["missing", "unreadable", "not_a_path"]);
-      expect(getScriptToolIssues(project)).toEqual([]);
+      const { loadMcpConfig } = await import("../config.ts");
+      const { loadedScriptToolIssues } = await import("../project-server-trust.ts");
+      const config = loadMcpConfig(undefined, project);
+      expect(Object.keys(config.scriptTools ?? {})).toEqual(["missing", "unreadable", "not_a_path"]);
+      expect(loadedScriptToolIssues(config)).toEqual([]);
     } finally {
       chmodSync(unreadable, 0o644);
     }

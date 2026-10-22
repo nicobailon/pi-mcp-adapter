@@ -283,14 +283,6 @@ export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath?:
 /** Settings that only configured mcpScript, besides the jev ones in REMOVED_JEV_KEYS. They still load, and do nothing. */
 const REMOVED_SCRIPT_SETTINGS = ["scriptMode", "scriptSkill"] as const;
 
-/**
- * One line per script tool a config file defines but the adapter did not load, with the reason.
- * Kept apart from the migration notices, which also reach `mcp({})` and so the model.
- */
-export function getScriptToolIssues(cwd = process.cwd(), overridePath?: string): string[] {
-  return getConfigSources(overridePath, cwd).flatMap((source) => readSourceConfig(source.id, source.readPath)?.scriptToolIssues ?? []);
-}
-
 /** One notice per config file that still sets a setting mcpScript's removal left without effect. */
 function getRemovedScriptSettingNotices(cwd: string, overridePath?: string): string[] {
   return getConfigSources(overridePath, cwd).flatMap((source) => {
@@ -580,6 +572,11 @@ export interface LoadedMcpConfig {
   projectServers: Map<string, ProjectServerSource>;
   /** Script tools whose entry came from a project config file, by name. Always set by loadMcpConfigWithSources. */
   projectScriptTools?: Map<string, ProjectServerSource>;
+  /**
+   * One line per script tool a config file defines but the adapter did not load, with the reason.
+   * Kept apart from the migration notices, which also reach `mcp({})`. Always set by loadMcpConfigWithSources.
+   */
+  scriptToolIssues?: string[];
   projectServerPolicy: "ask" | "allow";
 }
 
@@ -600,7 +597,7 @@ export const MCP_CONFIG_SOURCE_METADATA = Symbol.for("pi-mcp-adapter/config-sour
 export function loadMcpConfig(overridePath?: string, cwd = process.cwd()): McpConfig {
   const loaded = loadMcpConfigWithSources(overridePath, cwd);
   Object.defineProperty(loaded.config, MCP_CONFIG_SOURCE_METADATA, {
-    value: { projectServers: loaded.projectServers, projectScriptTools: loaded.projectScriptTools, projectServerPolicy: loaded.projectServerPolicy },
+    value: { projectServers: loaded.projectServers, projectScriptTools: loaded.projectScriptTools, scriptToolIssues: loaded.scriptToolIssues, projectServerPolicy: loaded.projectServerPolicy },
     enumerable: false,
   });
   return loaded.config;
@@ -611,6 +608,7 @@ export function loadMcpConfigWithSources(overridePath?: string, cwd = process.cw
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
   const projectServers = new Map<string, ProjectServerSource>();
   const projectScriptTools = new Map<string, ProjectServerSource>();
+  const scriptToolIssues: string[] = [];
   let projectServerPolicy: "ask" | "allow" = "ask";
   let projectAgentPluginSource: ProjectServerSource | undefined;
   let projectClaudePluginSource: ProjectServerSource | undefined;
@@ -631,6 +629,8 @@ export function loadMcpConfigWithSources(overridePath?: string, cwd = process.cw
   for (const source of sourceSpecs) {
     const loaded = readSourceConfig(source.id, source.readPath);
     if (!loaded) continue;
+    // Read here, because expandImports and mergeConfigs keep only the config's own keys.
+    scriptToolIssues.push(...loaded.scriptToolIssues ?? []);
     // Pi replaces a global entry that the project file redefines; mergeServerMaps would merge fields.
     if (source.id === "pi-mcp-global") {
       for (const name of piProjectNames) delete loaded.mcpServers[name];
@@ -667,7 +667,7 @@ export function loadMcpConfigWithSources(overridePath?: string, cwd = process.cw
   }
 
   if (isExclusiveConfigMode()) {
-    return { config: stripProjectProviderAuth(resolveConfiguredClaudePluginMcp(config, cwd), projectServers), projectServers, projectScriptTools, projectServerPolicy };
+    return { config: stripProjectProviderAuth(resolveConfiguredClaudePluginMcp(config, cwd), projectServers), projectServers, projectScriptTools, scriptToolIssues, projectServerPolicy };
   }
 
   const packageConfig = loadPackageMcpConfigs(cwd);
@@ -695,6 +695,7 @@ export function loadMcpConfigWithSources(overridePath?: string, cwd = process.cw
     config: stripProjectProviderAuth(mergedConfig, projectServers),
     projectServers,
     projectScriptTools,
+    scriptToolIssues,
     projectServerPolicy,
   };
 }

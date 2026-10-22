@@ -63,7 +63,7 @@ export function describeBlockedScriptTool(name: string, block: ProjectServerBloc
 }
 
 type ConfigWithSourceMetadata = McpConfig & {
-  [MCP_CONFIG_SOURCE_METADATA]?: Pick<LoadedMcpConfig, "projectServers" | "projectScriptTools" | "projectServerPolicy">;
+  [MCP_CONFIG_SOURCE_METADATA]?: Pick<LoadedMcpConfig, "projectServers" | "projectScriptTools" | "scriptToolIssues" | "projectServerPolicy">;
 };
 
 function asLoadedConfig(config: McpConfig): LoadedMcpConfig {
@@ -82,6 +82,11 @@ export function hasProjectServerDefinitions(config: McpConfig): boolean {
 
 export function hasProjectScriptToolDefinitions(config: McpConfig): boolean {
   return (asLoadedConfig(config).projectScriptTools?.size ?? 0) > 0;
+}
+
+/** The script-tool issues `loadMcpConfig` found in the config files of `config`; none for any other config. */
+export function loadedScriptToolIssues(config: McpConfig): string[] {
+  return (config as ConfigWithSourceMetadata)[MCP_CONFIG_SOURCE_METADATA]?.scriptToolIssues ?? [];
 }
 
 function canonicalize(value: unknown): unknown {

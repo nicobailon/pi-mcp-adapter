@@ -309,3 +309,62 @@ describe("a script tool an embedder supplies in createMcpAdapter({ config })", (
     }
   }, 30_000);
 });
+
+describe("a script tool entry a config file gets wrong, in a real session", () => {
+  it("is warned about once when the session starts, listed by /mcp-adapter status, and never shown in mcp({})", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-mcp-script-tool-issue-"));
+    const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const originalArgv = [...process.argv];
+    let session: Session | undefined;
+    try {
+      const agentDir = join(root, "agent");
+      const cwd = join(root, "project");
+      await Promise.all([mkdir(agentDir), mkdir(cwd)]);
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      const configPath = join(agentDir, "mcp-adapter.json");
+      await writeFile(join(root, "close-stale.js"), 'return "ran";');
+      await writeFile(configPath, JSON.stringify({
+        mcpServers: {},
+        settings: { sampling: false, elicitation: false },
+        scriptTools: {
+          Bad: { description: "Bad name", file: join(root, "close-stale.js") },
+          close_stale: { description: "Close stale issues", file: join(root, "close-stale.js") },
+        },
+      }));
+      process.argv.push("--mcp-config", configPath);
+      const issue = `${configPath}: script tool "Bad" was not loaded — its name must start with a lowercase letter and have only lowercase letters, digits and underscores, at most 48 characters.`;
+      const notices: string[] = [];
+      const settingsManager = SettingsManager.inMemory();
+      const loader = new DefaultResourceLoader({
+        cwd, agentDir, settingsManager, additionalExtensionPaths: [resolve("index.ts")], extensionFactories: [createCodemodeExtension()],
+      });
+      await loader.reload();
+      ({ session } = await createAgentSession({
+        cwd, agentDir, resourceLoader: loader, sessionManager: SessionManager.inMemory(cwd), settingsManager, noTools: "builtin",
+      }));
+      const ui = { notify: (text: string) => notices.push(text), setStatus: () => undefined, theme: { fg: (_color: string, value: string) => value } } as any;
+      await session.bindExtensions({ mode: "tui", uiContext: ui, onError: () => undefined });
+      await vi.waitFor(() => expect(notices).toContain(issue), { timeout: 10_000 });
+      const runner = session.extensionRunner;
+      await vi.waitFor(() => expect(runner.getAllRegisteredTools().map(tool => tool.definition.name)).toContain("mcp__script__close_stale"), { timeout: 10_000 });
+
+      await runner.getCommand("mcp-adapter")!.handler("status", runner.createCommandContext());
+      const status = notices.find(text => text.startsWith("MCP Server Status:"));
+      const overview = textOf(await callAs(session, "mcp", "mcp-1", {}));
+
+      expect(notices.filter(text => text === issue)).toHaveLength(1);
+      expect(status).toContain(`⚠ ${issue}`);
+      expect(overview).not.toContain("Bad");
+    } finally {
+      try {
+        await session?.extensionRunner.emit({ type: "session_shutdown", reason: "test" });
+      } finally {
+        session?.dispose();
+        process.argv.splice(0, process.argv.length, ...originalArgv);
+        if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }, 30_000);
+});

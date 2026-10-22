@@ -24,7 +24,6 @@ const mocks = vi.hoisted(() => ({
   discoverConfiguredClaudePluginSkills: vi.fn(() => []),
   resolveConfiguredClaudePluginMcp: vi.fn((config: unknown) => structuredClone(config)),
   getLegacyMcpMigrationNotices: vi.fn(() => []),
-  getScriptToolIssues: vi.fn((): string[] => []),
   setPiMcpConfigEnabled: vi.fn(),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
@@ -110,7 +109,6 @@ vi.mock("../config.ts", () => ({
   discoverConfiguredClaudePluginSkills: mocks.discoverConfiguredClaudePluginSkills,
   resolveConfiguredClaudePluginMcp: mocks.resolveConfiguredClaudePluginMcp,
   getLegacyMcpMigrationNotices: mocks.getLegacyMcpMigrationNotices,
-  getScriptToolIssues: mocks.getScriptToolIssues,
   getPiMcpAuthPath: () => "/nonexistent/pi-mcp-auth.json",
   setPiMcpConfigEnabled: mocks.setPiMcpConfigEnabled,
   getPiGlobalConfigPath: mocks.getPiGlobalConfigPath,
@@ -403,7 +401,6 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.cloneMcpConfig.mockImplementation((config: unknown) => structuredClone(config));
     mocks.discoverConfiguredClaudePluginSkills.mockReturnValue([]);
     mocks.resolveConfiguredClaudePluginMcp.mockImplementation((config: unknown) => structuredClone(config));
-    mocks.getScriptToolIssues.mockReturnValue([]);
     mocks.getLegacyMcpMigrationNotices.mockReturnValue([]);
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway");
@@ -2738,16 +2735,15 @@ describe("mcpAdapter session lifecycle", () => {
 
   it("warns at session start about script tools that were not loaded, apart from the migration notices", async () => {
     const issue = '/project/.pi/mcp-adapter.json: script tool "Bad" was not loaded — its name must start with a lowercase letter.';
-    mocks.getScriptToolIssues.mockReturnValue([issue]);
     const state = createState();
+    // What initializeMcp found when it loaded the config files.
+    state.scriptToolLoadIssues = [issue];
     mocks.initializeMcp.mockResolvedValue(state);
     const { api, handlers } = await loadAdapter();
     const ui = { notify: vi.fn() };
 
     await handlers.get("session_start")?.({}, { hasUI: true, ui, cwd: "/project" });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(mocks.getScriptToolIssues).toHaveBeenCalledWith("/project", undefined);
+    await vi.waitFor(() => expect(ui.notify).toHaveBeenCalledWith(issue, "warning"));
     expect(ui.notify).toHaveBeenCalledTimes(1);
     expect(ui.notify).toHaveBeenCalledWith(issue, "warning");
 

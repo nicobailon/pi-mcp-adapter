@@ -9,8 +9,8 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { NestedCallHandOff } from "./proxy-modes.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getScriptToolIssues, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
-import { approveProjectServer, describeBlockedScriptTool, excludeProjectServersAtLoadTime, hasProjectScriptToolDefinitions, hasProjectServerDefinitions } from "./project-server-trust.ts";
+import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
+import { approveProjectServer, describeBlockedScriptTool, excludeProjectServersAtLoadTime, hasProjectScriptToolDefinitions, hasProjectServerDefinitions, loadedScriptToolIssues } from "./project-server-trust.ts";
 import { BUILTIN_NAMES, buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
 import { findScriptTool, nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolOwnerKey, type ScriptToolSpec } from "./script-tool-surface.ts";
@@ -1055,6 +1055,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     config: McpConfig;
     cache: MetadataCache | null;
     enabledServerCount: number;
+    /** The script-tool issues of the config files read for this snapshot. */
+    scriptToolIssues: string[];
   } | undefined {
     let config: McpConfig;
     if (programmaticConfig) {
@@ -1072,7 +1074,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       && getMissingConfiguredDirectToolServers(config, cache, envDirectToolOverride).length > 0) return undefined;
     if (config.settings?.deferWithMissingMetadata !== true
       && (cache === null || hasEnabledServerWithoutValidMetadata(config, cache))) return undefined;
-    return { config, cache, enabledServerCount: enabledServers.length };
+    return { config, cache, enabledServerCount: enabledServers.length, scriptToolIssues: programmaticConfig ? sessionScriptToolIssues : loadedScriptToolIssues(config) };
   }
 
   function syncNamespaceTools(
@@ -1453,6 +1455,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       let statusPublicationAttempted = false;
       state = nextState;
       nextState.migrationNotices = [...sessionMigrationNotices];
+      if (nextState.scriptToolLoadIssues) sessionScriptToolIssues = nextState.scriptToolLoadIssues;
       nextState.scriptToolIssues = scriptToolIssuesOf(nextState);
       // initializeMcp already warned about each project script tool that trust blocked.
       for (const [name, block] of nextState.blockedScriptTools ?? []) deliveredScriptToolIssues.add(describeBlockedScriptTool(name, block));
@@ -1622,9 +1625,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     sessionMigrationNotices = programmaticConfig
       ? []
       : getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath);
-    sessionScriptToolIssues = programmaticConfig
-      ? supplied?.issues ?? []
-      : getScriptToolIssues(ctx.cwd, earlyConfigPath);
+    // A config file's issues arrive with the session's config load: the deferred snapshot or initialization.
+    sessionScriptToolIssues = programmaticConfig ? supplied?.issues ?? [] : [];
     deliveredScriptToolIssues = new Set(sessionScriptToolIssues);
     if (ctx.hasUI) {
       for (const notice of [...sessionMigrationNotices, ...sessionScriptToolIssues]) ctx.ui.notify(notice, "warning");
@@ -1694,9 +1696,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const deferredSnapshot = getDeferredSessionSnapshot(ctx.cwd);
       if (deferredSnapshot) {
         const { config, cache, enabledServerCount } = deferredSnapshot;
+        sessionScriptToolIssues = deferredSnapshot.scriptToolIssues;
         const directResult = syncDirectTools(config, cache);
         syncDeferredTools(config, cache, directResult.reservedDirectNames, directResult.specs);
-        deliverScriptToolIssues(ctx, scriptToolSurfaceIssues);
+        deliverScriptToolIssues(ctx, [...sessionScriptToolIssues, ...scriptToolSurfaceIssues]);
         syncProxyTool(config, cache, directResult.specs);
         syncNamespaceTools(config, cache, directResult.reservedDirectNames, directResult.activeDirectNames);
         // Pi cannot unregister commands. Wait until cwd is authoritative, and
