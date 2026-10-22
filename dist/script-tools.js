@@ -63,19 +63,20 @@ export function validateScriptToolEntry(name, value, sourceDir) {
     };
 }
 /**
- * Read a config file's `scriptTools` block. A bad entry is dropped and reported; it never drops the
- * file's other entries or its servers.
+ * Read a config's `scriptTools` block. A bad entry is dropped and reported; it never drops the
+ * config's other entries or its servers. `source` names the config in each issue. Relative `file`
+ * paths resolve against `sourceDir`, by default the folder of the config file `source` names.
  */
-export function parseScriptTools(value, configPath) {
+export function parseScriptTools(value, source, sourceDir = dirname(source)) {
     const scriptTools = {};
     if (!isRecord(value)) {
-        return { scriptTools, issues: [`${configPath}: scriptTools was not loaded — it must be an object that maps tool names to script tools.`] };
+        return { scriptTools, issues: [`${source}: scriptTools was not loaded — it must be an object that maps tool names to script tools.`] };
     }
     const issues = [];
     for (const [name, entry] of Object.entries(value)) {
-        const validated = validateScriptToolEntry(name, entry, dirname(configPath));
+        const validated = validateScriptToolEntry(name, entry, sourceDir);
         if (typeof validated === "string")
-            issues.push(`${configPath}: script tool ${JSON.stringify(name)} was not loaded — ${validated}.`);
+            issues.push(`${source}: script tool ${JSON.stringify(name)} was not loaded — ${validated}.`);
         else
             scriptTools[name] = validated;
     }

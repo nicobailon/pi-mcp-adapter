@@ -10,10 +10,11 @@ export declare function resolveScriptToolPath(file: string, sourceDir: string): 
  */
 export declare function validateScriptToolEntry(name: string, value: unknown, sourceDir: string): ScriptToolDefinition | string;
 /**
- * Read a config file's `scriptTools` block. A bad entry is dropped and reported; it never drops the
- * file's other entries or its servers.
+ * Read a config's `scriptTools` block. A bad entry is dropped and reported; it never drops the
+ * config's other entries or its servers. `source` names the config in each issue. Relative `file`
+ * paths resolve against `sourceDir`, by default the folder of the config file `source` names.
  */
-export declare function parseScriptTools(value: unknown, configPath: string): {
+export declare function parseScriptTools(value: unknown, source: string, sourceDir?: string): {
     scriptTools: Record<string, ScriptToolDefinition>;
     issues: string[];
 };
