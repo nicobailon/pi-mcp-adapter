@@ -870,3 +870,60 @@ describe("proxy discovery", () => {
     expect(handOff).not.toHaveBeenCalled();
   });
 });
+
+describe("proxy discovery of script tools", () => {
+  const inputSchema = { type: "object", properties: { repo: { type: "string" } }, required: ["repo"] };
+  function withScriptTools(state = createState()): McpExtensionState {
+    state.listScriptTools = () => [
+      { name: "close_stale", toolName: "mcp__script__close_stale", definition: { description: "Close stale demo records", file: "/s/close.js", inputSchema } },
+      { name: "triage", toolName: "mcp__script__triage", definition: { description: "Triage new issues", file: "/s/triage.js" } },
+    ];
+    return state;
+  }
+
+  it("lists script tools with MCP tools, marked, and tells their matches apart", () => {
+    const result = executeSearch(withScriptTools(), "demo records", false, undefined, false);
+
+    expect(result.content[0].text).toBe([
+      'Found 3 tools matching "demo records":',
+      "",
+      "- demo_find - Find demo records",
+      "- demo_search - Search demo records",
+      "- close_stale (script tool) - Close stale demo records",
+    ].join("\n"));
+    expect((result.details as any).matches).toEqual([
+      { server: "demo", tool: "demo_find", score: expect.any(Number) },
+      { server: "demo", tool: "demo_search", score: expect.any(Number) },
+      { scriptTool: "close_stale", score: expect.any(Number) },
+    ]);
+  });
+
+  it("finds script tools by regex, and lists none in a search scoped to a server", () => {
+    expect((executeSearch(withScriptTools(), "^triage$", true).details as any).matches).toEqual([{ scriptTool: "triage", score: 0 }]);
+    expect((executeSearch(withScriptTools(), "records", false, "demo").details as any).matches.map((match: any) => match.tool))
+      .toEqual(["demo_find", "demo_search"]);
+    expect((executeSearch(withScriptTools(), "triage", false, "demo").details as any).matches).toEqual([]);
+  });
+
+  it("describes a script tool by its name or its Pi name, with its input schema", () => {
+    for (const name of ["close_stale", "mcp__script__close_stale"]) {
+      const result = executeDescribe(withScriptTools(), name);
+      expect(result.content[0].text).toBe("close_stale (script tool)\nPi tool: mcp__script__close_stale\n\nClose stale demo records\n\nShape:\n{ repo: string; }");
+      expect(result.details).toMatchObject({ mode: "describe", scriptTool: "close_stale", tool: { inputSchema } });
+    }
+    expect(executeDescribe(withScriptTools(), "triage").content[0].text).toContain("No parameters");
+  });
+
+  it("describes the script tool over a same-named MCP tool and says how to reach that one", () => {
+    const state = withScriptTools();
+    state.toolMetadata.get("demo")!.push({ name: "close_stale", originalName: "close_stale", description: "Close via MCP" });
+
+    expect(executeDescribe(state, "close_stale").content[0].text)
+      .toContain('"close_stale" also names an MCP tool on server "demo". Describe it with mcp({ describe: "close_stale", server: "demo" }).');
+    expect(executeDescribe(state, "close_stale", "demo").details).toMatchObject({ server: "demo", tool: { description: "Close via MCP" } });
+  });
+
+  it("leaves unknown names on the tool_not_found path", () => {
+    expect(executeDescribe(withScriptTools(), "nope").details).toMatchObject({ error: "tool_not_found" });
+  });
+});

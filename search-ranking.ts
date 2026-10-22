@@ -29,6 +29,8 @@ export interface RankedToolMatch {
   server: string;
   tool: ToolMetadata;
   score: number;
+  /** A script tool, which belongs to no server; `server` is then "mcp__script". */
+  scriptTool?: true;
 }
 
 type SearchField = Exclude<keyof typeof FIELD_WEIGHTS, "keywords">;

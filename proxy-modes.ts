@@ -20,7 +20,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses } from "./executor-pauses.ts";
-import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, type RankedToolMatch } from "./search-ranking.ts";
+import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, scoreToolMatch, type RankedToolMatch } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { semanticSearch, type SemanticSearchBackend, type SemanticSearchEvaluator } from "./semantic-search.ts";
@@ -45,6 +45,8 @@ type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
 const require = createRequire(import.meta.url);
 const proxyArgumentValidators = new WeakMap<object, JsonSchemaValidator<unknown>>();
 const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
+// The `server` of a script tool's search match, which belongs to no server.
+const SCRIPT_TOOL_SERVER = "mcp__script";
 
 function proxyArgumentValidationError(inputSchema: unknown, args: unknown): string | null | undefined {
   if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) return null;
@@ -794,6 +796,8 @@ export function resolveDescribeTarget(
 }
 
 export function executeDescribe(state: McpExtensionState, toolName: string, serverOverride?: string): ProxyToolResult {
+  const script = serverOverride === undefined ? findScriptToolMeta(state, toolName) : undefined;
+  if (script) return describeScriptTool(state, toolName, script);
   const target = resolveDescribeTarget(state, toolName, serverOverride);
   if ("error" in target) return target.error;
   const { server: serverName, tool: toolMeta } = target;
@@ -808,17 +812,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
   const hints = formatToolHints(toolMeta);
   if (hints) text += `Hints: ${hints}\n`;
   text += `\n${toolMeta.description || "(no description)"}\n`;
-
-  if (toolMeta.inputSchema && !toolMeta.resourceUri) {
-    const shape = renderTsShape(toolMeta.inputSchema);
-    text += shape !== null && isPlainTypeSchema(toolMeta.inputSchema)
-      ? `\nShape:\n${shape}`
-      : `\nInput schema (JSON Schema):\n\`\`\`json\n${JSON.stringify(toolMeta.inputSchema, null, 2)}\n\`\`\``;
-  } else if (toolMeta.resourceUri) {
-    text += `\nNo parameters required (resource tool).`;
-  } else {
-    text += `\nNo parameters defined.`;
-  }
+  text += describeInputSchema(toolMeta);
 
   const observed = toolMeta.resourceUri ? undefined : getObservedOutput(state, serverName, toolMeta);
   if (observed) {
@@ -829,6 +823,48 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
   return {
     content: [{ type: "text" as const, text: text.trim() }],
     details: { mode: "describe", tool: toolMeta, server: serverName },
+  };
+}
+
+function describeInputSchema(toolMeta: ToolMetadata): string {
+  if (toolMeta.inputSchema && !toolMeta.resourceUri) {
+    const shape = renderTsShape(toolMeta.inputSchema);
+    return shape !== null && isPlainTypeSchema(toolMeta.inputSchema)
+      ? `\nShape:\n${shape}`
+      : `\nInput schema (JSON Schema):\n\`\`\`json\n${JSON.stringify(toolMeta.inputSchema, null, 2)}\n\`\`\``;
+  }
+  return toolMeta.resourceUri ? `\nNo parameters required (resource tool).` : `\nNo parameters defined.`;
+}
+
+// A script tool, shaped like an MCP tool's metadata so search ranks and renders it the same way.
+function scriptToolMeta(spec: { name: string; definition: { description: string; inputSchema?: Record<string, unknown> } }): ToolMetadata {
+  const { description, inputSchema } = spec.definition;
+  return { name: spec.name, originalName: spec.name, description, ...(inputSchema ? { inputSchema } : {}) };
+}
+
+function findScriptToolMeta(state: McpExtensionState, name: string): { tool: ToolMetadata; toolName: string } | undefined {
+  const spec = state.listScriptTools?.().find((candidate) => candidate.name === name || candidate.toolName === name);
+  return spec ? { tool: scriptToolMeta(spec), toolName: spec.toolName } : undefined;
+}
+
+function scriptToolMatches(state: McpExtensionState, score: (tool: ToolMetadata) => number | null): RankedToolMatch[] {
+  return (state.listScriptTools?.() ?? []).flatMap((spec) => {
+    const tool = scriptToolMeta(spec);
+    const matched = score(tool);
+    return matched === null ? [] : [{ server: SCRIPT_TOOL_SERVER, tool, score: matched, scriptTool: true as const }];
+  });
+}
+
+// A script tool wins over an MCP tool of the same name; the result says how to reach the MCP one.
+function describeScriptTool(state: McpExtensionState, requested: string, script: { tool: ToolMetadata; toolName: string }): ProxyToolResult {
+  let text = `${script.tool.name} (script tool)\nPi tool: ${script.toolName}\n\n${script.tool.description}\n${describeInputSchema(script.tool)}`;
+  const shadowed = resolveDescribeTarget(state, requested);
+  if (!("error" in shadowed)) {
+    text += `\n\n"${requested}" also names an MCP tool on server "${shadowed.server}". Describe it with mcp({ describe: "${requested}", server: "${shadowed.server}" }).`;
+  }
+  return {
+    content: [{ type: "text" as const, text: text.trim() }],
+    details: { mode: "describe", scriptTool: script.tool.name, tool: script.tool },
   };
 }
 
@@ -849,7 +885,7 @@ function renderSearchResults(
   showSchemas: boolean,
   limit: number,
   offset: number,
-  matches: Array<{ server: string; tool: ToolMetadata; score: number }>,
+  matches: RankedToolMatch[],
   backend?: SemanticSearchBackend,
 ): ProxyToolResult {
   const page = paginate(matches, offset, limit);
@@ -880,11 +916,12 @@ function renderSearchResults(
 
   let text = `Found ${page.total} tool${page.total === 1 ? "" : "s"} matching "${query}":\n\n`;
   for (const match of page.items) {
-    const approvalMarker = isToolCallApprovalRequired(state.config, match.server, match.tool, state.toolMetadata)
-      ? " (requires approval)"
-      : "";
+    // A script tool's own calls ask for approval, never the script tool itself.
+    const marker = match.scriptTool
+      ? " (script tool)"
+      : isToolCallApprovalRequired(state.config, match.server, match.tool, state.toolMetadata) ? " (requires approval)" : "";
     if (showSchemas) {
-      text += `${match.tool.name}${approvalMarker}\n`;
+      text += `${match.tool.name}${marker}\n`;
       text += `  ${match.tool.description || "(no description)"}\n`;
       if (match.tool.inputSchema && !match.tool.resourceUri) {
         const shape = renderTsShape(match.tool.inputSchema);
@@ -892,14 +929,15 @@ function renderSearchResults(
           ? `\n  Parameters:\n${formatSchema(match.tool.inputSchema, "    ")}\n`
           : `\n  Shape:\n${shape.split("\n").map(line => `    ${line}`).join("\n")}\n`;
         if (shape === null || !isPlainTypeSchema(match.tool.inputSchema)) {
-          text += `  Parameter summary only. Full input schema: mcp(${JSON.stringify({ describe: match.tool.name, server: match.server })})\n`;
+          const describe = match.scriptTool ? { describe: match.tool.name } : { describe: match.tool.name, server: match.server };
+          text += `  Parameter summary only. Full input schema: mcp(${JSON.stringify(describe)})\n`;
         }
       } else if (match.tool.resourceUri) {
         text += "  No parameters (resource tool).\n";
       }
       text += "\n";
     } else {
-      text += `- ${match.tool.name}${approvalMarker}`;
+      text += `- ${match.tool.name}${marker}`;
       if (match.tool.description) text += ` - ${truncateAtWord(match.tool.description, 50)}`;
       text += "\n";
     }
@@ -910,7 +948,9 @@ function renderSearchResults(
     content: [{ type: "text" as const, text: text.trim() }],
     details: {
       mode: "search",
-      matches: page.items.map(match => ({ server: match.server, tool: match.tool.name, score: match.score })),
+      matches: page.items.map(match => match.scriptTool
+        ? { scriptTool: match.tool.name, score: match.score }
+        : { server: match.server, tool: match.tool.name, score: match.score }),
       count: page.total, hasMore: page.hasMore, nextOffset: page.nextOffset, query,
       ...(backend ? { backend } : {}),
     },
@@ -989,6 +1029,8 @@ export function findTools(state: McpExtensionState, input: ToolSearchInput): Too
         if (matched) matches.push({ server: serverName, tool, score: 0 });
       }
     }
+    // Script tools belong to no server, so a search scoped to one lists none.
+    if (!server) matches.push(...scriptToolMatches(state, tool => pattern.test(tool.name) || pattern.test(tool.description) ? 0 : null));
     return { matches };
   }
 
@@ -1000,7 +1042,11 @@ export function findTools(state: McpExtensionState, input: ToolSearchInput): Too
         .sort((a, b) => a.tool.name.localeCompare(b.tool.name)),
     };
   }
-  return { matches: rankToolMatches(state, query, server) };
+  const ranked = rankToolMatches(state, query, server);
+  if (server) return { matches: ranked };
+  const scripts = scriptToolMatches(state, tool => scoreToolMatch(tool, "script", query));
+  if (scripts.length === 0) return { matches: ranked };
+  return { matches: [...ranked, ...scripts].sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name)) };
 }
 
 export function executeSearch(

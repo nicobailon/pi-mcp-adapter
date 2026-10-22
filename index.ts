@@ -13,7 +13,7 @@ import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigra
 import { approveProjectServer, describeBlockedScriptTool, excludeProjectServersAtLoadTime, hasProjectScriptToolDefinitions, hasProjectServerDefinitions } from "./project-server-trust.ts";
 import { BUILTIN_NAMES, buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
-import { nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolOwnerKey, type ScriptToolSpec } from "./script-tool-surface.ts";
+import { findScriptTool, nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolOwnerKey, type ScriptToolSpec } from "./script-tool-surface.ts";
 import { namespaceProxyName } from "./mcp-references.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, withSessionMetadata, type MetadataCache } from "./metadata-cache.ts";
@@ -403,6 +403,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const registeredDeferredTools = new Map<string, string>();
   // Script tools, by Pi name: the fingerprint each was last registered with.
   const registeredScriptTools = new Map<string, string>();
+  // The registered script tools, by Pi name, for the gateway.
+  const registeredScriptSpecs = new Map<string, ScriptToolSpec>();
   // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
   const registeredToolNames = new Map<string, string>();
   // The deferredToolKey each deferred name was first given to. Never cleared, so within a session a
@@ -560,7 +562,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function executeScriptTool(script: ScriptToolSpec, toolCallId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionToolContext): Promise<AgentToolResult<Record<string, unknown>>> {
     // Called by a tool other than the model or the adapter's proxies, such as a codemode script.
-    if (deliversToScript(toolCallId)) return Promise.resolve(nestedScriptToolResult(script.name));
+    if (calledByAnotherTool(toolCallId)) return Promise.resolve(nestedScriptToolResult(script.name));
     return runScriptTool({
       pi, ctx, toolCallId, signal, onUpdate: onUpdate as AgentToolUpdateCallback<unknown> | undefined,
       spec: script, input: params, settings: (state?.config ?? earlyConfig).settings,
@@ -580,9 +582,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     scriptToolSurfaceIssues = issues;
     if (state) state.scriptToolIssues = scriptToolIssuesOf(state);
     const nextNames = new Set<string>();
+    registeredScriptSpecs.clear();
     for (const spec of specs) {
       taken.add(spec.toolName);
       nextNames.add(spec.toolName);
+      registeredScriptSpecs.set(spec.toolName, spec);
       if (!deferredNameOwners.has(spec.toolName)) deferredNameOwners.set(spec.toolName, scriptToolOwnerKey(spec.name));
       const deferred = spec.definition.declare === true ? undefined : { exposure: "deferred", namespace: { name: SCRIPT_TOOL_NAMESPACE } };
       const fingerprint = JSON.stringify([spec.definition, deferred ?? null]);
@@ -601,6 +605,54 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function scriptToolIssuesOf(targetState: McpExtensionState): string[] {
     const blocked = [...targetState.blockedScriptTools ?? []].map(([name, block]) => describeBlockedScriptTool(name, block));
     return [...sessionScriptToolIssues, ...blocked, ...scriptToolSurfaceIssues];
+  }
+
+  // The script tools the gateway reaches: the registered ones, or under MCP_DIRECT_TOOLS=__none__,
+  // which registers none, every configured one. A Pi before 0.99 gets none.
+  function gatewayScriptTools(): ScriptToolSpec[] {
+    if (deferredRegistryLive) return [...registeredScriptSpecs.values()];
+    if (!deferSearchTools) return [];
+    return resolveScriptToolSpecs((state?.config ?? earlyConfig).scriptTools, [], new Map()).specs;
+  }
+
+  /**
+   * `mcp({ tool: "<script tool>" })`. With a nested-call context the call is handed to the registered
+   * script tool, so Pi's hooks see `mcp__script__<name>` and its own caller check runs; otherwise the
+   * script runs here. Either way the result is the script tool's own.
+   */
+  async function callScriptToolFromGateway(
+    spec: ScriptToolSpec, args: Record<string, unknown>, mcpCallId: string, signal: AbortSignal | undefined,
+    onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext,
+    shadowed: { server: string; tool: string } | undefined,
+  ): Promise<AgentToolResult<Record<string, unknown>>> {
+    const withShadowNote = (result: AgentToolResult<Record<string, unknown>>) => shadowed ? {
+      ...result,
+      content: [...result.content, { type: "text" as const, text: `"${shadowed.tool}" also names an MCP tool on server "${shadowed.server}"; this call ran the script tool. Call the MCP tool with mcp({ tool: "${shadowed.tool}", server: "${shadowed.server}" }).` }],
+    } : result;
+    let input: Record<string, unknown>;
+    try {
+      input = prepareDirectToolArguments(normalizeDirectToolInputSchema(spec.definition.inputSchema), args) as Record<string, unknown>;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: "text", text: `Failed to call tool: ${message}` }], details: { mode: "script_tool", tool: spec.name, error: "call_failed", message } };
+    }
+    const toolCtx = ctx as ExtensionToolContext;
+    if (deferredRegistryLive && !directToolsFrozen && typeof toolCtx.executeTool === "function"
+      && registeredScriptSpecs.has(spec.toolName) && toolCtx.tools.some((tool) => tool.name === spec.toolName)) {
+      const outcome = await toolCtx.executeTool(spec.toolName, input);
+      const details = outcome.result.details as Record<string, unknown> | undefined;
+      // Blocked by a tool_call hook or rejected before the script tool ran.
+      if (details?.mode !== "script_tool") {
+        return withShadowNote({ content: outcome.result.content, details: { mode: "script_tool", tool: spec.name, error: "nested_call_failed" } });
+      }
+      return withShadowNote({ content: outcome.result.content, details });
+    }
+    // The script runs here, not in the script tool, so the caller check runs here too.
+    if (calledByAnotherTool(mcpCallId)) return withShadowNote(nestedScriptToolResult(spec.name));
+    return withShadowNote(await runScriptTool({
+      pi, ctx: toolCtx, toolCallId: mcpCallId, signal, onUpdate: onUpdate as AgentToolUpdateCallback<unknown> | undefined,
+      spec, input, settings: (state?.config ?? earlyConfig).settings,
+    }));
   }
 
   // Pi registers a tool active. A lazy tool must not stay that way: hold every
@@ -1371,6 +1423,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       nextState.migrationNotices = [...sessionMigrationNotices];
       nextState.scriptToolIssues = scriptToolIssuesOf(nextState);
       nextState.deliversToScript = deliversToScript;
+      nextState.listScriptTools = gatewayScriptTools;
       finalizationGuard = guard;
       finalizationRegistrations = registeredDuringFinalization;
       try {
@@ -1832,6 +1885,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       call = parent;
     }
     return false;
+  }
+
+  /**
+   * Whether a tool other than the model or the adapter's proxies called `toolCallId`, for script tools.
+   * Pi forms every nested call id as `<parent>/<n>`; under MCP_DIRECT_TOOLS=__none__ there is no caller
+   * record, so the id shape is the only signal. That holds for a call whose record is already gone too.
+   */
+  function calledByAnotherTool(toolCallId: string): boolean {
+    return toolCallsById.has(toolCallId) ? deliversToScript(toolCallId) : toolCallId.includes("/");
   }
 
   if (deferredRegistryLive) pi.on("agent_end", () => toolCallsById.clear());
@@ -2553,6 +2615,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             : proxyModes.executeAuthComplete(proxyState, params.server, input);
         }
         if (params.tool) {
+          // A script tool wins over an MCP tool of the same name; mcp({ tool, server }) reaches the MCP one.
+          const scriptTool = params.server === undefined ? findScriptTool(gatewayScriptTools(), params.tool) : undefined;
+          if (scriptTool) {
+            const mcpMatch = proxyModes.resolveDescribeTarget(proxyState, params.tool);
+            const shadowed = "error" in mcpMatch ? undefined : { server: mcpMatch.server, tool: params.tool };
+            const result = await callScriptToolFromGateway(scriptTool, parsedArgs ?? {}, toolCallId, signal, _onUpdate, _ctx, shadowed);
+            assertRuntimeGuard(proxyGuard);
+            return result;
+          }
           const handOff = createProxyHandOff(_ctx, toolCallId, (server, canonicalTool, args, nestedSignal) =>
             proxyModes.executeCall(proxyState, canonicalTool, args, server, getPiTools, nestedSignal, undefined, undefined, toolCallId));
           const result = await proxyModes.executeCall(proxyState, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, undefined, toolCallId, handOff);

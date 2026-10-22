@@ -3,7 +3,7 @@ import type { ConsentManager } from "./consent-manager.ts";
 import type { McpLifecycleManager } from "./lifecycle.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { AuthStorageOptions } from "./mcp-auth.ts";
-import type { ServerDefinition, ToolMetadata, PromptMetadata, ServerCacheEntry, McpConfig, UiSessionMessages, UiStreamSummary, McpStatusEventBus, UiServerHandle, ProjectServerBlock } from "./types.ts";
+import type { ServerDefinition, ToolMetadata, PromptMetadata, ServerCacheEntry, McpConfig, UiSessionMessages, UiStreamSummary, McpStatusEventBus, UiServerHandle, ProjectServerBlock, ScriptToolDefinition } from "./types.ts";
 import type { UiResourceHandler } from "./ui-resource-handler.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
@@ -54,6 +54,8 @@ export interface McpExtensionState {
    * it skips the output guard. Unset, or false for an unknown call, keeps the guard.
    */
   deliversToScript?: (toolCallId: string | undefined) => boolean;
+  /** The script tools `mcp({ search })`, `mcp({ describe })` and `mcp({ tool })` reach: config name, Pi name, entry. */
+  listScriptTools?: () => ReadonlyArray<{ name: string; toolName: string; definition: ScriptToolDefinition }>;
   /** Install validations must not publish durable cache entries before config persistence. */
   provisionalInstalls?: Set<string>;
   oauthRuntime: McpOAuthRuntime;

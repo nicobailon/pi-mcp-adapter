@@ -14,8 +14,9 @@ type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
 type ToolCall = { name: string; id: string; parent: string | undefined };
 
 // A real Pi session with the adapter, Pi's codemode, the fixture MCP server and one script tool,
-// close_stale, whose file is `script`. Needs `env -u MCP_DIRECT_TOOLS`, as the suite runs.
-async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[]; script: string }) => Promise<void>): Promise<void> {
+// close_stale, whose file is `script`, and a script tool echo that shadows the fixture's echo.
+// Needs `env -u MCP_DIRECT_TOOLS`, as the suite runs.
+async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[]; script: string }) => Promise<void>, settings: Record<string, unknown> = {}): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "pi-mcp-script-tool-"));
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalArgv = [...process.argv];
@@ -29,9 +30,10 @@ async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[
     const script = join(root, "close-stale.js");
     await writeFile(configPath, JSON.stringify({
       mcpServers: { fixture: { command: process.execPath, args: [resolve("__tests__/fixtures/structured-echo-server.mjs")] } },
-      settings: { sampling: false, elicitation: false },
+      settings: { sampling: false, elicitation: false, ...settings },
       scriptTools: {
         close_stale: { description: "Close stale issues", file: script, inputSchema: { type: "object", properties: { repo: { type: "string" } }, required: ["repo"] } },
+        echo: { description: "Echo through a script", file: script },
       },
     }));
     process.argv.push("--mcp-config", configPath);
@@ -124,6 +126,65 @@ describe("a script tool in a real session", () => {
         { name: "codemode", id: "cm-1", parent: undefined },
         { name: "mcp__script__close_stale", id: "cm-1/1", parent: "cm-1" },
       ]);
+    });
+  }, 30_000);
+});
+
+describe("a script tool through the mcp gateway in a real session", () => {
+  const body = "return (await tools.mcp__fixture__echo({ value: input.repo })).structuredContent.value;";
+
+  it("hands mcp({ tool }) to the registered script tool, which runs once under the mcp call", async () => {
+    await withScriptTool(async ({ session, toolCalls, script }) => {
+      await writeFile(script, body);
+      const result = await callAs(session, "mcp", "mcp-1", { tool: "close_stale", args: { repo: "a/b" } });
+
+      expect(textOf(result)).toContain("Script completed");
+      expect(textOf(result)).toContain("a/b");
+      expect(result.details).toEqual({ mode: "script_tool", tool: "close_stale", calls: [expect.objectContaining({ id: "mcp-1/1/1", name: "mcp__fixture__echo", status: "ok" })] });
+      expect(toolCalls).toEqual([
+        { name: "mcp", id: "mcp-1", parent: undefined },
+        { name: "mcp__script__close_stale", id: "mcp-1/1", parent: "mcp-1" },
+        { name: "mcp__fixture__echo", id: "mcp-1/1/1", parent: "mcp-1/1" },
+      ]);
+    });
+  }, 30_000);
+
+  it("refuses mcp({ tool }) for a script tool from inside a codemode script", async () => {
+    await withScriptTool(async ({ session, toolCalls, script }) => {
+      await writeFile(script, body);
+      const result = await callAs(session, "codemode", "cm-1", { code: 'return await tools.mcp({ tool: "close_stale", args: { repo: "a/b" } });' });
+
+      expect(textOf(result)).toContain('Script tool "close_stale" cannot run inside another script.');
+      expect(toolCalls.map(call => call.name)).toEqual(["codemode", "mcp", "mcp__script__close_stale"]);
+    });
+  }, 30_000);
+
+  it("runs the script in the proxy with a frozen surface, with the same result shape", async () => {
+    await withScriptTool(async ({ session, toolCalls, script }) => {
+      await writeFile(script, body);
+      const result = await callAs(session, "mcp", "mcp-1", { tool: "close_stale", args: { repo: "a/b" } });
+
+      expect(textOf(result)).toContain("a/b");
+      expect(result.details).toEqual({ mode: "script_tool", tool: "close_stale", calls: [expect.objectContaining({ id: "mcp-1/1", name: "mcp__fixture__echo", status: "ok" })] });
+      // No mcp__script__close_stale call: the script ran in the proxy, its MCP call nested under the mcp call.
+      expect(toolCalls).toEqual([
+        { name: "mcp", id: "mcp-1", parent: undefined },
+        { name: "mcp__fixture__echo", id: "mcp-1/1", parent: "mcp-1" },
+      ]);
+    }, { freezeDirectTools: true });
+  }, 30_000);
+
+  it("runs the script tool over a same-named MCP tool and says how to reach that one", async () => {
+    await withScriptTool(async ({ session, script }) => {
+      await writeFile(script, 'return "from the script";');
+      const shadowing = await callAs(session, "mcp", "mcp-2", { tool: "echo", args: {} });
+      const direct = await callAs(session, "mcp", "mcp-3", { tool: "echo", server: "fixture", args: { value: "from the server" } });
+
+      expect(textOf(shadowing)).toContain("from the script");
+      expect(textOf(shadowing)).toContain('"echo" also names an MCP tool on server "fixture"; this call ran the script tool. Call the MCP tool with mcp({ tool: "echo", server: "fixture" }).');
+      expect(shadowing.details).toMatchObject({ mode: "script_tool", tool: "echo" });
+      expect(textOf(direct)).toContain("from the server");
+      expect(textOf(direct)).not.toContain("script");
     });
   }, 30_000);
 });

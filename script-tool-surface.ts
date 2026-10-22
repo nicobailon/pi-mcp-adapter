@@ -48,6 +48,11 @@ export function scriptToolOwnerKey(name: string): string {
   return JSON.stringify(["script", name]);
 }
 
+/** The script tool `mcp({ tool })` or `mcp({ describe })` names, by its config name or its Pi name. */
+export function findScriptTool(specs: readonly ScriptToolSpec[], name: string): ScriptToolSpec | undefined {
+  return specs.find((spec) => spec.name === name || spec.toolName === name);
+}
+
 type ScriptToolResult = AgentToolResult<Record<string, unknown>>;
 
 function failure(tool: string, error: string, text: string): ScriptToolResult {

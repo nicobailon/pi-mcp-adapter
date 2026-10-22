@@ -56,6 +56,7 @@ const mocks = vi.hoisted(() => ({
   executeSearch: vi.fn(),
   executeStatus: vi.fn(),
   executeUiMessages: vi.fn(),
+  resolveDescribeTarget: vi.fn((): unknown => ({ error: {} })),
   coreModuleGate: null as Promise<void> | null,
   oauthModuleGate: null as Promise<void> | null,
   coreModuleStarted: vi.fn(),
@@ -163,6 +164,7 @@ vi.mock("../proxy-modes.ts", async () => {
   executeList: mocks.executeList,
   executeSearch: mocks.executeSearch,
   executeStatus: mocks.executeStatus,
+  resolveDescribeTarget: mocks.resolveDescribeTarget,
   executeUiMessages: mocks.executeUiMessages,
   };
 });
@@ -5151,6 +5153,46 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         ]);
         expect(state.migrationNotices).toEqual([]);
         expect(scriptRegistrations(api).map((tool: { name: string }) => tool.name)).toEqual(["mcp__script__kept"]);
+      });
+
+      it.each([false, true])("hands mcp({ tool }) for a script tool to the registered tool, or with a frozen surface runs it in the proxy (frozen: %s)", async (frozen) => {
+        const { api, state } = await bootScripts({ close_stale: closeStale }, eager, frozen ? { freezeDirectTools: true } : {});
+        await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+        const ran = { content: [{ type: "text", text: "ran" }], details: { mode: "script_tool", tool: "close_stale", calls: [] } };
+        const executeTool = vi.fn(async () => ({ isError: false, result: ran }));
+        const ctx = { executeTool, tools: [{ name: "mcp__script__close_stale" }] };
+
+        const result = await registeredTool(api, "mcp").execute("mcp-1", { tool: "close_stale", args: { repo: "a/b" } }, undefined, undefined, ctx);
+
+        if (frozen) {
+          expect(executeTool).not.toHaveBeenCalled();
+          expect(result.details).toEqual({ mode: "script_tool", tool: "close_stale", error: "script_file_missing" });
+        } else {
+          expect(executeTool).toHaveBeenCalledWith("mcp__script__close_stale", { repo: "a/b" });
+          expect(result).toEqual(ran);
+        }
+        expect(mocks.executeCall).not.toHaveBeenCalled();
+      });
+
+      it("runs mcp({ tool }) for a script tool in the proxy under MCP_DIRECT_TOOLS=__none__, refusing a nested-shaped call id", async () => {
+        vi.stubEnv("MCP_DIRECT_TOOLS", "__none__");
+        try {
+          const { prepareDirectToolArguments } = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
+          mocks.prepareDirectToolArguments.mockImplementation(prepareDirectToolArguments);
+          const { api, state } = await bootScripts({ close_stale: closeStale });
+          await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+          const call = (id: string, args: Record<string, unknown>) =>
+            registeredTool(api, "mcp").execute(id, { tool: "close_stale", args }, undefined, undefined, {});
+
+          expect((await call("cm-1/1", { repo: "a/b" })).details).toEqual({ mode: "script_tool", tool: "close_stale", error: "nested_script_tool" });
+          // A model call gets as far as reading the file, in the proxy: nothing is registered to hand it to.
+          expect((await call("model-1", { repo: "a/b" })).details).toEqual({ mode: "script_tool", tool: "close_stale", error: "script_file_missing" });
+          expect((await call("model-2", {})).details).toMatchObject({ mode: "script_tool", tool: "close_stale", error: "call_failed" });
+          expect(scriptRegistrations(api)).toEqual([]);
+          expect(mocks.executeCall).not.toHaveBeenCalled();
+        } finally {
+          vi.unstubAllEnvs();
+        }
       });
 
       it("registers none before Pi 0.99, and says why", async () => {
