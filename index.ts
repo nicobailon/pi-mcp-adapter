@@ -392,6 +392,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // Removal clears the record so stale/fallback reactivation is reportable.
   const reportedDirectToolNamesByServer = new Map<string, Set<string>>();
   const registeredNamespaceProxyTools = new Set<string>();
+  const namespaceProxyFingerprints = new Map<string, string>();
   const fallbackDeactivatedTools = new Set<string>();
   // directTools: "search" — registered inactive, activated by mcp({ search }) or a successful mcp({ tool }) call.
   const lazyDirectTools = new Set<string>();
@@ -940,6 +941,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       existingDirectNames: reservedDirectNames,
       activeDirectNames,
       existingNamespaceNames: registeredNamespaceProxyTools,
+      registeredFingerprints: namespaceProxyFingerprints,
       unavailableServers: activeFailureServers(),
       fallbackDeactivatedNames: fallbackDeactivatedTools,
       pi,

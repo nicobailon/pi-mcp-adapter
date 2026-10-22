@@ -190,6 +190,8 @@ export interface SyncNamespaceProxyToolsInput {
   existingDirectNames: Set<string>;
   activeDirectNames?: ReadonlySet<string>;
   existingNamespaceNames: Set<string>;
+  /** What each registered namespace proxy was registered with, so an unchanged one is not re-registered. */
+  registeredFingerprints?: Map<string, string>;
   unavailableServers?: ReadonlySet<string>;
   // Names the adapter removed from Pi's active tools because Pi could not
   // unregister them. Pi does not re-activate a name it already knows, so a
@@ -355,8 +357,14 @@ export function syncNamespaceProxyTools(input: SyncNamespaceProxyToolsInput): Sy
   const renderResult = input.renderResult ?? createMcpToolResultRenderer(renderOptions);
 
   for (const spec of specs) {
+    const existing = input.existingNamespaceNames.has(spec.toolName);
+    const fingerprint = JSON.stringify([spec.serverName, spec.description, input.reachesTools === true]);
+    // Pi rebuilds its whole tool registry on every registerTool, so an unchanged proxy is left alone.
+    if (existing && input.registeredFingerprints?.get(spec.toolName) === fingerprint
+      && !input.fallbackDeactivatedNames?.has(spec.toolName)) continue;
     registerNamespaceProxyTool(input, spec, renderOptions, renderShell, renderResult);
-    (input.existingNamespaceNames.has(spec.toolName) ? result.updated : result.added).push(spec.toolName);
+    input.registeredFingerprints?.set(spec.toolName, fingerprint);
+    (existing ? result.updated : result.added).push(spec.toolName);
   }
 
   result.deactivated.push(...deactivateStaleNamespaceTools(input, nextNames));
