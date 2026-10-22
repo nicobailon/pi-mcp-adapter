@@ -272,7 +272,11 @@ describe("Executor catalog paging", () => {
   const page = (items: unknown[], next: { offset: number } | null, remaining = 0) =>
     ({ content: [], structuredContent: { items, namespaces: [], remaining, next, unavailableApps: [] } });
   const fetchPages = (pageAt: (offset: number) => unknown) => fetchExecutorCatalog({
-    client: { callTool: async (params: { arguments?: Record<string, unknown> }) => pageAt(params.arguments!.offset as number) } as never,
+    // Each answer waits a macrotask, so a loop that never ends still lets the test time out.
+    client: { callTool: async (params: { arguments?: Record<string, unknown> }) => {
+      await new Promise(resolve => setImmediate(resolve));
+      return pageAt(params.arguments!.offset as number);
+    } } as never,
     isAppTool: () => true,
   });
 
@@ -285,7 +289,8 @@ describe("Executor catalog paging", () => {
     let calls = 0;
     const pages = fetchPages(offset => {
       calls++;
-      return page([item("tools.a.x")], { offset: offset + 1 }, 1);
+      // Pages that keep advancing with nothing new; the last one ends a pass that has no bound.
+      return page([item("tools.a.x")], calls > EXECUTOR_APP_TOOL_CAP + 1 ? null : { offset: offset + 1 }, 1);
     });
     await expect(pages).rejects.toThrow("Executor returned a malformed search page: more pages than the cap allows");
     expect(calls).toBe(EXECUTOR_APP_TOOL_CAP);
