@@ -8,13 +8,14 @@ import {
   DefaultResourceLoader,
   SessionManager,
   SettingsManager,
+  type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
 // Real Pi session, registered tools, nested-call pipeline, and stdio MCP transport.
 async function withPiSession(
-  options: { codemode?: boolean },
+  options: { codemode?: boolean; extend?: (pi: ExtensionAPI) => void },
   run: (pi: { session: Session; toolCalls: Array<{ name: string; id: string; parent: string | undefined }> }) => Promise<void>,
 ): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "pi-mcp-codemode-deferred-"));
@@ -45,6 +46,7 @@ async function withPiSession(
           pi.on("tool_call", (event) => {
             toolCalls.push({ name: event.toolName, id: event.toolCallId, parent: event.parentToolCallId });
           });
+          options.extend?.(pi);
         },
       ],
     });
@@ -123,11 +125,22 @@ describe("Pi codemode reach to proxy-only MCP tools", () => {
 
   // The fixture's `large` result is over the 50 KB output guard limit.
   it("gives a codemode script the whole result, called directly and through the namespace proxy", async () => {
-    await withPiSession({ codemode: true }, async ({ session, toolCalls }) => {
+    let flood: (() => Promise<void>) | undefined;
+    // Between the script's two calls: more calls of the script than the record keeps, all blocked
+    // before they ran, so none gets a tool_result. The script's own record must survive them.
+    const extend = (pi: ExtensionAPI) => pi.on("tool_result", async (event) => {
+      if (event.toolCallId === "cm-1/1") await flood?.();
+    });
+    await withPiSession({ codemode: true, extend }, async ({ session, toolCalls }) => {
       const runner = session.extensionRunner;
       await vi.waitFor(() => expect(runner.createToolContext("probe", undefined).tools.map(tool => tool.name))
         .toContain("mcp__fixture__large"), { timeout: 10_000 });
       const codemode = runner.getAllRegisteredTools().find(tool => tool.definition.name === "codemode")!.definition;
+      flood = async () => {
+        for (let index = 0; index < 4100; index++) {
+          await runner.emitToolCall({ type: "tool_call", toolName: "mcp__fixture__large", toolCallId: `cm-1/blocked-${index}`, parentToolCallId: "cm-1", input: {} } as never);
+        }
+      };
       const code = `
         const direct = (await tools.mcp__fixture__large({})).content[0].text;
         const proxied = await tools.mcp__fixture({ tool: "large", args: {} });
@@ -145,7 +158,8 @@ describe("Pi codemode reach to proxy-only MCP tools", () => {
       expect(counts).toMatchObject({ direct: 2000, proxied: 2000 });
       expect(counts.directBytes).toBeGreaterThan(50 * 1024);
       expect(counts.proxiedBytes).toBe(counts.directBytes);
-      expect(toolCalls.map(call => [call.name, call.id])).toEqual([
+      expect(toolCalls.filter(call => call.id.includes("blocked"))).toHaveLength(4100);
+      expect(toolCalls.filter(call => !call.id.includes("blocked")).map(call => [call.name, call.id])).toEqual([
         ["codemode", "cm-1"],
         ["mcp__fixture__large", "cm-1/1"],
         ["mcp__fixture", "cm-1/2"],
@@ -162,6 +176,8 @@ describe("Pi codemode reach to proxy-only MCP tools", () => {
       const proxies = { mcp: { tool: "fixture_large" }, mcp__fixture: { tool: "large" } };
       for (const [name, params] of Object.entries(proxies)) {
         const proxy = runner.getAllRegisteredTools().find(tool => tool.definition.name === name)!.definition;
+        // Recorded as the model's own call, so a proxy ancestor is classified, not just unknown.
+        await runner.emitToolCall({ type: "tool_call", toolName: name, toolCallId: `${name}-call`, input: params });
         const result = await proxy.execute(`${name}-call`, params, undefined, undefined, runner.createToolContext(`${name}-call`, undefined));
         const text = result.content.map(block => block.type === "text" ? block.text : "").join("");
         expect(text, name).toContain("[MCP text output truncated");

@@ -1657,7 +1657,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   });
 
   // Re-flag returned MCP tool failures so pi registers them as errors (see toolErrorOverride).
-  pi.on("tool_result", (event) => toolErrorOverride(event.details));
+  pi.on("tool_result", (event) => {
+    // A finished call is never asked about again; its ancestors are still running.
+    toolCallsById.delete(event.toolCallId);
+    return toolErrorOverride(event.details);
+  });
 
   // Pi 1.2+ `reachesTools` by tool name: refilled from pi.getAllTools() only for a name it does not know,
   // so a tool call costs a map lookup.
@@ -1747,13 +1751,22 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   // Pi tells a nested call only its parent's id, not which tool that is, so the tool_call handler
-  // below records every call of the agent run. Without that handler (MCP_DIRECT_TOOLS=__none__, or
-  // Pi before 0.99) nothing is recorded and every result keeps the output guard.
+  // below records each call until its tool_result. Without that handler (MCP_DIRECT_TOOLS=__none__,
+  // or Pi before 0.99) nothing is recorded and every result keeps the output guard.
   const toolCallsById = new Map<string, { name: string; parent: string | undefined }>();
+  // A backstop for calls blocked before they run, which get no tool_result.
   const MAX_RECORDED_TOOL_CALLS = 4096;
+  const MAX_CALL_DEPTH = 64;
 
   function recordToolCall(id: string, name: string, parent: string | undefined): void {
-    if (toolCallsById.size >= MAX_RECORDED_TOOL_CALLS) toolCallsById.delete(toolCallsById.keys().next().value!);
+    if (toolCallsById.size >= MAX_RECORDED_TOOL_CALLS) {
+      for (const key of toolCallsById.keys()) {
+        // Pi ids nest as `<parent>/<n>`, so this call's ancestors stay to classify it.
+        if (id === key || id.startsWith(`${key}/`)) continue;
+        toolCallsById.delete(key);
+        break;
+      }
+    }
     toolCallsById.set(id, { name, parent });
   }
 
@@ -1764,9 +1777,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
    */
   function deliversToScript(toolCallId: string | undefined): boolean {
     let call = toolCallId === undefined ? undefined : toolCallsById.get(toolCallId);
-    while (call?.parent !== undefined) {
+    for (let depth = 0; call?.parent !== undefined && depth < MAX_CALL_DEPTH; depth++) {
       const parent = toolCallsById.get(call.parent);
-      if (!parent) return false;
+      if (!parent || parent === call) return false;
       if (parent.name !== "mcp" && !registeredNamespaceProxyTools.has(parent.name)) return true;
       call = parent;
     }

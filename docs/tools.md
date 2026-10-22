@@ -253,7 +253,7 @@ On Pi 0.99 and later, a call through `mcp` or `mcp__<server>`, or from a `codemo
 
 ## Output Guard
 
-Oversized MCP tool/resource results are guarded by default so a single huge response can't blow up the model context window or the session file. Only results that go to the model are guarded: a result that a codemode script or another extension's tool asked for reaches it whole, through `mcp`, `mcp__<server>` or the tool's own name, on Pi 0.99 and later unless `MCP_DIRECT_TOOLS=__none__` is set. For results that go to the model:
+Oversized MCP tool/resource results are guarded by default so a single huge response can't blow up the model context window or the session file. Only results that go to the model are guarded: a tool or resource result that a codemode script or another extension's tool asked for through Pi's nested tool calls reaches it whole, whether it called `mcp`, `mcp__<server>` or the tool by its own name. That needs Pi 0.99 or later, without `MCP_DIRECT_TOOLS=__none__`. `mcp`'s describe output and calls through the [runtime tool-call event](extension-api.md#runtime-tool-calls-from-other-extensions) are still guarded. For results that go to the model:
 
 - Inline text output is capped at **50 KiB / 2,000 lines** (matching Pi's built-in `bash` guard). Larger output is truncated to a head preview and the full text is saved to a temp file whose path is included in the result, so the agent can `read`/`grep` it.
 - **Image content blocks pass through unchanged** — only text output is guarded. Images are delivered to the provider as native image content.

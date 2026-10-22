@@ -145,6 +145,8 @@ if (!outcome.ok) throw outcome.error;
 
 `tool` and `server` resolve the same way as `mcp({ tool, server })`, and approval settings and disabled servers apply as they do for that call. The adapter sets `request.result` to a promise during `emit()`; await it. A tool error or denied approval resolves with `ok: false`. Emit during `session_start` or later; calls fail after the session shuts down.
 
+A call through this event is guarded by the [output guard](tools.md#output-guard) like a model's call. A tool of yours that calls an MCP tool through Pi's `ctx.executeTool()` instead gets the whole result, without the guard, so limit what your tool returns to the model.
+
 ## SDK configuration
 
 Use `createMcpAdapter` when an SDK or server integration already owns its MCP configuration:
