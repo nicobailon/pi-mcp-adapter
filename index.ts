@@ -2546,7 +2546,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (calledByAnotherTool(toolCallId)) {
       return result('Saving a script tool cannot be requested from inside another tool. Call mcp({ action: "save-script" }) directly.', { error: "nested_save" });
     }
-    const core = await loadForRuntime(loadCoreRuntime, captureRuntimeGuard(targetState));
+    const saveGuard = captureRuntimeGuard(targetState);
+    const core = await loadForRuntime(loadCoreRuntime, saveGuard);
     // An RPC client has a UI too, but the operator must read the diff and the script, so only the TUI asks.
     if (!core.isTuiMode(ctx)) {
       return result(`Saving a script tool needs an interactive terminal session, because it writes files only after you approve them. This session is ${ctx.mode}.`, { error: "headless" });
@@ -2616,9 +2617,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     targetState.blockedScriptTools?.delete(name);
     targetState.config.scriptTools = { ...targetState.config.scriptTools, [name]: entry };
-    if (!directToolsFrozen) syncToolSurface(ctx);
-    const registered = deferredRegistryLive && !directToolsFrozen && registeredScriptSpecs.has(toolName);
-    const lines = [savedScriptToolText(name, toolName, registered)];
+    // The files are written: only a stale session or an abort makes that a failure, as for install.
+    let syncFailure: string | undefined;
+    if (!directToolsFrozen) {
+      try {
+        syncToolSurface(ctx);
+      } catch (error) {
+        if (isRuntimeGuardStale(saveGuard) || isAbortError(error, saveGuard.owner?.signal)) throw error;
+        syncFailure = error instanceof Error ? error.message : String(error);
+        logger.warn(`MCP: saved script tool "${name}" but could not refresh the tool surface: ${syncFailure}`);
+      }
+    }
+    const registered = syncFailure === undefined && deferredRegistryLive && !directToolsFrozen && registeredScriptSpecs.has(toolName);
+    const lines = [savedScriptToolText(name, toolName, registered, syncFailure)];
     const edited = code !== checked.code;
     if (edited) lines.push("The operator edited the script before saving, so the saved code differs from the code you sent.");
     lines.push(`Script: ${scriptPath}`, `Config: ${configPath}`);
@@ -2626,10 +2637,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   // How the model reaches a script tool it just saved.
-  function savedScriptToolText(name: string, toolName: string, registered: boolean): string {
+  function savedScriptToolText(name: string, toolName: string, registered: boolean, syncFailure: string | undefined): string {
     if (registered) return `Saved script tool "${name}". Call it as ${toolName} or mcp({ tool: "${name}", args }).`;
     if (!deferredRegistryLive) return `Saved script tool "${name}". This session registers no script tools, so call it with mcp({ tool: "${name}", args }).`;
     if (directToolsFrozen) return `Saved script tool "${name}". The tool surface is frozen in this session, so it is callable after /reload.`;
+    if (syncFailure !== undefined) {
+      return `Saved script tool "${name}", but the tool surface could not be refreshed (${syncFailure}), so it is callable after /reload.`;
+    }
     const issue = scriptToolSurfaceIssues.find((text) => text.startsWith(`Script tool "${name}" was not loaded`));
     return `Saved script tool "${name}", but it is not registered in this session. ${issue ?? `${toolName} was left out of the tool surface.`}`;
   }
