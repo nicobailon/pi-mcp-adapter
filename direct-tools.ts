@@ -223,7 +223,8 @@ export function createDirectToolExecutor(
     let uiSession: UiSessionRuntime | null = null;
     const requestOptions = state.manager.getRequestOptions?.(spec.serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
 
-    const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
+    // A script gets the server's whole result; Pi limits what the script returns to the model.
+    const outputGuardOptions = { ...resolveMcpOutputGuardOptions(state.config.settings), ...(state.deliversToScript?.(toolCallId) ? { enabled: false } : {}) };
     const appendStructuredContent = state.config.mcpServers[spec.serverName]?.appendStructuredContent !== false;
     const recoverAuthConnection = async () => {
       const current = state.manager.getConnection(spec.serverName);

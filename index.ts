@@ -1310,6 +1310,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       let statusPublicationAttempted = false;
       state = nextState;
       nextState.migrationNotices = [...sessionMigrationNotices];
+      nextState.deliversToScript = deliversToScript;
       finalizationGuard = guard;
       finalizationRegistrations = registeredDuringFinalization;
       try {
@@ -1745,9 +1746,39 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (connected && !directToolsFrozen && state === runtimeState) syncToolSurface();
   }
 
+  // Pi tells a nested call only its parent's id, not which tool that is, so the tool_call handler
+  // below records every call of the agent run. Without that handler (MCP_DIRECT_TOOLS=__none__, or
+  // Pi before 0.99) nothing is recorded and every result keeps the output guard.
+  const toolCallsById = new Map<string, { name: string; parent: string | undefined }>();
+  const MAX_RECORDED_TOOL_CALLS = 4096;
+
+  function recordToolCall(id: string, name: string, parent: string | undefined): void {
+    if (toolCallsById.size >= MAX_RECORDED_TOOL_CALLS) toolCallsById.delete(toolCallsById.keys().next().value!);
+    toolCallsById.set(id, { name, parent });
+  }
+
+  /**
+   * A call's result goes to a script, not the model, when a tool other than the adapter's proxies
+   * (`mcp`, `mcp__<server>`) called it, directly or through them: Pi's codemode or another
+   * extension's tool. A proxy's hand-off leg is asked with the proxy's own id.
+   */
+  function deliversToScript(toolCallId: string | undefined): boolean {
+    let call = toolCallId === undefined ? undefined : toolCallsById.get(toolCallId);
+    while (call?.parent !== undefined) {
+      const parent = toolCallsById.get(call.parent);
+      if (!parent) return false;
+      if (parent.name !== "mcp" && !registeredNamespaceProxyTools.has(parent.name)) return true;
+      call = parent;
+    }
+    return false;
+  }
+
+  if (deferredRegistryLive) pi.on("agent_end", () => toolCallsById.clear());
+
   // A call that may reach other tools (Pi's codemode and tool_search, other extensions) first registers what it reaches.
   // Registered only when deferred tools are, since Pi runs its tool_call pipeline for every call once a handler exists.
   if (deferredRegistryLive) pi.on("tool_call", async (event, ctx) => {
+    recordToolCall(event.toolCallId, event.toolName, event.parentToolCallId);
     if (directToolsFrozen) return;
     try {
       const reach = reachOf(event.toolName, event.input);

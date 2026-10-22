@@ -46,6 +46,11 @@ export interface McpExtensionState {
     programmaticConfig?: boolean;
     /** Session-scoped notices for legacy mcp.json files the adapter ignores. */
     migrationNotices?: string[];
+    /**
+     * Whether the result of the tool call `toolCallId` goes to a script rather than to the model, so
+     * it skips the output guard. Unset, or false for an unknown call, keeps the guard.
+     */
+    deliversToScript?: (toolCallId: string | undefined) => boolean;
     /** Install validations must not publish durable cache entries before config persistence. */
     provisionalInstalls?: Set<string>;
     oauthRuntime: McpOAuthRuntime;

@@ -120,4 +120,54 @@ describe("Pi codemode reach to proxy-only MCP tools", () => {
       ]);
     });
   }, 20_000);
+
+  // The fixture's `large` result is over the 50 KB output guard limit.
+  it("gives a codemode script the whole result, called directly and through the namespace proxy", async () => {
+    await withPiSession({ codemode: true }, async ({ session, toolCalls }) => {
+      const runner = session.extensionRunner;
+      await vi.waitFor(() => expect(runner.createToolContext("probe", undefined).tools.map(tool => tool.name))
+        .toContain("mcp__fixture__large"), { timeout: 10_000 });
+      const codemode = runner.getAllRegisteredTools().find(tool => tool.definition.name === "codemode")!.definition;
+      const code = `
+        const direct = (await tools.mcp__fixture__large({})).content[0].text;
+        const proxied = await tools.mcp__fixture({ tool: "large", args: {} });
+        return JSON.stringify({ direct: JSON.parse(direct).length, directBytes: direct.length, proxied: JSON.parse(proxied).length, proxiedBytes: proxied.length });
+      `;
+
+      // As Pi runs a model-issued call: its tool_call hooks first, then the tool.
+      await runner.emitToolCall({ type: "tool_call", toolName: "codemode", toolCallId: "cm-1", input: { code } });
+      const result = await codemode.execute("cm-1", { code }, undefined, undefined, runner.createToolContext("cm-1", undefined));
+
+      const output = result.content.map(block => block.type === "text" ? block.text : "").join("");
+      expect(output).toContain("Script completed");
+      expect(output).not.toMatch(/truncated|Full text saved/);
+      const counts = JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1));
+      expect(counts).toMatchObject({ direct: 2000, proxied: 2000 });
+      expect(counts.directBytes).toBeGreaterThan(50 * 1024);
+      expect(counts.proxiedBytes).toBe(counts.directBytes);
+      expect(toolCalls.map(call => [call.name, call.id])).toEqual([
+        ["codemode", "cm-1"],
+        ["mcp__fixture__large", "cm-1/1"],
+        ["mcp__fixture", "cm-1/2"],
+        ["mcp__fixture__large", "cm-1/2/1"],
+      ]);
+    });
+  }, 20_000);
+
+  it("still truncates the same result for the model's own proxy call and saves the full text", async () => {
+    await withPiSession({}, async ({ session }) => {
+      const runner = session.extensionRunner;
+      await vi.waitFor(() => expect(runner.createToolContext("probe", undefined).tools.map(tool => tool.name))
+        .toContain("mcp__fixture__large"), { timeout: 10_000 });
+      const proxies = { mcp: { tool: "fixture_large" }, mcp__fixture: { tool: "large" } };
+      for (const [name, params] of Object.entries(proxies)) {
+        const proxy = runner.getAllRegisteredTools().find(tool => tool.definition.name === name)!.definition;
+        const result = await proxy.execute(`${name}-call`, params, undefined, undefined, runner.createToolContext(`${name}-call`, undefined));
+        const text = result.content.map(block => block.type === "text" ? block.text : "").join("");
+        expect(text, name).toContain("[MCP text output truncated");
+        expect(text, name).toContain("Full text saved to");
+        expect(text.length, name).toBeLessThan(50 * 1024);
+      }
+    });
+  }, 20_000);
 });
