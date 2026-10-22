@@ -1,6 +1,6 @@
 # Configuration
 
-Where the adapter reads MCP servers from, which file wins, how project servers are trusted, and every `settings` key.
+Where the adapter reads MCP servers from, which file wins, how project servers are trusted, every `settings` key, and the `scriptTools` key.
 
 ## Setup panel
 
@@ -54,7 +54,7 @@ On Pi 0.99 and later, the adapter also reads Pi's own `<Pi agent dir>/mcp.json` 
 | `toolExposure` entries set to `"hidden"` | `excludeTools`, which can hide more than Pi's `hidden` |
 | `auth: { "provider": ... }` | same; user-global file only, see [Pi provider tokens](auth.md#pi-provider-tokens) |
 
-Entries with `type: "sse"`, and entries Pi rejects, are skipped. Other settings without an exact equivalent, such as a per-tool `codemode` or `deferred`, are ignored, and the server keeps its server-level setting. Top-level `settings`, `imports`, `claudePlugins`, and `mcp-servers` come from old adapter configs; they are ignored too and belong in `mcp-adapter.json`. Everything skipped or ignored is reported once per file at startup, and a loaded server's ignored settings are also listed under it in `/mcp-adapter`.
+Entries with `type: "sse"`, and entries Pi rejects, are skipped. Other settings without an exact equivalent, such as a per-tool `codemode` or `deferred`, are ignored, and the server keeps its server-level setting. Top-level `settings`, `imports`, `claudePlugins`, `scriptTools`, and `mcp-servers` are adapter keys; they are ignored too and belong in `mcp-adapter.json`. Everything skipped or ignored is reported once per file at startup, and a loaded server's ignored settings are also listed under it in `/mcp-adapter`.
 
 A server in `.pi/mcp.json` replaces the same-named server from `<Pi agent dir>/mcp.json` as a whole, as in Pi. The adapter never writes Pi's files; changes such as direct tools go to the `mcp-adapter.json` in the same folder. `.pi/mcp.json` servers need project trust and approval like `.mcp.json` servers. Exclusive mode reads neither file.
 
@@ -115,9 +115,11 @@ Supported compatibility imports: `cursor`, `claude-code`, `claude-desktop`, `ope
 
 Servers defined or changed by project-scoped MCP files (`.mcp.json`, `.pi/mcp-adapter.json`, and opted-in ancestor project files) do not run merely because a repository was opened. This includes servers brought in through project `imports`, `claudePlugins`, `settings.agentPluginPaths`, repo-local host config files (even when imports or discovery are enabled globally), or Pi packages listed in project `.pi/settings.json`. If Pi reports the project as untrusted, the adapter blocks them. In a trusted interactive session, the adapter shows the source file and command or URL and asks once before the first connection. The prompt starts on "Don't allow", so pressing Enter blocks the server for that session and `/reload` asks again. The approval is stored under the Pi agent directory and is tied to the canonical project path, server name, and complete effective definition; changing the definition requires a new approval. Git worktrees of one repository share approvals for the same folder, so a new worktree only asks when its definition differs. This covers regular, bare, and `--separate-git-dir` repositories; the one exception is the main checkout of a `--separate-git-dir` repository, which git records no link to, so it asks once on its own. Blocked servers are identified in the panel, while MCP status includes the required trust or approval action.
 
-In print, JSON, and RPC sessions, an unapproved project server is skipped. To intentionally allow project servers in trusted headless sessions, set `"projectServers": "allow"` in the **user-global** `settings` object. The default is `"ask"`; project files cannot change this policy. Explicit config files, programmatic configuration, global/import/plugin servers, and runtime registrations retain their existing behavior. Project servers are always excluded from extension-load initialization and are admitted only after `session_start` supplies Pi's trust context.
+[Script tools](#script-tools) set in project files follow the same rules: they load only when Pi trusts the project and you approve each one, with its own prompt.
 
-A script that opens interactive sessions nobody is watching, for example one Pi per new git worktree, can start Pi with `--mcp-project-servers allow`. That process then starts unapproved project servers without asking, in every session mode, but only while Pi reports the project as trusted; nothing is saved to the approval store. Use it only for folders whose project config you control: Pi treats a folder that has a `.mcp.json` and no `.pi` resources as trusted without asking, so the flag runs whatever that file defines. Typing `pi` without the flag keeps the approval prompt.
+In print, JSON, and RPC sessions, an unapproved project server or script tool is skipped. To intentionally allow project servers and script tools in trusted headless sessions, set `"projectServers": "allow"` in the **user-global** `settings` object. The default is `"ask"`; project files cannot change this policy. Explicit config files, programmatic configuration, global/import/plugin servers, and runtime registrations retain their existing behavior. Project servers are always excluded from extension-load initialization and are admitted only after `session_start` supplies Pi's trust context.
+
+A script that opens interactive sessions nobody is watching, for example one Pi per new git worktree, can start Pi with `--mcp-project-servers allow`. That process then starts unapproved project servers and loads unapproved project script tools without asking, in every session mode, but only while Pi reports the project as trusted; nothing is saved to the approval store. Use it only for folders whose project config you control: Pi treats a folder that has a `.mcp.json` and no `.pi` resources as trusted without asking, so the flag runs whatever that file defines. Typing `pi` without the flag keeps the approval prompt.
 
 ## Check servers from a shell
 
@@ -199,7 +201,7 @@ Accepting a browser (URL) request from the server, and its completion, also coun
 | `collapsedResultLines` | Number of result text lines to show before expansion: `1`, `2`, or `3`. Defaults to `1` in compact mode and `3` in boxed mode. |
 | `notifyOnStartupConnect` | Show successful startup connection notices (default: `true`). Set to `false` to suppress routine `MCP: N servers connected (M tools)` notices. Connection errors and authentication warnings remain visible. |
 | `hostConfigDiscovery` | Host-specific config policy: `"off"` (default), `"prompt"` (detect/report only), or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
-| `projectServers` | Project-server admission policy for trusted headless sessions: `"ask"` (default, skip unapproved servers) or `"allow"`. Only user-global or explicitly selected config may set it; project files are ignored. |
+| `projectServers` | Admission policy for project servers and project script tools in trusted headless sessions: `"ask"` (default, skip unapproved ones) or `"allow"`. Only user-global or explicitly selected config may set it; project files are ignored. |
 | `ancestorConfigRoots` | Trusted absolute or `~/...` roots for opt-in ancestor config discovery. Only user-global or explicitly selected config may set it; roots outside cwd are ignored and the deepest matching root is used. |
 | `agentPluginPaths` | Agent Plugins package directories to load MCP servers from. Relative paths resolve from the active project cwd. |
 | `approveTools` | `true` to require approval before every MCP tool call, `"destructive"` to require it for tools the server does not mark read-only or non-destructive, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
@@ -225,3 +227,35 @@ Accepting a browser (URL) request from the server, and its completion, also coun
 Per-server `idleTimeout`, `requestTimeoutMs`, `approveTools`, and `exposeResources` override the global settings. `debug` remains stderr display and is unrelated to protocol tracing.
 
 A config that still sets the settings of the adapter's removed script tool, including its `jev` keys, loads as before. The adapter shows a notice that names the file and the keys to remove; Pi's `codemode` replaces that tool ([MCP scripting](scripting.md#scripting-mcp-calls-with-pis-codemode)).
+
+## Script tools
+
+`scriptTools` is a top-level key, next to `mcpServers` and `settings`, that saves codemode scripts as tools. [Script tools](scripting.md#script-tools) explains how they run and how the model reaches them. They need Pi 0.99.0 or later.
+
+```json
+{
+  "scriptTools": {
+    "stale_issues": {
+      "description": "List a repository's open issues with no activity for the given number of days",
+      "file": "scripts/stale-issues.js",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "repo": { "type": "string" }, "days": { "type": "number" } },
+        "required": ["repo", "days"]
+      },
+      "declare": false
+    }
+  }
+}
+```
+
+Each key is the tool's name, which becomes the Pi tool `mcp__script__<name>`. It starts with a lowercase letter and has only lowercase letters, digits and underscores, up to 48 characters.
+
+| Field | Description |
+|-------|-------------|
+| `description` | Required. What the tool does, as the model and search see it. |
+| `file` | Required. The script file. A relative path is relative to the folder of the config file that sets it; `~/` paths and absolute paths work too. The file is read on every call. |
+| `inputSchema` | JSON Schema for the arguments, with `"type": "object"`. The script gets them as `input`. Without it the tool takes no arguments. |
+| `declare` | `true` puts the tool in the model's tool list from the start. Default `false`: the tool is a Pi deferred tool, found by search. |
+
+Set `scriptTools` in `mcp-adapter.json` or any of the shared MCP files above; Pi's own `mcp.json` files don't read it. An entry in a higher-precedence file replaces the same-named entry as a whole. An entry with an unknown key or a bad value isn't loaded, and the file's other entries and servers still are. Each problem shows a warning that names the file, once per session, and is listed in `/mcp-adapter`. A tool whose name is already taken, by a direct MCP tool, a server's `mcp__<server>` tool, or another extension's tool, isn't loaded either. Entries in project files need project trust and approval; see [Project server trust](#project-server-trust).

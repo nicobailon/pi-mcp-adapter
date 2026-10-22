@@ -1,6 +1,6 @@
 # MCP scripting
 
-Semantic tool search with Jev, and scripts that call MCP tools through Pi's `codemode`.
+Semantic tool search with Jev, scripts that call MCP tools through Pi's `codemode`, and script tools that save a script as a tool.
 
 ## Jev semantic search
 
@@ -94,6 +94,54 @@ return result.structuredContent ?? JSON.parse(result.content[0].text);
 Each call from a script is a Pi tool call under the tool's registered name, with the `codemode` call as its parent, so Pi's `tool_call` hooks and permission extensions see it. The adapter's own gates still run once per call: `approveTools` and the approval broker ([Tool approval](tools.md#tool-approval)). A call connects its server first when it isn't connected yet, and on Pi 1.2 and later a script that names a server whose tools aren't registered yet connects that server before it runs.
 
 Scripts run in Pi's QuickJS sandbox, with no file system, network, timers, or Node APIs of their own; they reach the outside world only through tools. Pi's [limits](https://pi.dev/docs/latest/codemode#limits) apply. To classify results, call `models.classify()` with a classifier such as Jev, as described in Pi's [Models](https://pi.dev/docs/latest/codemode#models).
+
+## Script tools
+
+A workflow you repeat, such as checking a repository for stale issues, can be saved as a script tool: a codemode script with a name, a description and fixed inputs. The model calls it like any other tool instead of writing the script again, a subagent can be limited to it by name, and a permission extension can match that name. Script tools need Pi 0.99.0 or later; on older Pi none are loaded, and a warning says so. You don't need to turn `codemode` on for the model to use them.
+
+Add a `scriptTools` object to an adapter config file, such as `~/.pi/agent/mcp-adapter.json`:
+
+```json
+{
+  "scriptTools": {
+    "stale_issues": {
+      "description": "List a repository's open issues with no activity for the given number of days",
+      "file": "scripts/stale-issues.js",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "repo": { "type": "string", "description": "owner/name" },
+          "days": { "type": "number" }
+        },
+        "required": ["repo", "days"]
+      }
+    }
+  }
+}
+```
+
+A relative `file` is relative to the folder of the config file that sets it, so this one is `~/.pi/agent/scripts/stale-issues.js`. [Script tools](configuration.md#script-tools) in the configuration docs lists every field. The adapter reads the file on every call, so an edit applies to the next call without `/reload`. A file that is missing, empty or larger than 1 MiB isn't run.
+
+The file is an ordinary codemode script, as described above. The call's arguments are in `input`, after Pi checks them against `inputSchema`; a tool without `inputSchema` takes no arguments and gets `{}`. What the script returns is the tool's result, and it goes through the [output guard](tools.md#output-guard) like any MCP result that goes to the model.
+
+```js
+const since = new Date(Date.now() - input.days * 86_400_000).toISOString().slice(0, 10);
+const result = await tools.mcp__github__search_issues({ query: `repo:${input.repo} is:issue is:open updated:<${since}` });
+if (result.isError) return result.content;
+return result.structuredContent ?? JSON.parse(result.content[0].text);
+```
+
+The adapter defines `input` by adding one line to the start of the script. A `// @options:` line stays first, so a script tool can still set its own limits there. Because of the added line, line numbers in a script's errors are one higher than in the file. Pi's `codemode.mode` and `codemode.inlineBudget` settings change how Pi offers `codemode` to the model; they don't affect script tools. Like any codemode script, a script tool can call `models.classify()` and `models.generateImages()`, which use the session's credentials and are billed to the session.
+
+A script tool is a Pi tool named `mcp__script__<name>`, so the one above is `mcp__script__stale_issues`. Like the adapter's other MCP tools, it isn't in the model's tool list: `mcp({ search })`, `tool_search` and codemode's `searchTools()` find it, and `mcp({ tool: "stale_issues", args })` calls it. Set `"declare": true` to put it in the model's tool list from the start instead, which adds its description and schema to every turn. When a script tool has the same name as an MCP tool, `mcp({ tool })` runs the script tool, and its result says how to call the MCP tool with `mcp({ tool, server })`. An MCP server named `script` shares the `mcp__script` namespace, so codemode's `searchTools()` and `describeNamespace("mcp__script")` list its tools together with the script tools; all of them stay callable. Under `MCP_DIRECT_TOOLS=__none__` no script tool is registered, but `mcp` still finds and runs them.
+
+A script tool can't run inside another script, including a `codemode` script the model wrote, because Pi doesn't let a script start a second one. Such a call returns `Script tool "<name>" cannot run inside another script. Pi does not let a codemode script start another script, so call this tool directly.` Call it directly or through `mcp({ tool })`.
+
+Each tool call inside a script tool is a nested Pi tool call under the script tool, so Pi's `tool_call` hooks, permission extensions and `approveTools` each see it once. `approveTools` matches the MCP calls inside a script tool, never the script tool itself; a permission extension can match the script tool as `mcp__script__<name>`. When `mcp` runs the script itself, under `MCP_DIRECT_TOOLS=__none__` or once `freezeDirectTools` has frozen the tool surface, the MCP results the script gets go through the output guard, so a large result reaches the script cut short.
+
+Script tools set in a project file, such as `.pi/mcp-adapter.json`, follow the [project server trust](configuration.md#project-server-trust) rules. They load only when Pi trusts the project, and Pi asks when the session starts, showing the config file and the script's path; the prompt starts on "Don't allow". In print, JSON and RPC sessions they are skipped unless `"projectServers": "allow"` or `--mcp-project-servers allow` is set, which admits project script tools as well as project servers. The approval covers the entry as configured, not the script file's contents, so the file can change without Pi asking again. A relative `file` resolves to a different path in each git worktree, so each worktree asks once. When a project entry that isn't approved has the same name as a global script tool, neither is loaded.
+
+An invalid entry, a name another tool already has, and a project entry that isn't approved each show a warning once per session and are listed in `/mcp-adapter`. When a script tool can't run, its result says why, and `details.error` names the reason: `script_file_missing`, `script_file_unreadable`, `script_file_empty`, `script_file_too_large`, `nested_script_tool`, or `codemode_unavailable` when the Pi build doesn't let extensions run codemode. Through `mcp`, a call that Pi blocks or rejects before the script runs, for example in a `tool_call` hook, returns `nested_call_failed`. A script that throws returns codemode's own error output.
 
 ## Moving from the adapter's own script tool
 
