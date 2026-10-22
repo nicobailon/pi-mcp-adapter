@@ -10,6 +10,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { toolErrorOverride } from "../error-signal.ts";
+import { MCP_TOOL_APPROVAL_REQUEST_EVENT, type McpToolApprovalRequest } from "../types.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
 type ToolCall = { name: string; id: string; parent: string | undefined };
@@ -18,7 +19,7 @@ type ToolCall = { name: string; id: string; parent: string | undefined };
 // close_stale, whose file is `script`, and a script tool echo that shadows the fixture's echo.
 // Needs `env -u MCP_DIRECT_TOOLS`, as the suite runs.
 // `blockTools` names tools a tool_call hook blocks, as a permission extension would.
-async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[]; script: string }) => Promise<void>, settings: Record<string, unknown> = {}, blockTools: string[] = []): Promise<void> {
+async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[]; script: string; approvals: McpToolApprovalRequest[] }) => Promise<void>, settings: Record<string, unknown> = {}, blockTools: string[] = []): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "pi-mcp-script-tool-"));
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalArgv = [...process.argv];
@@ -40,6 +41,7 @@ async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[
     }));
     process.argv.push("--mcp-config", configPath);
     const toolCalls: ToolCall[] = [];
+    const approvals: McpToolApprovalRequest[] = [];
     const settingsManager = SettingsManager.inMemory();
     const loader = new DefaultResourceLoader({
       cwd, agentDir, settingsManager, additionalExtensionPaths: [resolve("index.ts")],
@@ -47,6 +49,11 @@ async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[
         pi.on("tool_call", (event) => {
           toolCalls.push({ name: event.toolName, id: event.toolCallId, parent: event.parentToolCallId });
           return blockTools.includes(event.toolName) ? { block: true, reason: "Blocked by the test" } : undefined;
+        });
+        // Allows each approval-broker request once, and records it.
+        pi.events.on(MCP_TOOL_APPROVAL_REQUEST_EVENT, (request: McpToolApprovalRequest) => {
+          approvals.push(request);
+          request.claim(() => "allow_once");
         });
       }],
     });
@@ -63,7 +70,7 @@ async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[
     }];
     await vi.waitFor(() => expect(session!.extensionRunner.createToolContext("probe", undefined).tools.map(tool => tool.name))
       .toEqual(expect.arrayContaining(["mcp__fixture__echo", "mcp__script__close_stale"])), { timeout: 10_000 });
-    await run({ session, toolCalls, script });
+    await run({ session, toolCalls, script, approvals });
   } finally {
     try {
       await session?.extensionRunner.emit({ type: "session_shutdown", reason: "test" });
@@ -119,6 +126,26 @@ describe("a script tool in a real session", () => {
       expect(textOf(outcome.result)).not.toMatch(/ran|Script/);
       expect(toolCalls).toEqual([]);
     });
+  }, 30_000);
+
+  it("asks the approval broker once for each approveTools-gated call inside it, and never for the script tool", async () => {
+    await withScriptTool(async ({ session, toolCalls, script, approvals }) => {
+      await writeFile(script, [
+        "const first = await tools.mcp__fixture__echo({ value: input.repo + '/1' });",
+        "const second = await tools.mcp__fixture__echo({ value: input.repo + '/2' });",
+        "return [first.structuredContent.value, second.structuredContent.value].join(' ');",
+      ].join("\n"));
+      const result = await callAs(session, "mcp__script__close_stale", "st-1", { repo: "a/b" });
+
+      expect(textOf(result)).toContain("a/b/1 a/b/2");
+      expect(result.isError).toBeUndefined();
+      expect(approvals).toHaveLength(2);
+      approvals.forEach((request, index) => expect(request).toMatchObject({
+        serverName: "fixture", originalToolName: "echo", args: { value: `a/b/${index + 1}` },
+      }));
+      expect(approvals.some(request => [request.originalToolName, request.prefixedToolName, request.serverName].some(name => name.includes("close_stale")))).toBe(false);
+      expect(toolCalls.map(call => call.name)).toEqual(["mcp__script__close_stale", "mcp__fixture__echo", "mcp__fixture__echo"]);
+    }, { approveTools: ["echo"] });
   }, 30_000);
 
   it("refuses to run from a codemode script, and starts no second sandbox", async () => {
