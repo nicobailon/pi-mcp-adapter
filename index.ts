@@ -406,6 +406,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
   const registeredToolNames = new Map<string, string>();
   const syncedServers = new Set<string>();
+  // Every name this adapter registered a direct, search-mode or deferred tool under; Pi keeps hidden ones.
+  const adapterToolNames = new Set<string>();
   // Proxy calls handed to a registered tool, by the proxy's tool call id.
   const pendingProxyHandOffs = new Map<string, { name: string; consumed: boolean; run: (params: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>> }>();
   // Pi 1.2+ reads which tools a call may reach; Pi 0.99-1.1 ignore the field.
@@ -498,6 +500,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function registerDirectTool(spec: DirectToolSpec, config: McpConfig, deferred: Record<string, unknown> | undefined, name = spec.prefixedName): void {
     finalizationRegistrations?.add(name);
+    adapterToolNames.add(name);
     const definition = {
       name,
       label: `MCP: ${spec.originalName}`,
@@ -606,6 +609,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   }
 
+  // Tools other extensions registered, such as Pi's built-in MCP, which a deferred name must not
+  // replace. Names this adapter registered earlier stay its own, so deferred names don't drift.
+  function foreignToolNames(): string[] {
+    let tools: ToolInfo[];
+    try {
+      tools = callReentrant(() => pi.getAllTools());
+    } catch (error) {
+      if (error instanceof Error
+        && error.message.includes("Action methods cannot be called during extension loading")) return [];
+      throw error;
+    }
+    return tools.map((tool) => tool.name).filter((name) => !adapterToolNames.has(name));
+  }
+
   function deactivateTools(toolNames: string[]): string[] {
     if (toolNames.length === 0) return [];
     const unregisterTool = (pi as ExtensionAPI & { unregisterTool?: (name: string) => boolean }).unregisterTool;
@@ -712,7 +729,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function syncDeferredTools(config: McpConfig, cache: MetadataCache | null, reservedDirectNames: ReadonlySet<string>, directSpecs: DirectToolSpec[]): void {
     const specs: DeferredToolSpec[] = deferredRegistryLive
       ? resolveDeferredToolSpecs(config, cache, {
-        names: new Set([...reservedDirectNames, ...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName)]),
+        names: new Set([...reservedDirectNames, ...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName), ...foreignToolNames()]),
         directTools: directToolsIgnoringBackoff(config, cache, directSpecs),
       })
       : [];

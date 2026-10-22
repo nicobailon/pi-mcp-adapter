@@ -4432,7 +4432,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       return () => [...active];
     }
 
-    async function bootPi099(specs?: unknown[], config: Record<string, any> = searchConfig, pi099 = true) {
+    async function bootPi099(specs?: unknown[], config: Record<string, any> = searchConfig, pi099 = true, setup?: (api: any) => void) {
       if (specs) mocks.resolveDirectTools.mockReturnValue(specs);
       const state = createState();
       state.config = config;
@@ -4445,6 +4445,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         api.getMcpServers = vi.fn(() => []);
       }
       const activeTools = trackPiToolExposure(api);
+      setup?.(api);
       mcpAdapter(api);
       await handlers.get("session_start")?.({}, {});
       await Promise.resolve();
@@ -4573,7 +4574,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       annotations: { title: "Echo", destructiveHint: true },
     };
 
-    async function bootCached(servers: Record<string, [Record<string, unknown>, unknown[]]>, settings: Record<string, unknown> = {}, pi099 = true) {
+    async function bootCached(servers: Record<string, [Record<string, unknown>, unknown[]]>, settings: Record<string, unknown> = {}, pi099 = true, setup?: (api: any) => void) {
       const { resolveDirectTools } = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
       mocks.resolveDirectTools.mockImplementation(resolveDirectTools);
       const entries = Object.entries(servers);
@@ -4582,7 +4583,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         servers: Object.fromEntries(entries.map(([name, [definition, tools]]) => [name, cacheEntry(definition, { tools })])),
       });
       const config = { settings: { scriptMode: false, ...settings }, mcpServers: Object.fromEntries(entries.map(([name, [definition]]) => [name, definition])) };
-      return { config, ...(await bootPi099(undefined, config, pi099)) };
+      return { config, ...(await bootPi099(undefined, config, pi099, setup)) };
     }
 
     const registrations = (api: any, name: string) => api.registerTool.mock.calls.map((call: any[]) => call[0]).filter((tool: { name: string }) => tool.name === name);
@@ -4610,6 +4611,29 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(registeredTool(api, "direct_find")).not.toHaveProperty("exposure");
       expect(activeTools()).toEqual(["bash", "mcp", "direct_find", "picked_a", "mcp__proxy"]);
       expect(api.setActiveTools.mock.calls.flatMap(([next]: [string[]]) => next).filter((name: string) => /^mcp__\w+__\w+$/.test(name))).toEqual([]);
+    });
+
+    it("never takes a tool name another extension registered, and keeps its own names across syncs", async () => {
+      // Pi's built-in MCP registered the same server's tool under the shared naming scheme.
+      const piTools = [{ name: "mcp__proxy__echo" }];
+      const { api, config, state } = await bootCached(
+        { proxy: [{ command: "x", lifecycle: "eager" }, [echoTool, { name: "run" }]] }, {}, true,
+        (pi) => pi.getAllTools.mockImplementation(() => piTools),
+      );
+      await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+      const deferredNames = () => [...new Set(api.registerTool.mock.calls.map((call: any[]) => call[0])
+        .filter((tool: { exposure?: string }) => tool.exposure === "deferred").map((tool: { name: string }) => tool.name))];
+
+      expect(registrations(api, "mcp__proxy__echo")).toEqual([]);
+      const first = deferredNames();
+      expect(first).toEqual([expect.stringMatching(/^mcp__proxy__echo_[0-9a-f]{8}$/), "mcp__proxy__run"]);
+
+      // Pi now also lists this adapter's own registrations; a re-sync must not rename them.
+      piTools.push(...first.map((name) => ({ name })));
+      mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: cacheEntry(config.mcpServers.proxy!, { tools: [echoTool, { name: "run" }, { name: "late" }] }) } });
+      state.onToolMetadataUpdated("proxy", "tools-list-changed");
+
+      expect(deferredNames()).toEqual([...first, "mcp__proxy__late"]);
     });
 
     it("re-registers the deferred tools of a disabled or removed server as hidden", async () => {
@@ -4850,6 +4874,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
     it("does nothing for a tool without reachesTools, as before Pi 1.2, and skips its own MCP tools without a lookup", async () => {
       const { api, toolCall } = await bootWithUnconnectedServer();
       api.getAllTools.mockReturnValue([{ name: "codemode" }, { name: "bash" }]);
+      api.getAllTools.mockClear(); // Each sync reads it once to keep other extensions' tool names.
 
       await toolCall("codemode", { code: "tools.mcp__docs__find()" });
       await toolCall("bash", { command: "mcp__docs__find" });
