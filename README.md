@@ -21,33 +21,33 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 Since then, Pi 0.99 added MCP support of its own, which also keeps tool definitions out of context. Installing the adapter replaces it in Pi sessions. What you get by switching:
 
 - **Install many servers without paying for idle ones.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. By default, the adapter starts a server when the model first calls it and stops it after 10 idle minutes.
-- **Fewer tokens on everyday calls.** By default, the built-in runs every MCP call as a `codemode` script, even a single lookup. The adapter's scripts are off by default, so a lookup is one small JSON call to the `mcp` tool, which cost 10–33% less in our tests. For bulk work across many records, turn scripts on with `settings.scriptMode`; then it costs about the same as `codemode`.
+- **Fewer tokens on everyday calls.** By default, the built-in runs every MCP call as a `codemode` script, even a single lookup. The adapter's default is one small JSON call to the `mcp` tool, which cost 10–33% less in our tests. For bulk work across many records, turn on Pi's `codemode` by adding `"+codemode"` to `defaultTools`.
 - **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, and offer prompt templates as slash commands. The built-in doesn't handle these.
 - **Find tools by what you mean.** The built-in's tool search only matches words. With a System One key, the adapter can also rank tools by meaning: in a test of 12 everyday requests across 95 tools, it put the right tool first in 10 of 11, where word search did in 5.
 - **Sign-in tokens go in your OS keychain** by default (an encrypted file is opt-in), not in a plain JSON file under `~/.pi/agent`.
 - **Adding servers is easier.** Give the agent a server's URL and it installs it and checks its tools in the same session, opening sign-in first if the server needs it, with no shell command or `/reload`. Servers already configured in Cursor, Claude Code, Codex, or VS Code can be imported with `/mcp-adapter setup`, which also adds presets such as Figma and GitHub.
 
-The built-in has one thing the adapter doesn't: Pi's permission extensions see each MCP call as its own tool call without changes. Pi's `codemode` works with both.
+The built-in turns `codemode` on by itself; with the adapter, add `"+codemode"` to `defaultTools` in Pi's settings. Pi's `codemode` works with both.
 
 | | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
 | Servers running | Every enabled server, for the whole session | Only servers in use; each stops after 10 idle minutes |
 | Server memory (100 installed, 3 in use) | 7.0 GB at start, 5.9 GB after 15 minutes | Only the 3 in use, then none once they're idle |
-| How the model reaches tools | Default: `codemode` scripts. Per server: direct, or loaded by `tool_search` | Default: one `mcp` proxy tool. Per server: direct, or loaded by `tool_search`. Scripts: Pi's `codemode` (add `"+codemode"` to `defaultTools`) or the adapter's `mcpScript`, both opt-in |
-| Token cost | By default, every call is a `codemode` script | Compared with the built-in's default, single lookups cost 10–33% less. For bulk work, turn on `scriptMode`; without it, bulk tasks cost up to 7× more ([measured](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md#measured-token-cost)) |
-| Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex. With a System One key, semantic search ranks tools by meaning ([setup](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md#jev-semantic-search-and-opt-in-script-evaluation)) |
+| How the model reaches tools | Default: `codemode` scripts. Per server: direct, or loaded by `tool_search` | Default: one `mcp` proxy tool. Per server: direct, or loaded by `tool_search`. Scripts: Pi's `codemode`, opt-in (add `"+codemode"` to `defaultTools`) ([MCP scripting](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md#scripting-mcp-calls-with-pis-codemode)) |
+| Token cost | By default, every call is a `codemode` script | Compared with the built-in's default, single lookups cost 10–33% less. For bulk work, turn on Pi's `codemode`; without scripts, bulk tasks cost up to 7× more ([measured](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md#measured-token-cost)) |
+| Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex. With a System One key, semantic search ranks tools by meaning ([setup](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md#jev-semantic-search)) |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
 | MCP prompts, elicitation, sampling, Tasks | No | Yes; Tasks need `"protocolVersion": "auto"` |
 | MCP UI apps | Left out | Native window or browser |
 | Add a server | `pi mcp add` in a shell, then `/reload` | Give the agent the URL: `mcp({ action: "install", url })` connects it and checks its tools in the current session; for an OAuth server it opens sign-in first and checks the tools once you approve |
 | Configs from Cursor, Claude Code, Codex, VS Code | Convert by hand | Imported |
 | Guided setup in a session | No; `/mcp` manages servers that are already configured | `/mcp-adapter setup` overlay: imports configs found on your machine, adds presets (Figma desktop and RepoPrompt when installed, GitHub, Notion, Context7, DeepWiki, Parallel Search, Tavily Search, Chrome DevTools), and previews each file change before writing |
-| Ask before risky tools | Through a permission extension, which sees every MCP call | Built in (`approveTools`); permission extensions see proxy calls as the proxy tool |
-| Roots (session directory sent to servers) | Yes | No |
+| Ask before risky tools | Through a permission extension, which sees every MCP call | Built in (`approveTools`); permission extensions also see each MCP call under the tool's own name |
+| Roots (session directory sent to servers) | Yes | Yes |
 | Shell commands | `pi mcp add`, `remove`, `list` | `pi-mcp-adapter init`, `doctor` |
 | Transports | stdio, streamable HTTP | stdio, streamable HTTP, legacy SSE, `rmcp-mux` socket |
 
-Over a session, measured with 100 small local servers:
+Over a session, measured on Pi 0.99.2 with 100 small local servers:
 
 | 100 servers installed, 3 used | Pi's built-in MCP | pi-mcp-adapter |
 |---|---|---|
@@ -57,7 +57,7 @@ Over a session, measured with 100 small local servers:
 
 Stopping a server doesn't take its tools away: the model can still search them, and a stopped server starts again on its next call (0.1–0.3 s for a small local server). For a server that must keep state between calls, set `"lifecycle": "lazy-keep-alive"`. The first session briefly starts new servers, 10 at a time, to read their tool lists. [Measurements and details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md#measured-with-100-servers).
 
-The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 0.99.2.
+The [full comparison](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) has every row with sources, as of Pi 1.3.0.
 
 When you install or update the adapter, it turns Pi's built-in MCP off in Pi's settings for you (the same switch as `pi config` → Built-in), so the two don't both run. If you remove the adapter, turn the built-in back on there ([details](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#pis-built-in-mcp)).
 
@@ -129,7 +129,7 @@ Two calls instead of 26 tools cluttering the context.
 | Ask before a risky tool runs | `"approveTools": "destructive"` | [Tool approval](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/tools.md#tool-approval) |
 | Keep a server running | `"lifecycle": "keep-alive"` | [Lifecycle modes](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#lifecycle-modes) |
 | Hide noisy tools | `includeTools` / `excludeTools` on the server | [Search-activated direct tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/tools.md#search-activated-direct-tools) |
-| Chain many MCP calls in one step | `settings.scriptMode: true`, then `mcpScript` | [MCP scripting](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md) |
+| Chain many MCP calls in one step | `"+codemode"` in Pi's `defaultTools`, then `codemode` | [MCP scripting](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md#scripting-mcp-calls-with-pis-codemode) |
 | Use Figma | `/mcp-adapter setup`, add Figma (desktop) | [Setup panel](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md#setup-panel) |
 
 ## Commands
@@ -184,8 +184,8 @@ The full reference lives in `docs/`:
 | [Configuration](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/configuration.md) | The setup panel, config files and precedence, imports from other hosts, project server trust, lifecycle modes, and every `settings` key. |
 | [Server options](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/servers.md) | Every server field, custom HTTPS trust, macOS local-network access, protocol negotiation, MCP Tasks, stdio environment, rmcp-mux, and URL install. |
 | [Authentication](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/auth.md) | OAuth setup, remote and headless sign-in, token storage, headers, bearer tokens, and secret commands. |
-| [pi-mcp-adapter vs Pi's built-in MCP](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) | Every difference, with sources, as of Pi 0.99.2. |
+| [pi-mcp-adapter vs Pi's built-in MCP](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md) | Every difference, with sources, as of Pi 1.3.0. |
 | [Using MCP tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/tools.md) | The `mcp` tool, search and search keywords, direct tools, tool approval, and the output guard. |
-| [MCP scripting](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md) | Jev semantic search, the `mcpScript` tool, and composable tool search. |
+| [MCP scripting](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md) | Jev semantic search, and scripting MCP calls with Pi's `codemode`. |
 | [Prompts, elicitation, and MCP UI](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/prompts-and-ui.md) | MCP prompts as slash commands, servers asking for input, and interactive MCP UI windows. |
 | [Extension API, plugins, and SDK](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/extension-api.md) | Agent Plugins, Claude plugin bundles, Pi package manifests, runtime registration and tool calls, `createMcpAdapter`, host-managed embedding, and status events. |

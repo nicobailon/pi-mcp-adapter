@@ -19,7 +19,7 @@ Anything the model sees on every turn, such as tool names, descriptions, guidanc
 MCP servers run code and reach external services in the operator's name.
 Servers come from config the operator wrote or approved.
 Project config does not start servers until Pi trusts the project and the operator approves them.
-Tool calls respect approval settings, and `mcpScript` runs in a sandbox with no file, network, or process access of its own.
+Tool calls respect approval settings, and scripts that call MCP tools run in Pi's codemode, with no file, network, or process access of their own.
 When trust, approval, or ownership cannot be proven, the adapter fails closed and says why.
 
 ## Standard config first

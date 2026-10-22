@@ -58,6 +58,6 @@ describe("Jev integration boundaries", () => {
     expect(readme).toContain("privacy and retention");
     expect(readme).toContain("no-training commitment does not mean zero retention");
     expect(readme).toContain("Stdio MCP subprocesses inherit the host environment");
-    expect(readme).toContain("Script evaluation remains disabled");
+    expect(readme).toContain("Jev ranks matching tools but never executes them");
   });
 });
