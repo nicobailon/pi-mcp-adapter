@@ -1710,33 +1710,44 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   /**
    * Registers the servers a call reaches before it runs. "all" only awaits connections already in
-   * flight; a reach that names servers connects every unregistered one it names. Failures are
-   * recorded by the connect and reported by the call itself.
+   * flight; a reach that names servers connects every unregistered one it names, first starting the
+   * session runtime if a deferred session has none yet. Failures are recorded by the connect and
+   * reported by the call itself.
    */
-  async function registerReachedServers(reach: "all" | string[], signal: AbortSignal | undefined): Promise<void> {
-    const targetState = state;
+  async function registerReachedServers(reach: "all" | string[], signal: AbortSignal | undefined, ctx: ExtensionContext): Promise<void> {
+    if (signal?.aborted) return;
+    let targetState = state;
     if (!targetState) {
-      if (!initPromise) return;
-      await waitBounded(initPromise, signal);
-      // The session initialization just produced, if it finished within the wait.
-      if (!directToolsFrozen && state) syncToolSurface();
-      return;
+      // A deferred session has no runtime until its first MCP operation, so naming a server with no
+      // registered tools starts it, as the proxy's first call does. "all" never starts every server.
+      const namesPending = reach !== "all" && Object.entries(earlyConfig.mcpServers)
+        .some(([serverName, definition]) => !isServerDisabled(definition) && !syncedServers.has(serverName) && reachesServer(reach, serverName));
+      const initialization = namesPending ? ensureSessionRuntime(ctx) : initPromise;
+      if (!initialization) return;
+      await waitBounded(initialization, signal);
+      if (!namesPending || !state) {
+        // The session initialization just produced, if it finished within the wait.
+        if (!directToolsFrozen && state) syncToolSurface();
+        return;
+      }
+      targetState = state;
     }
-    const pending = Object.entries(targetState.config.mcpServers)
+    const runtimeState = targetState;
+    const pending = Object.entries(runtimeState.config.mcpServers)
       .filter(([serverName, definition]) => !isServerDisabled(definition) && !syncedServers.has(serverName) && reachesServer(reach, serverName))
       .map(([serverName]) => serverName);
     if (pending.length === 0) return;
-    const { lazyConnect } = await loadForRuntime(loadCoreRuntime, captureRuntimeGuard(targetState));
+    const { lazyConnect } = await loadForRuntime(loadCoreRuntime, captureRuntimeGuard(runtimeState));
     const connecting = reach === "all"
-      ? pending.filter((serverName) => targetState.manager.isConnecting(serverName))
+      ? pending.filter((serverName) => runtimeState.manager.isConnecting(serverName))
       : pending;
     if (connecting.length === 0) return;
     let connected = false;
     await waitBounded(Promise.all(connecting.map(async (serverName) => {
-      if (await lazyConnect(targetState, serverName, signal)) connected = true;
+      if (await lazyConnect(runtimeState, serverName, signal)) connected = true;
     })), signal);
     // A failed connect has nothing new to register, so an unreachable server costs no re-sync.
-    if (connected && !directToolsFrozen && state === targetState) syncToolSurface();
+    if (connected && !directToolsFrozen && state === runtimeState) syncToolSurface();
   }
 
   // A call that may reach other tools (Pi's codemode and tool_search, other extensions) first registers what it reaches.
@@ -1745,7 +1756,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (directToolsFrozen) return;
     try {
       const reach = reachOf(event.toolName, event.input);
-      if (reach !== undefined) await registerReachedServers(reach, ctx.signal);
+      if (reach !== undefined) await registerReachedServers(reach, ctx.signal, ctx);
     } catch (error) {
       logger.debug(`MCP: could not register the servers ${event.toolName} reaches: ${formatTerminalError(error)}`);
     }

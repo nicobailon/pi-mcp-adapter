@@ -4908,6 +4908,32 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(mocks.lazyConnect).not.toHaveBeenCalled();
     });
 
+    it("starts a deferred session's runtime for a reach that names a server without cached tools, and nothing for an \"all\" reach", async () => {
+      const { resolveDirectTools } = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
+      mocks.resolveDirectTools.mockImplementation(resolveDirectTools);
+      const proxy = { command: "x" };
+      const docs = { command: "d" };
+      mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: cacheEntry(proxy, { tools: [echoTool] }) } });
+      const { api, handlers, state } = await bootPi099(undefined, { settings: { scriptMode: false, deferWithMissingMetadata: true }, mcpServers: { proxy, docs } });
+      api.getAllTools.mockReturnValue([{ name: "tool_search", reachesTools: () => "all" }, { name: "codemode", reachesTools: scriptWords }]);
+      mocks.lazyConnect.mockImplementation(async () => {
+        mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: cacheEntry(proxy, { tools: [echoTool] }), docs: cacheEntry(docs, { tools: [{ name: "find" }] }) } });
+        state.onToolMetadataUpdated("docs", "lazy-connect");
+        return true;
+      });
+      const toolCall = (toolName: string, input: unknown) =>
+        handlers.get("tool_call")!({ type: "tool_call", toolName, toolCallId: "t1", input }, { signal: undefined, cwd: process.cwd(), hasUI: false });
+      expect(registeredTool(api, "mcp__proxy__echo")).toMatchObject({ exposure: "deferred" });
+
+      await toolCall("tool_search", { query: "find" });
+      expect(mocks.initializeMcp).not.toHaveBeenCalled();
+
+      await toolCall("codemode", { code: "await tools.mcp__docs__find({})" });
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+      expect(mocks.lazyConnect).toHaveBeenCalledWith(state, "docs", undefined);
+      expect(registeredTool(api, "mcp__docs__find")).toMatchObject({ exposure: "deferred" });
+    });
+
     it("registers nothing for a reaching call when settings.freezeDirectTools is set", async () => {
       const { api, toolCall, connectDocs } = await bootWithUnconnectedServer({ freezeDirectTools: true });
       api.getAllTools.mockReturnValue([{ name: "codemode", reachesTools: scriptWords }]);
