@@ -85,7 +85,7 @@ describe("direct tool host contracts", () => {
     })).toThrow("MCP direct tool arguments do not match the advertised input schema");
   });
 
-  it("returns a bounded raw MCP result when configured", async () => {
+  it.each([false, true])("returns a bounded raw MCP result when configured, and none when a script gets the result (script: %s)", async (toScript) => {
     const rawResult = {
       content: [{ type: "text", text: "accepted" }],
       structuredContent: {
@@ -117,6 +117,7 @@ describe("direct tool host contracts", () => {
       toolMetadata: new Map(),
       failureTracker: new Map(),
       completedUiSessions: [],
+      deliversToScript: () => toScript,
     } as any;
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
     const execute = createDirectToolExecutor(() => state, () => null, {
@@ -128,11 +129,9 @@ describe("direct tool host contracts", () => {
 
     const result = await execute("call-19", {}, undefined, undefined, undefined as any);
 
-    expect(result.details).toMatchObject({
-      server: "demo",
-      tool: "commit",
-      mcpResult: rawResult,
-    });
+    expect(result.details).toMatchObject({ server: "demo", tool: "commit" });
+    if (toScript) expect(result.details).not.toHaveProperty("mcpResult");
+    else expect(result.details).toMatchObject({ mcpResult: rawResult });
     expect(state.manager.ensureListen).toHaveBeenCalledWith("demo", connection);
   });
 
@@ -249,5 +248,40 @@ describe("direct tool host contracts", () => {
     });
     expect(connection.client.readResource).toHaveBeenCalledWith({ uri: "docs://handbook" }, undefined);
     expect(state.manager.prepareResourceUse).toHaveBeenCalledWith("demo", "docs://handbook", connection);
+  });
+
+  it.each([false, true])("keeps the raw MCP result in proxy details only when the model gets it (script: %s)", async (toScript) => {
+    const rawResult = { content: [{ type: "text", text: "accepted" }] };
+    const state = {
+      config: { settings: {}, mcpServers: { demo: { command: "demo" } } },
+      toolMetadata: new Map([["demo", [{ name: "demo_commit", originalName: "commit", description: "Commit" }]]]),
+      resourceCounts: new Map(),
+      promptMetadata: new Map(),
+      promptMetadataLive: new Set(),
+      serverInstructions: new Map(),
+      manager: {
+        getConnection: () => ({
+          status: "connected",
+          tools: [{ name: "commit", description: "Commit" }],
+          resources: [],
+          prompts: [],
+          client: { callTool: vi.fn().mockResolvedValue(rawResult) },
+        }),
+        getRequestOptions: () => undefined,
+        touch: vi.fn(),
+        incrementInFlight: vi.fn(),
+        decrementInFlight: vi.fn(),
+      },
+      failureTracker: new Map(),
+      completedUiSessions: [],
+      deliversToScript: () => toScript,
+    } as any;
+    const { executeCall } = await import("../proxy-modes.ts");
+
+    const result = await executeCall(state, "demo_commit", {}, undefined, undefined, undefined, undefined, undefined, "call-21");
+
+    expect(result.details).toMatchObject({ server: "demo", tool: "commit" });
+    if (toScript) expect(result.details).not.toHaveProperty("mcpResult");
+    else expect(result.details).toMatchObject({ mcpResult: rawResult });
   });
 });
