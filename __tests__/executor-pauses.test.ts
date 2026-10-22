@@ -247,7 +247,7 @@ describe("Executor pauses", () => {
     );
 
     await expect(run).rejects.toMatchObject({
-      message: expect.stringContaining("Executor did not resume the program: Session not found"),
+      message: expect.stringContaining("Resuming the Executor program failed: Session not found"),
       cause: expect.any(SdkHttpError),
     });
     expect(sent).toEqual(["execute", "resume"]);

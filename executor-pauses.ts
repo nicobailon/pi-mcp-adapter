@@ -142,8 +142,8 @@ export async function callToolAnsweringExecutorPauses<T extends object>({
       if (signal?.aborted) throw error;
       // A plain Error keeps session recovery from replaying the original execute/call, which would re-run the program.
       throw new Error(
-        `Executor did not resume the program: ${error instanceof Error ? error.message : String(error)}. `
-          + "Its earlier steps may already have run; check their effects before running it again.",
+        `Resuming the Executor program failed: ${error instanceof Error ? error.message : String(error)}. `
+          + "Some of its steps may already have run; check their effects before running it again.",
         { cause: error },
       );
     }
