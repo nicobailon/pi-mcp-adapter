@@ -7,7 +7,7 @@ import { getServerPrefix, getToolNameCandidates, isServerDisabled, parseUiPrompt
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure, refreshExecutorCatalog, cacheExecutorSignature, EXECUTOR_UNKNOWN_PATH_REASON } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { buildToolMetadata, executorAppToolsLine, executorCatalogOf, getToolNames, formatSchema, isPlainTypeSchema } from "./tool-metadata.ts";
+import { buildToolMetadata, executorAppToolsLine, executorCatalogOf, getToolNames, formatSchema, isPlainTypeSchema, ownTools } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import { getObservedOutput, observedOutputRecorder, renderOutputShape } from "./output-shape.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
@@ -541,7 +541,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
     }
 
     // Executor's app tools are counted on their own line, in mcp({ server }) and /mcp-adapter.
-    const toolCount = status === "failed" ? 0 : metadata?.filter(m => m.executorPath === undefined).length ?? 0;
+    const toolCount = status === "failed" ? 0 : ownTools(metadata).length;
 
     const listenState = connection?.status === "connected" ? connection.listenState : "disconnected";
     servers.push({
@@ -1208,7 +1208,7 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     }
   }
   // Executor's app tools are counted in one line, not listed: there can be a thousand.
-  const serverTools = (metadata ?? []).filter(toolMeta => toolMeta.executorPath === undefined);
+  const serverTools = ownTools(metadata);
   const appToolsLine = executorAppToolsLine(state, server);
   let text = `${server} (${serverTools.length} tools${cachedNote}):${descriptionText}\n\n`;
 

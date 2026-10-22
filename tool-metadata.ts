@@ -135,8 +135,16 @@ export function buildToolMetadata(
   return { metadata: ownership.unique, failedTools };
 }
 
+/**
+ * A server's own tools: its metadata without Executor app tools. Every tool count and name list
+ * uses this; app tools are counted only in the +N Executor app tools line and the cap line.
+ */
+export function ownTools(metadata: readonly ToolMetadata[] | undefined): ToolMetadata[] {
+  return metadata?.filter(tool => tool.executorPath === undefined) ?? [];
+}
+
 export function getToolNames(state: McpExtensionState, serverName: string): string[] {
-  return state.toolMetadata.get(serverName)?.filter(m => m.executorPath === undefined).map(m => m.name) ?? [];
+  return ownTools(state.toolMetadata.get(serverName)).map(m => m.name);
 }
 
 /**
@@ -178,7 +186,8 @@ export function cacheReader(): () => MetadataCache | null {
 }
 
 function executorAppToolCounts(state: McpExtensionState, serverName: string, readCache?: () => MetadataCache | null) {
-  const count = state.toolMetadata.get(serverName)?.filter(m => m.executorPath !== undefined).length ?? 0;
+  const metadata = state.toolMetadata.get(serverName) ?? [];
+  const count = metadata.length - ownTools(metadata).length;
   // Only an Executor server can have a catalog, so any other server skips the cache file.
   const catalog = count === 0 && !state.sessionMetadata?.get(serverName)?.executorApps ? undefined : executorCatalogOf(state, serverName, readCache);
   // A catalog cached under a larger cap is still read only up to this one.
@@ -190,7 +199,7 @@ function executorAppToolCounts(state: McpExtensionState, serverName: string, rea
 export function totalToolCount(state: McpExtensionState): number {
   let count = 0;
   for (const metadata of state.toolMetadata.values()) {
-    count += metadata.filter(m => m.executorPath === undefined).length;
+    count += ownTools(metadata).length;
   }
   return count;
 }

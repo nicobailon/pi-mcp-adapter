@@ -27,7 +27,7 @@ import {
 import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { loadMetadataCache, reconstructPromptMetadata, withSessionMetadata } from "./metadata-cache.ts";
-import { buildToolMetadata, cacheReader, executorAppToolsLine, executorAppToolsStatus } from "./tool-metadata.ts";
+import { buildToolMetadata, cacheReader, executorAppToolsLine, executorAppToolsStatus, ownTools } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { inspectBearerTokenForUrl, removeBearerToken } from "./mcp-bearer-store.ts";
@@ -175,7 +175,7 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     }
     const connection = state.manager.getConnection(name);
     const metadata = state.toolMetadata.get(name);
-    const toolCount = metadata?.filter(m => m.executorPath === undefined).length ?? 0;
+    const toolCount = ownTools(metadata).length;
     const failedAgo = getFailureAgeSeconds(state, name);
     let status = "not listening (disconnected)";
     let statusIcon = "○";
@@ -268,7 +268,7 @@ export async function showTools(state: McpExtensionState, ctx: ExtensionContext)
     .filter(([serverName]) => !isServerDisabled(state.config.mcpServers[serverName]))
     .filter(([serverName]) => !isServerInActiveFailureBackoff(state, serverName));
   // Executor's app tools are counted in one line per server, not listed: there can be a thousand.
-  const allTools = servers.flatMap(([, metadata]) => metadata.filter(m => m.executorPath === undefined).map(m => m.name));
+  const allTools = servers.flatMap(([, metadata]) => ownTools(metadata).map(m => m.name));
   const readCache = cacheReader();
   const appToolLines = servers.flatMap(([serverName]) => {
     const line = executorAppToolsLine(state, serverName, readCache);

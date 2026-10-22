@@ -51,6 +51,7 @@ vi.mock("../server-manager.ts", async (importOriginal) => {
 vi.mock("../tool-metadata.ts", () => ({
   buildToolMetadata: mocks.buildToolMetadata,
   totalToolCount: vi.fn(() => 0),
+  ownTools: (metadata?: Array<{ executorPath?: string }>) => metadata?.filter(tool => tool.executorPath === undefined) ?? [],
 }));
 
 vi.mock("../direct-tools.ts", () => ({

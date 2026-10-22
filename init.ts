@@ -26,7 +26,7 @@ import {
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
 import { McpServerManager, isTransientHttpConnectError, type ServerConnection } from "./server-manager.ts";
-import { buildToolMetadata, totalToolCount } from "./tool-metadata.ts";
+import { buildToolMetadata, ownTools, totalToolCount } from "./tool-metadata.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
 import { formatMcpFooterStatus, formatMcpStatus, openUrl, parallelLimit, providerSignInMessage, sanitizeTerminalText } from "./utils.ts";
@@ -663,7 +663,7 @@ export function updateMetadataCache(
 
 /** A connected server's tool metadata with this session's cached Executor app tools in place of any earlier ones. */
 function withExecutorAppMetadata(state: McpExtensionState, serverName: string, metadata: ToolMetadata[]): ToolMetadata[] {
-  const serverTools = metadata.filter((tool) => tool.executorPath === undefined);
+  const serverTools = ownTools(metadata);
   const entry = state.sessionMetadata?.get(serverName);
   const definition = state.config.mcpServers[serverName];
   if (!entry?.executorApps || !definition) return serverTools;
