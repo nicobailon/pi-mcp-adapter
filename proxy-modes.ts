@@ -29,6 +29,16 @@ import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { describeProjectServerBlock, disabledServerReason } from "./project-server-trust.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
+/**
+ * Runs a resolved, connected and validated proxy call as a nested Pi call of the tool registered
+ * for it, so Pi's hooks see the real tool. Resolves to undefined to keep the call in the proxy.
+ */
+export type NestedCallHandOff = (call: {
+  serverName: string;
+  toolMeta: ToolMetadata;
+  args: Record<string, unknown> | undefined;
+  callIdentity: Record<string, string>;
+}) => Promise<ProxyToolResult | undefined>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
 
@@ -1238,6 +1248,7 @@ export async function executeCall(
   // Internal consumers own successful data delivery; origin remains approval metadata only.
   internalDelivery?: { onSuccess: (data: unknown) => void },
   toolCallId?: string,
+  handOff?: NestedCallHandOff,
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
@@ -1577,6 +1588,10 @@ export async function executeCall(
       details: { mode: "call", error: "call_failed", ...callIdentity, message: validationError, ...guardedMcpDetails(guarded) },
     };
   }
+
+  // After connect and validation, which the nested leg repeats cheaply; before approval, which only it runs.
+  const handedOff = await handOff?.({ serverName, toolMeta, args: normalizedArgs, callIdentity });
+  if (handedOff) return handedOff;
 
   let uiSession: UiSessionRuntime | null = null;
   // openUi: false runs the tool as if it declared no UI.

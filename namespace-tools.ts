@@ -1,4 +1,5 @@
 import type { AgentToolResult, ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { NestedCallHandOff } from "./proxy-modes.ts";
 import { Type } from "typebox";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type McpConfig } from "./types.ts";
@@ -105,7 +106,13 @@ export type ExecuteNamespaceCall = (
   origin: "proxy",
   internalDelivery: undefined,
   toolCallId: string,
+  handOff: NestedCallHandOff | undefined,
 ) => Promise<AgentToolResult<Record<string, unknown>>>;
+export type CreateNamespaceHandOff = (
+  ctx: unknown,
+  toolCallId: string,
+  runInProxy: (serverName: string, args: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>>,
+) => NestedCallHandOff | undefined;
 
 function namespaceExecute(
   getState: GetState,
@@ -114,6 +121,7 @@ function namespaceExecute(
   executeCall: ExecuteNamespaceCall,
   serverName: string,
   getPiTools: GetPiTools,
+  createHandOff?: CreateNamespaceHandOff,
 ) {
   return async (
     toolCallId: string,
@@ -160,17 +168,11 @@ function namespaceExecute(
         details: { error: "not_initialized", server: serverName },
       };
     }
-    return executeCall(
-      state,
-      params.tool,
-      params.args ?? {},
-      serverName,
-      getPiTools,
-      signal,
-      "proxy",
-      undefined,
-      toolCallId,
-    );
+    const callState = state;
+    const tool = params.tool;
+    const handOff = createHandOff?.(ctx, toolCallId, (server, args, nestedSignal) =>
+      executeCall(callState, tool, args, server, getPiTools, nestedSignal, "proxy", undefined, toolCallId, undefined));
+    return executeCall(state, tool, params.args ?? {}, serverName, getPiTools, signal, "proxy", undefined, toolCallId, handOff);
   };
 }
 
@@ -205,6 +207,10 @@ export interface SyncNamespaceProxyToolsInput {
   renderResult?: unknown;
   guardReentrant?: () => void;
   onToolRegistered?: (name: string) => void;
+  /** Pi 0.99+: hands a resolved call to its registered tool through the tool context. */
+  createHandOff?: CreateNamespaceHandOff;
+  /** Pi 0.99+: declare the namespace's tools as what a call may reach. */
+  reachesTools?: boolean;
 }
 
 export interface SyncNamespaceProxyToolsResult {
@@ -259,6 +265,7 @@ function registerNamespaceProxyTool(
     renderShell,
     renderCall: createNamespaceRenderCall(renderOptions, spec.serverName),
     renderResult,
+    ...(input.reachesTools ? { reachesTools: () => [spec.toolName] } : {}),
     execute: namespaceExecute(
       input.getState,
       input.getInitPromise,
@@ -266,6 +273,7 @@ function registerNamespaceProxyTool(
       executeCall,
       spec.serverName,
       input.getPiTools,
+      input.createHandOff,
     ),
   });
   input.guardReentrant?.();

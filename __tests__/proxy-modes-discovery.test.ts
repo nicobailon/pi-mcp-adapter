@@ -803,4 +803,55 @@ describe("proxy discovery", () => {
     );
     expect(result.details).toMatchObject({ error: "native_tool", requestedTool: "read" });
   });
+
+  function connectedState(callTool: ReturnType<typeof vi.fn>): McpExtensionState {
+    return {
+      config: { mcpServers: { demo: { command: "demo", directTools: true } } },
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      manager: {
+        getConnection: () => ({ status: "connected", client: { callTool } }),
+        touch: () => {},
+        incrementInFlight: () => {},
+        decrementInFlight: () => {},
+        getRequestOptions: () => undefined,
+      },
+      failureTracker: new Map(),
+      serverInstructions: new Map(),
+      completedUiSessions: [],
+    } as unknown as McpExtensionState;
+  }
+
+  it("hands a resolved, connected call off before approval, and runs it itself when the hand-off declines", async () => {
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "in proxy" }] }));
+    const handedOff = { content: [{ type: "text" as const, text: "nested" }], details: { mode: "call" } };
+    const handOff = vi.fn().mockResolvedValueOnce(handedOff).mockResolvedValueOnce(undefined);
+    const state = connectedState(callTool);
+
+    await expect(executeCall(state, "demo_search", { q: "x" }, undefined, undefined, undefined, undefined, undefined, undefined, handOff)).resolves.toBe(handedOff);
+    expect(callTool).not.toHaveBeenCalled();
+    expect(handOff).toHaveBeenCalledWith({
+      serverName: "demo",
+      toolMeta: expect.objectContaining({ originalName: "search" }),
+      args: { q: "x" },
+      callIdentity: { server: "demo", tool: "search", canonicalTool: "demo_search" },
+    });
+
+    const inProxy = await executeCall(state, "demo_search", { q: "x" }, undefined, undefined, undefined, undefined, undefined, undefined, handOff);
+    expect(inProxy.content).toEqual([{ type: "text", text: "in proxy" }]);
+    expect(callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a backed-off direct server as unavailable instead of handing the call off", async () => {
+    const handOff = vi.fn();
+    const state = connectedState(vi.fn());
+    state.manager.getConnection = () => undefined;
+    state.failureTracker.set("demo", Date.now());
+    state.failureMessages = new Map([["demo", "spawn demo ENOENT"]]);
+
+    const result = await executeCall(state, "demo_search", {}, undefined, undefined, undefined, undefined, undefined, undefined, handOff);
+
+    expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringMatching(/^Server "demo" not available \(last failed .*spawn demo ENOENT\)$/) });
+    expect(result.details).toMatchObject({ mode: "call", error: "server_backoff", server: "demo" });
+    expect(handOff).not.toHaveBeenCalled();
+  });
 });

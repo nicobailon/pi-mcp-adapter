@@ -1,12 +1,13 @@
 import { registerProtocolBridge } from "./runtime-protocol.ts";
 export { registerMcpProtocol, MCP_PROTOCOL_EVENT, type McpProtocolDefinition, type McpProtocol, type McpProtocolSession, type McpProtocolStream, type McpProtocolWatch, type McpProtocolEnd } from "./runtime-protocol.ts";
-import { withFileMutationQueue, type AgentToolResult, type AgentToolUpdateCallback, type ExtensionAPI, type ExtensionContext, type RegisteredMcpServer, type ToolInfo } from "@earendil-works/pi-coding-agent";
+import { withFileMutationQueue, type AgentToolResult, type AgentToolUpdateCallback, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type RegisteredMcpServer, type ToolInfo } from "@earendil-works/pi-coding-agent";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import type { NestedCallHandOff } from "./proxy-modes.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
@@ -400,6 +401,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const registeredDeferredTools = new Map<string, string>();
   // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
   const registeredToolNames = new Map<string, string>();
+  // Proxy calls handed to a registered tool, by the proxy's tool call id.
+  const pendingProxyHandOffs = new Map<string, { name: string; consumed: boolean; run: (params: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>> }>();
+  // Pi 1.2+ reads which tools a call may reach; Pi 0.99-1.1 ignore the field.
+  const reachesAllTools = deferSearchTools ? { reachesTools: () => "all" as const } : {};
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
   const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
   const renderMcpToolResult = createMcpToolResultRenderer(toolRenderOptions);
@@ -497,6 +502,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         : {}),
       ...deferred,
       async execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Record<string, unknown>>> {
+        const handedOff = takeProxyHandOff(toolCallId, name);
+        if (handedOff) return handedOff(params, signal);
         let executor: ReturnType<(typeof import("./direct-tools.ts"))["createDirectToolExecutor"]>;
         let guard: RuntimeGuard | undefined;
         try {
@@ -733,6 +740,68 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     syncToolSurface();
   }
 
+  type InProxyCall = (serverName: string, args: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>>;
+
+  /**
+   * Pi 0.99+: hands a proxy call to its registered tool through ctx.executeTool, so Pi's hooks and
+   * permission extensions see the real tool. The registered tool runs the call as the proxy would,
+   * so results, approval (once, origin "proxy") and output limits are unchanged.
+   */
+  function createProxyHandOff(ctx: unknown, toolCallId: string, runInProxy: InProxyCall): NestedCallHandOff | undefined {
+    if (!deferSearchTools || typeof (ctx as { executeTool?: unknown } | undefined)?.executeTool !== "function") return undefined;
+    const toolCtx = ctx as ExtensionToolContext;
+    return async ({ serverName, toolMeta, args, callIdentity }) => {
+      let name = registeredDeferredName(serverName, toolMeta.originalName, toolMeta.resourceUri);
+      if (name === undefined) {
+        await ensureDeferredRegistered(serverName);
+        name = registeredDeferredName(serverName, toolMeta.originalName, toolMeta.resourceUri);
+      }
+      // A frozen surface registers nothing new; the proxy still reaches tools it knows.
+      if (name === undefined && directToolsFrozen) return undefined;
+      if (name === undefined) {
+        const message = `MCP tool "${toolMeta.originalName}" on server "${serverName}" has no registered Pi tool.`;
+        return { content: [{ type: "text" as const, text: message }], details: { mode: "call", error: "tool_not_registered", ...callIdentity, message } };
+      }
+      // Pi calls only active direct tools; one the host deactivated keeps today's proxy path.
+      const registered = name;
+      if (!toolCtx.tools.some((tool) => tool.name === registered)) return undefined;
+      let thrown: { error: unknown } | undefined;
+      const handOff = {
+        name: registered,
+        consumed: false,
+        run: async (params: Record<string, unknown>, signal: AbortSignal | undefined) => {
+          try {
+            return await runInProxy(serverName, params, signal);
+          } catch (error) {
+            thrown = { error };
+            throw error;
+          }
+        },
+      };
+      pendingProxyHandOffs.set(toolCallId, handOff);
+      let outcome: Awaited<ReturnType<ExtensionToolContext["executeTool"]>>;
+      try {
+        outcome = await toolCtx.executeTool(registered, args ?? {});
+      } finally {
+        pendingProxyHandOffs.delete(toolCallId);
+      }
+      // Pi turns a throw into an error result; the proxy throws, as it did in-proxy.
+      if (thrown) throw thrown.error;
+      const details = outcome.result.details as Record<string, unknown> | undefined;
+      if (handOff.consumed) return { content: outcome.result.content, details: details ?? {} };
+      // Blocked by a tool_call hook or rejected before the tool ran.
+      return { content: outcome.result.content, details: { mode: "call", error: "nested_call_failed", ...callIdentity } };
+    };
+  }
+
+  // The proxy hand-off a nested call `<proxy call id>/<n>` to `name` runs, consumed once.
+  function takeProxyHandOff(toolCallId: string, name: string): ((params: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>>) | undefined {
+    const handOff = pendingProxyHandOffs.get(toolCallId.slice(0, Math.max(0, toolCallId.lastIndexOf("/"))));
+    if (!handOff || handOff.consumed || handOff.name !== name) return undefined;
+    handOff.consumed = true;
+    return handOff.run;
+  }
+
   function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false | "search">): void {
     if (!state) return;
     for (const [serverName, value] of changes) {
@@ -844,6 +913,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       renderResult: renderMcpToolResult,
       guardReentrant: () => finalizationGuard?.(),
       onToolRegistered: (name) => finalizationRegistrations?.add(name),
+      createHandOff: createProxyHandOff,
+      reachesTools: deferSearchTools,
     });
     finalizationGuard?.();
     for (const name of result.added) registeredNamespaceProxyTools.add(name);
@@ -1855,6 +1926,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }),
       renderCall: createMcpScriptToolCallRenderer(toolRenderOptions),
       renderResult: renderMcpToolResult,
+      ...reachesAllTools,
       async execute(_toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         let executeOwner = currentOwner;
         if (!state) {
@@ -2171,6 +2243,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         target: Type.Optional(Type.String({ description: "Install target: 'global' (default) or 'project'" })),
       }),
       renderResult: renderMcpToolResult,
+      ...reachesAllTools,
       async execute(toolCallId: string, params: {
         tool?: string;
         args?: string | Record<string, unknown>;
@@ -2301,7 +2374,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             : proxyModes.executeAuthComplete(proxyState, params.server, input);
         }
         if (params.tool) {
-          const result = await proxyModes.executeCall(proxyState, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, undefined, toolCallId);
+          const tool = params.tool;
+          const handOff = createProxyHandOff(_ctx, toolCallId, (server, args, nestedSignal) =>
+            proxyModes.executeCall(proxyState, tool, args, server, getPiTools, nestedSignal, undefined, undefined, toolCallId));
+          const result = await proxyModes.executeCall(proxyState, tool, parsedArgs, params.server, getPiTools, signal, undefined, undefined, toolCallId, handOff);
           assertRuntimeGuard(proxyGuard);
           if (lazyDirectTools.size === 0) return result;
           // A successful proxy call is as clear a signal as a search hit: the

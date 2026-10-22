@@ -113,7 +113,7 @@ describe("tool call id forwarding", () => {
     await registered.get("mcp__demo")!.execute("toolu_03ghi", { tool: "search", args: { q: "x" } }, undefined);
 
     expect(executeCallMock).toHaveBeenCalledWith(
-      state, "search", { q: "x" }, "demo", expect.any(Function), undefined, "proxy", undefined, "toolu_03ghi",
+      state, "search", { q: "x" }, "demo", expect.any(Function), undefined, "proxy", undefined, "toolu_03ghi", undefined,
     );
   });
 });

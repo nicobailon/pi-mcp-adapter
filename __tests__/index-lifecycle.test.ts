@@ -2442,6 +2442,7 @@ describe("mcpAdapter session lifecycle", () => {
       undefined,
       undefined,
       "call-1",
+      undefined,
     );
   });
 
@@ -2555,6 +2556,7 @@ describe("mcpAdapter session lifecycle", () => {
       undefined,
       undefined,
       "call-1",
+      undefined,
     );
   });
 
@@ -4667,6 +4669,100 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(Object.keys(registeredTool(api, "mcp"))).toEqual(
         ["name", "label", "description", "promptSnippet", "renderShell", "renderCall", "parameters", "renderResult", "execute"],
       );
+      expect(registeredTool(api, "mcp__proxy")).not.toHaveProperty("reachesTools");
+    });
+
+    it("declares what mcp, mcpScript and a namespace proxy reach", async () => {
+      const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] }, { scriptMode: true });
+
+      expect(registeredTool(api, "mcp").reachesTools()).toBe("all");
+      expect(registeredTool(api, "mcpScript").reachesTools()).toBe("all");
+      expect(registeredTool(api, "mcp__proxy").reachesTools()).toEqual(["mcp__proxy"]);
+    });
+
+    const textBlocks = (value: string) => [{ type: "text", text: value }];
+    const echoCall = (originalName = "echo") => ({
+      serverName: "proxy",
+      toolMeta: { name: `proxy_${originalName}`, originalName, description: "" },
+      args: { value: "v" },
+      callIdentity: { server: "proxy", tool: originalName, canonicalTool: `proxy_${originalName}` },
+    });
+
+    // The hand-off the mcp proxy gives executeCall for a call in this tool context.
+    async function proxyHandOff(api: any, ctx: unknown) {
+      let handOff: any;
+      mocks.executeCall.mockImplementationOnce(async (...args: any[]) => {
+        handOff = args[9];
+        return { content: [], details: {} };
+      });
+      await registeredTool(api, "mcp").execute("c1", { tool: "proxy_echo" }, undefined, undefined, ctx);
+      return handOff;
+    }
+
+    function nestedContext(api: any, tools: string[]) {
+      const ctx: { tools: { name: string }[]; executeTool: ReturnType<typeof vi.fn> } = {
+        tools: tools.map((name) => ({ name })),
+        // Pi's nested pipeline: run the registered tool as `<caller>/1`, turning a throw into an error result.
+        executeTool: vi.fn(async (name: string, args: unknown) => {
+          try {
+            return { result: await registeredTool(api, name).execute("c1/1", args, undefined, undefined, ctx), isError: false };
+          } catch (error) {
+            return { result: { content: textBlocks(String(error)), details: {} }, isError: true };
+          }
+        }),
+      };
+      return ctx;
+    }
+
+    it("keeps calls in the proxy before Pi 0.99 and without ctx.executeTool", async () => {
+      const old = await bootCached({ proxy: [{ command: "x" }, [echoTool]] }, {}, false);
+      expect(await proxyHandOff(old.api, nestedContext(old.api, ["mcp__proxy__echo"]))).toBeUndefined();
+      const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] });
+      expect(await proxyHandOff(api, { hasUI: false })).toBeUndefined();
+      expect(await proxyHandOff(api, nestedContext(api, ["mcp__proxy__echo"]))).toBeTypeOf("function");
+    });
+
+    it("runs a handed-off call in the proxy under the registered tool, and reports a blocked or throwing one", async () => {
+      const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] });
+      const ctx = nestedContext(api, ["mcp__proxy__echo"]);
+      const handOff = await proxyHandOff(api, ctx);
+      const inProxy = { content: textBlocks("echoed"), details: { mode: "call", server: "proxy", tool: "echo", canonicalTool: "proxy_echo" } };
+      mocks.executeCall.mockResolvedValueOnce(inProxy);
+
+      await expect(handOff(echoCall())).resolves.toEqual(inProxy);
+      expect(ctx.executeTool).toHaveBeenCalledWith("mcp__proxy__echo", { value: "v" });
+      expect(mocks.executeCall).toHaveBeenLastCalledWith(expect.anything(), "proxy_echo", { value: "v" }, "proxy", expect.any(Function), undefined, undefined, undefined, "c1");
+
+      ctx.executeTool.mockResolvedValueOnce({ result: { content: textBlocks("Blocked by policy"), details: {} }, isError: true });
+      await expect(handOff(echoCall())).resolves.toEqual({
+        content: textBlocks("Blocked by policy"),
+        details: { mode: "call", error: "nested_call_failed", server: "proxy", tool: "echo", canonicalTool: "proxy_echo" },
+      });
+
+      mocks.executeCall.mockRejectedValueOnce(new Error("aborted"));
+      await expect(handOff(echoCall())).rejects.toThrow("aborted");
+    });
+
+    it("answers tool_not_registered only after a forced registration, and keeps frozen or uncallable tools in the proxy", async () => {
+      const { api, config } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] });
+      const ctx = nestedContext(api, []);
+      const handOff = await proxyHandOff(api, ctx);
+
+      await expect(handOff(echoCall("ghost"))).resolves.toMatchObject({ details: { mode: "call", error: "tool_not_registered", server: "proxy", tool: "ghost" } });
+      // Registered, but not callable, as when the host deactivated a direct tool.
+      await expect(handOff(echoCall())).resolves.toBeUndefined();
+      expect(ctx.executeTool).not.toHaveBeenCalled();
+
+      mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: cacheEntry(config.mcpServers.proxy!, { tools: [echoTool, { name: "late" }] }) } });
+      ctx.tools.push({ name: "mcp__proxy__late" });
+      mocks.executeCall.mockResolvedValueOnce({ content: textBlocks("late"), details: { mode: "call" } });
+      await expect(handOff(echoCall("late"))).resolves.toEqual({ content: textBlocks("late"), details: { mode: "call" } });
+      expect(ctx.executeTool).toHaveBeenCalledWith("mcp__proxy__late", { value: "v" });
+
+      const frozen = await bootCached({ proxy: [{ command: "x", lifecycle: "eager" }, [echoTool]] }, { freezeDirectTools: true });
+      await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(frozen.state));
+      const frozenHandOff = await proxyHandOff(frozen.api, nestedContext(frozen.api, []));
+      await expect(frozenHandOff(echoCall("ghost"))).resolves.toBeUndefined();
     });
   });
 });
