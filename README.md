@@ -21,7 +21,6 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 Since then, Pi 0.99 added MCP support of its own, which also keeps tool definitions out of context. Installing the adapter replaces it in Pi sessions. What you get by switching:
 
 - **Install many servers without paying for idle ones.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. By default, the adapter starts a server when the model first calls it and stops it after 10 idle minutes.
-- **Everyday calls cost about the same.** By default, the built-in runs every MCP call as a `codemode` script, even a single lookup, while the adapter makes one small JSON call to the `mcp` tool. In our tests a single lookup cost 1.8 cents against the built-in's 2.1, and a question from the docs 1.9 cents with both. Bulk work across many records costs more with the adapter, even with Pi's `codemode` turned on by adding `"+codemode"` to `defaultTools`.
 - **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, and offer prompt templates as slash commands. The built-in doesn't handle these.
 - **Find tools by what you mean.** The built-in's tool search only matches words. With a System One key, the adapter can also rank tools by meaning: in a test of 12 everyday requests across 95 tools, it put the right tool first in 10 of 11, where word search did in 5.
 - **Sign-in tokens go in your OS keychain** by default (an encrypted file is opt-in), not in a plain JSON file under `~/.pi/agent`.
