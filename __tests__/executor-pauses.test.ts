@@ -24,7 +24,12 @@ function metadata(originalName: string): ToolMetadata {
   };
 }
 
-async function connectExecutor(options: { select?: string[]; input?: string[]; serverName?: string } = {}) {
+async function connectExecutor(options: {
+  select?: Array<string | undefined>;
+  input?: string[];
+  env?: Record<string, string>;
+  headless?: boolean;
+} = {}) {
   const ui = {
     select: vi.fn(async () => options.select?.shift()),
     input: vi.fn(async () => options.input?.shift()),
@@ -37,11 +42,11 @@ async function connectExecutor(options: { select?: string[]; input?: string[]; s
     command: process.execPath,
     args: [fixture],
     protocolVersion: "2026-07-28" as const,
-    env: { EXECUTOR_LOG_FILE: logPath, ...(options.serverName ? { EXECUTOR_SERVER_NAME: options.serverName } : {}) },
+    env: { EXECUTOR_LOG_FILE: logPath, ...options.env },
   };
   const manager = new McpServerManager();
   manager.setDefaultRequestTimeoutMs(2_000);
-  manager.setElicitationConfig({ ui, allowUrl: false });
+  if (!options.headless) manager.setElicitationConfig({ ui, allowUrl: false });
   await manager.connect("executor", definition);
   managers.push(manager);
   const state = {
@@ -120,7 +125,7 @@ describe("Executor pauses", () => {
   });
 
   it("passes a lookalike pending result from another server through untouched", async () => {
-    const { state, ui, resumes } = await connectExecutor({ select: ["Continue"], serverName: "lookalike" });
+    const { state, ui, resumes } = await connectExecutor({ select: ["Continue"], env: { EXECUTOR_SERVER_NAME: "lookalike" } });
 
     const result = await executeCall(state, "executor_call", {}, "executor");
 
@@ -129,9 +134,84 @@ describe("Executor pauses", () => {
     expect(await resumes()).toEqual([]);
   });
 
-  it("gives execute, call and resume a 6-minute timeout unless the server sets one", async () => {
-    const timeoutFor = async (requestTimeoutMs: number | undefined, requestOptions: RequestOptions | undefined) => {
-      const seen: Array<RequestOptions | undefined> = [];
+  it("leaves Executor's browser mode, whose resume takes no response, to the browser", async () => {
+    const { state, ui, resumes } = await connectExecutor({ select: ["Continue"], env: { EXECUTOR_RESUME_SCHEMA: "browser" } });
+
+    const result = await executeCall(state, "executor_call", {}, "executor");
+
+    expect(textOf(result)).toContain('"requestId":"apr_1"');
+    expect(ui.select).not.toHaveBeenCalled();
+    expect(await resumes()).toEqual([]);
+  });
+
+  it("answers two chained pauses before returning the final result", async () => {
+    const { state, ui, resumes } = await connectExecutor({
+      select: ["Continue", "Continue", "Enter value", "Submit"],
+      input: ["work"],
+    });
+
+    const result = await executeCall(state, "executor_execute", { code: "chain" }, "executor");
+
+    expect(textOf(result)).toContain("inbox work");
+    expect(ui.input).toHaveBeenCalledOnce();
+    expect(await resumes()).toEqual([
+      { requestId: "apr_2", response: { action: "accept" } },
+      { requestId: "elc_1", response: { action: "accept", content: { inbox: "work" } } },
+    ]);
+  });
+
+  it.each(["proxy", "direct"] as const)("refuses a resume from the model on the %s path without sending it", async (path) => {
+    const { state, resumes } = await connectExecutor();
+    const args = { requestId: "apr_1", response: { action: "accept" } };
+
+    const result = path === "proxy"
+      ? await executeCall(state, "executor_resume", args, "executor")
+      : await createDirectToolExecutor(() => state, () => null, {
+          serverName: "executor",
+          prefixedName: "executor_resume",
+          originalName: "resume",
+          description: "Executor resume",
+          inputSchema: { type: "object", properties: {} },
+        })("call-1", args, undefined, undefined, undefined as never);
+
+    expect(textOf(result)).toContain("Pi answers Executor's approval and input requests itself");
+    expect(result.details).toMatchObject({ error: "tool_error" });
+    expect(await resumes()).toEqual([]);
+  });
+
+  it("fails a pause in a session that cannot show dialogs without leaking the requestId", async () => {
+    const { state, resumes } = await connectExecutor({ headless: true });
+
+    const result = await executeCall(state, "executor_call", {}, "executor");
+
+    expect(textOf(result)).toContain("interactive Pi session");
+    expect(`${textOf(result)} ${JSON.stringify(result.details)}`).not.toMatch(/apr_|elc_|requestId/);
+    expect(await resumes()).toEqual([]);
+  });
+
+  it.each([
+    ["Decline", "That question was already answered."],
+    [undefined, "Executor is still answering an earlier request for this call; try the call again."],
+  ])("shows an unavailable or busy outcome as its message only (%s)", async (answer, message) => {
+    const { state } = await connectExecutor({ select: [answer] });
+
+    const result = await executeCall(state, "executor_execute", { code: "pickInbox()" }, "executor");
+
+    expect(textOf(result)).toBe(message);
+    expect(JSON.stringify(result.details)).not.toMatch(/elc_|requestId/);
+  });
+
+  it("gives execute, call and their resumes a 6-minute timeout unless the server sets one", async () => {
+    const timeoutsFor = async (requestTimeoutMs: number | undefined, requestOptions: RequestOptions | undefined) => {
+      const seen: Array<number | undefined> = [];
+      const pending = {
+        content: [],
+        structuredContent: {
+          status: "approval-required",
+          requestId: "apr_1",
+          elicitation: { mode: "form", message: "Approve?", requestedSchema: { type: "object", properties: {} } },
+        },
+      };
       await callToolAnsweringExecutorPauses({
         conn: {
           client: { getServerVersion: () => undefined },
@@ -142,21 +222,24 @@ describe("Executor pauses", () => {
             { name: "resume", inputSchema: { type: "object", properties: { requestId: {}, response: {} } } },
           ],
         } as unknown as Pick<ServerConnection, "client" | "definition" | "tools">,
-        manager: { promptFormElicitation: async () => undefined },
+        manager: { promptFormElicitation: async () => ({ action: "accept" }) },
         serverName: "executor",
         params: { name: "call", arguments: {} },
         requestOptions,
-        call: async (_params, options) => {
-          seen.push(options);
-          return { content: [] };
+        call: async (params, options) => {
+          seen.push(options?.timeout);
+          return params.name === "call" ? pending : { content: [] };
         },
       });
-      return seen[0]?.timeout;
+      return seen;
     };
 
-    expect(await timeoutFor(undefined, undefined)).toBe(360_000);
-    expect(await timeoutFor(undefined, { timeout: 2_000 })).toBe(360_000);
-    expect(await timeoutFor(undefined, { timeout: 600_000 })).toBe(600_000);
-    expect(await timeoutFor(5_000, { timeout: 5_000 })).toBe(5_000);
+    expect(await timeoutsFor(undefined, undefined)).toEqual([360_000, 360_000]);
+    expect(await timeoutsFor(undefined, { timeout: 2_000 })).toEqual([360_000, 360_000]);
+    expect(await timeoutsFor(undefined, { timeout: 600_000 })).toEqual([600_000, 600_000]);
+    expect(await timeoutsFor(5_000, { timeout: 5_000 })).toEqual([5_000, 5_000]);
+    for (const unset of [0, -1, Number.NaN]) {
+      expect(await timeoutsFor(unset, { timeout: 2_000 })).toEqual([360_000, 360_000]);
+    }
   });
 });

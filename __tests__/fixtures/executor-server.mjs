@@ -4,6 +4,7 @@ import readline from "node:readline";
 // Follows Executor's model-mode pause contract (executor@2.0.0-beta.25): `call` and `execute`
 // return a pending structuredContent, and `resume({requestId, response})` continues the program.
 // EXECUTOR_SERVER_NAME lets a test present the same tools under another server name.
+// EXECUTOR_RESUME_SCHEMA=browser gives `resume` browser mode's input, a requestId only.
 const lines = readline.createInterface({ input: process.stdin });
 const logFile = process.env.EXECUTOR_LOG_FILE;
 const serverInfo = { name: process.env.EXECUTOR_SERVER_NAME ?? "Executor", version: "0.1.0" };
@@ -63,11 +64,25 @@ function resume({ requestId, response }) {
       ? completed("email sent")
       : completed(`send_email was not approved: ${response?.action}`, "failure");
   }
+  if (requestId === "apr_2" && response?.action === "accept") return pending.execute;
   if (requestId === "elc_1" && response?.action === "accept") {
     return completed(`inbox ${response.content?.inbox}`);
   }
+  if (requestId === "elc_1" && response?.action === "cancel") return { status: "busy", requestId };
+  if (requestId === "elc_1") {
+    return { status: "unavailable", requestId, reason: "answered", message: "That question was already answered." };
+  }
   return { status: "unavailable", requestId, reason: "not-found", message: "That request is no longer waiting." };
 }
+
+function start(name, args) {
+  if (name === "execute" && args?.code === "chain") return { ...pending.call, requestId: "apr_2" };
+  return pending[name];
+}
+
+const resumeProperties = process.env.EXECUTOR_RESUME_SCHEMA === "browser"
+  ? { requestId: { type: "string" } }
+  : { requestId: { type: "string" }, response: { type: "object" } };
 
 const tools = [
   { name: "execute", inputSchema: { type: "object", properties: { code: { type: "string" } } } },
@@ -76,8 +91,8 @@ const tools = [
     name: "resume",
     inputSchema: {
       type: "object",
-      properties: { requestId: { type: "string" }, response: { type: "object" } },
-      required: ["requestId", "response"],
+      properties: resumeProperties,
+      required: Object.keys(resumeProperties),
     },
   },
 ];
@@ -99,7 +114,7 @@ lines.on("line", line => {
   } else if (request.method === "tools/call") {
     const { name, arguments: args } = request.params;
     record({ method: "tools/call", name, arguments: args });
-    respond(request.id, toolResult(name === "resume" ? resume(args) : pending[name]));
+    respond(request.id, toolResult(name === "resume" ? resume(args) : start(name, args)));
   } else if (request.id !== undefined) {
     process.stdout.write(`${JSON.stringify({
       jsonrpc: "2.0",

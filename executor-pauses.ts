@@ -11,6 +11,7 @@ export const EXECUTOR_REQUEST_TIMEOUT_MS = 360_000;
 const MAX_EXECUTOR_PAUSES = 16;
 
 type ToolCallParams = Parameters<Client["callTool"]>[0];
+type TextResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
 export interface ExecutorPause {
   status: "approval-required" | "input-required";
@@ -26,6 +27,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The name check accepts an absent name: on a 2026-07-28 connect the SDK reads serverInfo only
  * from discover `_meta["io.modelcontextprotocol/serverInfo"]`, and Executor returns serverInfo
  * as a top-level discover field, so a real Executor may report no name at all.
+ * The `resume` schema check keeps out Executor's browser mode, whose `resume` takes only a
+ * requestId because the operator answers in the browser.
  */
 export function isExecutorConnection(conn: Pick<ServerConnection, "client" | "tools">): boolean {
   const name = conn.client.getServerVersion?.()?.name;
@@ -79,6 +82,27 @@ function resumeResponse(pause: ExecutorPause, decision: ElicitResult): Record<st
   return { action: "accept", content: decision.content ?? {} };
 }
 
+function textResult(text: string, isError?: boolean): TextResult {
+  return { content: [{ type: "text", text }], ...(isError ? { isError } : {}) };
+}
+
+/** `unavailable` and `busy` outcomes carry the requestId; the model gets only what to do next. */
+function redactExecutorOutcome<T extends object>(result: T): T | TextResult {
+  const content = (result as { structuredContent?: unknown }).structuredContent;
+  if (!isRecord(content) || (content.status !== "unavailable" && content.status !== "busy")) return result;
+  const isError = (result as { isError?: boolean }).isError === true;
+  if (content.status === "busy") {
+    return textResult("Executor is still answering an earlier request for this call; try the call again.", isError);
+  }
+  if (typeof content.message !== "string") throw new Error("Executor returned a malformed unavailable outcome");
+  return textResult(content.message, isError);
+}
+
+function hasServerTimeout(definition: ServerConnection["definition"]): boolean {
+  const timeout = definition.requestTimeoutMs;
+  return typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0;
+}
+
 /**
  * Calls a tool and, when the server is Executor, answers each approval or input pause with
  * Pi's dialogs and Executor's `resume` until the program finishes, so the caller only sees
@@ -86,6 +110,9 @@ function resumeResponse(pause: ExecutorPause, decision: ElicitResult): Record<st
  *
  * The loop runs inside the caller's session-recovery closure: if the session dies while a
  * dialog is open, recovery reissues the original `execute`/`call`, as for any other tool.
+ *
+ * A `resume` the caller asks for is refused without contacting the server, so only Pi answers
+ * Executor's pauses. The loop's own `resume` goes straight to `call` and is not refused.
  */
 export async function callToolAnsweringExecutorPauses<T extends object>(args: {
   conn: Pick<ServerConnection, "client" | "definition" | "tools">;
@@ -95,22 +122,36 @@ export async function callToolAnsweringExecutorPauses<T extends object>(args: {
   requestOptions: RequestOptions | undefined;
   signal?: AbortSignal | undefined;
   call: (params: ToolCallParams, options: RequestOptions | undefined) => Promise<T>;
-}): Promise<T> {
+}): Promise<T | TextResult> {
   const { conn, params, call } = args;
   if (!EXECUTOR_RESUMING_TOOLS.has(params.name) || !isExecutorConnection(conn)) {
     return call(params, args.requestOptions);
   }
-  const options = conn.definition.requestTimeoutMs === undefined
+  if (!EXECUTOR_PAUSING_TOOLS.has(params.name)) {
+    return textResult(
+      "Pi answers Executor's approval and input requests itself and then resumes the program. "
+        + "Call `execute` or `call` again instead; do not call `resume`.",
+      true,
+    );
+  }
+  const options = !hasServerTimeout(conn.definition)
     && (args.requestOptions?.timeout ?? 0) < EXECUTOR_REQUEST_TIMEOUT_MS
     ? { ...args.requestOptions, timeout: EXECUTOR_REQUEST_TIMEOUT_MS }
     : args.requestOptions;
   let result = await call(params, options);
-  if (!EXECUTOR_PAUSING_TOOLS.has(params.name)) return result;
   for (let pauses = 0; pauses < MAX_EXECUTOR_PAUSES; pauses++) {
     const pause = parseExecutorPause(result);
-    if (!pause) return result;
+    if (!pause) return redactExecutorOutcome(result);
     const decision = await args.manager.promptFormElicitation(args.serverName, pause.elicitation, args.signal);
-    if (!decision) return result;
+    if (!decision) {
+      const reason = pause.status === "approval-required" ? "your approval" : "your input";
+      return textResult(
+        `MCP tool "${params.name}" on server "${args.serverName}" paused for ${reason}. `
+          + "Pi must ask you in an interactive session, so this call did not continue. "
+          + "Run it in an interactive Pi session with MCP input enabled, then try again.",
+        true,
+      );
+    }
     throwIfAborted(args.signal);
     result = await call({
       name: "resume",

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- [Executor](https://executor.sh) approvals and questions are now answered by you in Pi, not by the model. On its default URL, Executor hands a paused program to the model and asks it to check with you, but nothing stopped the model from approving on its own. The adapter now shows the request in Pi's dialogs, resumes the program with your answer, and gives the model only the final result. A `resume` call from the model is refused, and a session that cannot show dialogs fails the call instead. Executor programs also get a 6-minute timeout unless the server sets `requestTimeoutMs`, so they no longer stop at the 60-second default. See [#860](https://github.com/nicobailon/pi-mcp-adapter/issues/860).
+
 ## [5.4.0] - 2026-10-19
 
 ### Highlights

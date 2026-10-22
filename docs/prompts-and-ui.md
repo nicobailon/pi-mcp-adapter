@@ -22,6 +22,10 @@ URL mode is advertised only in TUI mode. The adapter displays the requesting ser
 
 Time spent answering a server's prompt does not count against its tool calls' `requestTimeoutMs` (or the SDK's 60-second default). The timeout pauses while a prompt from that server is open and resumes with the time that was left. Task-backed calls are unchanged: their timeout applies to each task request, not to the whole task.
 
+### Executor approvals
+
+[Executor](https://executor.sh) pauses a program when an app tool needs your approval or input, and on its default URL it hands that pause to the model to answer. The adapter answers it instead: it shows Executor's form in Pi's dialogs, sends your answer with Executor's `resume`, and gives the model only the final result. The model never sees the request ID, and a `resume` call from the model is refused. A session that cannot show dialogs (headless, or `settings.elicitation: false`) fails the call with a message saying it needs an interactive Pi session. Executor's `execute` and `call` get a 6-minute timeout, enough for its 5-minute program limit, unless the server entry sets `requestTimeoutMs`. Executor's browser mode is left alone, since you answer there in the browser.
+
 ## MCP UI Integration
 
 MCP servers can ship interactive UIs via the [MCP UI](https://github.com/MCP-UI-Org/mcp-ui) standard. When you call a tool that has a UI resource, the adapter opens it in a native macOS window via [Glimpse](https://github.com/hazat/glimpse) if available, otherwise falls back to the browser.
