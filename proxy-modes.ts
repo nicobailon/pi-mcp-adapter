@@ -1870,6 +1870,7 @@ export async function executeCall(
           manager: state.manager,
           serverName,
           params: { ...callParams, _meta: requestMeta },
+          toolName: toolMeta.originalName,
           requestOptions,
           signal: ownedSignal,
           call: async (params, options) => {

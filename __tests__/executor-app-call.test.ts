@@ -162,6 +162,16 @@ describe("calling an Executor app tool", () => {
     expect((await calls()).map(call => call.name)).toEqual(["call", "call"]);
   });
 
+  it.each(["direct", "proxy"] as const)("names the app tool when its approval can't be asked on the %s leg", async (leg) => {
+    const { state } = await connectExecutor({ env: { EXECUTOR_CALL_APPROVAL: "1" } });
+    // As in a session that can't show dialogs.
+    state.manager.promptFormElicitation = async () => undefined;
+
+    const result = await callApp(state, leg, "tools.alpha.tool_001", { id: "7" });
+
+    expect(textOf(result)).toContain('MCP tool "alpha.tool_001" on server "executor" paused for your approval');
+  });
+
   it.each(["direct", "proxy"] as const)("answers Executor's approval pause in Pi and resumes on the %s leg", async (leg) => {
     const { state, ui, calls } = await connectExecutor({ env: { EXECUTOR_CALL_APPROVAL: "1" }, select: ["Continue"] });
 

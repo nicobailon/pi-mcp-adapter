@@ -346,6 +346,7 @@ export function createDirectToolExecutor(
             manager: state.manager,
             serverName: spec.serverName,
             params: { ...callParams, _meta: requestMeta },
+            toolName: spec.originalName,
             requestOptions,
             signal: ownedSignal,
             call: async (params, options) => {

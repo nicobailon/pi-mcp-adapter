@@ -105,12 +105,14 @@ function redactExecutorOutcome<T extends object>(result: T): T | TextResult {
  * through Executor's own link and retries the call once. Otherwise the result stands unchanged.
  */
 export async function callToolAnsweringExecutorPauses<T extends object>({
-  conn, manager, serverName, params, requestOptions, signal, call,
+  conn, manager, serverName, params, toolName, requestOptions, signal, call,
 }: {
   conn: Pick<ServerConnection, "client" | "definition" | "tools">;
   manager: Pick<McpServerManager, "promptFormElicitation" | "urlElicitationPrompt">;
   serverName: string;
   params: ToolCallParams;
+  /** The tool the user knows, when `params` names another: an Executor app tool's path, sent through `call`. */
+  toolName?: string;
   requestOptions: RequestOptions | undefined;
   signal?: AbortSignal | undefined;
   call: (params: ToolCallParams, options: RequestOptions | undefined) => Promise<T>;
@@ -127,7 +129,7 @@ export async function callToolAnsweringExecutorPauses<T extends object>({
   const options = Number.isFinite(serverTimeout) && serverTimeout > 0
     ? requestOptions
     : { ...requestOptions, timeout: Math.max(requestOptions?.timeout ?? 0, EXECUTOR_REQUEST_TIMEOUT_MS) };
-  const answer = () => answerPauses({ manager, serverName, params, options, signal, call });
+  const answer = () => answerPauses({ manager, serverName, params, toolName: toolName ?? params.name, options, signal, call });
   const result = await answer();
   const gap = findAccountGap(params, result);
   if (!gap?.retrySafe) return result;
@@ -142,10 +144,11 @@ export async function callToolAnsweringExecutorPauses<T extends object>({
   return connected === "connected" ? answer() : result;
 }
 
-async function answerPauses<T extends object>({ manager, serverName, params, options, signal, call }: {
+async function answerPauses<T extends object>({ manager, serverName, params, toolName, options, signal, call }: {
   manager: Pick<McpServerManager, "promptFormElicitation">;
   serverName: string;
   params: ToolCallParams;
+  toolName: string;
   options: RequestOptions | undefined;
   signal?: AbortSignal | undefined;
   call: (params: ToolCallParams, options: RequestOptions | undefined) => Promise<T>;
@@ -158,7 +161,7 @@ async function answerPauses<T extends object>({ manager, serverName, params, opt
     const decision = await manager.promptFormElicitation(serverName, pause.elicitation, signal);
     if (!decision) {
       return textResult(
-        `MCP tool "${params.name}" on server "${serverName}" paused for your `
+        `MCP tool "${toolName}" on server "${serverName}" paused for your `
           + `${pause.status === "approval-required" ? "approval" : "input"}, which Pi can only ask for `
           + "in an interactive Pi session with MCP input enabled. Run it there and try again.",
         true,
