@@ -4603,6 +4603,9 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         outputSchema: { properties: { structuredContent: echoTool.outputSchema }, required: ["content"] },
       });
       expect(registeredTool(api, "mcp__proxy__echo").annotations).not.toHaveProperty("title");
+      // Like Pi's built-in MCP tools: no prompt line, even once tool_search activates one.
+      expect(registeredTool(api, "mcp__proxy__echo")).not.toHaveProperty("promptSnippet");
+      expect(registeredTool(api, "direct_find")).toHaveProperty("promptSnippet");
       expect(registeredTool(api, "mcp__picked__b")).toMatchObject({ exposure: "deferred" });
       for (const name of ["mcp__proxy__secret", "mcp__proxy__widget", "mcp__off__echo", "mcp__direct__find", "mcp__picked__a"]) {
         expect(registrations(api, name)).toEqual([]);

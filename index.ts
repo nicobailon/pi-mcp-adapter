@@ -501,14 +501,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (reportedNames.size === 0) reportedDirectToolNamesByServer.delete(serverName);
   }
 
-  function registerDirectTool(spec: DirectToolSpec, config: McpConfig, deferred: Record<string, unknown> | undefined, name = spec.prefixedName): void {
+  // The deferred surface registers without a promptSnippet, like Pi's built-in MCP: Pi re-normalizes
+  // every snippet on every registerTool, and an activated tool then adds no line to the prompt.
+  function registerDirectTool(spec: DirectToolSpec, config: McpConfig, deferred: Record<string, unknown> | undefined, name = spec.prefixedName, promptSnippet = true): void {
     finalizationRegistrations?.add(name);
     adapterToolNames.add(name);
     const definition = {
       name,
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
-      promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
+      ...(promptSnippet ? { promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}` } : {}),
       parameters: toToolParameters(normalizeDirectToolInputSchema(spec.inputSchema)),
       ...(config.settings?.strictDirectToolArguments === true
         ? { prepareArguments: (args: unknown) => prepareDirectToolArguments(spec.inputSchema, args) }
@@ -773,7 +775,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const fields = piDeferredToolFields(spec, config, cache, cachedToolsOf(spec.serverName));
       const fingerprint = directToolFingerprint(spec) + JSON.stringify(fields);
       if (registeredDeferredTools.get(spec.name) === fingerprint) continue;
-      registerDirectTool(spec, config, fields, spec.name);
+      registerDirectTool(spec, config, fields, spec.name, false);
       finalizationGuard?.();
       registeredDeferredTools.set(spec.name, fingerprint);
     }
