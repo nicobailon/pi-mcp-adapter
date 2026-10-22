@@ -236,13 +236,12 @@ describe("mcp({ action: \"save-script\" }) in a real session", () => {
     }, { directTools: "__none__" });
   }, 60_000);
 
-  it("reports script_save_failed as an error when the summary cannot be built or the approved write fails", async () => {
+  it("reports script_save_failed as an error, with no dialog for a broken config, and after an approved write fails", async () => {
     await withSession(async ({ session, ui, configPath, scriptPath }) => {
       await writeFile(configPath, "{ malformed");
       const beforeDialog = await save(session, "save-1");
-      expect(beforeDialog.details.message).toMatch(new RegExp(`^Failed to read MCP config at ${configPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-      expect(textOf(beforeDialog)).toBe(`Cannot save script tool "greet": ${beforeDialog.details.message}`);
-      expect(beforeDialog.details).toMatchObject({ mode: "save-script", name: "greet", error: "script_save_failed" });
+      expect(textOf(beforeDialog).startsWith(`Cannot save script tool "greet": Failed to read MCP config at ${configPath}: `)).toBe(true);
+      expect(beforeDialog.details).toEqual({ mode: "save-script", name: "greet", error: "script_save_failed" });
       expect(toolErrorOverride(beforeDialog.details)).toEqual({ isError: true });
       expect(ui.select).not.toHaveBeenCalled();
 

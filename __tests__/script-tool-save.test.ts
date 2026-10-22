@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -142,6 +142,25 @@ describe("checkScriptToolSave", () => {
     expect(checkScriptToolSave(request(args, { projectScriptTools, target: "project" }))).toMatchObject({ ok: true, configPath: join(cwd, ".pi", "mcp-adapter.json") });
   });
 
+  it.each([
+    ["mcp-scripts is a file", (_configPath: string, scriptPath: string) => writeFileSync(dirname(scriptPath), ""), (scriptPath: string) => `${scriptPath} cannot be checked (ENOTDIR`],
+    ["the script path is a directory", (_configPath: string, scriptPath: string) => mkdirSync(scriptPath, { recursive: true }), (scriptPath: string) => `${scriptPath} is not a regular file.`],
+    ["the script path is a symlink", (configPath: string, scriptPath: string) => { mkdirSync(dirname(scriptPath)); symlinkSync(configPath, scriptPath); }, (scriptPath: string) => `${scriptPath} is not a regular file.`],
+    ["the config is malformed", (configPath: string) => writeFileSync(configPath, "{ malformed"), (_scriptPath: string, configPath: string) => `Failed to read MCP config at ${configPath}: `],
+    ["the config's scriptTools is not an object", (configPath: string) => writeFileSync(configPath, '{"scriptTools": []}'), (_scriptPath: string, configPath: string) => `Failed to update MCP config at ${configPath}: scriptTools must be an object.`],
+  ])("refuses as script_save_failed when %s, writing nothing", (_kind, arrange, reason) => {
+    const configPath = join(agentDir, "mcp-adapter.json");
+    const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(configPath, "{}\n");
+    arrange(configPath, scriptPath);
+    const before = readFileSync(configPath, "utf8");
+    const result = checkScriptToolSave(request({ name: "stale_issues", description: "D", code: CODE }));
+    expect(result).toMatchObject({ ok: false, error: "script_save_failed", name: "stale_issues" });
+    expect((result as { message: string }).message).toContain(`Cannot save script tool "stale_issues": ${reason(scriptPath, configPath)}`);
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+
   it("never compiles, evaluates or loads the code, and reads no implicit cwd or home directory", () => {
     const source = readFileSync(new URL("../script-tool-save.ts", import.meta.url), "utf8");
     for (const pattern of [/node:vm/, /\bFunction\s*\(/, /AsyncFunction/, /\beval\s*\(/, /\brequire\s*\(/, /\bimport\s*\(/, /process\.cwd/, /homedir/]) {
@@ -196,6 +215,15 @@ describe("buildScriptToolSavePrompt", () => {
     expect(prompt).not.toContain("Script change:");
   });
 
+  it("leaves out the rewrite sentence for a blank config file", () => {
+    const configPath = join(agentDir, "mcp-adapter.json");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(configPath, "  \n");
+    const prompt = buildScriptToolSavePrompt(plan());
+    expect(prompt).toContain(`Config: ${configPath} (new entry)\n`);
+    expect(prompt).not.toContain("Comments and formatting");
+  });
+
   it("names the script an entry from another config file runs, which the save replaces", () => {
     const loaded = { description: "Old global", file: join(agentDir, "mcp-scripts", "stale_issues.js") };
     const configPath = join(cwd, ".pi", "mcp-adapter.json");
@@ -221,11 +249,13 @@ describe("writeScriptToolSave", () => {
     expect(validateScriptToolEntry("stale_issues", raw.scriptTools.stale_issues, dirname(configPath))).toEqual({ ...saved.entry, file: saved.scriptPath });
   });
 
+  // These break a file after the check, which refuses a broken one before any dialog.
   it("removes a script it created when the config write fails", () => {
     const configPath = join(agentDir, "mcp-adapter.json");
+    const saved = plan();
     mkdirSync(agentDir, { recursive: true });
     writeFileSync(configPath, "{ malformed");
-    expect(() => writeScriptToolSave(plan())).toThrow(`Failed to read MCP config at ${configPath}`);
+    expect(() => writeScriptToolSave(saved)).toThrow(`Failed to read MCP config at ${configPath}`);
     expect(files(join(agentDir, "mcp-scripts"))).toEqual([]);
     expect(readFileSync(configPath, "utf8")).toBe("{ malformed");
   });
@@ -234,10 +264,11 @@ describe("writeScriptToolSave", () => {
     const configPath = join(agentDir, "mcp-adapter.json");
     const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
     mkdirSync(dirname(scriptPath), { recursive: true });
-    writeFileSync(configPath, '{"scriptTools": []}');
     writeFileSync(scriptPath, "return 'old';\r\n");
     chmodSync(scriptPath, 0o640);
-    expect(() => writeScriptToolSave(plan())).toThrow(`Failed to update MCP config at ${configPath}: scriptTools must be an object`);
+    const saved = plan();
+    writeFileSync(configPath, '{"scriptTools": []}');
+    expect(() => writeScriptToolSave(saved)).toThrow(`Failed to update MCP config at ${configPath}: scriptTools must be an object`);
     expect(readFileSync(scriptPath, "utf8")).toBe("return 'old';\r\n");
     expect(statSync(scriptPath).mode & 0o777).toBe(0o640);
     expect(files(dirname(scriptPath))).toEqual(["stale_issues.js"]);
@@ -245,8 +276,9 @@ describe("writeScriptToolSave", () => {
 
   it("refuses to replace something that is not a regular file, writing nothing", () => {
     const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
+    const saved = plan();
     mkdirSync(scriptPath, { recursive: true });
-    expect(() => writeScriptToolSave(plan())).toThrow(`Failed to write script tool file at ${scriptPath}: it is not a regular file`);
+    expect(() => writeScriptToolSave(saved)).toThrow(`Failed to write script tool file at ${scriptPath}: it is not a regular file`);
     expect(existsSync(join(agentDir, "mcp-adapter.json"))).toBe(false);
   });
 });

@@ -29,7 +29,7 @@ export interface ScriptToolSaveRequest {
   projectScriptTools: ReadonlyMap<string, { path: string }> | undefined;
 }
 
-export type ScriptToolSaveError = "missing_input" | "invalid_entry" | "code_empty" | "code_too_large" | "code_invalid" | "name_shadowed";
+export type ScriptToolSaveError = "missing_input" | "invalid_entry" | "code_empty" | "code_too_large" | "code_invalid" | "name_shadowed" | "script_save_failed";
 
 export interface ScriptToolSaveRefusal {
   ok: false;
@@ -59,23 +59,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function configPathFor(target: ScriptToolSaveTargetKind, paths: { cwd: string; configOverridePath?: string }): string {
-  return target === "global" ? getPiGlobalConfigPath(paths.configOverridePath) : getProjectPiConfigPath(paths.cwd);
-}
-
 /** Where a save writes: the script goes to `mcp-scripts/<name>.js` beside the target config file. */
 export function resolveScriptToolSaveTarget(
   target: ScriptToolSaveTargetKind,
   name: string,
   paths: { cwd: string; configOverridePath?: string },
 ): ScriptToolSaveTarget {
-  const configPath = configPathFor(target, paths);
+  const configPath = target === "global" ? getPiGlobalConfigPath(paths.configOverridePath) : getProjectPiConfigPath(paths.cwd);
   const file = `mcp-scripts/${name}.js`;
   return { configPath, scriptPath: resolveScriptToolPath(file, dirname(configPath)), file };
 }
 
 function refusal(error: ScriptToolSaveError, name: string, reason: string): ScriptToolSaveRefusal {
   return { ok: false, error, name, message: `Cannot save script tool "${name}": ${reason}.` };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -100,12 +100,12 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
   if (typeof name !== "string" || typeof description !== "string" || typeof code !== "string") {
     return { ok: false, error: "missing_input", message: MISSING_INPUT, ...(typeof name === "string" ? { name } : {}) };
   }
-  const configPath = configPathFor(request.target, request);
-  const file = `mcp-scripts/${name}.js`;
-  const entry: ScriptToolDefinition = { description, file, ...(inputSchema !== undefined ? { inputSchema: inputSchema as Record<string, unknown> } : {}) };
-  // Validated before any path is built from the name.
-  const validated = validateScriptToolEntry(name, entry, dirname(configPath));
+  const target = resolveScriptToolSaveTarget(request.target, name, request);
+  const entry: ScriptToolDefinition = { description, file: target.file, ...(inputSchema !== undefined ? { inputSchema: inputSchema as Record<string, unknown> } : {}) };
+  // Validated before any path built from the name is touched.
+  const validated = validateScriptToolEntry(name, entry, dirname(target.configPath));
   if (typeof validated === "string") return refusal("invalid_entry", name, validated);
+  if (validated.file !== target.scriptPath) throw new Error(`Script tool "${name}" resolves to ${validated.file}, not ${target.scriptPath}`);
   const codeRefusal = checkScriptToolCode(name, code);
   if (codeRefusal) return codeRefusal;
 
@@ -118,9 +118,21 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
     };
   }
 
-  const target = resolveScriptToolSaveTarget(request.target, name, request);
+  let existing: ReturnType<typeof lstatSync>;
+  try {
+    existing = lstatSync(target.scriptPath, { throwIfNoEntry: false });
+  } catch (error) {
+    return refusal("script_save_failed", name, `${target.scriptPath} cannot be checked (${errorMessage(error)})`);
+  }
+  // Renaming over a symlink would replace the link, so only a regular file is replaced.
+  if (existing && !existing.isFile()) return refusal("script_save_failed", name, `${target.scriptPath} is not a regular file`);
+  try {
+    previewScriptToolEntry(target.configPath, name, entry);
+  } catch (error) {
+    return refusal("script_save_failed", name, errorMessage(error));
+  }
   const existingEntry = request.scriptTools?.[name];
-  const scriptExisted = lstatSync(target.scriptPath, { throwIfNoEntry: false }) !== undefined;
+  const scriptExisted = existing !== undefined;
   return {
     ok: true, name, target: request.target, ...target, entry, code,
     ...(existingEntry || scriptExisted ? { overwrite: { ...(existingEntry ? { entry: existingEntry } : {}), scriptExisted } } : {}),
@@ -153,9 +165,10 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
   if (plan.overwrite?.entry && configState !== "entry replaced") {
     lines.push(`This name already runs ${plan.overwrite.entry.file}, from another config file; the new entry takes precedence.`);
   }
-  // The writer re-serializes the parsed config, which the diff cannot show.
-  if (preview.existed && readFileSync(plan.configPath, "utf8") !== preview.beforeText) {
-    lines.push("Comments and formatting in this file will be rewritten.");
+  // The writer re-serializes the parsed config, which the diff cannot show. A blank file loses nothing.
+  if (preview.existed) {
+    const raw = readFileSync(plan.configPath, "utf8");
+    if (raw.trim() !== "" && raw !== preview.beforeText) lines.push("Comments and formatting in this file will be rewritten.");
   }
   if (plan.target === "project") {
     lines.push("", "Approving a project script tool covers its entry, not the script. The script file can change without asking you again.");
