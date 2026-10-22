@@ -74,6 +74,13 @@ describe("parseScriptTools", () => {
     ]);
   });
 
+  it("names a config with no file by its label, and resolves its relative paths against the given folder", () => {
+    expect(parseScriptTools({ good: { description: "Good", file: "good.js" }, "Close Stale!": { description: "Bad", file: "bad.js" } }, "The supplied config", "/work")).toEqual({
+      scriptTools: { good: { description: "Good", file: "/work/good.js" } },
+      issues: ['The supplied config: script tool "Close Stale!" was not loaded — its name must start with a lowercase letter and have only lowercase letters, digits and underscores, at most 48 characters.'],
+    });
+  });
+
   it("reports a block that is not an object", () => {
     expect(parseScriptTools("close_stale", "/cfg/a.json")).toEqual({
       scriptTools: {},

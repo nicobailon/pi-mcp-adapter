@@ -14,6 +14,7 @@ import { approveProjectServer, describeBlockedScriptTool, excludeProjectServersA
 import { BUILTIN_NAMES, buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
 import { findScriptTool, nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolOwnerKey, type ScriptToolSpec } from "./script-tool-surface.ts";
+import { parseScriptTools } from "./script-tools.ts";
 import { namespaceProxyName } from "./mcp-references.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, withSessionMetadata, type MetadataCache } from "./metadata-cache.ts";
@@ -173,6 +174,16 @@ function normalizeProgrammaticConfig(config: McpConfig): McpConfig {
   };
 }
 
+// The label a supplied config's script-tool issues carry, since it has no file path.
+const SUPPLIED_CONFIG_LABEL = "The MCP config supplied to the adapter";
+
+function validateSuppliedScriptTools(config: McpConfig): { config: McpConfig; issues: string[] } {
+  if (config.scriptTools === undefined) return { config, issues: [] };
+  const { scriptTools, issues } = parseScriptTools(config.scriptTools, SUPPLIED_CONFIG_LABEL, process.cwd());
+  const { scriptTools: _supplied, ...rest } = config;
+  return { config: Object.keys(scriptTools).length > 0 ? { ...rest, scriptTools } : rest, issues };
+}
+
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -213,7 +224,10 @@ function resolveNamespaceEnvOverride(
 }
 
 function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
-  const sessionConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
+  // A supplied config was never read from a file, so its script tools are checked here, with
+  // relative paths against the working directory, the same way a config file's are.
+  const supplied = options.config !== undefined ? validateSuppliedScriptTools(cloneMcpConfig(options.config)) : undefined;
+  const sessionConfig = supplied?.config;
   const programmaticConfig = sessionConfig !== undefined;
   // Before the first config load, so every load in this process agrees.
   if (!programmaticConfig) setPiMcpConfigEnabled(piSupportsMcp(pi));
@@ -1609,7 +1623,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ? []
       : getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath);
     sessionScriptToolIssues = programmaticConfig
-      ? []
+      ? supplied?.issues ?? []
       : getScriptToolIssues(ctx.cwd, earlyConfigPath);
     deliveredScriptToolIssues = new Set(sessionScriptToolIssues);
     if (ctx.hasUI) {

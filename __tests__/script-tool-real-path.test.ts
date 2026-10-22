@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   createAgentSession,
@@ -226,5 +226,59 @@ describe("a script tool through the mcp gateway in a real session", () => {
       expect(textOf(direct)).toContain("from the server");
       expect(textOf(direct)).not.toContain("script");
     });
+  }, 30_000);
+});
+
+describe("a script tool an embedder supplies in createMcpAdapter({ config })", () => {
+  it("drops an invalid entry with its reason, and resolves a relative file against the working directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-mcp-script-tool-embedder-"));
+    const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+    let session: Session | undefined;
+    try {
+      const agentDir = join(root, "agent");
+      const cwd = join(root, "project");
+      await Promise.all([mkdir(agentDir), mkdir(cwd)]);
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      const script = join(root, "close-stale.js");
+      await writeFile(script, 'return "ran " + input.repo;');
+      const definition = { description: "Close stale issues", inputSchema: { type: "object", properties: { repo: { type: "string" } } } };
+      const { createMcpAdapter } = await import("../index.ts");
+      const notices: string[] = [];
+      const settingsManager = SettingsManager.inMemory();
+      const loader = new DefaultResourceLoader({
+        cwd, agentDir, settingsManager,
+        extensionFactories: [createCodemodeExtension(), createMcpAdapter({
+          config: {
+            mcpServers: {},
+            settings: { sampling: false, elicitation: false },
+            scriptTools: {
+              "Close Stale!": { ...definition, file: script },
+              close_stale: { ...definition, file: relative(process.cwd(), script) },
+            },
+          },
+        })],
+      });
+      await loader.reload();
+      ({ session } = await createAgentSession({
+        cwd, agentDir, resourceLoader: loader, sessionManager: SessionManager.inMemory(cwd), settingsManager, noTools: "builtin",
+      }));
+      const ui = { notify: (text: string) => notices.push(text), setStatus: () => undefined, theme: { fg: (_color: string, value: string) => value } } as any;
+      await session.bindExtensions({ mode: "tui", uiContext: ui, onError: () => undefined });
+      const names = () => session!.extensionRunner.getAllRegisteredTools().map(tool => tool.definition.name);
+      await vi.waitFor(() => expect(names()).toContain("mcp__script__close_stale"), { timeout: 10_000 });
+
+      expect(names().filter(name => name.startsWith("mcp__script__"))).toEqual(["mcp__script__close_stale"]);
+      expect(notices).toContain('The MCP config supplied to the adapter: script tool "Close Stale!" was not loaded — its name must start with a lowercase letter and have only lowercase letters, digits and underscores, at most 48 characters.');
+      expect(textOf(await callAs(session, "mcp__script__close_stale", "st-1", { repo: "a/b" }))).toContain("ran a/b");
+    } finally {
+      try {
+        await session?.extensionRunner.emit({ type: "session_shutdown", reason: "test" });
+      } finally {
+        session?.dispose();
+        if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+        await rm(root, { recursive: true, force: true });
+      }
+    }
   }, 30_000);
 });
