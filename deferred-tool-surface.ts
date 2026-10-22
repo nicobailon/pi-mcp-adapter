@@ -35,12 +35,14 @@ function plainDeferredToolName(serverName: string, toolName: string): string {
 /**
  * `mcp__<server namespace>__<tool>`, as Pi's built-in MCP names its tools, so the name is also the
  * identifier codemode scripts call it by. Anything but `[A-Za-z0-9_]` becomes `_`; a name that is
- * too long or taken gets an 8-hex hash of the raw server and tool names.
+ * too long or taken gets an 8-hex hash of the raw server and tool names, and of the URI for a
+ * resource tool, so each resource URI gets its own hashed name.
  */
-export function formatDeferredToolName(serverName: string, toolName: string, isTaken: (name: string) => boolean): string {
+export function formatDeferredToolName(serverName: string, toolName: string, isTaken: (name: string) => boolean, resourceUri?: string): string {
   const name = plainDeferredToolName(serverName, toolName);
   if (name.length <= MAX_TOOL_NAME_LENGTH && !isTaken(name)) return name;
-  const hash = createHash("sha256").update(`${serverName}\0${toolName}`).digest("hex").slice(0, 8);
+  const hashInput = `${serverName}\0${toolName}${resourceUri !== undefined ? `\0${resourceUri}` : ""}`;
+  const hash = createHash("sha256").update(hashInput).digest("hex").slice(0, 8);
   return `${name.slice(0, MAX_TOOL_NAME_LENGTH - hash.length - 1)}_${hash}`;
 }
 
@@ -83,7 +85,7 @@ export function resolveDeferredToolSpecs(
     const key = deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri);
     const unavailable = (candidate: string) => taken.has(candidate) || (reserved.owners?.get(candidate) ?? key) !== key;
     const name = formatDeferredToolName(spec.serverName, spec.originalName,
-      (candidate) => unavailable(candidate) || (plainNameCounts.get(candidate) ?? 0) > 1);
+      (candidate) => unavailable(candidate) || (plainNameCounts.get(candidate) ?? 0) > 1, spec.resourceUri);
     if (unavailable(name)) {
       console.warn(`MCP: skipping deferred tool "${name}" for "${spec.originalName}" on "${spec.serverName}" (name already taken)`);
       continue;

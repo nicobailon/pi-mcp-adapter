@@ -4907,6 +4907,34 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(registrations(api, "mcp__s__a_b").map((tool: { label: string }) => tool.label)).not.toContain("MCP: a-b");
     });
 
+    it("keeps a resource tool registered as its URI changes, and gives same-named resources distinct names", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { api, config, state } = await bootCached({ s: [{ command: "x", lifecycle: "eager" }, []] });
+        await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+        const deferredNamesFor = (uri: string) => api.registerTool.mock.calls.map((call: any[]) => call[0])
+          .filter((tool: { description: string; exposure?: string }) => tool.description === `Read resource: ${uri}` && tool.exposure === "deferred")
+          .map((tool: { name: string }) => tool.name);
+        const syncResources = (uris: string[]) => {
+          mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { s: cacheEntry(config.mcpServers.s!, { tools: [], resources: uris.map((uri) => ({ name: "guide", uri })) }) } });
+          state.onToolMetadataUpdated("s", "tools-list-changed");
+        };
+
+        for (const uri of ["file:///guide-1", "file:///guide-2", "file:///guide-3"]) {
+          syncResources([uri]);
+          expect(deferredNamesFor(uri)).toHaveLength(1);
+        }
+        syncResources(["file:///guide-4", "file:///guide-5"]);
+        const [fourth] = deferredNamesFor("file:///guide-4");
+        const [fifth] = deferredNamesFor("file:///guide-5");
+        expect([fourth, fifth]).toEqual([expect.stringMatching(/^mcp__s__read_guide_[0-9a-f]{8}$/), expect.stringMatching(/^mcp__s__read_guide_[0-9a-f]{8}$/)]);
+        expect(fourth).not.toBe(fifth);
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("skipping"));
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it("does nothing for a tool without reachesTools, as before Pi 1.2, and skips its own MCP tools without a lookup", async () => {
       const { api, toolCall } = await bootWithUnconnectedServer();
       api.getAllTools.mockReturnValue([{ name: "codemode" }, { name: "bash" }]);
