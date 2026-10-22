@@ -2556,7 +2556,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       scriptTools: targetState.config.scriptTools,
       projectScriptTools: loadMcpConfigWithSources(earlyConfigPath, ctx.cwd).projectScriptTools,
     });
-    if (!checked.ok) return result(checked.message, { error: checked.error, ...(checked.shadowedBy ? { shadowedBy: checked.shadowedBy } : {}) });
+    if (!checked.ok) {
+      return result(checked.message, {
+        error: checked.error,
+        ...(checked.shadowedBy ? { shadowedBy: checked.shadowedBy } : {}),
+        ...(checked.reason !== undefined ? { message: checked.reason } : {}),
+      });
+    }
     const { name, scriptPath, configPath } = checked;
     const toolName = `${SCRIPT_TOOL_NAMESPACE}__${name}`;
     const unavailable = scriptToolNameConflict(name, scriptToolReservations, deferredNameOwners);

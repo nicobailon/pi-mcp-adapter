@@ -150,10 +150,10 @@ describe("checkScriptToolSave", () => {
 
   it.each([
     ["mcp-scripts is a file", (_configPath: string, scriptPath: string) => writeFileSync(dirname(scriptPath), ""), (scriptPath: string) => `${scriptPath} cannot be checked (ENOTDIR`],
-    ["the script path is a directory", (_configPath: string, scriptPath: string) => mkdirSync(scriptPath, { recursive: true }), (scriptPath: string) => `${scriptPath} is not a regular file.`],
-    ["the script path is a symlink", (configPath: string, scriptPath: string) => { mkdirSync(dirname(scriptPath)); symlinkSync(configPath, scriptPath); }, (scriptPath: string) => `${scriptPath} is not a regular file.`],
+    ["the script path is a directory", (_configPath: string, scriptPath: string) => mkdirSync(scriptPath, { recursive: true }), (scriptPath: string) => `${scriptPath} is not a regular file`],
+    ["the script path is a symlink", (configPath: string, scriptPath: string) => { mkdirSync(dirname(scriptPath)); symlinkSync(configPath, scriptPath); }, (scriptPath: string) => `${scriptPath} is not a regular file`],
     ["the config is malformed", (configPath: string) => writeFileSync(configPath, "{ malformed"), (_scriptPath: string, configPath: string) => `Failed to read MCP config at ${configPath}: `],
-    ["the config's scriptTools is not an object", (configPath: string) => writeFileSync(configPath, '{"scriptTools": []}'), (_scriptPath: string, configPath: string) => `Failed to update MCP config at ${configPath}: scriptTools must be an object.`],
+    ["the config's scriptTools is not an object", (configPath: string) => writeFileSync(configPath, '{"scriptTools": []}'), (_scriptPath: string, configPath: string) => `Failed to update MCP config at ${configPath}: scriptTools must be an object`],
   ])("refuses as script_save_failed when %s, writing nothing", (_kind, arrange, reason) => {
     const configPath = join(agentDir, "mcp-adapter.json");
     const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
@@ -161,9 +161,10 @@ describe("checkScriptToolSave", () => {
     writeFileSync(configPath, "{}\n");
     arrange(configPath, scriptPath);
     const before = readFileSync(configPath, "utf8");
-    const result = checkScriptToolSave(request({ name: "stale_issues", description: "D", code: CODE }));
+    const result = checkScriptToolSave(request({ name: "stale_issues", description: "D", code: CODE })) as { ok: false; message: string; reason: string };
     expect(result).toMatchObject({ ok: false, error: "script_save_failed", name: "stale_issues" });
-    expect((result as { message: string }).message).toContain(`Cannot save script tool "stale_issues": ${reason(scriptPath, configPath)}`);
+    expect(result.reason.startsWith(reason(scriptPath, configPath))).toBe(true);
+    expect(result.message).toBe(`Cannot save script tool "stale_issues": ${result.reason}`);
     expect(readFileSync(configPath, "utf8")).toBe(before);
   });
 

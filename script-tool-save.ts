@@ -38,6 +38,8 @@ export interface ScriptToolSaveRefusal {
   name?: string;
   /** The project config file that defines the name, for `name_shadowed`. */
   shadowedBy?: string;
+  /** For `script_save_failed`: what failed, which the save action reports as `details.message`. */
+  reason?: string;
 }
 
 export interface ScriptToolSavePlan extends ScriptToolSaveTarget {
@@ -75,6 +77,11 @@ export function resolveScriptToolSaveTarget(
 
 function refusal(error: ScriptToolSaveError, name: string, reason: string): ScriptToolSaveRefusal {
   return { ok: false, error, name, message: `Cannot save script tool "${name}": ${reason}.` };
+}
+
+/** A save that cannot be written, in the shape the save action reports for every such failure. */
+function saveFailed(name: string, reason: string): ScriptToolSaveRefusal {
+  return { ok: false, error: "script_save_failed", name, message: `Cannot save script tool "${name}": ${reason}`, reason };
 }
 
 function errorMessage(error: unknown): string {
@@ -127,14 +134,14 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
   try {
     existing = lstatSync(target.scriptPath, { throwIfNoEntry: false });
   } catch (error) {
-    return refusal("script_save_failed", name, `${target.scriptPath} cannot be checked (${errorMessage(error)})`);
+    return saveFailed(name, `${target.scriptPath} cannot be checked (${errorMessage(error)})`);
   }
   // Renaming over a symlink would replace the link, so only a regular file is replaced.
-  if (existing && !existing.isFile()) return refusal("script_save_failed", name, `${target.scriptPath} is not a regular file`);
+  if (existing && !existing.isFile()) return saveFailed(name, `${target.scriptPath} is not a regular file`);
   try {
     previewScriptToolEntry(target.configPath, name, entry);
   } catch (error) {
-    return refusal("script_save_failed", name, errorMessage(error));
+    return saveFailed(name, errorMessage(error));
   }
   const existingEntry = request.scriptTools?.[name];
   const scriptExisted = existing !== undefined;
