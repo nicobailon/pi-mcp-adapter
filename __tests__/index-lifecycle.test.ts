@@ -4689,13 +4689,13 @@ describe("directTools: \"search\" — registered inactive, activated by search o
     });
 
     // The hand-off the mcp proxy gives executeCall for a call in this tool context.
-    async function proxyHandOff(api: any, ctx: unknown) {
+    async function proxyHandOff(api: any, ctx: unknown, tool = "proxy_echo") {
       let handOff: any;
       mocks.executeCall.mockImplementationOnce(async (...args: any[]) => {
         handOff = args[9];
         return { content: [], details: {} };
       });
-      await registeredTool(api, "mcp").execute("c1", { tool: "proxy_echo" }, undefined, undefined, ctx);
+      await registeredTool(api, "mcp").execute("c1", { tool }, undefined, undefined, ctx);
       return handOff;
     }
 
@@ -4725,7 +4725,8 @@ describe("directTools: \"search\" — registered inactive, activated by search o
     it("runs a handed-off call in the proxy under the registered tool, and reports a blocked or throwing one", async () => {
       const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] });
       const ctx = nestedContext(api, ["mcp__proxy__echo"]);
-      const handOff = await proxyHandOff(api, ctx);
+      // The model names the tool loosely; the nested leg gets the canonical name.
+      const handOff = await proxyHandOff(api, ctx, "echo");
       const inProxy = { content: textBlocks("echoed"), details: { mode: "call", server: "proxy", tool: "echo", canonicalTool: "proxy_echo" } };
       mocks.executeCall.mockResolvedValueOnce(inProxy);
 

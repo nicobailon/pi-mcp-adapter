@@ -106,12 +106,12 @@ export type ExecuteNamespaceCall = (
   origin: "proxy",
   internalDelivery: undefined,
   toolCallId: string,
-  handOff: NestedCallHandOff | undefined,
+  handOff?: NestedCallHandOff,
 ) => Promise<AgentToolResult<Record<string, unknown>>>;
 export type CreateNamespaceHandOff = (
   ctx: unknown,
   toolCallId: string,
-  runInProxy: (serverName: string, args: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>>,
+  runInProxy: (serverName: string, canonicalTool: string, args: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>>,
 ) => NestedCallHandOff | undefined;
 
 function namespaceExecute(
@@ -169,10 +169,9 @@ function namespaceExecute(
       };
     }
     const callState = state;
-    const tool = params.tool;
-    const handOff = createHandOff?.(ctx, toolCallId, (server, args, nestedSignal) =>
-      executeCall(callState, tool, args, server, getPiTools, nestedSignal, "proxy", undefined, toolCallId, undefined));
-    return executeCall(state, tool, params.args ?? {}, serverName, getPiTools, signal, "proxy", undefined, toolCallId, handOff);
+    const handOff = createHandOff?.(ctx, toolCallId, (server, canonicalTool, args, nestedSignal) =>
+      executeCall(callState, canonicalTool, args, server, getPiTools, nestedSignal, "proxy", undefined, toolCallId));
+    return executeCall(state, params.tool, params.args ?? {}, serverName, getPiTools, signal, "proxy", undefined, toolCallId, handOff);
   };
 }
 

@@ -46,7 +46,7 @@ const require = createRequire(import.meta.url);
 const proxyArgumentValidators = new WeakMap<object, JsonSchemaValidator<unknown>>();
 const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
 
-function proxyArgumentValidationError(inputSchema: unknown, args: unknown): string | null {
+function proxyArgumentValidationError(inputSchema: unknown, args: unknown): string | null | undefined {
   if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) return null;
   try {
     let validate = proxyArgumentValidators.get(inputSchema);
@@ -57,8 +57,8 @@ function proxyArgumentValidationError(inputSchema: unknown, args: unknown): stri
     const result = validate(args);
     return result.valid ? null : result.errorMessage ?? "arguments do not match the advertised input schema";
   } catch {
-    // Preserve server-side validation for schema dialects the adapter cannot evaluate.
-    return null;
+    // Undefined: the adapter cannot evaluate this schema's dialect, so the server validates it.
+    return undefined;
   }
 }
 const INSTRUCTIONS_PREVIEW_LENGTH = 300;
@@ -1590,8 +1590,19 @@ export async function executeCall(
   }
 
   // After connect and validation, which the nested leg repeats cheaply; before approval, which only it runs.
-  const handedOff = await handOff?.({ serverName, toolMeta, args: normalizedArgs, callIdentity });
-  if (handedOff) return handedOff;
+  // Pi validates handed-off arguments itself, so a schema only the server can evaluate stays in the proxy.
+  const serverValidatesArguments = validationError === undefined;
+  if (handOff && !serverValidatesArguments) {
+    // Held in flight while Pi's tool_call hooks, such as a permission dialog, run before the nested leg.
+    state.manager.incrementInFlight(serverName);
+    let handedOff: ProxyToolResult | undefined;
+    try {
+      handedOff = await handOff({ serverName, toolMeta, args: normalizedArgs, callIdentity });
+    } finally {
+      state.manager.decrementInFlight(serverName);
+    }
+    if (handedOff) return handedOff;
+  }
 
   let uiSession: UiSessionRuntime | null = null;
   // openUi: false runs the tool as if it declared no UI.

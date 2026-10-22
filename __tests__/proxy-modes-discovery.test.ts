@@ -841,6 +841,21 @@ describe("proxy discovery", () => {
     expect(callTool).toHaveBeenCalledTimes(1);
   });
 
+  it("holds the server in flight while the hand-off runs", async () => {
+    const state = connectedState(vi.fn());
+    let inFlight = 0;
+    state.manager.incrementInFlight = () => { inFlight += 1; };
+    state.manager.decrementInFlight = () => { inFlight -= 1; };
+    const handOff = vi.fn(async () => {
+      expect(inFlight).toBe(1);
+      throw new Error("nested call aborted");
+    });
+
+    await expect(executeCall(state, "demo_search", {}, undefined, undefined, undefined, undefined, undefined, undefined, handOff)).rejects.toThrow("nested call aborted");
+    expect(handOff).toHaveBeenCalledTimes(1);
+    expect(inFlight).toBe(0);
+  });
+
   it("reports a backed-off direct server as unavailable instead of handing the call off", async () => {
     const handOff = vi.fn();
     const state = connectedState(vi.fn());

@@ -396,6 +396,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const searchActivatedTools = new Set<string>();
   // On Pi 0.99+ search-mode tools are Pi deferred tools, whose activation Pi owns.
   const deferSearchTools = piSupportsMcp(pi);
+  // MCP_DIRECT_TOOLS=__none__ registers nothing, so proxy calls then stay in the proxy too.
+  const deferredRegistryLive = deferSearchTools && envRaw !== "__none__";
   const deferredToolDefinitions = new Map<string, Record<string, unknown>>();
   // Pi 0.99+: cached tools with no direct or search-mode registration, as Pi deferred tools, by Pi name.
   const registeredDeferredTools = new Map<string, string>();
@@ -703,7 +705,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   // Pi 0.99+ only. Runs after syncDirectTools, whose names it must not take, and before the namespace proxies.
   function syncDeferredTools(config: McpConfig, cache: MetadataCache | null, reservedDirectNames: ReadonlySet<string>, directSpecs: DirectToolSpec[]): void {
-    const specs: DeferredToolSpec[] = deferSearchTools && envRaw !== "__none__"
+    const specs: DeferredToolSpec[] = deferredRegistryLive
       ? resolveDeferredToolSpecs(config, cache, {
         names: new Set([...reservedDirectNames, ...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName)]),
         directTools: directToolsIgnoringBackoff(config, cache, directSpecs),
@@ -740,7 +742,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     syncToolSurface();
   }
 
-  type InProxyCall = (serverName: string, args: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>>;
+  // The nested leg resolves the canonical name, an exact match by construction.
+  type InProxyCall = (serverName: string, canonicalTool: string, args: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>>;
 
   /**
    * Pi 0.99+: hands a proxy call to its registered tool through ctx.executeTool, so Pi's hooks and
@@ -748,7 +751,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
    * so results, approval (once, origin "proxy") and output limits are unchanged.
    */
   function createProxyHandOff(ctx: unknown, toolCallId: string, runInProxy: InProxyCall): NestedCallHandOff | undefined {
-    if (!deferSearchTools || typeof (ctx as { executeTool?: unknown } | undefined)?.executeTool !== "function") return undefined;
+    if (!deferredRegistryLive || typeof (ctx as { executeTool?: unknown } | undefined)?.executeTool !== "function") return undefined;
     const toolCtx = ctx as ExtensionToolContext;
     return async ({ serverName, toolMeta, args, callIdentity }) => {
       let name = registeredDeferredName(serverName, toolMeta.originalName, toolMeta.resourceUri);
@@ -771,7 +774,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         consumed: false,
         run: async (params: Record<string, unknown>, signal: AbortSignal | undefined) => {
           try {
-            return await runInProxy(serverName, params, signal);
+            return await runInProxy(serverName, toolMeta.name, params, signal);
           } catch (error) {
             thrown = { error };
             throw error;
@@ -2374,10 +2377,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             : proxyModes.executeAuthComplete(proxyState, params.server, input);
         }
         if (params.tool) {
-          const tool = params.tool;
-          const handOff = createProxyHandOff(_ctx, toolCallId, (server, args, nestedSignal) =>
-            proxyModes.executeCall(proxyState, tool, args, server, getPiTools, nestedSignal, undefined, undefined, toolCallId));
-          const result = await proxyModes.executeCall(proxyState, tool, parsedArgs, params.server, getPiTools, signal, undefined, undefined, toolCallId, handOff);
+          const handOff = createProxyHandOff(_ctx, toolCallId, (server, canonicalTool, args, nestedSignal) =>
+            proxyModes.executeCall(proxyState, canonicalTool, args, server, getPiTools, nestedSignal, undefined, undefined, toolCallId));
+          const result = await proxyModes.executeCall(proxyState, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, undefined, toolCallId, handOff);
           assertRuntimeGuard(proxyGuard);
           if (lazyDirectTools.size === 0) return result;
           // A successful proxy call is as clear a signal as a search hit: the
