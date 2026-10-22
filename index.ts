@@ -2528,6 +2528,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (targetState.config.settings?.allowScriptToolSave === false) {
       return result("Saving script tools is disabled by configuration.", { error: "save_disabled" });
     }
+    // Before Pi 0.99 no script tool loads, so a save would write files that never become a tool.
+    if (!deferSearchTools) {
+      return result("Saving a script tool needs Pi 0.99.0 or later, which runs script tools. Nothing was written.", { error: "unsupported_pi" });
+    }
     const target = argsTarget ?? topLevelTarget ?? "global";
     if (target !== "global" && target !== "project") {
       return result("Script tool save target must be 'global' or 'project'.", { error: "invalid_target" });

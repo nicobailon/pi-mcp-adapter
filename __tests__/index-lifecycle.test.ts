@@ -5229,6 +5229,20 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         expect(scriptRegistrations(api)).toEqual([]);
         expect(state.scriptToolIssues).toEqual(["Script tools need Pi 0.99.0 or later, so none were loaded."]);
       });
+
+      it("refuses to save a script tool before Pi 0.99, asking nothing", async () => {
+        const { api, state } = await bootScripts({}, eager, {}, undefined, false);
+        await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+        const select = vi.fn();
+        const result = await registeredTool(api, "mcp").execute("save-1", { action: "save-script", args: { name: "greet", description: "D", code: "return 1;" } }, undefined, undefined,
+          { cwd: "/tmp/project", hasUI: true, mode: "tui", isProjectTrusted: () => true, ui: { select, editor: vi.fn() } });
+
+        expect(result).toEqual({
+          content: [{ type: "text", text: "Saving a script tool needs Pi 0.99.0 or later, which runs script tools. Nothing was written." }],
+          details: { mode: "save-script", name: "greet", error: "unsupported_pi" },
+        });
+        expect(select).not.toHaveBeenCalled();
+      });
     });
   });
 });
