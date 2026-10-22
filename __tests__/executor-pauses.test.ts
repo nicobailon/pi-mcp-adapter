@@ -119,6 +119,20 @@ describe("Executor pauses", () => {
     expect(await resumes()).toEqual([{ requestId: "apr_1", response: { action: "decline" } }]);
   });
 
+  it("answers the pause once when the proxy hands the call off to its registered Pi tool", async () => {
+    const { state, ui, resumes } = await connectExecutor({ select: ["Continue"] });
+    // The registered tool runs a handed-off call as the proxy would, without a second hand-off.
+    const handOff = vi.fn(async ({ serverName, toolMeta, args }: { serverName: string; toolMeta: ToolMetadata; args: Record<string, unknown> | undefined }) =>
+      executeCall(state, toolMeta.name, args, serverName));
+
+    const result = await executeCall(state, "executor_call", { path: "gmail.send_email" }, "executor", undefined, undefined, undefined, undefined, undefined, handOff);
+
+    expect(handOff).toHaveBeenCalledOnce();
+    expect(textOf(result)).toContain("email sent");
+    expect(ui.select).toHaveBeenCalledOnce();
+    expect(await resumes()).toEqual([{ requestId: "apr_1", response: { action: "accept" } }]);
+  });
+
   it.each(["direct", "mcpScript"] as const)("answers the pause on the %s path", async (path) => {
     const { state, ui } = await connectExecutor({ select: ["Continue"] });
 
