@@ -7,7 +7,7 @@ import { showTools } from "../commands.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { unwrapExecutorCallResult } from "../executor-app-tools.ts";
 import { computeServerHash, executorAppToolMetadata } from "../metadata-cache.ts";
-import { executeCall } from "../proxy-modes.ts";
+import { executeCall, executeDescribe } from "../proxy-modes.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { ServerCacheEntry, ServerEntry } from "../types.ts";
@@ -233,6 +233,14 @@ describe("calling an Executor app tool", () => {
     expect(textOf(result)).toBe("tools.alpha.tool_001 record 7");
     expect(ui.select).not.toHaveBeenCalled();
     expect((await calls()).map(call => call.name)).toEqual(["call"]);
+  });
+
+  it("keeps an app tool's observed output in the session for mcp({ describe })", async () => {
+    const { state } = await connectExecutor();
+
+    await callApp(state, "direct", "tools.alpha.tool_000", { id: "7" });
+
+    expect(textOf(executeDescribe(state, "alpha.tool_000", "executor"))).toContain("Observed output (structuredContent");
   });
 
   it("guards a large result for the model, and gives a script the whole result without the raw MCP result", async () => {
