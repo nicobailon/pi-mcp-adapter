@@ -578,6 +578,8 @@ export interface ProjectServerSource {
 export interface LoadedMcpConfig {
   config: McpConfig;
   projectServers: Map<string, ProjectServerSource>;
+  /** Script tools whose entry came from a project config file, by name. Always set by loadMcpConfigWithSources. */
+  projectScriptTools?: Map<string, ProjectServerSource>;
   projectServerPolicy: "ask" | "allow";
 }
 
@@ -598,7 +600,7 @@ export const MCP_CONFIG_SOURCE_METADATA = Symbol.for("pi-mcp-adapter/config-sour
 export function loadMcpConfig(overridePath?: string, cwd = process.cwd()): McpConfig {
   const loaded = loadMcpConfigWithSources(overridePath, cwd);
   Object.defineProperty(loaded.config, MCP_CONFIG_SOURCE_METADATA, {
-    value: { projectServers: loaded.projectServers, projectServerPolicy: loaded.projectServerPolicy },
+    value: { projectServers: loaded.projectServers, projectScriptTools: loaded.projectScriptTools, projectServerPolicy: loaded.projectServerPolicy },
     enumerable: false,
   });
   return loaded.config;
@@ -608,6 +610,7 @@ export function loadMcpConfigWithSources(overridePath?: string, cwd = process.cw
   const sourceSpecs = getConfigSources(overridePath, cwd);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
   const projectServers = new Map<string, ProjectServerSource>();
+  const projectScriptTools = new Map<string, ProjectServerSource>();
   let projectServerPolicy: "ask" | "allow" = "ask";
   let projectAgentPluginSource: ProjectServerSource | undefined;
   let projectClaudePluginSource: ProjectServerSource | undefined;
@@ -655,11 +658,16 @@ export function loadMcpConfigWithSources(overridePath?: string, cwd = process.cw
     for (const [name, importedSource] of expandedImport.serverSources) {
       if (importedSource.scope === "project") projectServers.set(name, { path: importedSource.path });
     }
+    // A later file's entry replaces the whole entry, so the file that set it last decides its scope.
+    for (const name of Object.keys(expanded.scriptTools ?? {})) {
+      if (source.scope === "project") projectScriptTools.set(name, sourceRef);
+      else projectScriptTools.delete(name);
+    }
     config = mergeConfigs(config, expanded);
   }
 
   if (isExclusiveConfigMode()) {
-    return { config: stripProjectProviderAuth(resolveConfiguredClaudePluginMcp(config, cwd), projectServers), projectServers, projectServerPolicy };
+    return { config: stripProjectProviderAuth(resolveConfiguredClaudePluginMcp(config, cwd), projectServers), projectServers, projectScriptTools, projectServerPolicy };
   }
 
   const packageConfig = loadPackageMcpConfigs(cwd);
@@ -686,6 +694,7 @@ export function loadMcpConfigWithSources(overridePath?: string, cwd = process.cw
   return {
     config: stripProjectProviderAuth(mergedConfig, projectServers),
     projectServers,
+    projectScriptTools,
     projectServerPolicy,
   };
 }

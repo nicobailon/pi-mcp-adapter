@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentPath } from "./agent-dir.ts";
 import type { LoadedMcpConfig } from "./config.ts";
-import { isServerDisabled, type McpConfig, type ProjectServerBlock, type ProjectServerBlockReason, type ServerDefinition } from "./types.ts";
+import { isServerDisabled, type McpConfig, type ProjectServerBlock, type ProjectServerBlockReason, type ScriptToolDefinition, type ServerDefinition } from "./types.ts";
 
 const APPROVALS_VERSION = 1;
 const APPROVALS_FILE = "mcp-project-approvals.json";
@@ -30,6 +30,8 @@ interface ApprovalStore {
 export interface ProjectTrustResult {
   config: McpConfig;
   blockedServers: Map<string, ProjectServerBlock>;
+  /** Project script tools left out of `config.scriptTools`, by name. */
+  blockedScriptTools?: Map<string, ProjectServerBlock>;
 }
 
 export function describeProjectServerBlock(reason: ProjectServerBlockReason): string {
@@ -48,8 +50,18 @@ export function disabledServerReason(blocked: ReadonlyMap<string, ProjectServerB
   return block ? describeProjectServerBlock(block.reason) : `disabled. Run /mcp-adapter enable ${name} and /reload to enable it.`;
 }
 
+/** One line per blocked project script tool, for scriptToolIssues. */
+export function describeBlockedScriptTool(name: string, block: ProjectServerBlock): string {
+  const reason = {
+    untrusted: "the project is not trusted; trust the project to review and approve it",
+    "approval-required": "it needs your approval; approve it in a trusted interactive session or set user-global settings.projectServers to \"allow\"",
+    denied: "you did not allow it; reload in a trusted interactive session to approve it",
+  }[block.reason];
+  return `${block.source.path}: script tool "${name}" was not loaded — ${reason}.`;
+}
+
 type ConfigWithSourceMetadata = McpConfig & {
-  [MCP_CONFIG_SOURCE_METADATA]?: Pick<LoadedMcpConfig, "projectServers" | "projectServerPolicy">;
+  [MCP_CONFIG_SOURCE_METADATA]?: Pick<LoadedMcpConfig, "projectServers" | "projectScriptTools" | "projectServerPolicy">;
 };
 
 function asLoadedConfig(config: McpConfig): LoadedMcpConfig {
@@ -57,12 +69,17 @@ function asLoadedConfig(config: McpConfig): LoadedMcpConfig {
   return {
     config,
     projectServers: metadata?.projectServers ?? new Map(),
+    projectScriptTools: metadata?.projectScriptTools ?? new Map(),
     projectServerPolicy: metadata?.projectServerPolicy ?? "ask",
   };
 }
 
 export function hasProjectServerDefinitions(config: McpConfig): boolean {
   return asLoadedConfig(config).projectServers.size > 0;
+}
+
+export function hasProjectScriptToolDefinitions(config: McpConfig): boolean {
+  return (asLoadedConfig(config).projectScriptTools?.size ?? 0) > 0;
 }
 
 function canonicalize(value: unknown): unknown {
@@ -74,8 +91,13 @@ function canonicalize(value: unknown): unknown {
     .map(([key, entry]) => [key, canonicalize(entry)]));
 }
 
-export function hashProjectServerDefinition(definition: ServerDefinition): string {
+export function hashProjectServerDefinition(definition: ServerDefinition | ScriptToolDefinition): string {
   return createHash("sha256").update(JSON.stringify(canonicalize(definition))).digest("hex");
+}
+
+// The approval key of a script tool, kept apart from server names.
+function scriptToolApprovalKey(name: string): string {
+  return `scriptTools/${name}`;
 }
 
 export function canonicalProjectRoot(cwd: string): string {
@@ -170,7 +192,17 @@ export function approveProjectServer(cwd: string, serverName: string, definition
   });
 }
 
-function isApproved(approvals: ApprovalStore, projectRoot: string, serverName: string, definition: ServerDefinition): boolean {
+/** The approval covers the entry as loaded, with its resolved file path, not the script file's bytes. */
+export function approveProjectScriptTool(cwd: string, name: string, definition: ScriptToolDefinition): void {
+  saveApproval({
+    projectRoot: projectApprovalScope(cwd),
+    serverName: scriptToolApprovalKey(name),
+    definitionHash: hashProjectServerDefinition(definition),
+    approvedAt: new Date().toISOString(),
+  });
+}
+
+function isApproved(approvals: ApprovalStore, projectRoot: string, serverName: string, definition: ServerDefinition | ScriptToolDefinition): boolean {
   const definitionHash = hashProjectServerDefinition(definition);
   return approvals.approvals.some(entry =>
     entry.projectRoot === projectRoot && entry.serverName === serverName && entry.definitionHash === definitionHash);
@@ -229,7 +261,9 @@ export async function applyProjectServerTrust(
 ): Promise<ProjectTrustResult> {
   const config: McpConfig = { ...loaded.config, mcpServers: { ...loaded.config.mcpServers } };
   const blockedServers = new Map<string, ProjectServerBlock>();
-  if (loaded.projectServers.size === 0) return { config, blockedServers };
+  const blockedScriptTools = new Map<string, ProjectServerBlock>();
+  const projectScriptTools = loaded.projectScriptTools ?? new Map();
+  if (loaded.projectServers.size === 0 && projectScriptTools.size === 0) return { config, blockedServers, blockedScriptTools };
 
   const projectTrusted = isProjectTrusted(ctx);
   // RPC sessions also have a UI, but Pi reads RPC input only after session_start, so a dialog here never resolves.
@@ -262,7 +296,34 @@ export async function applyProjectServerTrust(
     blockedServers.set(name, { reason, source });
   }
 
-  return { config, blockedServers };
+  // A project script tool goes through the same gate. A blocked one is left out of the config, so it
+  // is never registered and its file is never read.
+  if (projectScriptTools.size > 0) config.scriptTools = { ...config.scriptTools };
+  for (const [name, source] of projectScriptTools) {
+    const definition = config.scriptTools?.[name];
+    if (!definition) continue;
+    const approved = isApproved(approvals, projectRoot, scriptToolApprovalKey(name), definition);
+    if (projectTrusted && (approved || allowUnapproved)) continue;
+
+    let reason: ProjectServerBlockReason;
+    if (!projectTrusted) {
+      reason = "untrusted";
+    } else if (!interactive) {
+      reason = "approval-required";
+    } else if (await ctx.ui.select(
+      `Allow project script tool “${name}”?\nProject config: ${source.path}\nScript: ${definition.file}\n\nThis tool runs the script in Pi's codemode, where it can call your MCP and Pi tools. The script file can change without asking you again.`,
+      PROJECT_SERVER_CHOICES,
+    ) === ALLOW_PROJECT_SERVER) {
+      approveProjectScriptTool(ctx.cwd, name, definition);
+      continue;
+    } else {
+      reason = "denied";
+    }
+    delete config.scriptTools![name];
+    blockedScriptTools.set(name, { reason, source });
+  }
+
+  return { config, blockedServers, blockedScriptTools };
 }
 
 export function applyProjectServerTrustToConfig(
@@ -273,12 +334,16 @@ export function applyProjectServerTrustToConfig(
   return applyProjectServerTrust(asLoadedConfig(config), ctx, options);
 }
 
-/** Remove project-derived servers before an ExtensionContext exists. */
+/** Remove project-derived servers and script tools before an ExtensionContext exists. */
 export function excludeProjectServersAtLoadTime(loadedOrConfig: LoadedMcpConfig | McpConfig): McpConfig {
   const loaded = "config" in loadedOrConfig && "projectServers" in loadedOrConfig
     ? loadedOrConfig as LoadedMcpConfig
     : asLoadedConfig(loadedOrConfig as McpConfig);
   const config: McpConfig = { ...loaded.config, mcpServers: { ...loaded.config.mcpServers } };
   for (const name of loaded.projectServers.keys()) delete config.mcpServers[name];
+  if (loaded.projectScriptTools?.size && config.scriptTools) {
+    config.scriptTools = { ...config.scriptTools };
+    for (const name of loaded.projectScriptTools.keys()) delete config.scriptTools[name];
+  }
   return config;
 }

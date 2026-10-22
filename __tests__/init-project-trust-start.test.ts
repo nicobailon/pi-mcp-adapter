@@ -88,4 +88,26 @@ describe("initializeMcp project trust start signal", () => {
     expect(select).not.toHaveBeenCalled();
     expect(state.config.mcpServers.local?.disabled).toBe(disabled);
   });
+
+  it("leaves a blocked project script tool out of the session and names it with its reason", async () => {
+    const cwd = join(root, "project");
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    const configPath = join(cwd, ".pi", "mcp-adapter.json");
+    writeFileSync(configPath, JSON.stringify({ scriptTools: { close_stale: { description: "Close", file: "./close.js" } } }));
+    const notify = vi.fn();
+    const { initializeMcp } = await import("../init.ts");
+
+    const state = await initializeMcp(
+      { getFlag: vi.fn() } as unknown as ExtensionAPI,
+      {
+        cwd, hasUI: true, mode: "tui", isProjectTrusted: () => false,
+        ui: { select: vi.fn(), notify, setStatus: vi.fn() }, modelRegistry: {}, signal: undefined,
+      } as unknown as ExtensionContext,
+    );
+
+    const line = `${configPath}: script tool "close_stale" was not loaded — the project is not trusted; trust the project to review and approve it.`;
+    expect(state.config.scriptTools).toEqual({});
+    expect(state.blockedScriptTools).toEqual(new Map([["close_stale", { reason: "untrusted", source: { path: configPath } }]]));
+    expect(notify).toHaveBeenCalledWith(line, "warning");
+  });
 });

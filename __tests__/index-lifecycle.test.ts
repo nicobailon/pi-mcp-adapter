@@ -5127,6 +5127,32 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         expect(scriptRegistrations(api).map((tool: { name: string }) => tool.name)).toEqual(["mcp__script__close_stale"]);
       });
 
+      it.each([false, true])("starts the session's trust check instead of deferring it when a project file defines a script tool (%s)", async (project) => {
+        const markProject = () => {
+          const config = mocks.loadMcpConfig();
+          Object.defineProperty(config, Symbol.for("pi-mcp-adapter/config-source-metadata"), {
+            value: { projectServers: new Map(), projectScriptTools: new Map([["close_stale", { path: "/project/.pi/mcp-adapter.json" }]]) },
+          });
+        };
+        await bootScripts({ close_stale: closeStale }, { lazy: [{ command: "l" }, [{ name: "find" }]] }, {}, project ? markProject : undefined);
+
+        expect(mocks.initializeMcp).toHaveBeenCalledTimes(project ? 1 : 0);
+      });
+
+      it("lists a project script tool that trust blocked in /mcp-adapter, apart from the migration notices", async () => {
+        const { api, state } = await bootScripts({ kept: triage });
+        await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+        state.blockedScriptTools = new Map([["close_stale", { reason: "approval-required", source: { path: "/project/.pi/mcp-adapter.json" } }]]);
+
+        state.onToolMetadataUpdated("boot", "tools-changed");
+
+        expect(state.scriptToolIssues).toEqual([
+          '/project/.pi/mcp-adapter.json: script tool "close_stale" was not loaded — it needs your approval; approve it in a trusted interactive session or set user-global settings.projectServers to "allow".',
+        ]);
+        expect(state.migrationNotices).toEqual([]);
+        expect(scriptRegistrations(api).map((tool: { name: string }) => tool.name)).toEqual(["mcp__script__kept"]);
+      });
+
       it("registers none before Pi 0.99, and says why", async () => {
         const { api, state } = await bootScripts({ close_stale: closeStale }, eager, {}, undefined, false);
         await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));

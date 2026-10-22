@@ -66,6 +66,8 @@ export interface McpExtensionState {
     observedOutputs?: WeakMap<ServerDefinition, Map<string, ObservedOutput>>;
     /** Configured project servers disabled by trust or approval policy for this session. */
     blockedProjectServers?: Map<string, ProjectServerBlock>;
+    /** Project script tools left out by trust or approval policy for this session. */
+    blockedScriptTools?: Map<string, ProjectServerBlock>;
     /** Runtime-only server grants. Never persisted or restored from session entries. */
     approvedServers?: Map<string, {
         definition: ServerDefinition;

@@ -1,16 +1,23 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { LoadedMcpConfig } from "./config.ts";
-import { type McpConfig, type ProjectServerBlock, type ProjectServerBlockReason, type ServerDefinition } from "./types.ts";
+import { type McpConfig, type ProjectServerBlock, type ProjectServerBlockReason, type ScriptToolDefinition, type ServerDefinition } from "./types.ts";
 export interface ProjectTrustResult {
     config: McpConfig;
     blockedServers: Map<string, ProjectServerBlock>;
+    /** Project script tools left out of `config.scriptTools`, by name. */
+    blockedScriptTools?: Map<string, ProjectServerBlock>;
 }
 export declare function describeProjectServerBlock(reason: ProjectServerBlockReason): string;
 export declare function disabledServerReason(blocked: ReadonlyMap<string, ProjectServerBlock> | undefined, name: string): string;
+/** One line per blocked project script tool, for scriptToolIssues. */
+export declare function describeBlockedScriptTool(name: string, block: ProjectServerBlock): string;
 export declare function hasProjectServerDefinitions(config: McpConfig): boolean;
-export declare function hashProjectServerDefinition(definition: ServerDefinition): string;
+export declare function hasProjectScriptToolDefinitions(config: McpConfig): boolean;
+export declare function hashProjectServerDefinition(definition: ServerDefinition | ScriptToolDefinition): string;
 export declare function canonicalProjectRoot(cwd: string): string;
 export declare function approveProjectServer(cwd: string, serverName: string, definition: ServerDefinition): void;
+/** The approval covers the entry as loaded, with its resolved file path, not the script file's bytes. */
+export declare function approveProjectScriptTool(cwd: string, name: string, definition: ScriptToolDefinition): void;
 /**
  * After the adapter edits config on the user's behalf (a panel save), re-approve each named project
  * server whose pre-edit definition was approved, so the edit does not revoke the approval. Only a
@@ -25,5 +32,5 @@ export declare function applyProjectServerTrust(loaded: LoadedMcpConfig, ctx: Pi
 export declare function applyProjectServerTrustToConfig(config: McpConfig, ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "mode" | "ui" | "isProjectTrusted">, options?: {
     allowUnapproved?: boolean;
 }): Promise<ProjectTrustResult>;
-/** Remove project-derived servers before an ExtensionContext exists. */
+/** Remove project-derived servers and script tools before an ExtensionContext exists. */
 export declare function excludeProjectServersAtLoadTime(loadedOrConfig: LoadedMcpConfig | McpConfig): McpConfig;

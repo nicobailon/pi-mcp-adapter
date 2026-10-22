@@ -10,7 +10,7 @@ import type { NestedCallHandOff } from "./proxy-modes.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getScriptToolIssues, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
-import { approveProjectServer, excludeProjectServersAtLoadTime, hasProjectServerDefinitions } from "./project-server-trust.ts";
+import { approveProjectServer, describeBlockedScriptTool, excludeProjectServersAtLoadTime, hasProjectScriptToolDefinitions, hasProjectServerDefinitions } from "./project-server-trust.ts";
 import { BUILTIN_NAMES, buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
 import { nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolOwnerKey, type ScriptToolSpec } from "./script-tool-surface.ts";
@@ -578,7 +578,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       { names: new Set(foreignNames), reason: "is already registered by another extension" },
     ], deferredNameOwners);
     scriptToolSurfaceIssues = issues;
-    if (state) state.scriptToolIssues = [...sessionScriptToolIssues, ...issues];
+    if (state) state.scriptToolIssues = scriptToolIssuesOf(state);
     const nextNames = new Set<string>();
     for (const spec of specs) {
       taken.add(spec.toolName);
@@ -595,6 +595,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const removed = [...registeredScriptTools.keys()].filter((name) => !nextNames.has(name));
     for (const name of removed) registeredScriptTools.delete(name);
     deactivateTools(removed);
+  }
+
+  // What /mcp-adapter lists: invalid entries, project script tools trust blocked, and name clashes.
+  function scriptToolIssuesOf(targetState: McpExtensionState): string[] {
+    const blocked = [...targetState.blockedScriptTools ?? []].map(([name, block]) => describeBlockedScriptTool(name, block));
+    return [...sessionScriptToolIssues, ...blocked, ...scriptToolSurfaceIssues];
   }
 
   // Pi registers a tool active. A lazy tool must not stay that way: hold every
@@ -785,7 +791,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (taken) syncScriptTools(config, taken, reservedDirectNames, foreignNames);
     else if (!deferSearchTools && Object.keys(config.scriptTools ?? {}).length > 0) {
       scriptToolSurfaceIssues = ["Script tools need Pi 0.99.0 or later, so none were loaded."];
-      if (state) state.scriptToolIssues = [...sessionScriptToolIssues, ...scriptToolSurfaceIssues];
+      if (state) state.scriptToolIssues = scriptToolIssuesOf(state);
     }
     const specs: DeferredToolSpec[] = taken
       ? resolveDeferredToolSpecs(config, cache, { names: taken, directTools: directToolsIgnoringBackoff(config, cache, directSpecs), owners: deferredNameOwners })
@@ -971,8 +977,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       config = resolveConfiguredClaudePluginMcp(cloneMcpConfig(sessionConfig), cwd ?? process.cwd());
     } else {
       const loadedConfig = loadMcpConfig(earlyConfigPath, cwd);
-      // Project servers require the authoritative session trust context.
-      if (hasProjectServerDefinitions(loadedConfig)) return undefined;
+      // Project servers and script tools require the authoritative session trust context.
+      if (hasProjectServerDefinitions(loadedConfig) || hasProjectScriptToolDefinitions(loadedConfig)) return undefined;
       config = loadedConfig;
     }
     const cache = loadMetadataCache();
@@ -1363,7 +1369,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       let statusPublicationAttempted = false;
       state = nextState;
       nextState.migrationNotices = [...sessionMigrationNotices];
-      nextState.scriptToolIssues = [...sessionScriptToolIssues, ...scriptToolSurfaceIssues];
+      nextState.scriptToolIssues = scriptToolIssuesOf(nextState);
       nextState.deliversToScript = deliversToScript;
       finalizationGuard = guard;
       finalizationRegistrations = registeredDuringFinalization;

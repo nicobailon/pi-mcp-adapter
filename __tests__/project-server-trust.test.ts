@@ -348,4 +348,96 @@ describe("project MCP server trust", () => {
     const result = await trust.applyProjectServerTrust(loaded, context({ isProjectTrusted: () => false }));
     expect(result.config.mcpServers[name]).toMatchObject({ disabled: true, lifecycle: "eager" });
   });
+
+  describe("project script tools", () => {
+    const globalPath = () => join(home, ".pi", "agent", "mcp-adapter.json");
+    const projectPath = () => join(cwd, ".pi", "mcp-adapter.json");
+    const closeStale = { description: "Close stale issues", file: "./close.js", inputSchema: { type: "object", properties: { repo: { type: "string" } } } };
+    const tui = (select: ReturnType<typeof vi.fn>) => context({ hasUI: true, mode: "tui", ui: { select } });
+    async function gate(ctx: any) {
+      const { config, trust } = await load();
+      return trust.applyProjectServerTrust(config.loadMcpConfigWithSources(undefined, cwd), ctx);
+    }
+
+    it("records which script tools a project file set last, and leaves them out before trust is known", async () => {
+      writeJson(globalPath(), { scriptTools: { kept: { description: "Global", file: "/g.js" }, close_stale: { description: "Global", file: "/g.js" } } });
+      writeJson(projectPath(), { scriptTools: { close_stale: closeStale } });
+      const { config, trust } = await load();
+      const loaded = config.loadMcpConfigWithSources(undefined, cwd);
+
+      expect([...loaded.projectScriptTools!]).toEqual([["close_stale", { path: projectPath() }]]);
+      expect(trust.hasProjectScriptToolDefinitions(config.loadMcpConfig(undefined, cwd))).toBe(true);
+      expect(Object.keys(trust.excludeProjectServersAtLoadTime(loaded).scriptTools ?? {})).toEqual(["kept"]);
+    });
+
+    it("blocks a project script tool in an untrusted project, and never gates a global one", async () => {
+      writeJson(globalPath(), { scriptTools: { triage: { description: "Global", file: "/g.js" } } });
+      writeJson(projectPath(), { scriptTools: { close_stale: closeStale } });
+      const select = vi.fn();
+      const result = await gate({ ...tui(select), isProjectTrusted: () => false });
+
+      expect(Object.keys(result.config.scriptTools ?? {})).toEqual(["triage"]);
+      expect(result.blockedScriptTools).toEqual(new Map([["close_stale", { reason: "untrusted", source: { path: projectPath() } }]]));
+      expect(select).not.toHaveBeenCalled();
+    });
+
+    it("needs approval in a trusted project without a dialog, unless user-global projectServers is \"allow\"", async () => {
+      writeJson(projectPath(), { scriptTools: { close_stale: closeStale } });
+      const blocked = await gate(context());
+      expect(blocked.config.scriptTools).toEqual({});
+      expect(blocked.blockedScriptTools?.get("close_stale")?.reason).toBe("approval-required");
+
+      writeJson(globalPath(), { settings: { projectServers: "allow" } });
+      vi.resetModules();
+      const allowed = await gate(context());
+      expect(Object.keys(allowed.config.scriptTools ?? {})).toEqual(["close_stale"]);
+      expect(allowed.blockedScriptTools?.size).toBe(0);
+    });
+
+    it("asks with the tool, the config file and the script path; Allow keeps the tool and records it, Enter denies", async () => {
+      writeJson(projectPath(), { scriptTools: { close_stale: closeStale } });
+      const allow = vi.fn().mockResolvedValue("Allow");
+      const allowed = await gate(tui(allow));
+
+      expect(allow).toHaveBeenCalledWith(
+        `Allow project script tool “close_stale”?\nProject config: ${projectPath()}\nScript: ${join(cwd, ".pi", "close.js")}\n\nThis tool runs the script in Pi's codemode, where it can call your MCP and Pi tools. The script file can change without asking you again.`,
+        ["Don't allow", "Allow"],
+      );
+      expect(Object.keys(allowed.config.scriptTools ?? {})).toEqual(["close_stale"]);
+      expect(JSON.parse(readFileSync(join(home, ".pi", "agent", "mcp-project-approvals.json"), "utf8")).approvals)
+        .toEqual([expect.objectContaining({ serverName: "scriptTools/close_stale" })]);
+
+      rmSync(join(home, ".pi", "agent", "mcp-project-approvals.json"));
+      // Pi preselects the first choice.
+      const enter = vi.fn().mockResolvedValue("Don't allow");
+      const denied = await gate(tui(enter));
+      expect(denied.config.scriptTools).toEqual({});
+      expect(denied.blockedScriptTools?.get("close_stale")?.reason).toBe("denied");
+      expect(existsSync(join(home, ".pi", "agent", "mcp-project-approvals.json"))).toBe(false);
+    });
+
+    it("keeps an approval across restarts until the entry changes, its file, inputSchema or declare included", async () => {
+      writeJson(projectPath(), { scriptTools: { close_stale: closeStale } });
+      await gate(tui(vi.fn().mockResolvedValue("Allow")));
+      vi.resetModules();
+      expect(Object.keys((await gate(context())).config.scriptTools ?? {})).toEqual(["close_stale"]);
+
+      for (const changed of [
+        { ...closeStale, file: "./other.js" },
+        { ...closeStale, inputSchema: { type: "object", properties: {} } },
+        { ...closeStale, declare: true },
+        { ...closeStale, description: "Close old issues" },
+      ]) {
+        writeJson(projectPath(), { scriptTools: { close_stale: changed } });
+        vi.resetModules();
+        expect((await gate(context())).blockedScriptTools?.get("close_stale")?.reason, JSON.stringify(changed)).toBe("approval-required");
+      }
+      // A project server of the same name gets nothing from the script tool's approval.
+      writeJson(projectPath(), { mcpServers: { close_stale: { command: "node" } }, scriptTools: { close_stale: closeStale } });
+      vi.resetModules();
+      const both = await gate(context());
+      expect(both.blockedServers.get("close_stale")?.reason).toBe("approval-required");
+      expect(Object.keys(both.config.scriptTools ?? {})).toEqual(["close_stale"]);
+    });
+  });
 });
