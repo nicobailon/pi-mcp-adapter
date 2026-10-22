@@ -428,6 +428,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let sessionScriptToolIssues: string[] = [];
   // Script tools the last sync left out, with the reason.
   let scriptToolSurfaceIssues: string[] = [];
+  // The script-tool issues this session already showed, so a re-sync never repeats one.
+  let deliveredScriptToolIssues = new Set<string>();
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
@@ -598,7 +600,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     const removed = [...registeredScriptTools.keys()].filter((name) => !nextNames.has(name));
     for (const name of removed) registeredScriptTools.delete(name);
-    deactivateTools(removed);
+    // A direct tool registered under a removed name this sync owns it now.
+    deactivateTools(removed.filter((name) => !registeredDirectTools.has(name)));
   }
 
   // What /mcp-adapter lists: invalid entries, project script tools trust blocked, and name clashes.
@@ -841,8 +844,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ? new Set([...reservedDirectNames, ...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName), ...foreignNames])
       : undefined;
     if (taken) syncScriptTools(config, taken, reservedDirectNames, foreignNames);
-    else if (!deferSearchTools && Object.keys(config.scriptTools ?? {}).length > 0) {
-      scriptToolSurfaceIssues = ["Script tools need Pi 0.99.0 or later, so none were loaded."];
+    else {
+      // MCP_DIRECT_TOOLS=__none__ registers none and drops none, so it has no issue to report.
+      scriptToolSurfaceIssues = !deferSearchTools && Object.keys(config.scriptTools ?? {}).length > 0
+        ? ["Script tools need Pi 0.99.0 or later, so none were loaded."]
+        : [];
       if (state) state.scriptToolIssues = scriptToolIssuesOf(state);
     }
     const specs: DeferredToolSpec[] = taken
@@ -1000,6 +1006,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         `MCP: direct tools refreshed (+${result.added.length}, ~${result.updated.length}, -${result.deactivated.length})`,
         "info",
       ));
+    }
+    if (ctx && state) deliverScriptToolIssues(ctx, scriptToolIssuesOf(state));
+  }
+
+  // Shows each script-tool issue once per session, whichever sync found it.
+  function deliverScriptToolIssues(ctx: ExtensionContext, issues: readonly string[]): void {
+    for (const issue of issues) {
+      if (deliveredScriptToolIssues.has(issue)) continue;
+      deliveredScriptToolIssues.add(issue);
+      if (ctx.hasUI) callReentrant(() => ctx.ui.notify(issue, "warning"));
     }
   }
 
@@ -1422,6 +1438,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       state = nextState;
       nextState.migrationNotices = [...sessionMigrationNotices];
       nextState.scriptToolIssues = scriptToolIssuesOf(nextState);
+      // initializeMcp already warned about each project script tool that trust blocked.
+      for (const [name, block] of nextState.blockedScriptTools ?? []) deliveredScriptToolIssues.add(describeBlockedScriptTool(name, block));
       nextState.deliversToScript = deliversToScript;
       nextState.listScriptTools = gatewayScriptTools;
       finalizationGuard = guard;
@@ -1591,6 +1609,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     sessionScriptToolIssues = programmaticConfig
       ? []
       : getScriptToolIssues(ctx.cwd, earlyConfigPath);
+    deliveredScriptToolIssues = new Set(sessionScriptToolIssues);
     if (ctx.hasUI) {
       for (const notice of [...sessionMigrationNotices, ...sessionScriptToolIssues]) ctx.ui.notify(notice, "warning");
     }
@@ -1661,6 +1680,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         const { config, cache, enabledServerCount } = deferredSnapshot;
         const directResult = syncDirectTools(config, cache);
         syncDeferredTools(config, cache, directResult.reservedDirectNames, directResult.specs);
+        deliverScriptToolIssues(ctx, scriptToolSurfaceIssues);
         syncProxyTool(config, cache, directResult.specs);
         syncNamespaceTools(config, cache, directResult.reservedDirectNames, directResult.activeDirectNames);
         // Pi cannot unregister commands. Wait until cwd is authoritative, and

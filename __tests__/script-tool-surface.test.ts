@@ -65,6 +65,23 @@ describe("runScriptTool", () => {
     expect(guarded.details).toMatchObject({ mode: "script_tool", tool: "close_stale", calls: [], outputGuard: { truncated: true, maxLines: 10 } });
   });
 
+  // A character device on macOS and Linux: it reports size 0 and reads like an endless or empty stream.
+  it.skipIf(process.platform === "win32")("refuses a path that is neither a regular file nor a directory before reading it", async () => {
+    bridge.runCodemodeScript.mockClear();
+    await expect(run("/dev/null")).resolves.toEqual({
+      content: [{ type: "text", text: 'Script tool "close_stale" cannot run: /dev/null could not be read (not a regular file).' }],
+      details: { mode: "script_tool", tool: "close_stale", error: "script_file_unreadable" },
+    });
+    expect(bridge.runCodemodeScript).not.toHaveBeenCalled();
+  });
+
+  it("keeps the path where codemode saved the whole output it cut", async () => {
+    const file = join(dir, "close.js");
+    writeFileSync(file, "return 1;");
+    bridge.runCodemodeScript.mockResolvedValueOnce({ content: [{ type: "text", text: "Script completed" }], details: { calls: [], fullOutputPath: "/tmp/codemode-out.txt" } });
+    expect((await run(file)).details).toEqual({ mode: "script_tool", tool: "close_stale", calls: [], fullOutputPath: "/tmp/codemode-out.txt" });
+  });
+
   it("returns codemode_unavailable as the bridge gave it", async () => {
     const file = join(dir, "close.js");
     const unavailable = { content: [{ type: "text", text: "unavailable" }], details: { mode: "script_tool", tool: "close_stale", error: "codemode_unavailable" } };

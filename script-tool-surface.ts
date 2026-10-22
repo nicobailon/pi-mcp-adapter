@@ -68,6 +68,10 @@ export function nestedScriptToolResult(tool: string): ScriptToolResult {
 async function readScript(tool: string, file: string): Promise<string | ScriptToolResult> {
   try {
     const info = await stat(file);
+    // A FIFO or a device reports no size and may never end, so only regular files are read.
+    if (!info.isFile() && !info.isDirectory()) {
+      return failure(tool, "script_file_unreadable", `Script tool "${tool}" cannot run: ${file} could not be read (not a regular file).`);
+    }
     if (info.isFile() && info.size > MAX_SCRIPT_BYTES) {
       return failure(tool, "script_file_too_large", `Script tool "${tool}" cannot run: ${file} is larger than 1 MiB.`);
     }
@@ -114,6 +118,11 @@ export async function runScriptTool(options: RunScriptToolOptions): Promise<Scri
   return {
     ...result,
     content: guarded.content as ScriptToolResult["content"],
-    details: { mode: "script_tool", tool: spec.name, calls: details.calls ?? [], ...guardedMcpDetails(guarded) },
+    details: {
+      mode: "script_tool", tool: spec.name, calls: details.calls ?? [],
+      // Where codemode saved the whole output when it cut it; the guard below can cut its notice off.
+      ...(typeof details.fullOutputPath === "string" ? { fullOutputPath: details.fullOutputPath } : {}),
+      ...guardedMcpDetails(guarded),
+    },
   };
 }

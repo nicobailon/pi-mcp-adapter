@@ -111,6 +111,7 @@ vi.mock("../config.ts", () => ({
   resolveConfiguredClaudePluginMcp: mocks.resolveConfiguredClaudePluginMcp,
   getLegacyMcpMigrationNotices: mocks.getLegacyMcpMigrationNotices,
   getScriptToolIssues: mocks.getScriptToolIssues,
+  getPiMcpAuthPath: () => "/nonexistent/pi-mcp-auth.json",
   setPiMcpConfigEnabled: mocks.setPiMcpConfigEnabled,
   getPiGlobalConfigPath: mocks.getPiGlobalConfigPath,
   getProjectConfigPath: mocks.getProjectConfigPath,
@@ -4392,7 +4393,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       return () => [...active];
     }
 
-    async function bootPi099(specs?: unknown[], config: Record<string, any> = searchConfig, pi099 = true, setup?: (api: any) => void) {
+    async function bootPi099(specs?: unknown[], config: Record<string, any> = searchConfig, pi099 = true, setup?: (api: any) => void, sessionCtx: Record<string, unknown> = {}) {
       if (specs) mocks.resolveDirectTools.mockReturnValue(specs);
       const state = createState();
       state.config = config;
@@ -4407,7 +4408,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       const activeTools = trackPiToolExposure(api);
       setup?.(api);
       mcpAdapter(api);
-      await handlers.get("session_start")?.({}, {});
+      await handlers.get("session_start")?.({}, sessionCtx);
       await Promise.resolve();
       await Promise.resolve();
       return { api, handlers, state, activeTools, proxyTool: registeredTool(api, "mcp") };
@@ -4534,7 +4535,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       annotations: { title: "Echo", destructiveHint: true },
     };
 
-    async function bootCached(servers: Record<string, [Record<string, unknown>, unknown[]]>, settings: Record<string, unknown> = {}, pi099 = true, setup?: (api: any) => void, extra: Record<string, unknown> = {}) {
+    async function bootCached(servers: Record<string, [Record<string, unknown>, unknown[]]>, settings: Record<string, unknown> = {}, pi099 = true, setup?: (api: any) => void, extra: Record<string, unknown> = {}, sessionCtx: Record<string, unknown> = {}) {
       const { resolveDirectTools } = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
       mocks.resolveDirectTools.mockImplementation(resolveDirectTools);
       const entries = Object.entries(servers);
@@ -4543,7 +4544,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         servers: Object.fromEntries(entries.map(([name, [definition, tools]]) => [name, cacheEntry(definition, { tools })])),
       });
       const config = { settings: { ...settings }, mcpServers: Object.fromEntries(entries.map(([name, [definition]]) => [name, definition])), ...extra };
-      return { config, ...(await bootPi099(undefined, config, pi099, setup)) };
+      return { config, ...(await bootPi099(undefined, config, pi099, setup, sessionCtx)) };
     }
 
     const registrations = (api: any, name: string) => api.registerTool.mock.calls.map((call: any[]) => call[0]).filter((tool: { name: string }) => tool.name === name);
@@ -5068,6 +5069,36 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         expect(registrations(api, "mcp__script__close_stale").at(-1)).toMatchObject({ label: "Script: close_stale", exposure: "hidden" });
         expect(new Set(mcpNames()).size).toBe(1);
         expect(mcpNames()[0]).not.toBe("mcp__script__close_stale");
+      });
+
+      it("warns at session start about a script tool a sync left out, once however often it syncs", async () => {
+        const notify = vi.fn();
+        const local = { command: "l", directTools: true, toolPrefix: "none", lifecycle: "eager" };
+        const { state } = await bootCached({ local: [local, [{ name: "mcp__script__close_stale" }]] }, {}, true, undefined, { scriptTools: { close_stale: closeStale } }, { hasUI: true, ui: { notify } });
+        await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+        state.onToolMetadataUpdated("local", "tools-changed");
+        state.onToolMetadataUpdated("local", "tools-changed");
+
+        const line = 'Script tool "close_stale" was not loaded — mcp__script__close_stale is already the name of a direct MCP tool.';
+        expect(state.scriptToolIssues).toEqual([line]);
+        expect(notify.mock.calls.filter(([text]) => text === line)).toEqual([[line, "warning"]]);
+      });
+
+      it("leaves a direct tool that takes a script tool's name registered", async () => {
+        const local = { command: "l", directTools: true, toolPrefix: "none", lifecycle: "eager" };
+        const unregisterTool = vi.fn(() => true);
+        const { api, state } = await bootScripts({ close_stale: closeStale }, { local: [local, []] }, {}, (pi) => { pi.unregisterTool = unregisterTool; });
+        await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+        expect(registrations(api, "mcp__script__close_stale")).toMatchObject([{ label: "Script: close_stale" }]);
+
+        // The server now has a direct tool under the script tool's name: the direct tool takes it.
+        mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { local: cacheEntry(local, { tools: [{ name: "mcp__script__close_stale" }] }) } });
+        state.onToolMetadataUpdated("local", "tools-changed");
+
+        expect(registrations(api, "mcp__script__close_stale").at(-1)).toMatchObject({ label: "MCP: mcp__script__close_stale" });
+        expect(registrations(api, "mcp__script__close_stale").at(-1)).not.toHaveProperty("exposure");
+        expect(unregisterTool).not.toHaveBeenCalledWith("mcp__script__close_stale");
+        expect(state.scriptToolIssues).toEqual(['Script tool "close_stale" was not loaded — mcp__script__close_stale is already the name of a direct MCP tool.']);
       });
 
       it("drops a script tool whose name a direct tool, a namespace tool or another extension has, with the reason", async () => {
