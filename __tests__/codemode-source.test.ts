@@ -67,13 +67,12 @@ describe("buildCodemodeSource", () => {
 describe("runCodemodeScript", () => {
   type Execute = (...args: unknown[]) => Promise<unknown>;
   let piPackageLoads = 0;
-  let codemodeFactory: ((options?: unknown) => (pi: any) => void) | undefined;
 
   afterEach(() => {
     vi.doUnmock("@earendil-works/pi-coding-agent");
     vi.resetModules();
+    vi.restoreAllMocks();
     piPackageLoads = 0;
-    codemodeFactory = undefined;
   });
 
   // A fresh bridge whose `import("@earendil-works/pi-coding-agent")` gets `exports`.
@@ -206,7 +205,50 @@ describe("runCodemodeScript", () => {
     expect(() => shim.sendMessage).toThrow("pi.sendMessage");
   });
 
-  it("reports codemode_unavailable when codemode reads another pi member while running, and recaptures next time", async () => {
+  it("reports codemode_unavailable and logs why when the factory throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const factory = vi.fn(() => (shim: any) => {
+      shim.on("session_start", () => {});
+    });
+    const bridge = await loadBridge(() => ({ createCodemodeExtension: factory }));
+    const pi = livePi();
+
+    await expect(run(bridge, pi)).resolves.toEqual(unavailable);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith("MCP: codemode is unavailable: Pi's codemode read pi.on, which the adapter does not provide");
+    expect(pi.on).not.toHaveBeenCalled();
+  });
+
+  it("reports codemode_unavailable and logs why when Pi cannot be imported", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const bridge = await loadBridge(() => { throw new Error("broken install"); });
+
+    await expect(run(bridge, livePi())).resolves.toEqual(unavailable);
+    expect(warn).toHaveBeenCalledTimes(1);
+    // Vitest wraps the mock factory's error in its own message.
+    expect(warn.mock.calls[0]![0]).toMatch(/^MCP: codemode is unavailable: \S/);
+  });
+
+  it("captures only the tool named codemode", async () => {
+    const helper = vi.fn(async () => ({ content: [{ type: "text", text: "helper" }] }));
+    const execute = vi.fn(async () => ({ content: [{ type: "text", text: "Script completed" }] }));
+    const both = await loadBridge(() => ({
+      createCodemodeExtension: () => (shim: any) => {
+        shim.registerTool({ name: "codemode_helper", execute: helper });
+        shim.registerTool({ name: "codemode", execute });
+      },
+    }));
+    await expect(run(both, livePi())).resolves.toEqual({ content: [{ type: "text", text: "Script completed" }] });
+    expect(helper).not.toHaveBeenCalled();
+
+    const other = await loadBridge(() => ({
+      createCodemodeExtension: () => (shim: any) => shim.registerTool({ name: "run_script", execute: helper }),
+    }));
+    await expect(run(other, livePi())).resolves.toEqual(unavailable);
+    expect(helper).not.toHaveBeenCalled();
+  });
+
+  it("passes on codemode's error when it reads another pi member while running, and recaptures next time", async () => {
     let shim: any;
     const execute = vi.fn(async () => {
       if (execute.mock.calls.length === 1) void shim.getActiveTools();
@@ -216,12 +258,12 @@ describe("runCodemodeScript", () => {
     const bridge = await loadBridge(() => ({ createCodemodeExtension: factory }));
     const pi = livePi();
 
-    await expect(run(bridge, pi)).resolves.toEqual(unavailable);
+    await expect(run(bridge, pi)).rejects.toThrow("Pi's codemode read pi.getActiveTools, which the adapter does not provide");
     await expect(run(bridge, pi)).resolves.toEqual({ content: [{ type: "text", text: "Script completed" }] });
     expect(factory).toHaveBeenCalledTimes(2);
   });
 
-  it("reports codemode_unavailable even when codemode swallows the shim's throw", async () => {
+  it("returns codemode's own result when it swallows the shim's throw, and recaptures next time", async () => {
     let shim: any;
     const execute = vi.fn(async () => {
       try {
@@ -231,9 +273,41 @@ describe("runCodemodeScript", () => {
       }
       return { content: [] };
     });
-    const bridge = await loadBridge(() => ({ createCodemodeExtension: registeringFactory(execute, (pi) => { shim = pi; }) }));
+    const factory = registeringFactory(execute, (pi) => { shim = pi; });
+    const bridge = await loadBridge(() => ({ createCodemodeExtension: factory }));
+    const pi = livePi();
 
-    await expect(run(bridge, livePi())).resolves.toEqual(unavailable);
+    await expect(run(bridge, pi)).resolves.toEqual({ content: [{ type: "text", text: "Script failed" }] });
+    await run(bridge, pi);
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a concurrent run's result when another run trips the shim", async () => {
+    let shim: any;
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const execute = vi.fn(async (toolCallId: unknown) => {
+      if (toolCallId === "st-1") {
+        await released;
+        return { content: [{ type: "text", text: "first done" }] };
+      }
+      try {
+        void shim.getActiveTools;
+      } catch {
+        // Codemode handled it.
+      }
+      release();
+      return { content: [{ type: "text", text: "second done" }] };
+    });
+    const bridge = await loadBridge(() => ({ createCodemodeExtension: registeringFactory(execute as Execute, (pi) => { shim = pi; }) }));
+    const pi = livePi();
+
+    const results = await Promise.all([run(bridge, pi, "st-1"), run(bridge, pi, "st-2")]);
+
+    expect(results).toEqual([
+      { content: [{ type: "text", text: "first done" }] },
+      { content: [{ type: "text", text: "second done" }] },
+    ]);
   });
 
   it("passes on an error codemode throws for its own reasons", async () => {

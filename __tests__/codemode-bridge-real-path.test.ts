@@ -94,7 +94,7 @@ async function runProbe(session: Session, toolCallId: string, params: { source: 
   return probe.execute(toolCallId, params, undefined, undefined, runner.createToolContext(toolCallId, undefined)) as Promise<any>;
 }
 
-// Runs under the suite's environment (`env -u MCP_DIRECT_TOOLS`): the kill switch registers no mcp__<ns>__<tool>.
+// Needs the suite's environment (`env -u MCP_DIRECT_TOOLS`): with MCP_DIRECT_TOOLS=__none__ the kill switch would register no mcp__<ns>__<tool>.
 describe("reaching Pi codemode from an extension tool", () => {
   // Case 1 is why the bridge exists; case 2 is the mechanism the bridge is built on.
   it("cannot call codemode through ctx.executeTool, but can run its captured definition", async () => {
@@ -185,6 +185,21 @@ describe("runCodemodeScript in a real session", () => {
       // What the script saw as `input`, serialized inside the sandbox.
       expect(sent).toEqual([{ value: JSON.stringify(input) }, { value: JSON.stringify(input) }]);
       expect(JSON.parse((sent[0] as { value: string }).value)).toEqual(input);
+    });
+  }, 20_000);
+
+  // A misplaced options line is ignored on Pi 1.0.0, so only an option with a visible effect shows it was read.
+  it("leaves a leading options line where codemode reads it", async () => {
+    await withPiSession({}, async ({ session }) => {
+      await waitForEcho(session);
+
+      const result = await runProbe(session, "st-5", {
+        source: '// @options: {"timeout_ms": 1}\nreturn (await tools.mcp__fixture__echo({ value: input.repo })).structuredContent.value;',
+        input: { repo: "a/b" },
+      });
+
+      expect(textOf(result)).toContain("Script failed");
+      expect(textOf(result)).toContain("Script timed out");
     });
   }, 20_000);
 });

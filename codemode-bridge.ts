@@ -74,16 +74,17 @@ export async function runCodemodeScript(options: RunCodemodeScriptOptions): Prom
     captures.set(pi, pending);
   }
   const capture = await pending;
-  if (capture?.definition) {
-    try {
-      const result = await capture.definition.execute(toolCallId, { code: buildCodemodeSource(input, source) }, signal, onUpdate, ctx);
-      if (!capture.violation) return result;
-    } catch (error) {
-      if (!capture.violation) throw error;
-    }
+  if (!capture?.definition) {
+    if (captures.get(pi) === pending) captures.delete(pi);
+    return codemodeUnavailable(tool);
   }
-  if (captures.get(pi) === pending) captures.delete(pi);
-  return codemodeUnavailable(tool);
+  // Once the script has started, its own result or error is what happened, so it is returned as is.
+  try {
+    return await capture.definition.execute(toolCallId, { code: buildCodemodeSource(input, source) }, signal, onUpdate, ctx);
+  } finally {
+    // Codemode read a member the shim does not provide: the definition is stale, re-capture next call.
+    if (capture.violation && captures.get(pi) === pending) captures.delete(pi);
+  }
 }
 
 function codemodeUnavailable(tool: string): AgentToolResult<unknown> {
@@ -94,12 +95,17 @@ function codemodeUnavailable(tool: string): AgentToolResult<unknown> {
   };
 }
 
+function warnUnavailable(error: unknown): void {
+  console.warn(`MCP: codemode is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+}
+
 async function captureCodemode(pi: ExtensionAPI): Promise<Capture | undefined> {
   // Loaded on the first script run, never at adapter startup.
   let factory: unknown;
   try {
     factory = (await import("@earendil-works/pi-coding-agent") as { createCodemodeExtension?: unknown }).createCodemodeExtension;
-  } catch {
+  } catch (error) {
+    warnUnavailable(error);
     return undefined;
   }
   if (typeof factory !== "function") return undefined;
@@ -108,7 +114,7 @@ async function captureCodemode(pi: ExtensionAPI): Promise<Capture | undefined> {
   let open = true;
   const members: ShimMembers = {
     registerTool: (tool) => {
-      if (open && !capture.definition) capture.definition = tool as unknown as ToolDefinition;
+      if (open && !capture.definition && tool.name === "codemode") capture.definition = tool as unknown as ToolDefinition;
     },
     getSettings: () => pi.getSettings(),
     getAllTools: () => pi.getAllTools(),
@@ -123,7 +129,8 @@ async function captureCodemode(pi: ExtensionAPI): Promise<Capture | undefined> {
   });
   try {
     (factory as () => (pi: unknown) => unknown)()(shim);
-  } catch {
+  } catch (error) {
+    warnUnavailable(error);
     return undefined;
   } finally {
     open = false;
