@@ -2122,6 +2122,37 @@ describe("config discovery", () => {
     );
   });
 
+  it("loads a config that still sets mcpScript's settings, and names each such file in one notice", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-removed-script-home-"));
+    const project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-removed-script-project-")));
+    process.env.HOME = home;
+    process.chdir(project);
+    const adapterPath = join(home, ".pi", "agent", "mcp-adapter.json");
+    const projectPath = join(project, ".pi", "mcp-adapter.json");
+    writeJson(adapterPath, { mcpServers: { docs: { url: "https://docs.test/mcp" } }, settings: { scriptMode: true, scriptSkill: "model", toolPrefix: "short" } });
+    writeJson(projectPath, { mcpServers: {}, settings: { scriptSkill: "manual" } });
+
+    const { getLegacyMcpMigrationNotices, loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(undefined, project);
+    expect(config.mcpServers.docs).toEqual({ url: "https://docs.test/mcp" });
+    expect(config.settings?.toolPrefix).toBe("short");
+    expect(getLegacyMcpMigrationNotices(project)).toEqual([
+      `${adapterPath}: pi-mcp-adapter no longer has mcpScript, so settings.scriptMode and settings.scriptSkill do nothing. Remove them, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`,
+      `${projectPath}: pi-mcp-adapter no longer has mcpScript, so settings.scriptSkill does nothing. Remove it, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`,
+    ]);
+  });
+
+  it("gives no mcpScript notice for a config that sets neither scriptMode nor scriptSkill", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-no-script-home-"));
+    const project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-no-script-project-")));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { mcpServers: { docs: { url: "https://docs.test/mcp" } }, settings: { toolPrefix: "short" } });
+
+    const { getLegacyMcpMigrationNotices } = await import("../config.ts");
+    expect(getLegacyMcpMigrationNotices(project)).toEqual([]);
+  });
+
   it("reports a key a project OpenCode entry inherits from the global file, against the global file", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-ignored-merge-home-"));
     const project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-opencode-ignored-merge-project-")));

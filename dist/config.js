@@ -168,7 +168,23 @@ export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath) 
         ...getPiMcpConfigNotices(cwd, overridePath),
         ...getOpenCodeImportNotices(cwd, overridePath),
         ...getDroppedCredentialNotices(cwd, overridePath),
+        ...getRemovedScriptSettingNotices(cwd, overridePath),
     ];
+}
+/** Settings that only configured mcpScript. They still load, and do nothing. */
+const REMOVED_SCRIPT_SETTINGS = ["scriptMode", "scriptSkill"];
+/** One notice per config file that still sets a setting mcpScript's removal left without effect. */
+function getRemovedScriptSettingNotices(cwd, overridePath) {
+    return getConfigSources(overridePath, cwd).flatMap((source) => {
+        const settings = readSourceConfig(source.id, source.readPath)?.settings;
+        if (!settings)
+            return [];
+        const keys = REMOVED_SCRIPT_SETTINGS.filter((key) => settings[key] !== undefined).map((key) => `settings.${key}`);
+        if (keys.length === 0)
+            return [];
+        const [verb, pronoun] = keys.length === 1 ? ["does", "it"] : ["do", "them"];
+        return [`${source.readPath}: pi-mcp-adapter no longer has mcpScript, so ${keys.join(" and ")} ${verb} nothing. Remove ${pronoun}, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`];
+    });
 }
 function credentialFiles(servers, fileOf) {
     return new Map(Object.entries(servers).map(([name, definition]) => [

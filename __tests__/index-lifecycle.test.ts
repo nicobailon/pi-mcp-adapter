@@ -62,10 +62,7 @@ const mocks = vi.hoisted(() => ({
   commandsModuleGate: null as Promise<void> | null,
   proxyModuleGate: null as Promise<void> | null,
   directModuleGate: null as Promise<void> | null,
-  codeModuleGate: null as Promise<void> | null,
   installModuleGate: null as Promise<void> | null,
-  runMcpScript: vi.fn(),
-  codeModuleStarted: vi.fn(),
   installModuleStarted: vi.fn(),
   getConfigPathFromArgv: vi.fn(() => undefined),
   normalizeDirectToolInputSchema: vi.fn((schema: unknown) => schema && typeof schema === "object" && !Array.isArray(schema)
@@ -166,12 +163,6 @@ vi.mock("../proxy-modes.ts", async () => {
   executeStatus: mocks.executeStatus,
   executeUiMessages: mocks.executeUiMessages,
   };
-});
-
-vi.mock("../mcp-code.ts", async () => {
-  mocks.codeModuleStarted();
-  if (mocks.codeModuleGate) await mocks.codeModuleGate;
-  return { runMcpScript: mocks.runMcpScript };
 });
 
 vi.mock("../mcp-install.ts", async (importOriginal) => {
@@ -398,7 +389,6 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.commandsModuleGate = null;
     mocks.proxyModuleGate = null;
     mocks.directModuleGate = null;
-    mocks.codeModuleGate = null;
     mocks.installModuleGate = null;
 
     mocks.initializeOAuth.mockResolvedValue(undefined);
@@ -473,35 +463,17 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.discoverConfiguredClaudePluginSkills).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the bundled mcp-scripting skill aligned with install-time tool visibility after reload", async () => {
-    let config = { mcpServers: {}, claudePlugins: [], settings: { scriptMode: true } } as { mcpServers: {}; claudePlugins: []; settings: { scriptMode: boolean } };
+  it("registers no mcpScript, scripting skill or script description for a config that still sets scriptMode", async () => {
+    const config = { mcpServers: {}, claudePlugins: [], settings: { scriptMode: true, scriptSkill: "model" } };
     mocks.loadMcpConfig.mockImplementation(() => structuredClone(config));
     mocks.discoverConfiguredClaudePluginSkills.mockReturnValue([]);
 
     const { api, handlers } = await loadAdapter();
-    const discover = handlers.get("resources_discover")!;
-
-    const expectedSkillPath = resolve("skills/mcp-scripting/SKILL.md");
-    expect(registeredTool(api, "mcpScript")).toBeDefined();
-    expect(discover({ cwd: "/project", reason: "initial" })).toEqual({ skillPaths: [expectedSkillPath] });
-
-    config = { ...config, settings: { scriptMode: false } };
-    expect(discover({ cwd: "/project", reason: "reload" })).toEqual({ skillPaths: [expectedSkillPath] });
-  });
-
-  it("keeps mcpScript guidance on the load-time scriptMode when the session config differs", async () => {
-    const state = createState();
-    state.config = { mcpServers: {}, settings: { scriptMode: true } };
-    mocks.initializeMcp.mockResolvedValue(state);
-
-    const { api, handlers } = await loadAdapter();
-    await handlers.get("session_start")?.({}, { hasUI: false });
-    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
 
     expect(registeredTool(api, "mcpScript")).toBeUndefined();
-    expect(state.scriptTool).toBe(false);
-    expect(mocks.buildProxyDescription).toHaveBeenCalledWith(state.config, false);
-    expect(mocks.buildProxyDescription).not.toHaveBeenCalledWith(expect.anything(), true);
+    expect(handlers.get("resources_discover")!({ cwd: "/project", reason: "initial" })).toBeUndefined();
+    expect(mocks.buildProxyDescription.mock.calls.length).toBeGreaterThan(0);
+    for (const call of mocks.buildProxyDescription.mock.calls as unknown[][]) expect(call).toHaveLength(1);
   });
 
   it("keeps the proxy tool when direct tools are still missing from cache", async () => {
@@ -575,7 +547,7 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   it("does not leak TypeBox internal markers into registered tool parameter schemas", async () => {
-    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: { scriptMode: true } });
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {} });
     const { api } = await loadAdapter();
 
     const collectTildeKeys = (value: unknown, path = "$", keys: string[] = []): string[] => {
@@ -591,21 +563,19 @@ describe("mcpAdapter session lifecycle", () => {
       return keys;
     };
 
-    for (const toolName of ["mcpScript", "mcp"]) {
-      const tool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === toolName)?.[0];
-      expect(tool, `expected ${toolName} to be registered`).toBeDefined();
+    const tool = registeredTool(api, "mcp");
+    expect(tool, "expected mcp to be registered").toBeDefined();
 
-      const serialized = JSON.parse(JSON.stringify(tool.parameters));
-      expect(
-        collectTildeKeys(serialized),
-        `${toolName} parameters must not leak TypeBox internal markers (~optional etc.)`,
-      ).toEqual([]);
+    const serialized = JSON.parse(JSON.stringify(tool.parameters));
+    expect(
+      collectTildeKeys(serialized),
+      "mcp parameters must not leak TypeBox internal markers (~optional etc.)",
+    ).toEqual([]);
 
-      // Optional numeric fields must still be present with their options and not required.
-      for (const key of toolName === "mcpScript" ? ["timeoutMs"] : ["limit", "offset"]) {
-        expect(serialized.properties[key]).toMatchObject({ type: "number", description: expect.any(String) });
-        expect(serialized.required ?? []).not.toContain(key);
-      }
+    // Optional numeric fields must still be present with their options and not required.
+    for (const key of ["limit", "offset"]) {
+      expect(serialized.properties[key]).toMatchObject({ type: "number", description: expect.any(String) });
+      expect(serialized.required ?? []).not.toContain(key);
     }
   });
 
@@ -1718,7 +1688,7 @@ describe("mcpAdapter session lifecycle", () => {
     const { default: mcpAdapter } = await import("../index.ts");
     const { api, handlers } = createPi({ unregisterTool: false });
     const tracked = trackRuntimeToolActivation(api, ["bash"]);
-    const activeTools = () => tracked().filter((name) => name !== "mcpScript");
+    const activeTools = tracked;
     mcpAdapter(api);
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
@@ -1810,7 +1780,7 @@ describe("mcpAdapter session lifecycle", () => {
     const { default: mcpAdapter } = await import("../index.ts");
     const { api, handlers } = createPi();
     const tracked = trackRuntimeToolActivation(api, ["bash"]);
-    const activeTools = () => tracked().filter((name) => name !== "mcpScript");
+    const activeTools = tracked;
     mcpAdapter(api);
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
@@ -3472,28 +3442,6 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.createDirectToolExecutor).not.toHaveBeenCalled();
   });
 
-  it("gates a delayed code loader after shutdown", async () => {
-    const codeGate = createDeferred<void>();
-    mocks.codeModuleGate = codeGate.promise;
-    const initializedState = createState();
-    mocks.initializeMcp.mockResolvedValue(initializedState);
-    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: { scriptMode: true } });
-
-    const { api, handlers } = await loadAdapter();
-    await handlers.get("session_start")?.({}, { hasUI: false });
-    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(initializedState));
-    const script = registeredTool(api, "mcpScript");
-    const scriptExecution = script.execute("script", { code: "emit(1)" }, undefined, undefined, { hasUI: false, cwd: "/one" });
-    const scriptRejection = expect(scriptExecution).rejects.toThrow(/shutdown|stale session/);
-    await vi.waitFor(() => expect(mocks.codeModuleStarted).toHaveBeenCalledTimes(1));
-
-    await handlers.get("session_shutdown")?.();
-    codeGate.resolve(undefined);
-
-    await scriptRejection;
-    expect(mocks.runMcpScript).not.toHaveBeenCalled();
-  });
-
   it("lets session_start supersede an in-flight load-time init", async () => {
     mocks.loadMcpConfig.mockReturnValue({
       mcpServers: {
@@ -3638,19 +3586,6 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.authenticateServer).toHaveBeenCalledTimes(1);
     expect(mocks.authenticateServer.mock.calls[0][0]).toBe("demo");
     expect(mocks.authenticateServer.mock.calls[0][2].signal.aborted).toBe(false);
-  });
-
-  it("refreshes the script owner after retrying failed initialization", async () => {
-    mocks.runMcpScript.mockResolvedValue({ content: [{ type: "text", text: "script ok" }] });
-    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: { scriptMode: true } });
-    const { api } = await loadAfterFailedInitialization();
-    const result = await registeredTool(api, "mcpScript").execute(
-      "call-1", { code: "emit('ok')" }, undefined, undefined, { hasUI: false, cwd: "/tmp/retry-script" },
-    );
-
-    expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
-    expect(mocks.runMcpScript).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ content: [{ type: "text", text: "script ok" }] });
   });
 
   it("returns retry guidance when proxy retry initialization also fails", async () => {
@@ -4705,11 +4640,10 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(registeredTool(api, "mcp__proxy")).not.toHaveProperty("reachesTools");
     });
 
-    it("declares what mcp, mcpScript and a namespace proxy reach", async () => {
-      const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] }, { scriptMode: true });
+    it("declares what mcp and a namespace proxy reach", async () => {
+      const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] });
 
       expect(registeredTool(api, "mcp").reachesTools()).toBe("all");
-      expect(registeredTool(api, "mcpScript").reachesTools()).toBe("all");
       expect(registeredTool(api, "mcp__proxy").reachesTools()).toEqual(["mcp__proxy"]);
     });
 
@@ -5046,13 +4980,13 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(registeredTool(api, "mcp__gh__issues")).toMatchObject({ exposure: "deferred" });
     });
 
-    it("leaves mcp, mcpScript and the namespace proxies to connect on their own, keeping their first-call errors", async () => {
+    it("leaves mcp and the namespace proxies to connect on their own, keeping their first-call errors", async () => {
       const { api, toolCall } = await bootWithUnconnectedServer();
       // Even a proxy reach that names the unconnected server must not connect it ahead of the proxy's own call.
       const reachesDocs = vi.fn(() => ["mcp__docs"]);
-      api.getAllTools.mockReturnValue(["mcp", "mcpScript", "mcp__proxy"].map((name) => ({ name, reachesTools: reachesDocs })));
+      api.getAllTools.mockReturnValue(["mcp", "mcp__proxy"].map((name) => ({ name, reachesTools: reachesDocs })));
 
-      for (const name of ["mcp", "mcpScript", "mcp__proxy"]) await toolCall(name, { tool: "find" });
+      for (const name of ["mcp", "mcp__proxy"]) await toolCall(name, { tool: "find" });
 
       expect(reachesDocs).not.toHaveBeenCalled();
       expect(mocks.lazyConnect).not.toHaveBeenCalled();

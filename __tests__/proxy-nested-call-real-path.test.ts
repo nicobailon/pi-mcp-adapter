@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -14,6 +14,8 @@ type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
 interface PiSession {
   runner: Session["extensionRunner"];
   tool(name: string): ReturnType<Session["extensionRunner"]["getAllRegisteredTools"]>[number]["definition"];
+  activeTools(): string[];
+  configPath: string;
   requests: McpToolApprovalRequest[];
   toolCalls: Array<{ name: string; id: string; parent: string | undefined }>;
   receipts(): Promise<Array<{ name: string; arguments: Record<string, unknown> }>>;
@@ -21,7 +23,7 @@ interface PiSession {
 
 // Real Pi session, nested-call pipeline, tool_call hooks, approval broker, and stdio MCP transport.
 async function withPiSession(
-  options: { server: string; fixture: string; receiptsEnv: string; directTools?: string },
+  options: { server: string; fixture: string; receiptsEnv: string; directTools?: string; settings?: Record<string, unknown> },
   run: (pi: PiSession) => Promise<void>,
 ): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "pi-mcp-proxy-nested-"));
@@ -47,12 +49,13 @@ async function withPiSession(
           env: { [options.receiptsEnv]: receipts },
         },
       },
-      settings: { approveTools: true, sampling: false, elicitation: false, scriptMode: true },
+      settings: { approveTools: true, sampling: false, elicitation: false, ...options.settings },
     }));
     process.argv.push("--mcp-config", configPath);
     const requests: McpToolApprovalRequest[] = [];
     const toolCalls: PiSession["toolCalls"] = [];
     const errors: string[] = [];
+    let activeTools: (() => string[]) | undefined;
     const settingsManager = SettingsManager.inMemory();
     const loader = new DefaultResourceLoader({
       cwd,
@@ -60,6 +63,7 @@ async function withPiSession(
       settingsManager,
       additionalExtensionPaths: [resolve("index.ts")],
       extensionFactories: [(pi) => {
+        activeTools = () => pi.getActiveTools();
         pi.events.on(MCP_TOOL_APPROVAL_REQUEST_EVENT, (request: McpToolApprovalRequest) => {
           requests.push(request);
           request.claim(() => "allow_once");
@@ -88,6 +92,8 @@ async function withPiSession(
     await run({
       runner,
       tool: (name) => runner.getAllRegisteredTools().find(registered => registered.definition.name === name)!.definition,
+      activeTools: () => activeTools!(),
+      configPath,
       requests,
       toolCalls,
       receipts: async () => (await readFile(receipts, "utf8")).trim().split("\n").filter(Boolean).map(line => JSON.parse(line)),
@@ -119,19 +125,18 @@ describe("proxy calls through Pi's nested tool calls", () => {
 
       const proxied = await tool("mcp").execute("proxy-call", { tool: "fixture_echo", args: { value: "a" } }, undefined, undefined, runner.createToolContext("proxy-call", undefined));
       const namespaced = await tool("mcp__fixture").execute("ns-call", { tool: "echo", args: { value: "b" } }, undefined, undefined, runner.createToolContext("ns-call", undefined));
-      // Without a nested-call context, and from mcpScript, the proxy runs the call itself.
+      // Without a nested-call context, the proxy runs the call itself.
       const inProxy = await tool("mcp").execute("plain-call", { tool: "fixture_echo", args: { value: "c" } }, undefined, undefined, runner.createContext());
-      await tool("mcpScript").execute("script-call", { code: `return await tools.call("fixture_echo", { value: "d" });` }, undefined, undefined, runner.createToolContext("script-call", undefined));
 
       expect(toolCalls).toEqual([
         { name: "mcp__fixture__echo", id: "proxy-call/1", parent: "proxy-call" },
         { name: "mcp__fixture__echo", id: "ns-call/1", parent: "ns-call" },
       ]);
       expect(requests.map(request => [request.origin, request.args])).toEqual([
-        ["proxy", { value: "a" }], ["proxy", { value: "b" }], ["proxy", { value: "c" }], ["script", { value: "d" }],
+        ["proxy", { value: "a" }], ["proxy", { value: "b" }], ["proxy", { value: "c" }],
       ]);
       requests.forEach(request => expect(request).toMatchObject({ serverName: "fixture", originalToolName: "echo", prefixedToolName: "fixture_echo" }));
-      expect((await receipts()).map(receipt => receipt.arguments.value)).toEqual(["a", "b", "c", "d"]);
+      expect((await receipts()).map(receipt => receipt.arguments.value)).toEqual(["a", "b", "c"]);
 
       for (const [result, value] of [[proxied, "a"], [namespaced, "b"], [inProxy, "c"]] as const) {
         expect(result.content).toEqual([{ type: "text", text: value }]);
@@ -192,4 +197,61 @@ describe("proxy calls through Pi's nested tool calls", () => {
       expect(handedOff).toEqual(inProxy);
     });
   }, 30_000);
+});
+
+describe("a config that still sets scriptMode", () => {
+  type Surface = { active: string[]; registered: string[]; description: string; status: string; configPath: string; large: string[] };
+  const surface = async (settings?: Record<string, unknown>) => {
+    let seen: Surface | undefined;
+    await withPiSession({ ...brokerFixture, settings }, async ({ runner, tool, activeTools, configPath }) => {
+      await vi.waitFor(() => expect(runner.createToolContext("probe", undefined).tools.map(callable => callable.name))
+        .toContain("mcp__fixture__echo"), { timeout: 10_000 });
+      const status = await tool("mcp").execute("status", {}, undefined, undefined, runner.createContext());
+      const text = (result: { content: Array<{ type: string; text?: string }> }) => result.content.map(block => block.text ?? "").join("");
+      // Large enough for the removed "[Use mcpScript …]" footer, handed off and in the proxy.
+      const args = { tool: "fixture_echo", args: { value: "x".repeat(10 * 1024) } };
+      const large = [
+        text(await tool("mcp").execute("large-call", args, undefined, undefined, runner.createToolContext("large-call", undefined))),
+        text(await tool("mcp").execute("large-plain", args, undefined, undefined, runner.createContext())),
+      ];
+      seen = {
+        active: activeTools(),
+        registered: runner.getAllRegisteredTools().map(registered => registered.definition.name),
+        description: tool("mcp").description,
+        status: text(status),
+        configPath,
+        large,
+      };
+    });
+    return seen!;
+  };
+  let plain: Surface;
+  let scripted: Surface;
+  beforeAll(async () => {
+    plain = await surface();
+    scripted = await surface({ scriptMode: true });
+  }, 30_000);
+
+  it("registers no mcpScript and keeps the same tools", () => {
+    expect(scripted.registered).not.toContain("mcpScript");
+    expect(plain.active).toContain("mcp");
+    expect(scripted.active).toEqual(plain.active);
+    expect(scripted.registered).toEqual(plain.registered);
+  });
+
+  it("says in mcp({}) to add \"+codemode\", naming the file", () => {
+    const notice = `${scripted.configPath}: pi-mcp-adapter no longer has mcpScript, so settings.scriptMode does nothing. Remove it, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`;
+    expect(scripted.status).toContain(`⚠ ${notice}`);
+    expect(plain.status).not.toContain("mcpScript");
+  });
+
+  it("keeps mcpScript out of the mcp description and large results", () => {
+    expect(scripted.description).toBe(plain.description);
+    expect(scripted.description).not.toContain("mcpScript");
+    expect(scripted.large).toHaveLength(2);
+    for (const output of scripted.large) {
+      expect(output).toContain("x".repeat(1024));
+      expect(output).not.toContain("mcpScript");
+    }
+  });
 });

@@ -3,7 +3,6 @@ export { registerMcpProtocol, MCP_PROTOCOL_EVENT, type McpProtocolDefinition, ty
 import { withFileMutationQueue, type AgentToolResult, type AgentToolUpdateCallback, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type RegisteredMcpServer, type ToolInfo } from "@earendil-works/pi-coding-agent";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type CachedTool, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
@@ -20,7 +19,7 @@ import { isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, withSe
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
 import { formatMcpFooterStatus, formatTerminalError, getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
-import { createMcpDirectToolCallRenderer, createMcpProxyToolCallRenderer, createMcpScriptToolCallRenderer, createMcpToolResultRenderer, resolveMcpToolRenderOptions } from "./tool-result-renderer.ts";
+import { createMcpDirectToolCallRenderer, createMcpProxyToolCallRenderer, createMcpToolResultRenderer, resolveMcpToolRenderOptions } from "./tool-result-renderer.ts";
 import { toolErrorOverride } from "./error-signal.ts";
 import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { cleanupMaterializedBinaryResources } from "./tool-registrar.ts";
@@ -59,7 +58,6 @@ const loadOAuthRuntime = createRetryableLoader(() => import("./mcp-auth-flow.ts"
 const loadProxyModes = createRetryableLoader(() => import("./proxy-modes.ts"));
 const loadDirectExecution = createRetryableLoader(() => import("./direct-tools.ts"));
 const loadCommands = createRetryableLoader(() => import("./commands.ts"));
-const loadCodeMode = createRetryableLoader(() => import("./mcp-code.ts"));
 const loadInstallParsing = createRetryableLoader(() => import("./mcp-install.ts"));
 
 const INIT_WAIT_TIMEOUT_MS = 30_000;
@@ -377,8 +375,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const earlyConfig = programmaticConfig
     ? resolveConfiguredClaudePluginMcp(cloneMcpConfig(sessionConfig), process.cwd())
     : excludeProjectServersAtLoadTime(loadMcpConfig(earlyConfigPath));
-  // Pi registers tools and discovers skills once per load, so the script tool and every pointer to it follow this value.
-  const scriptTool = earlyConfig.settings?.scriptMode === true;
   const earlyCache = loadMetadataCache();
   const envRaw = process.env.MCP_DIRECT_TOOLS;
   const envDirectToolOverride = parseEnvDirectToolOverride(envRaw);
@@ -1312,7 +1308,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       };
       const registeredDuringFinalization = new Set<string>();
       let statusPublicationAttempted = false;
-      nextState.scriptTool = scriptTool;
       state = nextState;
       nextState.migrationNotices = [...sessionMigrationNotices];
       finalizationGuard = guard;
@@ -1466,15 +1461,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     });
   }
 
-  const scriptingSkillPath = fileURLToPath(new URL("./skills/mcp-scripting/SKILL.md", import.meta.url));
   pi.on("resources_discover", (event) => {
     const resourceConfig = programmaticConfig
       ? cloneMcpConfig(sessionConfig)
       : loadMcpConfig(earlyConfigPath, event.cwd);
     const skillPaths = discoverConfiguredClaudePluginSkills(resourceConfig, event.cwd);
-    if (scriptTool && existsSync(scriptingSkillPath) && !skillPaths.includes(scriptingSkillPath)) {
-      skillPaths.push(scriptingSkillPath);
-    }
     return skillPaths.length > 0 ? { skillPaths } : undefined;
   });
 
@@ -1674,7 +1665,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function reachOf(toolName: string, input: unknown): "all" | string[] | undefined {
     if (registeredDirectTools.has(toolName) || registeredDeferredTools.has(toolName)) return undefined;
     // The proxies connect and register on their own, so their first-call errors stay as they are.
-    if (toolName === "mcp" || toolName === "mcpScript" || registeredNamespaceProxyTools.has(toolName)) return undefined;
+    if (toolName === "mcp" || registeredNamespaceProxyTools.has(toolName)) return undefined;
     if (!toolReaches.has(toolName)) {
       toolReaches.clear();
       for (const tool of pi.getAllTools()) {
@@ -2061,63 +2052,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
     },
   });
-
-  if (scriptTool) {
-    // The skill file is manual-only; Pi reads disable-model-invocation from the file and extensions cannot override it.
-    const skillPointer = earlyConfig.settings?.scriptSkill === "model"
-      ? ` Before writing a script, read ${scriptingSkillPath} for result shapes and limits.`
-      : "";
-    (pi.registerTool as (tool: unknown) => unknown)({
-      name: "mcpScript",
-      label: "MCP Script",
-      description: "Run sandboxed JavaScript to loop, filter, chain, or fan out across multiple MCP calls in one request. Use mcp for a single call, search, describe, status, or auth. await tools.search({ query }) returns { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not { ok, data }. await tools.describe({ path }) returns a descriptor with inputTypeScript or { path, error: { code, message, suggestions } }. tools.call(path, args) and tools.<path>(args) return { ok: true, data } or { ok: false, error: { code, message } }. data is the raw MCP result { content, structuredContent? }: use data.structuredContent when present; otherwise JSON usually needs JSON.parse(data.content[0].text). Use emit(value) for user-visible output." + skillPointer,
-      promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
-      parameters: Type.Object({
-        code: Type.String({ description: "Sandboxed JavaScript MCP script. Pass tool names exactly as mcp lists them, e.g. tools.call(\"github_search_issues\", args), and use emit(value)." }),
-        timeoutMs: optionalNumber({ minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" }),
-      }),
-      renderCall: createMcpScriptToolCallRenderer(toolRenderOptions),
-      renderResult: renderMcpToolResult,
-      ...reachesAllTools,
-      async execute(_toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-        let executeOwner = currentOwner;
-        if (!state) {
-          try {
-            const initialized = await awaitWithTimeout(ensureSessionRuntime(ctx), INIT_WAIT_TIMEOUT_MS);
-            if (initialized === INIT_WAIT_TIMED_OUT) {
-              return {
-                content: [{ type: "text" as const, text: "MCP initialization is still in progress. Try again shortly." }],
-                details: { mode: "script", error: "init_timeout", timeoutMs: INIT_WAIT_TIMEOUT_MS },
-              };
-            }
-            executeOwner = currentOwner;
-            executeOwner?.throwIfInactive();
-            state = initialized;
-          } catch (error) {
-            if (executeOwner && isOwnerAbortError(error, executeOwner)) throw error;
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-              content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
-              details: { mode: "script", error: "init_failed", message },
-            };
-          }
-        }
-        if (!state) {
-          return {
-            content: [{ type: "text" as const, text: retainedInitFailure
-              ? buildInitRetryInstruction("MCP is not initialized after an earlier initialization failure")
-              : "MCP not initialized" }],
-            details: { mode: "script", error: "not_initialized", ...(retainedInitFailure ? { message: retainedInitFailure } : {}) },
-          };
-        }
-        executeOwner?.throwIfInactive();
-        const scriptState = state;
-        const scriptGuard = captureRuntimeGuard(scriptState);
-        const codeMode = await loadForRuntime(loadCodeMode, scriptGuard);
-        return codeMode.runMcpScript(scriptState, params.code, params.timeoutMs, getPiTools, signal);
-      },
-    });
-  }
 
   async function connectAndReport(targetState: McpExtensionState, serverName: string, signal?: AbortSignal, ctx?: ExtensionContext) {
     const guard = captureRuntimeGuard(targetState);
@@ -2601,7 +2535,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       || hasEnabledServerWithoutValidMetadata(config, cache, directSpecs);
 
     if (shouldRegisterProxyTool) {
-      const description = buildProxyDescription(config, scriptTool);
+      const description = buildProxyDescription(config);
       if (!proxyToolRegistered || proxyToolDescription !== description) {
         finalizationRegistrations?.add("mcp");
         registerProxyTool(description);

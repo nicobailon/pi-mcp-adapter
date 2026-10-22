@@ -8,7 +8,7 @@ import { describeFailure } from "./failure-backoff.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
-import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions, scriptPipeHint } from "./mcp-output-guard.ts";
+import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { isServerDisabled } from "./types.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
@@ -399,7 +399,6 @@ export function createDirectToolExecutor(
 
       const guarded = await guardMcpOutput(outputContent, {
         ...outputGuardOptions,
-        ...scriptPipeHint(state.scriptTool, outputContent),
         ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
       });
       return {

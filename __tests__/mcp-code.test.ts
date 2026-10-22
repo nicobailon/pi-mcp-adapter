@@ -7,7 +7,6 @@ import { promisify } from "node:util";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createMcpAdapter } from "../index.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { loadMcpScriptWasm, resolveMcpScriptQuickJsUrl } from "../mcp-script-wasm.ts";
 import { executeCall } from "../proxy-modes.ts";
@@ -32,57 +31,6 @@ function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] 
 }
 
 describe("runMcpScript", () => {
-  it("registers mcpScript when scriptMode is true", () => {
-    const registerTool = vi.fn();
-    createMcpAdapter({ config: { settings: { scriptMode: true }, mcpServers: {} } })({
-      registerTool,
-      registerFlag: vi.fn(),
-      registerCommand: vi.fn(),
-      on: vi.fn(),
-      events: { on: vi.fn(), emit: vi.fn() },
-      getAllTools: vi.fn(() => []),
-    } as any);
-
-    expect(registerTool).toHaveBeenCalledWith(expect.objectContaining({
-      name: "mcpScript",
-      description: expect.stringContaining("multiple MCP calls in one request"),
-      promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
-    }));
-    const scriptTool = registerTool.mock.calls.find(([tool]) => tool.name === "mcpScript")?.[0];
-    expect(scriptTool.description).not.toContain("SKILL.md");
-    expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp_script" }));
-  });
-
-  it("points mcpScript at the scripting skill when scriptSkill is model", () => {
-    const registerTool = vi.fn();
-    createMcpAdapter({ config: { settings: { scriptMode: true, scriptSkill: "model" }, mcpServers: {} } })({
-      registerTool,
-      registerFlag: vi.fn(),
-      registerCommand: vi.fn(),
-      on: vi.fn(),
-      events: { on: vi.fn(), emit: vi.fn() },
-      getAllTools: vi.fn(() => []),
-    } as any);
-
-    const scriptTool = registerTool.mock.calls.find(([tool]) => tool.name === "mcpScript")?.[0];
-    expect(scriptTool.description).toContain("skills/mcp-scripting/SKILL.md");
-  });
-
-  it("skips mcpScript by default", () => {
-    const registerTool = vi.fn();
-    createMcpAdapter({ config: { settings: {}, mcpServers: {} } })({
-      registerTool,
-      registerFlag: vi.fn(),
-      registerCommand: vi.fn(),
-      on: vi.fn(),
-      events: { on: vi.fn(), emit: vi.fn() },
-      getAllTools: vi.fn(() => []),
-    } as any);
-
-    expect(registerTool).toHaveBeenCalled();
-    expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcpScript" }));
-  });
-
   it("retries loading QuickJS after a failed wasm read", async () => {
     const directory = await mkdtemp(join(tmpdir(), "mcp-script-wasm-"));
     const target = join(directory, "quickjs.wasm");

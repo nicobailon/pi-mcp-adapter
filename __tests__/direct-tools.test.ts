@@ -105,9 +105,10 @@ describe("deferred tool names", () => {
 });
 
 describe("buildProxyDescription", () => {
-  it("points to mcpScript only when it is registered", () => {
-    expect(buildProxyDescription({ mcpServers: {} }, true)).toContain("Use mcpScript");
-    expect(buildProxyDescription({ mcpServers: {}, settings: { scriptMode: true } }, false)).not.toContain("mcpScript");
+  it("does not mention mcpScript, whatever the config still sets", () => {
+    const leftover = { mcpServers: {}, settings: { scriptMode: true, scriptSkill: "model" } } as McpConfig;
+    expect(buildProxyDescription(leftover)).not.toContain("mcpScript");
+    expect(buildProxyDescription(leftover)).toBe(buildProxyDescription({ mcpServers: {} }));
   });
 
   it("documents the ui-messages action", () => {

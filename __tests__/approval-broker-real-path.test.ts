@@ -9,10 +9,11 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { MCP_TOOL_APPROVAL_REQUEST_EVENT, type McpToolApprovalRequest } from "../types.ts";
+import { MCP_RUNTIME_TOOL_CALL_EVENT, type McpRuntimeToolCallRequest } from "../index.ts";
 
 // Real host event bus, registered tools, session, and stdio MCP transport.
 // The receipt log distinguishes broker denial from a call dispatched to the server.
-describe("approval broker through Pi registered script calls", () => {
+describe("approval broker through the runtime tool-call event", () => {
   it.each(["deny", "abstain", "no claim"] as const)(
     "consults the broker before a cached grant: %s",
     async (secondDecision) => {
@@ -37,11 +38,12 @@ describe("approval broker through Pi registered script calls", () => {
               lifecycle: "eager",
             },
           },
-          settings: { approveTools: true, sampling: false, elicitation: false, scriptMode: true },
+          settings: { approveTools: true, sampling: false, elicitation: false },
         }));
         process.argv.push("--mcp-config", configPath);
         const requests: McpToolApprovalRequest[] = [];
         const errors: string[] = [];
+        let events: { emit(channel: string, data: unknown): void } | undefined;
         const settingsManager = SettingsManager.inMemory();
         const loader = new DefaultResourceLoader({
           cwd,
@@ -49,6 +51,7 @@ describe("approval broker through Pi registered script calls", () => {
           settingsManager,
           additionalExtensionPaths: [resolve("index.ts")],
           extensionFactories: [(pi) => {
+            events = pi.events;
             pi.events.on(MCP_TOOL_APPROVAL_REQUEST_EVENT, (request: McpToolApprovalRequest) => {
               requests.push(request);
               const decision = requests.length === 1 ? "allow_for_session"
@@ -64,27 +67,19 @@ describe("approval broker through Pi registered script calls", () => {
         }));
         await session.bindExtensions({ mode: "print", onError: error => errors.push(error.error) });
         await session.extensionRunner.emit({ type: "agent_start" });
-        const script = session.extensionRunner.getAllRegisteredTools()
-          .find(tool => tool.definition.name === "mcpScript")?.definition;
-        expect(script).toBeDefined();
-        const result = await script!.execute("approval-script", {
-          code: `
-            const first = await tools.call("fixture_echo", { value: "same" });
-            const second = await tools.call("fixture_echo", { value: "same" });
-            const third = await tools.call("fixture_echo", { value: "same" });
-            const uncached = await tools.call("fixture_echo", { value: "new" });
-            return [first, second, third, uncached];
-          `,
-        }, undefined, undefined, session.extensionRunner.createContext());
-        const text = result.content.filter(block => block.type === "text").at(-1);
-        expect(text?.type).toBe("text");
-        const results = JSON.parse((text as { text: string }).text);
+        const call = (value: string) => {
+          const request: McpRuntimeToolCallRequest = { version: 1, tool: "fixture_echo", args: { value } };
+          events!.emit(MCP_RUNTIME_TOOL_CALL_EVENT, request);
+          return request.result!;
+        };
+        const results = [];
+        for (const value of ["same", "same", "same", "new"]) results.push(await call(value));
         expect(results[0]).toMatchObject({ ok: true });
         expect(results[1]).toMatchObject(secondDecision === "deny"
-          ? { ok: false, error: { code: "approval_denied" } } : { ok: true });
+          ? { ok: false, error: { message: "MCP tool call failed: approval_denied" } } : { ok: true });
         // A denial is not revocation: the next abstention still uses the grant.
         expect(results[2]).toMatchObject({ ok: true });
-        expect(results[3]).toMatchObject({ ok: false, error: { code: "approval_required" } });
+        expect(results[3]).toMatchObject({ ok: false, error: { message: "MCP tool call failed: approval_required" } });
         expect(requests).toHaveLength(4);
         expect(new Set(requests.map(request => request.requestId)).size).toBe(4);
         requests.forEach((request, index) => expect(request).toMatchObject({

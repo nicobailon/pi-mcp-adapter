@@ -643,10 +643,6 @@ export interface McpSettings {
   directToolResultDetails?: "lean" | "bounded";
   /** Show the advisory when 75 or more direct tools resolve. Defaults to true. */
   warnOnLargeDirectTools?: boolean;
-  /** Register the MCP-only JavaScript scripting tool and its manual skill. Defaults to false. */
-  scriptMode?: boolean;
-  /** `"model"` points the model at the mcp-scripting skill from the mcpScript description. Defaults to `"manual"`: `/skill:mcp-scripting` only. */
-  scriptSkill?: "manual" | "model";
   /** Expose MCP resources as tools (default: true). Set to false to disable globally across all servers. */
   exposeResources?: boolean;
   /** Optional Jev (System One) integrations. A valid key enables semantic search; script evaluation remains disabled by default. */

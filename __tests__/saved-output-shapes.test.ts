@@ -11,7 +11,7 @@ const tool = { name: "list", description: "List things", inputSchema: { type: "o
 const result = { content: [], structuredContent: { id: "secret-id", title: "Private title" } };
 const describeText = (state: any) => executeDescribe(state, "demo_list").content[0]!.text;
 
-function sessionState(tools: object[], scriptTool: boolean, toolListHints?: { cacheScope: "private" }) {
+function sessionState(tools: object[], toolListHints?: { cacheScope: "private" }) {
   const connection = { status: "connected", tools, toolListHints, resources: [], client: { callTool: vi.fn(async () => result) } };
   return {
     config: { mcpServers: { demo: definition } },
@@ -22,7 +22,6 @@ function sessionState(tools: object[], scriptTool: boolean, toolListHints?: { ca
     toolMetadata: new Map([["demo", [{ name: "demo_list", originalName: "list", description: "List things", inputSchema: { type: "object" } }]]]),
     serverInstructions: new Map(),
     failureTracker: new Map(),
-    scriptTool,
   } as any;
 }
 
@@ -42,11 +41,10 @@ describe("saved output shapes", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("gives a script session's shape to the next session before the tool is called", async () => {
-    await executeCall(sessionState([tool], false), "demo_list", {});
+  it("gives a session's shape to the next session before the tool is called", async () => {
     expect(loadMetadataCache()!.servers.demo!.outputShapes).toBeUndefined();
-
-    await executeCall(sessionState([tool], true), "demo_list", {});
+    await executeCall(sessionState([tool]), "demo_list", {});
+    expect(loadMetadataCache()!.servers.demo!.outputShapes).toBeDefined();
     expect(JSON.stringify(loadMetadataCache())).not.toMatch(/secret-id|Private title/);
 
     const next = await initializeMcp({ getFlag: vi.fn() } as any, {
@@ -66,9 +64,9 @@ describe("saved output shapes", () => {
       updateServerMetadata(session, "demo");
       updateMetadataCache(session, "demo");
     };
-    const state = sessionState([tool], true);
+    const state = sessionState([tool]);
     await executeCall(state, "demo_list", {});
-    const other = sessionState([tool], true);
+    const other = sessionState([tool]);
     updateMetadataCache(other, "demo");
     expect(describeText(other)).toContain("{ id: string; title: string; }");
 
@@ -88,7 +86,7 @@ describe("saved output shapes", () => {
   it("keeps no shapes from a private tool listing for other sessions", async () => {
     const noSavedShape = () => expect(loadMetadataCache()!.servers.demo!.outputShapes).toBeUndefined();
     // The cached entry is public, as another session with a public listing would write it.
-    const privateSession = sessionState([tool], true, { cacheScope: "private" });
+    const privateSession = sessionState([tool], { cacheScope: "private" });
     await executeCall(privateSession, "demo_list", {});
     noSavedShape();
 
@@ -101,7 +99,7 @@ describe("saved output shapes", () => {
     noSavedShape();
 
     // A listing that turns private while the call runs counts as private.
-    const flipping = sessionState([tool], true);
+    const flipping = sessionState([tool]);
     const connection = flipping.manager.getConnection("demo");
     connection.client.callTool.mockImplementationOnce(async () => {
       connection.toolListHints = { cacheScope: "private" };
@@ -111,10 +109,10 @@ describe("saved output shapes", () => {
     noSavedShape();
 
     // A shape saved while the listing was public is not handed on once the listing is private.
-    await executeCall(sessionState([tool], true), "demo_list", {});
+    await executeCall(sessionState([tool]), "demo_list", {});
     expect(loadMetadataCache()!.servers.demo!.outputShapes).toBeDefined();
     saveMetadataCache({ version: 1, servers: { demo: { ...loadMetadataCache()!.servers.demo!, cacheScope: "private" } } });
-    const other = sessionState([tool], true);
+    const other = sessionState([tool]);
     updateMetadataCache(other, "demo");
     expect(describeText(other)).not.toContain("Observed output");
   });

@@ -60,8 +60,6 @@ export interface McpExtensionState {
   observedOutputs?: WeakMap<ServerDefinition, Map<string, ObservedOutput>>;
   /** Configured project servers disabled by trust or approval policy for this session. */
   blockedProjectServers?: Map<string, ProjectServerBlock>;
-  /** mcpScript is registered. Fixed when Pi loads the adapter, so a session's own config cannot change it. */
-  scriptTool?: boolean;
   /** Runtime-only server grants. Never persisted or restored from session entries. */
   approvedServers?: Map<string, { definition: ServerDefinition; hash: string }>;
   /** Optional active-session sink for approval decisions. */
