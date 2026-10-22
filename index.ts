@@ -483,6 +483,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       resourceUri: spec.resourceUri,
       uiResourceUri: spec.uiResourceUri,
       uiStreamMode: spec.uiStreamMode,
+      // An Executor app tool's closure sends this path, so a refresh that only respells it must re-register.
+      executorPath: spec.executorPath,
       // A mode-only change (search ↔ eager) must re-register, or the tool
       // keeps the activation behavior of the mode it was registered under.
       lazy: spec.lazy === true,

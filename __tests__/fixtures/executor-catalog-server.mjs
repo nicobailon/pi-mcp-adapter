@@ -21,6 +21,8 @@ import readline from "node:readline";
 // tools.zeta.tool_000 is new.
 // EXECUTOR_LIST_CHANGED=1: the server declares tools.listChanged, answers subscriptions/listen, and
 // sends notifications/tools/list_changed once the EXECUTOR_CATALOG_CHANGE file appears.
+// EXECUTOR_CATALOG_BRACKETS: a path; once that file exists, every path is written `tools["<app>"].<tool>`,
+// the same tools under another spelling.
 const lines = readline.createInterface({ input: process.stdin });
 const logFile = process.env.EXECUTOR_LOG_FILE;
 const serverInfo = { name: process.env.EXECUTOR_SERVER_NAME ?? "Executor", version: "0.1.0" };
@@ -78,8 +80,11 @@ const changedCatalog = [
   ...baseCatalog.filter(item => item.path !== "tools.alpha.tool_000"),
   { ...baseCatalog.find(item => item.path.startsWith("tools.alpha.")), path: "tools.zeta.tool_000", description: "Read a zeta fixture record, added after the first listing." },
 ];
+const bracketFile = process.env.EXECUTOR_CATALOG_BRACKETS;
+const bracketCatalog = baseCatalog.map(item => ({ ...item, path: item.path.replace(/^tools\.([^.]+)\./, 'tools["$1"].') }));
 // Read on every request, so the catalog changes as soon as the test creates the file.
 function currentCatalog() {
+  if (bracketFile && existsSync(bracketFile)) return bracketCatalog;
   return changeFile && existsSync(changeFile) ? changedCatalog : baseCatalog;
 }
 const unavailable = (process.env.EXECUTOR_CATALOG_UNAVAILABLE ?? "").split(",").filter(Boolean);

@@ -152,6 +152,20 @@ describe("Executor app catalog refresh", () => {
     });
   }, 30_000);
 
+  it("re-registers an app tool whose path Executor now spells differently, so a call sends the new path", async () => {
+    const root = await agentDir();
+    const brackets = join(root, "bracket-paths");
+    await withSession(root, { env: { EXECUTOR_CATALOG_BRACKETS: brackets } }, async ({ session, call }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+      await writeFile(brackets, "");
+      await call("mcp", { connect: "executor" });
+      await vi.waitFor(async () => expect((await cachedCatalog(root)).tools.map((tool: { path: string }) => tool.path)).toContain('tools["alpha"].tool_001'), { timeout: 10_000 });
+
+      const outcome = await session.extensionRunner.createToolContext("model-call", undefined).executeTool("mcp__executor__alpha_tool_001", { id: "7" });
+      expect(textOf(outcome.result)).toBe('tools["alpha"].tool_001 record 7');
+    });
+  }, 30_000);
+
   it("pages again on mcp({ connect }), /mcp-adapter reconnect and Executor's tools/list_changed", async () => {
     const root = await agentDir();
     const change = join(root, "catalog-changed");
@@ -248,7 +262,7 @@ describe("Executor app catalog refresh", () => {
     await withSession(root, { env: { EXECUTOR_CATALOG_UNAVAILABLE: "delta" } }, async ({ session, command }) => {
       await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
       const status = (await command("status")).join("\n");
-      expect(status.endsWith("(11 tools)\n  executor: 6 Executor app tools")).toBe(true);
+      expect(status.endsWith("(5 tools)\n  executor: 6 Executor app tools")).toBe(true);
       expect(status).toContain("⚠ executor: Executor could not list the app delta, so its tools are missing — This app needs an account, and none is linked to it for you.");
       expect(status.match(/⚠/g)).toHaveLength(1);
     });
