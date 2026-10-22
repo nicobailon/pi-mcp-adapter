@@ -37,12 +37,16 @@ describe("runScriptTool", () => {
     expect(bridge.runCodemodeScript).not.toHaveBeenCalled();
   });
 
-  it("returns an unreadable file's errno message", async () => {
+  // chmod 0o000 doesn't stop root from reading the file.
+  it.skipIf(process.getuid?.() === 0)("returns an unreadable file's errno message", async () => {
     const file = join(dir, "locked.js");
     writeFileSync(file, "return 1;");
     chmodSync(file, 0o000);
     try {
-      expect((await run(file)).details).toEqual({ mode: "script_tool", tool: "close_stale", error: "script_file_unreadable" });
+      await expect(run(file)).resolves.toEqual({
+        content: [{ type: "text", text: `Script tool "close_stale" cannot run: ${file} could not be read (EACCES: permission denied, open '${file}').` }],
+        details: { mode: "script_tool", tool: "close_stale", error: "script_file_unreadable" },
+      });
     } finally {
       chmodSync(file, 0o644);
     }
@@ -83,7 +87,8 @@ describe("runScriptTool", () => {
   });
 
   it("returns codemode_unavailable as the bridge gave it", async () => {
-    const file = join(dir, "close.js");
+    const file = join(dir, "unavailable.js");
+    writeFileSync(file, "return 1;");
     const unavailable = { content: [{ type: "text", text: "unavailable" }], details: { mode: "script_tool", tool: "close_stale", error: "codemode_unavailable" } };
     bridge.runCodemodeScript.mockResolvedValueOnce(unavailable);
     await expect(run(file)).resolves.toBe(unavailable);
