@@ -192,6 +192,7 @@ Accepting a browser (URL) request from the server, and its completion, also coun
 |---------|-------------|
 | `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. |
 | `allowInstall` | Allow URL installation through the `mcp` tool (default: `true`). Set to `false` to block it. |
+| `allowScriptToolSave` | Allow the `mcp` tool to save a script as a script tool after you approve it (default: `true`). Set to `false` to block it and remove its line from the `mcp` tool description. |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used). For a tool call, the timeout restarts whenever the tool reports progress; task-augmented calls instead apply it to each task request |
 | `deferWithMissingMetadata` | Allow lazy startup to defer when persisted metadata is missing or invalid (default: `false`). See [Direct Tools](tools.md#direct-tools) for the startup tradeoff. |
@@ -259,3 +260,5 @@ Each key is the tool's name, which becomes the Pi tool `mcp__script__<name>`. It
 | `declare` | `true` puts the tool in the model's tool list from the start. Default `false`: the tool is a Pi deferred tool, found by search. |
 
 Set `scriptTools` in `mcp-adapter.json` or any of the shared MCP files above; Pi's own `mcp.json` files don't read it. An entry in a higher-precedence file replaces the same-named entry as a whole. An entry with an unknown key or a bad value isn't loaded, and the file's other entries and servers still are. Each problem shows a warning that names the file, once per session, and is listed in `/mcp-adapter`. A tool whose name is already taken, by a direct MCP tool, a server's `mcp__<server>` tool, or another extension's tool, isn't loaded either. Entries in project files need project trust and approval; see [Project server trust](#project-server-trust).
+
+The model can also save a script it wrote as a script tool, with `mcp({ action: "save-script" })`. Pi shows you the change and the script first, and writes the script file and its entry only after you approve. See [Saving a script as a tool](scripting.md#saving-a-script-as-a-tool).

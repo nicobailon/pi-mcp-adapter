@@ -16,6 +16,7 @@ The `mcp` proxy tool, search, direct tools, approval prompts, and output limits.
 | UI messages | `mcp({ action: "ui-messages" })` |
 | Auth start | `mcp({ action: "auth-start", server: "name" })` |
 | Auth complete | `mcp({ action: "auth-complete", server: "name", args: { redirectUrl: "..." } })` |
+| Save a script as a tool | `mcp({ action: "save-script", args: { name, description, code, inputSchema } })` ([Saving a script as a tool](scripting.md#saving-a-script-as-a-tool)) |
 
 `args` can be a JSON object or a JSON string. Prefer the object form when your model handles it reliably; the string form remains supported for providers that need simpler schemas.
 
