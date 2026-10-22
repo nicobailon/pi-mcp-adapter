@@ -295,6 +295,22 @@ describe("mcp({ describe }) on an Executor app tool", () => {
     });
   }, 30_000);
 
+  it.each([
+    ["tool", "Executor describe failed for tools.alpha.tool_001: Describe is unavailable right now."],
+    ["protocol", "Internal error"],
+  ])("still describes the tool, with a note, when Executor's describe fails (%s error)", async (fail, reason) => {
+    const root = await agentDir();
+    await withSession(root, { env: { EXECUTOR_CATALOG_TRUNCATED: "1", EXECUTOR_DESCRIBE_FAIL: fail } }, async ({ session, call }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+      const text = textOf(await call("mcp", { describe: "alpha.tool_001" }));
+      expect(text).toContain("Executor app tool alpha.tool_001");
+      expect(text).toContain("Executor's full signature is unavailable: ");
+      expect(text).toContain(reason);
+      expect(text).not.toContain("Full signature:");
+      expect((await cachedCatalog(root)).tools.find((tool: { path: string }) => tool.path === "tools.alpha.tool_001").signature).toBeUndefined();
+    });
+  }, 30_000);
+
   it("says so when Executor no longer has the tool, and never describes a tool it did not cut", async () => {
     const root = await agentDir();
     const change = join(root, "catalog-changed");

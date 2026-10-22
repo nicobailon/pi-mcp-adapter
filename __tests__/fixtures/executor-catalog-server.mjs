@@ -23,6 +23,7 @@ import readline from "node:readline";
 // sends notifications/tools/list_changed once the EXECUTOR_CATALOG_CHANGE file appears.
 // EXECUTOR_CATALOG_BRACKETS: a path; once that file exists, every path is written `tools["<app>"].<tool>`,
 // the same tools under another spelling.
+// EXECUTOR_DESCRIBE_FAIL=tool|protocol: `describe` answers with an error tool result, or a JSON-RPC error.
 const lines = readline.createInterface({ input: process.stdin });
 const logFile = process.env.EXECUTOR_LOG_FILE;
 const serverInfo = { name: process.env.EXECUTOR_SERVER_NAME ?? "Executor", version: "0.1.0" };
@@ -225,7 +226,10 @@ lines.on("line", async line => {
       await waitForGate();
       respond(request.id, toolResult(search(args)));
     } else if (name === "describe") {
-      respond(request.id, toolResult(describe(args)));
+      const fail = process.env.EXECUTOR_DESCRIBE_FAIL;
+      if (fail === "tool") respond(request.id, { ...(modern ? { resultType: "complete" } : {}), content: [{ type: "text", text: "Describe is unavailable right now." }], isError: true });
+      else if (fail === "protocol") process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32603, message: "Internal error" } })}\n`);
+      else respond(request.id, toolResult(describe(args)));
     } else if (name === "call") {
       if (!args?.calls?.input?.hold) respond(request.id, toolResult(call(args)));
     } else if (name === "resume") {

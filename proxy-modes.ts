@@ -845,12 +845,20 @@ async function executorSignatureText(state: McpExtensionState, described: ProxyT
   if (!(await lazyConnect(state, serverName, signal))) return `Executor's full signature is unavailable: server "${serverName}" is not connected.`;
   const connection = state.manager.getConnection(serverName)!;
   const timeout = state.config.mcpServers[serverName]?.requestTimeoutMs;
-  const answer = await describeExecutorAppTool({
-    client: connection.client,
-    path,
-    ...(signal ? { signal } : {}),
-    ...(timeout !== undefined && Number.isFinite(timeout) && timeout > 0 ? { timeout } : {}),
-  });
+  let answer: Awaited<ReturnType<typeof describeExecutorAppTool>>;
+  try {
+    answer = await describeExecutorAppTool({
+      client: connection.client,
+      path,
+      ...(signal ? { signal } : {}),
+      ...(timeout !== undefined && Number.isFinite(timeout) && timeout > 0 ? { timeout } : {}),
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    // The description already built still stands; only the signature is missing.
+    const message = error instanceof Error ? error.message : String(error);
+    return `Executor's full signature is unavailable: ${message.replace(/\.$/, "")}.`;
+  }
   if ("missing" in answer) return executorUnknownToolText(path, answer.matches);
   cacheExecutorSignature(state, serverName, path, answer.signature);
   return `Full signature:\n${answer.signature}`;
