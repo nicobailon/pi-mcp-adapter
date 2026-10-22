@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import open from "open";
 import { showTools } from "../commands.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { unwrapExecutorCallResult } from "../executor-app-tools.ts";
+import { refreshExecutorCatalog } from "../init.ts";
 import { computeServerHash, executorAppToolMetadata } from "../metadata-cache.ts";
 import { executeCall, executeDescribe } from "../proxy-modes.ts";
 import { McpServerManager } from "../server-manager.ts";
@@ -70,6 +71,7 @@ async function connectExecutor({ fixture = catalogFixture, paths = ["tools.alpha
     failureTracker: new Map(),
     ui,
     completedUiSessions: [],
+    owner: { signal: new AbortController().signal, isActive: () => true },
     uiServer: null,
   } as unknown as McpExtensionState;
   const received = async () => (await readFile(logPath, "utf8").catch(() => ""))
@@ -267,6 +269,32 @@ describe("calling an Executor app tool", () => {
 
     expect(result.details).toMatchObject({ error: "aborted" });
     expect(state.manager.getConnection("executor")?.inFlight).toBe(0);
+  });
+});
+
+describe("an Executor catalog pass", () => {
+  it("keeps the connection busy until the pass settles, so the idle check doesn't close it mid-pass", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/pi-mcp-executor-pass-`);
+    tempDirs.push(dir);
+    vi.stubEnv("PI_CODING_AGENT_DIR", dir);
+    const gate = `${dir}/search-gate`;
+    const { state, calls } = await connectExecutor({ env: { EXECUTOR_SEARCH_GATE: gate } });
+    const { executorApps: _cached, ...entry } = state.sessionMetadata!.get("executor")!;
+    state.sessionMetadata!.set("executor", entry);
+    const connection = state.manager.getConnection("executor")!;
+    connection.lastUsedAt = 0;
+
+    try {
+      const pass = refreshExecutorCatalog(state, "executor")!;
+      await vi.waitFor(async () => expect((await calls()).map(call => call.name)).toContain("search"));
+      expect(state.manager.isIdle("executor", 1)).toBe(false);
+
+      await writeFile(gate, "");
+      await pass;
+      expect(state.manager.isIdle("executor", 1)).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

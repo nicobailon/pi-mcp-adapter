@@ -816,6 +816,8 @@ export function refreshExecutorCatalog(state: McpExtensionState, serverName: str
   const timeout = definition.requestTimeoutMs;
   const pass = (async () => {
     let landed = false;
+    // Counts as a call in progress, so the idle check doesn't close the connection mid-pass.
+    state.manager.incrementInFlight(serverName);
     try {
       const catalog = await fetchExecutorCatalog({
         client: connection.client,
@@ -839,6 +841,7 @@ export function refreshExecutorCatalog(state: McpExtensionState, serverName: str
       setExecutorCatalogNotes(state, serverName, [`${serverName}: Executor app catalog unavailable — ${message}`.slice(0, MAX_FAILURE_MESSAGE_CHARS)]);
     } finally {
       running.delete(serverName);
+      state.manager.decrementInFlight(serverName);
     }
     // Outside the try, so a failure to sync the tool surface is never reported as the catalog being unavailable.
     if (landed) notifyToolMetadataUpdated(state, serverName, "executor-catalog");
