@@ -1,6 +1,6 @@
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.ts";
 import type { McpExtensionState } from "./state.ts";
-import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
+import type { ToolMetadata, McpTool, McpResource, ServerCacheEntry, ServerEntry, ToolPrefix } from "./types.ts";
 import { createToolSelectorCandidateIndex, EXECUTOR_APP_TOOL_CAP, formatToolName, getToolNameCandidates, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolAnnotations, extractToolUiStreamMode } from "./utils.ts";
@@ -183,6 +183,26 @@ export function executorCatalogOf(state: McpExtensionState, serverName: string, 
 export function cacheReader(): () => MetadataCache | null {
   let cache: MetadataCache | null | undefined;
   return () => cache === undefined ? (cache = loadMetadataCache()) : cache;
+}
+
+/** The ⚠ line for each app an Executor server's catalog couldn't list. */
+export function unavailableAppNotes(serverName: string, unavailableApps: NonNullable<ServerCacheEntry["executorApps"]>["unavailableApps"]): string[] {
+  return (unavailableApps ?? []).filter(app => typeof app?.name === "string").map(app =>
+    `${serverName}: Executor could not list the app ${app.name}, so its tools are missing${typeof app.reason === "string" ? ` — ${app.reason}` : "."}`);
+}
+
+/**
+ * The Executor catalog notes `/mcp-adapter` shows: this session's for a server whose catalog was
+ * refreshed or failed, else the unavailable apps of its cached catalog, so a lazy server that
+ * hasn't connected yet still shows them.
+ */
+export function executorCatalogNotes(state: McpExtensionState, readCache?: () => MetadataCache | null): string[] {
+  return Object.keys(state.config.mcpServers).flatMap(serverName => {
+    const notes = state.executorCatalogNotes?.get(serverName);
+    if (notes) return notes;
+    const { catalog } = executorAppToolCounts(state, serverName, readCache);
+    return unavailableAppNotes(serverName, catalog?.unavailableApps);
+  });
 }
 
 function executorAppToolCounts(state: McpExtensionState, serverName: string, readCache?: () => MetadataCache | null) {

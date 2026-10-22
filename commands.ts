@@ -27,7 +27,7 @@ import {
 import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { loadMetadataCache, reconstructPromptMetadata, withSessionMetadata } from "./metadata-cache.ts";
-import { buildToolMetadata, cacheReader, executorAppToolsLine, executorAppToolsStatus, ownTools } from "./tool-metadata.ts";
+import { buildToolMetadata, cacheReader, executorAppToolsLine, executorAppToolsStatus, executorCatalogNotes, ownTools } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { inspectBearerTokenForUrl, removeBearerToken } from "./mcp-bearer-store.ts";
@@ -149,9 +149,10 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
   if (state.scriptToolIssues?.length) {
     lines.push(...state.scriptToolIssues.map((issue) => `⚠ ${issue}`), "");
   }
-  const executorCatalogNotes = [...state.executorCatalogNotes?.values() ?? []].flat();
-  if (executorCatalogNotes.length > 0) {
-    lines.push(...executorCatalogNotes.map((note) => `⚠ ${sanitizeTerminalText(note)}`), "");
+  const readCache = cacheReader();
+  const catalogNotes = executorCatalogNotes(state, readCache);
+  if (catalogNotes.length > 0) {
+    lines.push(...catalogNotes.map((note) => `⚠ ${sanitizeTerminalText(note)}`), "");
   }
   if (!state.programmaticConfig) {
     lines.push(
@@ -161,7 +162,6 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     );
   }
 
-  const readCache = cacheReader();
   for (const name of Object.keys(state.config.mcpServers)) {
     const definition = state.config.mcpServers[name];
     const block = state.blockedProjectServers?.get(name);

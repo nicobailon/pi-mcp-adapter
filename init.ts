@@ -26,7 +26,7 @@ import {
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
 import { McpServerManager, isTransientHttpConnectError, type ServerConnection } from "./server-manager.ts";
-import { buildToolMetadata, ownTools, totalToolCount } from "./tool-metadata.ts";
+import { buildToolMetadata, ownTools, totalToolCount, unavailableAppNotes } from "./tool-metadata.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
 import { formatMcpFooterStatus, formatMcpStatus, openUrl, parallelLimit, providerSignInMessage, sanitizeTerminalText } from "./utils.ts";
@@ -767,11 +767,6 @@ const EXECUTOR_UNKNOWN_PATH_REASON = "executor-unknown-path";
 function setExecutorCatalogNotes(state: McpExtensionState, serverName: string, notes: string[]): void {
   if (notes.length > 0) (state.executorCatalogNotes ??= new Map()).set(serverName, notes);
   else state.executorCatalogNotes?.delete(serverName);
-}
-
-function unavailableAppNotes(serverName: string, unavailableApps: ExecutorCatalog["unavailableApps"]): string[] {
-  return (unavailableApps ?? []).filter(app => typeof app?.name === "string").map(app =>
-    `${serverName}: Executor could not list the app ${app.name}, so its tools are missing${typeof app.reason === "string" ? ` — ${app.reason}` : "."}`);
 }
 
 function takeRepageSlot(state: McpExtensionState, serverName: string): boolean {

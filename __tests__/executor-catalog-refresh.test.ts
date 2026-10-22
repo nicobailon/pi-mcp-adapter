@@ -217,6 +217,24 @@ describe("Executor app catalog refresh", () => {
     });
   }, 40_000);
 
+  it("shows a lazy server's cached unavailable apps in /mcp-adapter without connecting it", async () => {
+    const root = await agentDir();
+    const server = { env: { EXECUTOR_CATALOG_UNAVAILABLE: "delta" } };
+    await withSession(root, server, async ({ session }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+    });
+    await vi.waitFor(async () => expect((await cachedCatalog(root))?.unavailableApps).toHaveLength(1));
+    const before = (await receipts(root)).length;
+
+    await withSession(root, { ...server, lifecycle: "lazy" }, async ({ call, command }) => {
+      // Starts the runtime the way the model would; this command helper can't start it in print mode.
+      await call("mcp", {});
+      const status = (await command("status")).join("\n");
+      expect(status).toContain("⚠ executor: Executor could not list the app delta, so its tools are missing — This app needs an account");
+      expect((await receipts(root)).length).toBe(before);
+    });
+  }, 30_000);
+
   it("does not connect a lazy server at startup for a catalog older than an hour", async () => {
     const root = await agentDir();
     await withSession(root, {}, async ({ session }) => {
