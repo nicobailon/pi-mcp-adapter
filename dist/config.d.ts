@@ -99,11 +99,6 @@ export declare function getProjectConfigPath(cwd?: string): string;
 export declare function getProjectPiConfigPath(cwd?: string): string;
 export declare function getProjectPiMcpConfigPath(cwd?: string): string;
 export declare function getLegacyMcpMigrationNotices(cwd?: string, overridePath?: string): string[];
-/**
- * One line per script tool a config file defines but the adapter did not load, with the reason.
- * Kept apart from the migration notices, which also reach `mcp({})` and so the model.
- */
-export declare function getScriptToolIssues(cwd?: string, overridePath?: string): string[];
 export declare function getSharedConfigPath(target: SharedConfigTarget, cwd?: string): string;
 export declare function getConfigDiscoveryPaths(overridePath?: string, cwd?: string): ConfigDiscoveryPath[];
 export declare function findAvailableImportConfigs(cwd?: string): DiscoveredImportConfig[];
@@ -120,6 +115,11 @@ export interface LoadedMcpConfig {
     projectServers: Map<string, ProjectServerSource>;
     /** Script tools whose entry came from a project config file, by name. Always set by loadMcpConfigWithSources. */
     projectScriptTools?: Map<string, ProjectServerSource>;
+    /**
+     * One line per script tool a config file defines but the adapter did not load, with the reason.
+     * Kept apart from the migration notices, which also reach `mcp({})`. Always set by loadMcpConfigWithSources.
+     */
+    scriptToolIssues?: string[];
     projectServerPolicy: "ask" | "allow";
 }
 export declare const MCP_CONFIG_SOURCE_METADATA: unique symbol;

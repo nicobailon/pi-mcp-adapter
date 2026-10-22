@@ -174,13 +174,6 @@ export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath) 
 }
 /** Settings that only configured mcpScript, besides the jev ones in REMOVED_JEV_KEYS. They still load, and do nothing. */
 const REMOVED_SCRIPT_SETTINGS = ["scriptMode", "scriptSkill"];
-/**
- * One line per script tool a config file defines but the adapter did not load, with the reason.
- * Kept apart from the migration notices, which also reach `mcp({})` and so the model.
- */
-export function getScriptToolIssues(cwd = process.cwd(), overridePath) {
-    return getConfigSources(overridePath, cwd).flatMap((source) => readSourceConfig(source.id, source.readPath)?.scriptToolIssues ?? []);
-}
 /** One notice per config file that still sets a setting mcpScript's removal left without effect. */
 function getRemovedScriptSettingNotices(cwd, overridePath) {
     return getConfigSources(overridePath, cwd).flatMap((source) => {
@@ -440,7 +433,7 @@ export const MCP_CONFIG_SOURCE_METADATA = Symbol.for("pi-mcp-adapter/config-sour
 export function loadMcpConfig(overridePath, cwd = process.cwd()) {
     const loaded = loadMcpConfigWithSources(overridePath, cwd);
     Object.defineProperty(loaded.config, MCP_CONFIG_SOURCE_METADATA, {
-        value: { projectServers: loaded.projectServers, projectScriptTools: loaded.projectScriptTools, projectServerPolicy: loaded.projectServerPolicy },
+        value: { projectServers: loaded.projectServers, projectScriptTools: loaded.projectScriptTools, scriptToolIssues: loaded.scriptToolIssues, projectServerPolicy: loaded.projectServerPolicy },
         enumerable: false,
     });
     return loaded.config;
@@ -450,6 +443,7 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
     const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
     const projectServers = new Map();
     const projectScriptTools = new Map();
+    const scriptToolIssues = [];
     let projectServerPolicy = "ask";
     let projectAgentPluginSource;
     let projectClaudePluginSource;
@@ -470,6 +464,8 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
         const loaded = readSourceConfig(source.id, source.readPath);
         if (!loaded)
             continue;
+        // Read here, because expandImports and mergeConfigs keep only the config's own keys.
+        scriptToolIssues.push(...loaded.scriptToolIssues ?? []);
         // Pi replaces a global entry that the project file redefines; mergeServerMaps would merge fields.
         if (source.id === "pi-mcp-global") {
             for (const name of piProjectNames)
@@ -511,7 +507,7 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
         config = mergeConfigs(config, expanded);
     }
     if (isExclusiveConfigMode()) {
-        return { config: stripProjectProviderAuth(resolveConfiguredClaudePluginMcp(config, cwd), projectServers), projectServers, projectScriptTools, projectServerPolicy };
+        return { config: stripProjectProviderAuth(resolveConfiguredClaudePluginMcp(config, cwd), projectServers), projectServers, projectScriptTools, scriptToolIssues, projectServerPolicy };
     }
     const packageConfig = loadPackageMcpConfigs(cwd);
     const pluginConfig = loadAgentPluginConfigs(config.settings?.agentPluginPaths, cwd);
@@ -536,6 +532,7 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
         config: stripProjectProviderAuth(mergedConfig, projectServers),
         projectServers,
         projectScriptTools,
+        scriptToolIssues,
         projectServerPolicy,
     };
 }

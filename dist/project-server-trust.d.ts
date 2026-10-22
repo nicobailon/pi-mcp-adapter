@@ -13,6 +13,8 @@ export declare function disabledServerReason(blocked: ReadonlyMap<string, Projec
 export declare function describeBlockedScriptTool(name: string, block: ProjectServerBlock): string;
 export declare function hasProjectServerDefinitions(config: McpConfig): boolean;
 export declare function hasProjectScriptToolDefinitions(config: McpConfig): boolean;
+/** The script-tool issues `loadMcpConfig` found in the config files of `config`; none for any other config. */
+export declare function loadedScriptToolIssues(config: McpConfig): string[];
 export declare function hashProjectServerDefinition(definition: ServerDefinition | ScriptToolDefinition): string;
 export declare function canonicalProjectRoot(cwd: string): string;
 export declare function approveProjectServer(cwd: string, serverName: string, definition: ServerDefinition): void;

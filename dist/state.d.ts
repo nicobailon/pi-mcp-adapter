@@ -48,6 +48,8 @@ export interface McpExtensionState {
     migrationNotices?: string[];
     /** Script tools a config file defines but that were not loaded, with the reason. Shown to the operator, never in `mcp({})`. */
     scriptToolIssues?: string[];
+    /** The script-tool issues of the config files this state loaded; unset for a supplied config. */
+    scriptToolLoadIssues?: string[];
     /**
      * Whether the result of the tool call `toolCallId` goes to a script rather than to the model, so
      * it skips the output guard. Unset, or false for an unknown call, keeps the guard.

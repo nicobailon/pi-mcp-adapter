@@ -49,6 +49,10 @@ export function hasProjectServerDefinitions(config) {
 export function hasProjectScriptToolDefinitions(config) {
     return (asLoadedConfig(config).projectScriptTools?.size ?? 0) > 0;
 }
+/** The script-tool issues `loadMcpConfig` found in the config files of `config`; none for any other config. */
+export function loadedScriptToolIssues(config) {
+    return config[MCP_CONFIG_SOURCE_METADATA]?.scriptToolIssues ?? [];
+}
 function canonicalize(value) {
     if (Array.isArray(value))
         return value.map(canonicalize);
