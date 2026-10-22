@@ -163,9 +163,10 @@ async function connectAccountExecutor({ mode = "local", select = [], env = {}, s
   return { state, ui, sent };
 }
 
-// proxy: the in-proxy call (frozen or `__none__` surface); direct: the registered `mcp__executor__call`;
-// hand-off: `mcp({ tool })` handed to that registered tool, which runs it as the proxy would;
-// script: a codemode script's nested call to the registered tool, which gets the whole result.
+// proxy: the in-proxy call (frozen or `__none__` surface); direct: the registered `mcp__executor__call`,
+// built with structuredContent as the deferred surface registers it; hand-off: `mcp({ tool })` handed
+// to that registered tool, which runs it as the proxy would; script: a codemode script's nested call
+// to the registered tool, which gets the whole result.
 function runCall(state: McpExtensionState, path: "proxy" | "direct" | "hand-off" | "script" = "proxy") {
   if (path === "proxy") return executeCall(state, "executor_call", callArgs, "executor");
   if (path === "hand-off") {
@@ -182,7 +183,7 @@ function runCall(state: McpExtensionState, path: "proxy" | "direct" | "hand-off"
     originalName: "call",
     description: "Executor call",
     inputSchema: { type: "object", properties: {} },
-  })(path === "script" ? "codemode-1/1" : "call-1", callArgs, undefined, undefined, undefined as never);
+  }, true)(path === "script" ? "codemode-1/1" : "call-1", callArgs, undefined, undefined, undefined as never);
 }
 
 function visible(result: { content?: Array<{ type: string; text?: string }>; details?: unknown }): string {
@@ -228,6 +229,18 @@ describe("connecting a missing Executor account", () => {
     expect(open).toHaveBeenCalledOnce();
     expect(await sent("call")).toBe(2);
     expect(await sent("execute")).toBe(2);
+    if (path === "direct" || path === "script") {
+      expect(result.structuredContent).toMatchObject({ status: "completed", execution: { ok: true, value: { ok: true, value: "needs-account data" } } });
+    }
+  });
+
+  it.each(["direct", "script"] as const)("returns the pending message without structuredContent on the %s path", async (path) => {
+    const { state } = await connectAccountExecutor({ select: ["Open", "Continue"], env: { EXECUTOR_ACCOUNT_STATE: "pending" } });
+
+    const result = await runCall(state, path);
+
+    expect(visible(result)).toContain("The needs-account account has not finished connecting in Executor");
+    expect(result).not.toHaveProperty("structuredContent");
   });
 
   it("rethrows an abort during the Continue dialog without retrying the call", async () => {
