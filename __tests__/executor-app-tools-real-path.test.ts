@@ -240,6 +240,18 @@ describe("Executor app tools as Pi deferred tools", () => {
     }, 30_000);
   });
 
+  it("keeps the app tools in the proxy's metadata after mcp({ connect }) and /mcp-adapter reconnect", async () => {
+    const root = await agentDir();
+    await withSession(root, {}, async ({ session, call }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+      await call("mcp", { connect: "executor" });
+      expect(textOf(await call("mcp", { describe: "alpha.tool_001" }))).toContain("Executor app tool alpha.tool_001");
+      const runner = session.extensionRunner;
+      await runner.getCommand("mcp-adapter")!.handler("reconnect executor", runner.createCommandContext());
+      expect(textOf(await call("mcp", { describe: "alpha.tool_001" }))).toContain("Executor app tool alpha.tool_001");
+    });
+  }, 30_000);
+
   it("starts normally from a cached catalog with corrupt items, and leaves them out", async () => {
     const root = await agentDir();
     await withSession(root, {}, async ({ session }) => {
@@ -300,6 +312,9 @@ describe("Executor app tools as Pi deferred tools", () => {
         const approvals: McpToolApprovalRequest[] = [];
         await withSession(root, {}, async ({ session, call }) => {
           expect(deferredAppTools(session)).toEqual([]);
+          // Nothing reaches Pi's registry, while the proxy still has the cached app tools.
+          expect(session.getAllTools().map(tool => tool.name).filter(name => /alpha|beta|gamma/.test(name))).toEqual([]);
+          expect(textOf(await call("mcp", { search: "alpha fixture record" }))).toContain("executor_alpha_tool_001");
           await callInProxy(root, approvals, call);
         }, { extend: brokerInto(approvals) });
       } finally {

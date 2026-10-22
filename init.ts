@@ -791,6 +791,7 @@ export function refreshExecutorCatalog(state: McpExtensionState, serverName: str
   const prefix = resolveToolPrefix(definition, state.config.settings?.toolPrefix ?? "server");
   const timeout = definition.requestTimeoutMs;
   return (async () => {
+    let landed = false;
     try {
       const catalog = await fetchExecutorCatalog({
         client: connection.client,
@@ -806,7 +807,7 @@ export function refreshExecutorCatalog(state: McpExtensionState, serverName: str
       setExecutorCatalogNotes(state, serverName, unavailableAppNotes(serverName, catalog.unavailableApps));
       const metadata = state.toolMetadata.get(serverName);
       if (metadata) state.toolMetadata.set(serverName, withExecutorAppMetadata(state, serverName, metadata));
-      notifyToolMetadataUpdated(state, serverName, "executor-catalog");
+      landed = true;
     } catch (error) {
       if (signal.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
@@ -815,6 +816,8 @@ export function refreshExecutorCatalog(state: McpExtensionState, serverName: str
     } finally {
       running.delete(serverName);
     }
+    // Outside the try, so a failure to sync the tool surface is never reported as the catalog being unavailable.
+    if (landed) notifyToolMetadataUpdated(state, serverName, "executor-catalog");
   })();
 }
 

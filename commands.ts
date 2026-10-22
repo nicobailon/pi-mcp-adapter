@@ -336,6 +336,7 @@ export async function reconnectServer(
     } else {
       state.serverInstructions.delete(name);
     }
+    // Also puts this session's Executor app tools back into the metadata buildToolMetadata just replaced.
     updateMetadataCache(state, name);
     const restored = clearFailure(state, name, "command-reconnect");
     if (!restored) notifyToolMetadataUpdated(state, name, "command-reconnect");

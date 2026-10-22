@@ -1271,6 +1271,7 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
     } else {
       state.serverInstructions.delete(serverName);
     }
+    // Also puts this session's Executor app tools back into the metadata buildToolMetadata just replaced.
     updateMetadataCache(state, serverName);
     const restored = clearFailure(state, serverName, "proxy-connect");
     if (!restored) notifyToolMetadataUpdated(state, serverName, "proxy-connect");

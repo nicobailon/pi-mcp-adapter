@@ -63,7 +63,6 @@ export function resolveDeferredToolSpecs(
   const taken = new Set(reserved.names);
   const selectorIndexFor = createServerSelectorIndexResolver(config, cache, prefix);
   const candidates: DirectToolSpec[] = [];
-  const appCandidates: DirectToolSpec[] = [];
   for (const [serverName, definition] of Object.entries(config.mcpServers)) {
     if (isServerDisabled(definition)) continue;
     const serverCache = cache.servers[serverName];
@@ -74,9 +73,10 @@ export function resolveDeferredToolSpecs(
       if (!direct.has(deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri))) candidates.push(spec);
     }
     // Executor app tools are only ever deferred, whatever directTools selects. Their Pi names follow
-    // the rules below, so one whose adapter name a server tool has still gets its own.
+    // the rules below, which hash every shared name, so list order decides none of them and one
+    // whose adapter name a server tool has still gets its own.
     for (const tool of executorAppToolMetadata(serverName, serverCache, effectivePrefix, definition, selectorIndexFor(definition), undefined)) {
-      appCandidates.push({
+      candidates.push({
         serverName,
         originalName: tool.originalName,
         prefixedName: tool.name,
@@ -86,8 +86,6 @@ export function resolveDeferredToolSpecs(
       });
     }
   }
-  // App tools take their names after every other tool.
-  candidates.push(...appCandidates);
 
   // Every tool whose plain name another tool shares gets the hash, as in Pi's built-in MCP, so list
   // order never decides which tool a name calls.
