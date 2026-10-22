@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { homedir } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DIRECT_TOOLS_ADVISORY_THRESHOLD, buildProxyDescription, getLargeDirectToolsAdvisory, resolveDirectTools } from "../direct-tools.ts";
 import {
@@ -175,6 +176,38 @@ describe("Executor app tool names", () => {
     expect(reconstructToolMetadata("executor", cache.servers.executor!, "server", config.mcpServers.executor!, config.mcpServers, cache)
       .filter((tool) => tool.executorPath !== undefined).map((tool) => tool.originalName)).toEqual(["a.x"]);
     expect(resolveDeferredToolSpecs(config, cache, { names: new Set(), directTools: [] }).filter((spec) => spec.executorPath).map((spec) => spec.originalName)).toEqual(["a.x"]);
+  });
+
+  it("keeps the same app tools after a connect as from the cache, for a pattern only a dashed name's legacy form matches", () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-executor-selector-"));
+    vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+    try {
+      // Only the legacy, dash-normalised form of my-app.tool matches; my_app.tool's own name does too.
+      const definition: ServerEntry = { ...executor, excludeTools: ["executor_my_app_tool"] };
+      const cache = executorCache(definition, ["search"], ["tools.my-app.tool", "tools.my_app.tool"]);
+      const config: McpConfig = { settings: { toolPrefix: "server" }, mcpServers: { executor: definition } };
+      const appTools = (metadata: Array<{ originalName: string; executorPath?: string }> | undefined) =>
+        metadata?.filter((tool) => tool.executorPath !== undefined).map((tool) => tool.originalName);
+      const cached = appTools(reconstructToolMetadata("executor", cache.servers.executor!, "server", definition, config.mcpServers, cache));
+
+      const state = {
+        config,
+        sessionMetadata: new Map([["executor", cache.servers.executor!]]),
+        toolMetadata: new Map(),
+        resourceCounts: new Map(),
+        promptMetadata: new Map(),
+        promptMetadataLive: new Set(),
+        serverInstructions: new Map(),
+        manager: { getConnection: () => ({ status: "connected", tools: [{ name: "search" }], resources: [], prompts: [] }) },
+      } as any;
+      updateServerMetadata(state, "executor");
+
+      expect(cached).toEqual(["my-app.tool"]);
+      expect(appTools(state.toolMetadata.get("executor"))).toEqual(cached);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(agentDir, { recursive: true, force: true });
+    }
   });
 });
 

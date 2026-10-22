@@ -21,6 +21,7 @@ import {
   serializePrompts,
   serializeResources,
   serializeTools,
+  withSessionMetadata,
   type MetadataCache,
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
@@ -668,7 +669,14 @@ function withExecutorAppMetadata(state: McpExtensionState, serverName: string, m
   if (!entry?.executorApps || !definition) return serverTools;
   const prefix = resolveToolPrefix(definition, state.config.settings?.toolPrefix ?? "server");
   const takenNames = new Set(serverTools.map((tool) => tool.name));
-  return [...serverTools, ...executorAppToolMetadata(serverName, entry, prefix, definition, undefined, takenNames)];
+  // The cross-server selector index the cached path uses, so both keep the same app tools.
+  const hasToolFilters = (Array.isArray(definition.includeTools) && definition.includeTools.length > 0)
+    || (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
+  const cache = hasToolFilters ? withSessionMetadata(loadMetadataCache(), state.config, state.sessionMetadata) : null;
+  const selectorIndex = cache
+    ? createCachedToolSelectorCandidateIndex(state.config.mcpServers, cache, state.config.settings?.toolPrefix ?? "server")
+    : undefined;
+  return [...serverTools, ...executorAppToolMetadata(serverName, entry, prefix, definition, selectorIndex, takenNames)];
 }
 
 /** Builds a server's cache entry from a connection's catalog and records it as this session's metadata. */
