@@ -16,6 +16,11 @@ import readline from "node:readline";
 // EXECUTOR_CATALOG_MALFORMED=no-path|items|remaining: every page after the first is malformed that way.
 // EXECUTOR_SEARCH_GATE: a path; `search` answers only once that file exists.
 // EXECUTOR_CATALOG_OWN=<n>: the catalog starts with n of Executor's own `tools.executor.*` tools, as a real one does.
+// EXECUTOR_CATALOG_TRUNCATED=1: every item's input type is cut short, as Executor cuts a long one.
+// EXECUTOR_CATALOG_CHANGE: a path; once that file exists, tools.alpha.tool_000 is gone and
+// tools.zeta.tool_000 is new.
+// EXECUTOR_LIST_CHANGED=1: the server declares tools.listChanged, answers subscriptions/listen, and
+// sends notifications/tools/list_changed once the EXECUTOR_CATALOG_CHANGE file appears.
 const lines = readline.createInterface({ input: process.stdin });
 const logFile = process.env.EXECUTOR_LOG_FILE;
 const serverInfo = { name: process.env.EXECUTOR_SERVER_NAME ?? "Executor", version: "0.1.0" };
@@ -30,6 +35,23 @@ function respond(id, result) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
 }
 
+const SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId";
+const listChanged = process.env.EXECUTOR_LIST_CHANGED === "1";
+let listenId;
+
+function notify(method, params) {
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+}
+
+if (listChanged && process.env.EXECUTOR_CATALOG_CHANGE) {
+  const watch = setInterval(() => {
+    if (!existsSync(process.env.EXECUTOR_CATALOG_CHANGE) || listenId === undefined) return;
+    clearInterval(watch);
+    notify("notifications/tools/list_changed", { _meta: { [SUBSCRIPTION_ID]: listenId } });
+  }, 20);
+  watch.unref();
+}
+
 function toolResult(structuredContent) {
   const body = { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
   return modern ? { resultType: "complete", ...body } : body;
@@ -42,14 +64,24 @@ const ownTools = Array.from({ length: Number(process.env.EXECUTOR_CATALOG_OWN ??
   description: "Manage this Executor, the way its own admin API describes a tool on one line.",
   input: "{ query?: { owner?: string | null } }",
 }));
-const catalog = [...ownTools, ...appNames.flatMap(app => Array.from({ length: toolsPerApp }, (_, index) => {
+const truncated = process.env.EXECUTOR_CATALOG_TRUNCATED === "1";
+const baseCatalog = [...ownTools, ...appNames.flatMap(app => Array.from({ length: toolsPerApp }, (_, index) => {
   const tool = `tool_${String(index).padStart(3, "0")}`;
   return {
     path: `tools.${app}.${tool}`,
     description: `Read the ${app} fixture record number ${index}, the way an Executor app tool describes itself on one line.`,
-    input: "{ id: string, limit?: number, [key: string]: unknown }",
+    ...(truncated ? { input: "{ id: string, limit?: num…", inputTruncated: true } : { input: "{ id: string, limit?: number, [key: string]: unknown }" }),
   };
 }))];
+const changeFile = process.env.EXECUTOR_CATALOG_CHANGE;
+const changedCatalog = [
+  ...baseCatalog.filter(item => item.path !== "tools.alpha.tool_000"),
+  { ...baseCatalog.find(item => item.path.startsWith("tools.alpha.")), path: "tools.zeta.tool_000", description: "Read a zeta fixture record, added after the first listing." },
+];
+// Read on every request, so the catalog changes as soon as the test creates the file.
+function currentCatalog() {
+  return changeFile && existsSync(changeFile) ? changedCatalog : baseCatalog;
+}
 const unavailable = (process.env.EXECUTOR_CATALOG_UNAVAILABLE ?? "").split(",").filter(Boolean);
 
 function namespacesOf(items) {
@@ -59,6 +91,7 @@ function namespacesOf(items) {
 }
 
 function search({ query = "", limit = 10, offset = 0 } = {}) {
+  const catalog = currentCatalog();
   const items = [];
   for (const item of catalog.slice(offset, offset + limit)) {
     if (items.length > 0 && JSON.stringify({ items: [...items, item], namespaces: namespacesOf([...items, item]) }).length > PAGE_BYTES) break;
@@ -85,6 +118,7 @@ function search({ query = "", limit = 10, offset = 0 } = {}) {
 }
 
 function describe({ paths = [] } = {}) {
+  const catalog = currentCatalog();
   const found = paths.map(path => catalog.find(item => item.path === path || item.path === `tools.${path}`)).filter(Boolean);
   return {
     items: found.map(item => ({ path: item.path, description: item.description, signature: "(input: {\n  id: string,\n  limit?: number,\n  [key: string]: unknown,\n}): Promise<unknown>" })),
@@ -107,6 +141,7 @@ function finished(path, value) {
 }
 
 function callOutcome(calls) {
+  const catalog = currentCatalog();
   const { path, input = {} } = calls;
   const item = catalog.find(candidate => candidate.path === path);
   if (!item) {
@@ -166,7 +201,7 @@ lines.on("line", async line => {
     modern = true;
     respond(request.id, {
       supportedVersions: ["2026-07-28"],
-      capabilities: { tools: {} },
+      capabilities: { tools: listChanged ? { listChanged: true } : {} },
       _meta: { "io.modelcontextprotocol/serverInfo": serverInfo },
     });
   } else if (request.method === "initialize") {
@@ -188,6 +223,11 @@ lines.on("line", async line => {
     } else {
       respond(request.id, { content: [{ type: "text", text: `${name} is not part of this fixture` }], isError: true });
     }
+  } else if (request.method === "subscriptions/listen" && listChanged) {
+    listenId = request.id;
+    notify("notifications/subscriptions/acknowledged", { notifications: request.params?.notifications ?? {}, _meta: { [SUBSCRIPTION_ID]: listenId } });
+  } else if (request.method === "notifications/cancelled") {
+    if (request.params?.requestId === listenId) listenId = undefined;
   } else if (request.id !== undefined) {
     process.stdout.write(`${JSON.stringify({
       jsonrpc: "2.0",

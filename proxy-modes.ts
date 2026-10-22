@@ -4,13 +4,13 @@ import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
 import { getServerPrefix, getToolNameCandidates, isServerDisabled, parseUiPromptHandoff, resolveToolPrefix, type ServerEntry } from "./types.ts";
-import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
+import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure, refreshExecutorCatalog, cacheExecutorSignature, EXECUTOR_UNKNOWN_PATH_REASON } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { buildToolMetadata, executorAppToolsLine, getToolNames, formatSchema, isPlainTypeSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import { getObservedOutput, observedOutputRecorder, renderOutputShape } from "./output-shape.ts";
-import { reconstructPromptMetadata } from "./metadata-cache.ts";
+import { loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
@@ -20,7 +20,8 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses } from "./executor-pauses.ts";
-import { executorCallParams, unwrapExecutorCallResult } from "./executor-app-tools.ts";
+import { executorCallParams, executorUnknownToolMatches, executorUnknownToolText, unwrapExecutorCallResult } from "./executor-app-tools.ts";
+import { canonicalExecutorPath, describeExecutorAppTool, isExecutorCatalogConnection } from "./executor-catalog.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, scoreToolMatch, type RankedToolMatch } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -797,6 +798,63 @@ export function resolveDescribeTarget(
   };
 }
 
+// A canonical path the cached catalog doesn't have may name an app tool Executor added since: the
+// catalog is paged again (at most once per server a minute) and the path looked up once more.
+async function findExecutorAppToolAfterRepage(
+  state: McpExtensionState,
+  toolName: string,
+  serverName: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<{ server: string; tool: ToolMetadata } | undefined> {
+  const path = canonicalExecutorPath(toolName);
+  if (!path.includes(".")) return undefined;
+  const isExecutorServer = (name: string) => {
+    const connection = state.manager.getConnection(name);
+    return state.toolMetadata.get(name)?.some(tool => tool.executorPath !== undefined) === true
+      || (connection?.status === "connected" && isExecutorCatalogConnection(connection));
+  };
+  const servers = serverName !== undefined
+    ? [serverName]
+    : Object.keys(state.config.mcpServers).filter(name => !isServerDisabled(state.config.mcpServers[name]) && isExecutorServer(name));
+  for (const server of servers) {
+    if (!isExecutorServer(server) || !(await lazyConnect(state, server, signal))) continue;
+    await refreshExecutorCatalog(state, server, EXECUTOR_UNKNOWN_PATH_REASON);
+    throwIfAborted(signal);
+    const tool = state.toolMetadata.get(server)?.find(candidate => candidate.executorPath !== undefined && candidate.originalName === path);
+    if (tool) return { server, tool };
+  }
+  return undefined;
+}
+
+function cachedExecutorAppTool(state: McpExtensionState, serverName: string, path: string) {
+  const catalog = (state.sessionMetadata?.get(serverName) ?? loadMetadataCache()?.servers[serverName])?.executorApps;
+  return catalog?.tools.find(tool => tool?.path === path);
+}
+
+// An app tool whose input type Executor cut short gets its full signature from one Executor
+// `describe`, kept on the catalog entry so the next describe needs no call.
+async function executorSignatureText(state: McpExtensionState, described: ProxyToolResult, signal?: AbortSignal): Promise<string | undefined> {
+  const details = described.details as { error?: unknown; server?: string; tool?: ToolMetadata } | undefined;
+  const serverName = details?.server;
+  const path = details?.tool?.executorPath;
+  if (details?.error !== undefined || serverName === undefined || path === undefined) return undefined;
+  const cached = cachedExecutorAppTool(state, serverName, path);
+  if (!cached?.inputTruncated) return undefined;
+  if (typeof cached.signature === "string") return `Full signature:\n${cached.signature}`;
+  if (!(await lazyConnect(state, serverName, signal))) return `Executor's full signature is unavailable: server "${serverName}" is not connected.`;
+  const connection = state.manager.getConnection(serverName)!;
+  const timeout = state.config.mcpServers[serverName]?.requestTimeoutMs;
+  const answer = await describeExecutorAppTool({
+    client: connection.client,
+    path,
+    ...(signal ? { signal } : {}),
+    ...(timeout !== undefined && Number.isFinite(timeout) && timeout > 0 ? { timeout } : {}),
+  });
+  if ("missing" in answer) return executorUnknownToolText(path, answer.matches);
+  cacheExecutorSignature(state, serverName, path, answer.signature);
+  return `Full signature:\n${answer.signature}`;
+}
+
 export function executeDescribe(state: McpExtensionState, toolName: string, serverOverride?: string): ProxyToolResult {
   const script = serverOverride === undefined ? findScriptToolMeta(state, toolName) : undefined;
   if (script) return describeScriptTool(state, toolName, script);
@@ -870,8 +928,13 @@ function describeScriptTool(state: McpExtensionState, requested: string, script:
   };
 }
 
-export async function executeGuardedDescribe(state: McpExtensionState, toolName: string, serverOverride?: string): Promise<ProxyToolResult> {
-  const result = executeDescribe(state, toolName, serverOverride);
+export async function executeGuardedDescribe(state: McpExtensionState, toolName: string, serverOverride?: string, signal?: AbortSignal): Promise<ProxyToolResult> {
+  const described = executeDescribe(state, toolName, serverOverride);
+  const signature = await executorSignatureText(state, described, combineAbortSignals(state.owner?.signal, signal));
+  const result = signature === undefined ? described : {
+    ...described,
+    content: described.content.map((block, index) => index === 0 && block.type === "text" ? { ...block, text: `${block.text}\n\n${signature}` } : block),
+  };
   const guarded = await guardMcpOutput(result.content, resolveMcpOutputGuardOptions(state.config.settings));
   return {
     ...result,
@@ -1494,6 +1557,14 @@ export async function executeCall(
     }
   }
 
+  if (!toolMeta) {
+    const repaged = await findExecutorAppToolAfterRepage(state, toolName, serverName, ownedSignal);
+    if (repaged) {
+      serverName = repaged.server;
+      toolMeta = repaged.tool;
+    }
+  }
+
   if (!serverName || !toolMeta) {
     const nativeTool = !serverOverride
       ? getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp")
@@ -1817,6 +1888,14 @@ export async function executeCall(
       },
     );
     const result = toolMeta.executorPath !== undefined ? unwrapExecutorCallResult(toolMeta.executorPath, callResult) : callResult;
+    const executorMatches = toolMeta.executorPath !== undefined ? executorUnknownToolMatches(toolMeta.executorPath, callResult) : undefined;
+    if (executorMatches) {
+      await refreshExecutorCatalog(state, serverName, EXECUTOR_UNKNOWN_PATH_REASON);
+      return {
+        content: [{ type: "text" as const, text: executorUnknownToolText(toolMeta.originalName, executorMatches) }],
+        details: { mode: "call", error: "tool_not_found", ...callIdentity, requestedTool: toolName, suggestions: executorMatches },
+      };
+    }
     if (!result.isError) recordOutput(result as Record<string, unknown>);
 
     if (uiResourceUri) {

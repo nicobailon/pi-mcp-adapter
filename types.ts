@@ -874,14 +874,14 @@ export interface ServerCacheEntry {
   discoveryFailed?: true;
   /**
    * An Executor server's app tools, in Executor's catalog order, up to `cap`. `total` counts every tool
-   * the catalog had. `unavailableApps` names the apps Executor could not list.
+   * the catalog had. `unavailableApps` names the apps Executor could not list, with Executor's reason.
    */
   executorApps?: {
     tools: CachedExecutorAppTool[];
     total: number;
     cap: number;
     fetchedAt: number;
-    unavailableApps?: string[];
+    unavailableApps?: { name: string; reason?: string }[];
   };
   cachedAt: number;
 }

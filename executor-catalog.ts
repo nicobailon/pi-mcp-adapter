@@ -11,16 +11,19 @@ import type { CachedExecutorAppTool, ServerCacheEntry } from "./types.ts";
  * number of `search` calls.
  */
 export const EXECUTOR_APP_TOOL_CAP = 1_000;
+/** How long a cached Executor app catalog is used before a connect pages it again in the background. */
+export const EXECUTOR_CATALOG_TTL_MS = 3_600_000;
 // Executor also ends a page at a byte budget (25,000 bytes by default), so a page usually holds fewer.
 const SEARCH_PAGE_LIMIT = 200;
 
 export type ExecutorCatalog = NonNullable<ServerCacheEntry["executorApps"]>;
+type UnavailableApp = NonNullable<ExecutorCatalog["unavailableApps"]>[number];
 
 interface SearchPage {
   items: CachedExecutorAppTool[];
   remaining: number;
   nextOffset: number | null;
-  unavailableApps: string[];
+  unavailableApps: UnavailableApp[];
 }
 
 /** An Executor path without its `tools.` prefix: `tools.github.issues.list` and `tools["github"].issues.list` both give `github.issues.list`. */
@@ -47,6 +50,13 @@ function malformed(detail: string): never {
   throw new Error(`Executor returned a malformed search page: ${detail}`);
 }
 
+// The text of an error tool result, as `: <text>`, or "".
+function errorText(result: Record<string, unknown>): string {
+  const content = Array.isArray(result.content) ? result.content : [];
+  const text = content.map(block => isRecord(block) && typeof block.text === "string" ? block.text : "").join(" ").trim();
+  return text ? `: ${text.slice(0, 300)}` : "";
+}
+
 function parseItem(item: unknown): CachedExecutorAppTool {
   if (!isRecord(item) || typeof item.path !== "string" || item.path.trim() === "") malformed("an item has no path");
   if (typeof item.description !== "string" || typeof item.input !== "string") malformed(`item "${item.path}" has no description or input type`);
@@ -66,11 +76,7 @@ function parseItem(item: unknown): CachedExecutorAppTool {
 // `accounts` labels name the caller's linked accounts.
 function parseSearchPage(result: unknown, offset: number): SearchPage {
   if (!isRecord(result)) malformed("not a tool result");
-  if (result.isError === true) {
-    const content = Array.isArray(result.content) ? result.content : [];
-    const text = content.map(block => isRecord(block) && typeof block.text === "string" ? block.text : "").join(" ").trim();
-    throw new Error(`Executor search failed${text ? `: ${text.slice(0, 300)}` : ""}`);
-  }
+  if (result.isError === true) throw new Error(`Executor search failed${errorText(result)}`);
   const page = result.structuredContent;
   if (!isRecord(page)) malformed("no structuredContent");
   if (!Array.isArray(page.items)) malformed("items is not an array");
@@ -87,12 +93,26 @@ function parseSearchPage(result: unknown, offset: number): SearchPage {
   }
   if (!Array.isArray(page.unavailableApps)) malformed("unavailableApps is not an array");
   const unavailableApps = page.unavailableApps.map(app => {
-    if (!isRecord(app) || typeof app.name !== "string" || (app.router !== undefined && typeof app.router !== "string")) {
+    if (!isRecord(app) || typeof app.name !== "string" || (app.router !== undefined && typeof app.router !== "string")
+      || (app.reason !== undefined && typeof app.reason !== "string")) {
       malformed("an unavailable app has no name");
     }
-    return app.router === undefined ? app.name : `${app.name} (${app.router})`;
+    const name = app.router === undefined ? app.name : `${app.name} (${app.router})`;
+    const reason = app.reason === undefined ? undefined : unavailableReason(app.reason);
+    return reason ? { name, reason } : { name };
   });
   return { items: page.items.map(parseItem), remaining: page.remaining as number, nextOffset, unavailableApps };
+}
+
+// Executor sends the reason as its error response in JSON; its `message` is the readable part.
+function unavailableReason(reason: string): string {
+  try {
+    const parsed: unknown = JSON.parse(reason);
+    if (isRecord(parsed) && typeof parsed.message === "string") return parsed.message.slice(0, 300);
+  } catch {
+    // Not JSON: the reason is already text.
+  }
+  return reason.slice(0, 300);
 }
 
 /**
@@ -111,7 +131,7 @@ export async function fetchExecutorCatalog({ client, signal, timeout, isAppTool 
 }): Promise<ExecutorCatalog> {
   const tools: CachedExecutorAppTool[] = [];
   const paths = new Set<string>();
-  const unavailableApps = new Set<string>();
+  const unavailableApps = new Map<string, UnavailableApp>();
   let skipped = 0;
   for (let offset = 0, pages = 0; ;) {
     throwIfAborted(signal);
@@ -130,17 +150,51 @@ export async function fetchExecutorCatalog({ client, signal, timeout, isAppTool 
       paths.add(item.path);
       tools.push(item);
     }
-    for (const app of page.unavailableApps) unavailableApps.add(app);
+    for (const app of page.unavailableApps) if (!unavailableApps.has(app.name)) unavailableApps.set(app.name, app);
     if (page.nextOffset === null || tools.length === EXECUTOR_APP_TOOL_CAP) {
       return {
         tools,
         total: offset + page.items.length + page.remaining - skipped,
         cap: EXECUTOR_APP_TOOL_CAP,
         fetchedAt: Date.now(),
-        ...(unavailableApps.size > 0 ? { unavailableApps: [...unavailableApps] } : {}),
+        ...(unavailableApps.size > 0 ? { unavailableApps: [...unavailableApps.values()] } : {}),
       };
     }
     // Executor ends a page at its byte budget, so only its own next offset is right.
     offset = page.nextOffset;
   }
+}
+
+export type ExecutorDescribeAnswer = { signature: string } | { missing: true; matches: string[] };
+
+/**
+ * One Executor `describe` for one app tool: its full TypeScript signature, or Executor's word that
+ * it has no such tool, with the paths it suggests instead. Any other shape throws.
+ */
+export async function describeExecutorAppTool({ client, path, signal, timeout }: {
+  client: Pick<Client, "callTool">;
+  path: string;
+  signal?: AbortSignal;
+  timeout?: number;
+}): Promise<ExecutorDescribeAnswer> {
+  const result: unknown = await client.callTool({ name: "describe", arguments: { paths: [path] } }, { ...(signal ? { signal } : {}), ...(timeout ? { timeout } : {}) });
+  const fail: (detail: string) => never = detail => {
+    throw new Error(`Executor returned a malformed describe answer for ${path}: ${detail}`);
+  };
+  if (!isRecord(result)) fail("not a tool result");
+  if (result.isError === true) throw new Error(`Executor describe failed for ${path}${errorText(result)}`);
+  const answer = result.structuredContent;
+  if (!isRecord(answer) || !Array.isArray(answer.items) || !Array.isArray(answer.missing)) fail("no items or missing list");
+  const wanted = canonicalPath(path);
+  for (const item of answer.items as unknown[]) {
+    if (!isRecord(item) || typeof item.path !== "string" || typeof item.signature !== "string") fail("an item has no path or signature");
+    if (canonicalPath(item.path) === wanted) return { signature: item.signature };
+  }
+  for (const entry of answer.missing as unknown[]) {
+    if (!isRecord(entry) || typeof entry.path !== "string") fail("a missing entry has no path");
+    const matches = entry.matches ?? [];
+    if (!Array.isArray(matches) || matches.some(match => typeof match !== "string")) fail("matches is not a list of paths");
+    if (canonicalPath(entry.path) === wanted) return { missing: true, matches: (matches as string[]).map(canonicalPath) };
+  }
+  return fail("the tool is neither described nor missing");
 }

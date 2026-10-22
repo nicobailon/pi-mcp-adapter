@@ -1,4 +1,5 @@
 import type { Client } from "@modelcontextprotocol/client";
+import { canonicalPath } from "./executor-accounts.ts";
 
 type ToolCallParams = Parameters<Client["callTool"]>[0];
 
@@ -52,4 +53,24 @@ export function unwrapExecutorCallResult<T extends object>(path: string, result:
     ...(isRecord(error.response) ? { structuredContent: error.response } : {}),
     isError: true,
   } as unknown as T;
+}
+
+/**
+ * The paths Executor suggests when a `call` named a tool it doesn't have (an `ok:false` outcome
+ * with `matches`), without `tools.`; undefined for any other result. Read after
+ * `unwrapExecutorCallResult` accepted the result.
+ */
+export function executorUnknownToolMatches(path: string, result: object): string[] | undefined {
+  const { structuredContent, isError } = result as { structuredContent?: unknown; isError?: unknown };
+  if (isError === true || !isRecord(structuredContent) || !isRecord(structuredContent.execution)) return undefined;
+  const outcome = structuredContent.execution.value;
+  if (!isRecord(outcome) || outcome.ok !== false || outcome.matches === undefined) return undefined;
+  const matches = outcome.matches;
+  if (!Array.isArray(matches) || matches.some(match => typeof match !== "string")) malformed(path);
+  return (matches as string[]).map(canonicalPath);
+}
+
+/** What a call to an app tool Executor no longer has returns, after its catalog was paged again. */
+export function executorUnknownToolText(path: string, matches: string[]): string {
+  return `Executor has no tool ${canonicalPath(path)}.${matches.length > 0 ? ` Did you mean: ${matches.join(", ")}` : ""}`;
 }

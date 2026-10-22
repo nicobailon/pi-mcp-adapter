@@ -2372,7 +2372,7 @@ describe("mcpAdapter session lifecycle", () => {
       server: "codegraph",
     })).toBe(describeResult);
 
-    expect(mocks.executeGuardedDescribe).toHaveBeenCalledWith(state, "codegraph_explore", "codegraph");
+    expect(mocks.executeGuardedDescribe).toHaveBeenCalledWith(state, "codegraph_explore", "codegraph", undefined);
   });
 
   it("rejects a pending describe result after the session is replaced", async () => {

@@ -180,17 +180,16 @@ describe("Executor app catalog", () => {
     const env = { EXECUTOR_CATALOG_TOOLS: "5", EXECUTOR_CATALOG_PRIVATE: "1", EXECUTOR_CATALOG_UNAVAILABLE: "locked" };
     await withSession(root, env, async ({ call, status }) => {
       await vi.waitFor(async () => expect(await status()).toContain("Executor could not list the app locked"), { timeout: 10_000 });
-      // A reconnect in the same session keeps the session's catalog instead of paging again.
+      // A reconnect pages again, and the catalog still stays in the session.
       expect(JSON.stringify(await call({ connect: "executor" }))).toContain("executor_search");
-      await barrier(call);
-      expect(searches(await receipts(root))).toHaveLength(1);
+      await vi.waitFor(async () => expect(searches(await receipts(root))).toHaveLength(2), { timeout: 10_000 });
       expect(await status()).toContain("Executor could not list the app locked");
       expect(await cachedEntry(root)).toMatchObject({ cacheScope: "private" });
       expect((await cachedEntry(root))?.executorApps).toBeUndefined();
     });
 
     await withSession(root, env, async () => {
-      await vi.waitFor(async () => expect(searches(await receipts(root))).toHaveLength(2), { timeout: 10_000 });
+      await vi.waitFor(async () => expect(searches(await receipts(root))).toHaveLength(3), { timeout: 10_000 });
     });
     expect((await cachedEntry(root))?.executorApps).toBeUndefined();
   }, 30_000);
@@ -198,12 +197,13 @@ describe("Executor app catalog", () => {
   it("keeps the apps Executor could not list on the entry and shows them in /mcp-adapter", async () => {
     const root = await agentDir();
     const env = { EXECUTOR_CATALOG_TOOLS: "5", EXECUTOR_CATALOG_UNAVAILABLE: "locked,flaky" };
+    const reason = "This app needs an account, and none is linked to it for you.";
     const notes = [
-      "⚠ executor: Executor could not list the app locked, so its tools are missing.",
-      "⚠ executor: Executor could not list the app flaky, so its tools are missing.",
+      `⚠ executor: Executor could not list the app locked, so its tools are missing — ${reason}`,
+      `⚠ executor: Executor could not list the app flaky, so its tools are missing — ${reason}`,
     ].join("\n");
     await withSession(root, env, async ({ status }) => {
-      await vi.waitFor(async () => expect((await cachedEntry(root))?.executorApps?.unavailableApps).toEqual(["locked", "flaky"]), { timeout: 10_000 });
+      await vi.waitFor(async () => expect((await cachedEntry(root))?.executorApps?.unavailableApps).toEqual([{ name: "locked", reason }, { name: "flaky", reason }]), { timeout: 10_000 });
       expect(await status()).toContain(notes);
     });
 

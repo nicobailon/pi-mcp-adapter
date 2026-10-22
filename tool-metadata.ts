@@ -144,15 +144,30 @@ export function getToolNames(state: McpExtensionState, serverName: string): stri
  * name, since there can be a thousand of them; undefined for any other server.
  */
 export function executorAppToolsLine(state: McpExtensionState, serverName: string): string | undefined {
-  const count = state.toolMetadata.get(serverName)?.filter(m => m.executorPath !== undefined).length ?? 0;
+  const { count, catalog, capped } = executorAppToolCounts(state, serverName);
   if (count === 0) return undefined;
-  const catalog = (state.sessionMetadata?.get(serverName) ?? loadMetadataCache()?.servers[serverName])?.executorApps;
   const scope = !catalog
     ? "in Executor's catalog"
-    : catalog.tools.length >= catalog.cap && catalog.total > catalog.cap
+    : capped
       ? `${catalog.total} in Executor's catalog, capped at ${catalog.cap}`
       : `${catalog.total} in Executor's catalog`;
   return `+${count} Executor app tools (${scope}); find them with mcp({ search: "..." }).`;
+}
+
+/** The `/mcp-adapter` status line for an Executor server's app tools; undefined for any other server. */
+export function executorAppToolsStatus(state: McpExtensionState, serverName: string): string | undefined {
+  const { count, catalog, capped } = executorAppToolCounts(state, serverName);
+  if (!catalog && count === 0) return undefined;
+  return capped
+    ? `${serverName}: ${count} of ${catalog!.total} Executor app tools registered (cap)`
+    : `${serverName}: ${count} Executor app tools`;
+}
+
+function executorAppToolCounts(state: McpExtensionState, serverName: string) {
+  const count = state.toolMetadata.get(serverName)?.filter(m => m.executorPath !== undefined).length ?? 0;
+  const catalog = (state.sessionMetadata?.get(serverName) ?? loadMetadataCache()?.servers[serverName])?.executorApps;
+  const capped = catalog !== undefined && catalog.tools.length >= catalog.cap && catalog.total > catalog.cap;
+  return { count, catalog, capped };
 }
 
 export function totalToolCount(state: McpExtensionState): number {

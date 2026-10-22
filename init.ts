@@ -48,7 +48,7 @@ import {
   restoreSessionApprovalState,
 } from "./session-approvals.ts";
 import { seedObservedOutputs } from "./output-shape.ts";
-import { fetchExecutorCatalog, isExecutorCatalogConnection, isExecutorCatalogEntry } from "./executor-catalog.ts";
+import { EXECUTOR_CATALOG_TTL_MS, fetchExecutorCatalog, isExecutorCatalogConnection, isExecutorCatalogEntry, type ExecutorCatalog } from "./executor-catalog.ts";
 export { getFailureAgeSeconds, getFailureMessage } from "./failure-backoff.ts";
 
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
@@ -755,42 +755,66 @@ export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: 
   }
 }
 
-const executorCatalogPasses = new WeakMap<McpExtensionState, Set<string>>();
+const executorCatalogPasses = new WeakMap<McpExtensionState, Map<string, Promise<void>>>();
+// When each server's catalog was last paged again unasked, for a stale catalog or an unknown path.
+const executorCatalogRepages = new WeakMap<McpExtensionState, Map<string, number>>();
+const EXECUTOR_CATALOG_REPAGE_INTERVAL_MS = 60_000;
+// Metadata update reasons where the user or Executor asked for the current catalog.
+const FORCED_CATALOG_REASONS = new Set(["proxy-connect", "command-reconnect", "tools-list-changed"]);
+/** The `refreshExecutorCatalog` reason for a call naming a path the cached catalog doesn't have. */
+export const EXECUTOR_UNKNOWN_PATH_REASON = "executor-unknown-path";
 
 function setExecutorCatalogNotes(state: McpExtensionState, serverName: string, notes: string[]): void {
   if (notes.length > 0) (state.executorCatalogNotes ??= new Map()).set(serverName, notes);
   else state.executorCatalogNotes?.delete(serverName);
 }
 
-function unavailableAppNotes(serverName: string, unavailableApps: string[] | undefined): string[] {
-  return (unavailableApps ?? []).map(app => `${serverName}: Executor could not list the app ${app}, so its tools are missing.`);
+function unavailableAppNotes(serverName: string, unavailableApps: ExecutorCatalog["unavailableApps"]): string[] {
+  return (unavailableApps ?? []).filter(app => typeof app?.name === "string").map(app =>
+    `${serverName}: Executor could not list the app ${app.name}, so its tools are missing${typeof app.reason === "string" ? ` — ${app.reason}` : "."}`);
+}
+
+function takeRepageSlot(state: McpExtensionState, serverName: string): boolean {
+  let repages = executorCatalogRepages.get(state);
+  if (!repages) executorCatalogRepages.set(state, repages = new Map());
+  const last = repages.get(serverName);
+  if (last !== undefined && Date.now() - last < EXECUTOR_CATALOG_REPAGE_INTERVAL_MS) return false;
+  repages.set(serverName, Date.now());
+  return true;
 }
 
 /**
- * After a connect, pages a connected Executor server's app catalog into its cache entry in the
- * background, inside the runtime owner. Does nothing for any other server, or when this session's
- * entry already has a catalog. A private or zero-TTL listing's catalog stays in this session.
- * Returns the pass it started, or undefined. MCP_DIRECT_TOOLS=__none__ turns it off.
+ * After a connect or another metadata update (`reason`), pages a connected Executor server's app
+ * catalog into its cache entry in the background, inside the runtime owner, while the catalog it
+ * replaces keeps serving. It pages when this session's entry has no catalog; when `reason` is an
+ * explicit connect, reconnect or Executor's tools/list_changed; and, at most once per server a
+ * minute, when the catalog is older than `EXECUTOR_CATALOG_TTL_MS` or the reason is
+ * `EXECUTOR_UNKNOWN_PATH_REASON`. Does nothing for any other server. A private or zero-TTL
+ * listing's catalog stays in this session. Returns the pass it started or the one already running,
+ * or undefined. MCP_DIRECT_TOOLS=__none__ turns it off.
  */
-export function refreshExecutorCatalog(state: McpExtensionState, serverName: string): Promise<void> | undefined {
+export function refreshExecutorCatalog(state: McpExtensionState, serverName: string, reason?: string): Promise<void> | undefined {
   if (process.env.MCP_DIRECT_TOOLS === "__none__") return undefined;
   const connection = state.manager.getConnection(serverName);
   const definition = state.config.mcpServers[serverName];
   if (!definition || connection?.status !== "connected" || !isExecutorCatalogConnection(connection)) return undefined;
   const entry = state.sessionMetadata?.get(serverName);
   if (!entry) return undefined;
-  if (entry.executorApps) {
-    setExecutorCatalogNotes(state, serverName, unavailableAppNotes(serverName, entry.executorApps.unavailableApps));
+  let running = executorCatalogPasses.get(state);
+  if (!running) executorCatalogPasses.set(state, running = new Map());
+  const inFlight = running.get(serverName);
+  if (inFlight) return inFlight;
+  const cached = entry.executorApps;
+  const forced = reason !== undefined && FORCED_CATALOG_REASONS.has(reason);
+  const unasked = reason === EXECUTOR_UNKNOWN_PATH_REASON || (cached !== undefined && Date.now() - cached.fetchedAt >= EXECUTOR_CATALOG_TTL_MS);
+  if (!forced && (unasked ? !takeRepageSlot(state, serverName) : cached !== undefined)) {
+    if (cached) setExecutorCatalogNotes(state, serverName, unavailableAppNotes(serverName, cached.unavailableApps));
     return undefined;
   }
-  let running = executorCatalogPasses.get(state);
-  if (!running) executorCatalogPasses.set(state, running = new Set());
-  if (running.has(serverName)) return undefined;
-  running.add(serverName);
   const signal = state.owner.signal;
   const prefix = resolveToolPrefix(definition, state.config.settings?.toolPrefix ?? "server");
   const timeout = definition.requestTimeoutMs;
-  return (async () => {
+  const pass = (async () => {
     let landed = false;
     try {
       const catalog = await fetchExecutorCatalog({
@@ -819,6 +843,21 @@ export function refreshExecutorCatalog(state: McpExtensionState, serverName: str
     // Outside the try, so a failure to sync the tool surface is never reported as the catalog being unavailable.
     if (landed) notifyToolMetadataUpdated(state, serverName, "executor-catalog");
   })();
+  running.set(serverName, pass);
+  return pass;
+}
+
+/**
+ * Keeps the full signature Executor's `describe` gave for one app tool on this session's catalog,
+ * and in the cache file when the catalog is cached there.
+ */
+export function cacheExecutorSignature(state: McpExtensionState, serverName: string, path: string, signature: string): void {
+  const entry = state.sessionMetadata?.get(serverName);
+  const catalog = entry?.executorApps;
+  if (!entry || !catalog) return;
+  const next = { ...catalog, tools: catalog.tools.map(tool => tool.path === path ? { ...tool, signature } : tool) };
+  state.sessionMetadata!.set(serverName, { ...entry, executorApps: next });
+  if (entry.cacheScope !== "private" && entry.ttlMs !== 0) saveExecutorCatalog(serverName, entry.configHash, next);
 }
 
 export function flushMetadataCache(state: McpExtensionState): void {

@@ -27,7 +27,7 @@ import {
 import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { loadMetadataCache, reconstructPromptMetadata, withSessionMetadata } from "./metadata-cache.ts";
-import { buildToolMetadata, executorAppToolsLine } from "./tool-metadata.ts";
+import { buildToolMetadata, executorAppToolsLine, executorAppToolsStatus } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { inspectBearerTokenForUrl, removeBearerToken } from "./mcp-bearer-store.ts";
@@ -207,6 +207,8 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
 
     const toolSuffix = failed ? "" : ` (${toolCount} tools${status.startsWith("cached") ? ", cached" : ""})`;
     lines.push(`${statusIcon} ${name}: ${status}${toolSuffix}`);
+    const appTools = executorAppToolsStatus(state, name);
+    if (appTools) lines.push(`  ${appTools}`);
   }
 
   if (state.config.settings?.freezeDirectTools === true) {

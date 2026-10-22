@@ -1504,7 +1504,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         guard();
         nextState.onToolMetadataUpdated = (_serverName, _reason) => {
           if (state !== nextState || !owner.isActive()) return;
-          if (envRaw !== "__none__") coreRuntime?.refreshExecutorCatalog(nextState, _serverName);
+          if (envRaw !== "__none__") coreRuntime?.refreshExecutorCatalog(nextState, _serverName, _reason);
           syncPromptCommands();
           if (directToolsFrozen) {
             logger.debug(`MCP: metadata update for ${_serverName} (${_reason}) skipped — directTools frozen`);
@@ -2861,7 +2861,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return connectAndReport(proxyState, params.connect, signal, _ctx as ExtensionContext);
         }
         if (params.describe) {
-          const result = await proxyModes.executeGuardedDescribe(proxyState, params.describe, params.server);
+          const result = await proxyModes.executeGuardedDescribe(proxyState, params.describe, params.server, signal);
           assertRuntimeGuard(proxyGuard);
           return result;
         }
