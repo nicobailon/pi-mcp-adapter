@@ -65,6 +65,8 @@ const loadInstallParsing = createRetryableLoader(() => import("./mcp-install.ts"
 const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_FAILURE_MESSAGE_MAX_CHARS = 1_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
+// A call that reaches an unregistered server waits this long for it, then runs regardless.
+const LATE_REGISTRATION_WAIT_MS = 10_000;
 
 /** Pi 0.99+ has its own MCP config; on Pi 0.84–0.87, `mcp.json` is an old adapter config. */
 function piSupportsMcp(pi: ExtensionAPI): boolean {
@@ -403,6 +405,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const registeredDeferredTools = new Map<string, string>();
   // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
   const registeredToolNames = new Map<string, string>();
+  const syncedServers = new Set<string>();
   // Proxy calls handed to a registered tool, by the proxy's tool call id.
   const pendingProxyHandOffs = new Map<string, { name: string; consumed: boolean; run: (params: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<AgentToolResult<Record<string, unknown>>> }>();
   // Pi 1.2+ reads which tools a call may reach; Pi 0.99-1.1 ignore the field.
@@ -729,6 +732,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     registeredToolNames.clear();
     for (const spec of directSpecs) registeredToolNames.set(deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri), spec.prefixedName);
     for (const spec of specs) registeredToolNames.set(deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri), spec.name);
+    // The servers this sync covered, so a call that reaches another one registers it first.
+    syncedServers.clear();
+    if (!deferredRegistryLive) return;
+    for (const [serverName, definition] of Object.entries(config.mcpServers)) {
+      const entry = cache?.servers[serverName];
+      if (entry && isServerCacheValid(entry, definition)) syncedServers.add(serverName);
+    }
   }
 
   /** The Pi tool name a cached MCP tool or resource tool is registered under, direct or deferred. */
@@ -1616,6 +1626,83 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   // Re-flag returned MCP tool failures so pi registers them as errors (see toolErrorOverride).
   pi.on("tool_result", (event) => toolErrorOverride(event.details));
+
+  // Pi 1.2+ `reachesTools` by tool name: refilled from pi.getAllTools() only for a name it does not know,
+  // so a tool call costs a map lookup.
+  const toolReaches = new Map<string, ((input: unknown) => unknown) | undefined>();
+
+  function reachOf(toolName: string, input: unknown): "all" | string[] | undefined {
+    if (registeredDirectTools.has(toolName) || registeredDeferredTools.has(toolName)) return undefined;
+    if (!toolReaches.has(toolName)) {
+      toolReaches.clear();
+      for (const tool of pi.getAllTools()) {
+        const reaches = (tool as { reachesTools?: unknown }).reachesTools;
+        toolReaches.set(tool.name, typeof reaches === "function" ? reaches as (input: unknown) => unknown : undefined);
+      }
+      if (!toolReaches.has(toolName)) toolReaches.set(toolName, undefined);
+    }
+    const reach = toolReaches.get(toolName)?.(input);
+    if (reach === "all") return reach;
+    return Array.isArray(reach) && reach.every((word) => typeof word === "string") ? reach : undefined;
+  }
+
+  // Pi's codemode names tools by words of the script, so `mcp__docs` and `mcp__docs__find` reach docs.
+  function reachesServer(reach: "all" | string[], serverName: string): boolean {
+    if (reach === "all") return true;
+    const namespace = namespaceProxyName(serverName);
+    return reach.some((word) => word === namespace || word.startsWith(`${namespace}__`));
+  }
+
+  async function waitBounded(work: Promise<unknown>, signal: AbortSignal | undefined): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    await Promise.race([
+      work.catch(() => undefined),
+      new Promise<void>((resolveWait) => {
+        timer = setTimeout(resolveWait, LATE_REGISTRATION_WAIT_MS);
+        onAbort = resolveWait;
+        signal?.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+  }
+
+  /**
+   * Registers the servers a call reaches before it runs. "all" only awaits connections already in
+   * flight; a reach naming one unregistered server connects that server. Failures are recorded by
+   * the connect and reported by the call itself.
+   */
+  async function registerReachedServers(reach: "all" | string[], signal: AbortSignal | undefined): Promise<void> {
+    const targetState = state;
+    if (!targetState) {
+      if (!initPromise) return;
+      await waitBounded(initPromise, signal);
+    } else {
+      const pending = Object.entries(targetState.config.mcpServers)
+        .filter(([serverName, definition]) => !isServerDisabled(definition) && !syncedServers.has(serverName) && reachesServer(reach, serverName))
+        .map(([serverName]) => serverName);
+      if (pending.length === 0) return;
+      const { lazyConnect } = await loadForRuntime(loadCoreRuntime, captureRuntimeGuard(targetState));
+      const connecting = reach !== "all" && pending.length === 1
+        ? pending
+        : pending.filter((serverName) => targetState.manager.isConnecting(serverName));
+      if (connecting.length === 0) return;
+      await waitBounded(Promise.all(connecting.map((serverName) => lazyConnect(targetState, serverName, signal))), signal);
+    }
+    if (!directToolsFrozen && state) syncToolSurface();
+  }
+
+  // A call that may reach other tools (codemode, tool_search, the proxies) first registers what it reaches.
+  pi.on("tool_call", async (event, ctx) => {
+    if (!deferredRegistryLive || directToolsFrozen) return;
+    try {
+      const reach = reachOf(event.toolName, event.input);
+      if (reach !== undefined) await registerReachedServers(reach, ctx.signal);
+    } catch (error) {
+      logger.debug(`MCP: could not register the servers ${event.toolName} reaches: ${formatTerminalError(error)}`);
+    }
+  });
 
   const registerMcpCommand = (commandName: string) => pi.registerCommand(commandName, {
     description: "Show MCP server status",

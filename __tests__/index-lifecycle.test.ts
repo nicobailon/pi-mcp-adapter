@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn(),
   holdProjectTrust: false,
   clearFailure: vi.fn(),
+  lazyConnect: vi.fn(),
   updateStatusBar: vi.fn(),
   flushMetadataCache: vi.fn(),
   updateMetadataCache: vi.fn(),
@@ -86,6 +87,7 @@ vi.mock("../init.ts", async () => {
   return {
     initializeMcp: initializeMcpResolvingTrust,
     clearFailure: mocks.clearFailure,
+    lazyConnect: mocks.lazyConnect,
     updateStatusBar: mocks.updateStatusBar,
     flushMetadataCache: mocks.flushMetadataCache,
     updateMetadataCache: mocks.updateMetadataCache,
@@ -2960,6 +2962,7 @@ describe("mcpAdapter session lifecycle", () => {
         return {
           initializeMcp: initializeMcpResolvingTrust,
           clearFailure: mocks.clearFailure,
+          lazyConnect: mocks.lazyConnect,
           updateStatusBar: mocks.updateStatusBar,
           flushMetadataCache: mocks.flushMetadataCache,
           updateMetadataCache: mocks.updateMetadataCache,
@@ -4764,6 +4767,108 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(frozen.state));
       const frozenHandOff = await proxyHandOff(frozen.api, nestedContext(frozen.api, []));
       await expect(frozenHandOff(echoCall("ghost"))).resolves.toBeUndefined();
+    });
+
+    // A booted session with a registered server, plus `docs`, configured but never connected.
+    async function bootWithUnconnectedServer(settings: Record<string, unknown> = {}) {
+      const booted = await bootCached({ proxy: [{ command: "x", lifecycle: "eager" }, [echoTool]] }, settings);
+      await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(booted.state));
+      booted.config.mcpServers.docs = { command: "d" };
+      booted.state.manager.isConnecting = vi.fn(() => false);
+      const connectDocs = () => {
+        mocks.loadMetadataCache.mockReturnValue({
+          version: 1,
+          servers: {
+            proxy: cacheEntry(booted.config.mcpServers.proxy!, { tools: [echoTool] }),
+            docs: cacheEntry(booted.config.mcpServers.docs, { tools: [{ name: "find" }] }),
+          },
+        });
+        booted.state.onToolMetadataUpdated("docs", "lazy-connect");
+        return true;
+      };
+      const toolCall = (toolName: string, input: unknown, signal?: AbortSignal) =>
+        booted.handlers.get("tool_call")!({ type: "tool_call", toolName, toolCallId: "t1", input }, { signal });
+      return { ...booted, connectDocs, toolCall };
+    }
+    const scriptWords = (input: { code: string }) => input.code.match(/\w+/g) ?? [];
+
+    it("connects the one unregistered server a named reach names and registers it before the call runs", async () => {
+      const { api, state, connectDocs, toolCall } = await bootWithUnconnectedServer();
+      api.getAllTools.mockReturnValue([{ name: "codemode", reachesTools: scriptWords }]);
+      mocks.lazyConnect.mockImplementation(async () => connectDocs());
+
+      await toolCall("codemode", { code: "await tools.mcp__docs__find({}); await tools.mcp__proxy__echo({})" });
+      expect(registeredTool(api, "mcp__docs__find")).toMatchObject({ exposure: "deferred" });
+      await toolCall("codemode", { code: "await tools.mcp__docs__find({})" });
+
+      expect(mocks.lazyConnect.mock.calls).toEqual([[state, "docs", undefined]]);
+    });
+
+    it("lets a reach of all await a connection already in flight, and start none", async () => {
+      const { api, config, state, connectDocs, toolCall } = await bootWithUnconnectedServer();
+      config.mcpServers.idle = { command: "i" };
+      state.manager.isConnecting = vi.fn((serverName: string) => serverName === "docs");
+      let finishConnect!: () => void;
+      mocks.lazyConnect.mockImplementation(() => new Promise((resolveConnect) => { finishConnect = () => resolveConnect(connectDocs()); }));
+      api.getAllTools.mockReturnValue([{ name: "tool_search", reachesTools: () => "all" }]);
+
+      const call = toolCall("tool_search", { query: "find" });
+      await vi.waitFor(() => expect(mocks.lazyConnect).toHaveBeenCalled());
+      expect(registeredTool(api, "mcp__docs__find")).toBeUndefined();
+      finishConnect();
+      await call;
+
+      expect(registeredTool(api, "mcp__docs__find")).toMatchObject({ exposure: "deferred" });
+      expect(mocks.lazyConnect.mock.calls.map((callArgs: unknown[]) => callArgs[1])).toEqual(["docs"]);
+    });
+
+    it("lets the call run when the connect fails or does not finish", async () => {
+      const { api, toolCall } = await bootWithUnconnectedServer();
+      api.getAllTools.mockReturnValue([{ name: "codemode", reachesTools: scriptWords }]);
+      mocks.lazyConnect.mockResolvedValueOnce(false).mockReturnValueOnce(new Promise(() => {}));
+
+      await expect(toolCall("codemode", { code: "tools.mcp__docs__find()" })).resolves.toBeUndefined();
+      const controller = new AbortController();
+      const hanging = toolCall("codemode", { code: "tools.mcp__docs__find()" }, controller.signal);
+      await vi.waitFor(() => expect(mocks.lazyConnect).toHaveBeenCalledTimes(2));
+      controller.abort();
+      await expect(hanging).resolves.toBeUndefined();
+      expect(registeredTool(api, "mcp__docs__find")).toBeUndefined();
+    });
+
+    it("adds and withdraws deferred tools when a server's tool list changes", async () => {
+      const { api, config, state } = await bootCached({ proxy: [{ command: "x", lifecycle: "eager" }, [echoTool, { name: "old" }]] });
+      await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+      mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: cacheEntry(config.mcpServers.proxy!, { tools: [echoTool, { name: "new" }] }) } });
+
+      state.onToolMetadataUpdated("proxy", "tools-list-changed");
+
+      expect(registeredTool(api, "mcp__proxy__new")).toMatchObject({ exposure: "deferred" });
+      expect(registrations(api, "mcp__proxy__old").at(-1)).toMatchObject({ exposure: "hidden" });
+    });
+
+    it("does nothing for a tool without reachesTools, as before Pi 1.2, and skips its own MCP tools without a lookup", async () => {
+      const { api, toolCall } = await bootWithUnconnectedServer();
+      api.getAllTools.mockReturnValue([{ name: "codemode" }, { name: "bash" }]);
+
+      await toolCall("codemode", { code: "tools.mcp__docs__find()" });
+      await toolCall("bash", { command: "mcp__docs__find" });
+      expect(api.getAllTools).toHaveBeenCalledTimes(1);
+      await toolCall("mcp__proxy__echo", {});
+
+      expect(api.getAllTools).toHaveBeenCalledTimes(1);
+      expect(mocks.lazyConnect).not.toHaveBeenCalled();
+    });
+
+    it("registers nothing for a reaching call when settings.freezeDirectTools is set", async () => {
+      const { api, toolCall, connectDocs } = await bootWithUnconnectedServer({ freezeDirectTools: true });
+      api.getAllTools.mockReturnValue([{ name: "codemode", reachesTools: scriptWords }]);
+      mocks.lazyConnect.mockImplementation(async () => connectDocs());
+
+      await toolCall("codemode", { code: "tools.mcp__docs__find()" });
+
+      expect(mocks.lazyConnect).not.toHaveBeenCalled();
+      expect(registeredTool(api, "mcp__docs__find")).toBeUndefined();
     });
   });
 });
