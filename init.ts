@@ -14,6 +14,7 @@ import {
   loadMetadataCache,
   reconstructPromptMetadata,
   reconstructToolMetadata,
+  saveExecutorCatalog,
   saveMetadataCache,
   serializePrompts,
   serializeResources,
@@ -44,6 +45,7 @@ import {
   restoreSessionApprovalState,
 } from "./session-approvals.ts";
 import { seedObservedOutputs } from "./output-shape.ts";
+import { fetchExecutorCatalog, isExecutorCatalogConnection } from "./executor-catalog.ts";
 export { getFailureAgeSeconds, getFailureMessage } from "./failure-backoff.ts";
 
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
@@ -669,6 +671,9 @@ function captureMetadata(
   }
 
   const outputShapes = keepOutputShapes(existingEntry, configHash, tools);
+  // A reconnect keeps the Executor app catalog this session or a valid cache entry already has.
+  const executorApps = sessionFallback?.executorApps
+    ?? (existingEntry && isServerCacheValid(existingEntry, definition) ? existingEntry.executorApps : undefined);
   const entry: ServerCacheEntry = {
     configHash,
     tools,
@@ -678,6 +683,7 @@ function captureMetadata(
     ...(connection.toolListHints?.ttlMs !== undefined ? { ttlMs: connection.toolListHints.ttlMs } : {}),
     ...(cacheScope !== undefined ? { cacheScope } : {}),
     ...(outputShapes !== undefined ? { outputShapes } : {}),
+    ...(executorApps !== undefined ? { executorApps } : {}),
     cachedAt: Date.now(),
   };
 
@@ -699,6 +705,56 @@ export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: 
     const message = error instanceof Error ? error.message : String(error);
     logger.debug(`MCP: metadata update hook failed for ${serverName}: ${message}`);
   }
+}
+
+const executorCatalogPasses = new WeakMap<McpExtensionState, Set<string>>();
+
+function setExecutorCatalogNotes(state: McpExtensionState, serverName: string, notes: string[]): void {
+  if (notes.length > 0) (state.executorCatalogNotes ??= new Map()).set(serverName, notes);
+  else state.executorCatalogNotes?.delete(serverName);
+}
+
+function unavailableAppNotes(serverName: string, unavailableApps: string[] | undefined): string[] {
+  return (unavailableApps ?? []).map(app => `${serverName}: Executor could not list the app ${app}, so its tools are missing.`);
+}
+
+/**
+ * After a connect, pages a connected Executor server's app catalog into its cache entry in the
+ * background, inside the runtime owner. Does nothing for any other server, or when this session's
+ * entry already has a catalog. A private or zero-TTL listing's catalog stays in this session.
+ */
+export function refreshExecutorCatalog(state: McpExtensionState, serverName: string): void {
+  const connection = state.manager.getConnection(serverName);
+  if (connection?.status !== "connected" || !isExecutorCatalogConnection(connection)) return;
+  const entry = state.sessionMetadata?.get(serverName);
+  if (!entry) return;
+  if (entry.executorApps) {
+    setExecutorCatalogNotes(state, serverName, unavailableAppNotes(serverName, entry.executorApps.unavailableApps));
+    return;
+  }
+  let running = executorCatalogPasses.get(state);
+  if (!running) executorCatalogPasses.set(state, running = new Set());
+  if (running.has(serverName)) return;
+  running.add(serverName);
+  const signal = state.owner.signal;
+  void (async () => {
+    try {
+      const catalog = await fetchExecutorCatalog({ client: connection.client, signal });
+      if (signal.aborted) return;
+      const current = state.sessionMetadata?.get(serverName);
+      if (!current || current.configHash !== entry.configHash) return;
+      if (current.cacheScope !== "private" && current.ttlMs !== 0) saveExecutorCatalog(serverName, current.configHash, catalog);
+      state.sessionMetadata!.set(serverName, { ...current, executorApps: catalog });
+      setExecutorCatalogNotes(state, serverName, unavailableAppNotes(serverName, catalog.unavailableApps));
+    } catch (error) {
+      if (signal.aborted) return;
+      const message = error instanceof Error ? error.message : String(error);
+      logger.debug(`MCP: Executor app catalog for ${serverName} is unavailable: ${sanitizeTerminalText(message)}`);
+      setExecutorCatalogNotes(state, serverName, [`${serverName}: Executor app catalog unavailable — ${message}`]);
+    } finally {
+      running.delete(serverName);
+    }
+  })();
 }
 
 export function flushMetadataCache(state: McpExtensionState): void {

@@ -1493,6 +1493,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         guard();
         nextState.onToolMetadataUpdated = (_serverName, _reason) => {
           if (state !== nextState || !owner.isActive()) return;
+          if (envRaw !== "__none__") coreRuntime?.refreshExecutorCatalog(nextState, _serverName);
           syncPromptCommands();
           if (directToolsFrozen) {
             logger.debug(`MCP: metadata update for ${_serverName} (${_reason}) skipped — directTools frozen`);
@@ -1504,6 +1505,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         syncPromptCommands();
         guard();
         syncToolSurface(ctx);
+        guard();
+        // Startup connects ran before the hook above was set.
+        if (envRaw !== "__none__") {
+          for (const name of Object.keys(nextState.config.mcpServers)) coreRuntime?.refreshExecutorCatalog(nextState, name);
+        }
         guard();
         // A connected snapshot is readiness-like external state. Publish it only
         // after Pi's model-facing direct-tool surface reflects live metadata.

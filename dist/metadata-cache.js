@@ -53,7 +53,8 @@ export function withSessionMetadata(cache, config, sessionMetadata) {
 export function saveMetadataCache(cache, options = {}) {
     updateMetadataCacheFile(servers => {
         const next = { ...servers };
-        for (const [name, entry] of Object.entries(cache.servers)) {
+        for (const [name, listed] of Object.entries(cache.servers)) {
+            const entry = withoutSessionOnlyCatalog(listed);
             // Startup batch: a catalog is written unless disk has a newer catalog for the same config, and keeps output shapes
             // saved meanwhile. A failure marker is written only if disk is unchanged since the startup snapshot, so it never
             // destroys what another session wrote during the pass.
@@ -77,6 +78,13 @@ export function saveMetadataCache(cache, options = {}) {
         }
         return next;
     });
+}
+/** A private or zero-TTL listing's Executor app catalog stays in the session that fetched it. */
+function withoutSessionOnlyCatalog(entry) {
+    if (!entry.executorApps || (entry.cacheScope !== "private" && entry.ttlMs !== 0))
+        return entry;
+    const { executorApps: _sessionOnly, ...persisted } = entry;
+    return persisted;
 }
 /** Reads the cache file, applies one update, and writes the result; an update returning undefined skips the write. */
 function updateMetadataCacheFile(update) {
@@ -169,6 +177,15 @@ export function keepOutputShapes(previous, configHash, tools) {
         return before !== undefined && after !== undefined && outputShapeKey(before) === outputShapeKey(after);
     });
     return kept.length > 0 ? Object.fromEntries(kept) : undefined;
+}
+/** Adds an Executor server's app catalog to its cache entry on disk, if that entry is still the same, persistable listing. */
+export function saveExecutorCatalog(serverName, configHash, catalog) {
+    updateMetadataCacheFile(servers => {
+        const entry = servers[serverName];
+        if (!entry || entry.configHash !== configHash || entry.discoveryFailed || entry.cacheScope === "private" || entry.ttlMs === 0)
+            return undefined;
+        return { ...servers, [serverName]: { ...entry, executorApps: catalog } };
+    });
 }
 export function isServerCacheValid(entry, definition, 
 // 0 means no age limit: without a server-declared TTL, an entry stays valid until the next connect refreshes it.

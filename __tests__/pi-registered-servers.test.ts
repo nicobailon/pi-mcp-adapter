@@ -11,6 +11,7 @@ vi.mock("../init.ts", () => ({
   updateStatusBar: vi.fn(),
   flushMetadataCache: vi.fn(),
   notifyToolMetadataUpdated: vi.fn(),
+  refreshExecutorCatalog: vi.fn(),
 }));
 
 vi.mock("../mcp-auth-flow.ts", () => ({

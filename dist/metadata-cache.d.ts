@@ -24,6 +24,8 @@ export declare function outputShapeKey(tool: Pick<CachedTool, "description" | "i
 export declare function saveObservedOutput(serverName: string, definition: ServerEntry, toolName: string, toolKey: string, output: NonNullable<ServerCacheEntry["outputShapes"]>[string]): void;
 /** Output shapes to carry into a rewritten cache entry: same config, not private, and only tools whose definition kept its shape key. */
 export declare function keepOutputShapes(previous: ServerCacheEntry | undefined, configHash: string, tools: CachedTool[]): ServerCacheEntry["outputShapes"];
+/** Adds an Executor server's app catalog to its cache entry on disk, if that entry is still the same, persistable listing. */
+export declare function saveExecutorCatalog(serverName: string, configHash: string, catalog: NonNullable<ServerCacheEntry["executorApps"]>): void;
 export declare function isServerCacheValid(entry: ServerCacheEntry, definition: ServerEntry, maxAgeMs?: number, environment?: NodeJS.ProcessEnv): boolean;
 export declare function parseDirectToolSelectors(selectors: string[]): {
     servers: Set<string>;

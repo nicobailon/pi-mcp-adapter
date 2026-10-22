@@ -80,7 +80,8 @@ export function withSessionMetadata(
 export function saveMetadataCache(cache: MetadataCache, options: { startupSnapshot?: MetadataCache["servers"] } = {}): void {
   updateMetadataCacheFile(servers => {
     const next = { ...servers };
-    for (const [name, entry] of Object.entries(cache.servers)) {
+    for (const [name, listed] of Object.entries(cache.servers)) {
+      const entry = withoutSessionOnlyCatalog(listed);
       // Startup batch: a catalog is written unless disk has a newer catalog for the same config, and keeps output shapes
       // saved meanwhile. A failure marker is written only if disk is unchanged since the startup snapshot, so it never
       // destroys what another session wrote during the pass.
@@ -99,6 +100,13 @@ export function saveMetadataCache(cache: MetadataCache, options: { startupSnapsh
     }
     return next;
   });
+}
+
+/** A private or zero-TTL listing's Executor app catalog stays in the session that fetched it. */
+function withoutSessionOnlyCatalog(entry: ServerCacheEntry): ServerCacheEntry {
+  if (!entry.executorApps || (entry.cacheScope !== "private" && entry.ttlMs !== 0)) return entry;
+  const { executorApps: _sessionOnly, ...persisted } = entry;
+  return persisted;
 }
 
 /** Reads the cache file, applies one update, and writes the result; an update returning undefined skips the write. */
@@ -205,6 +213,15 @@ export function keepOutputShapes(
     return before !== undefined && after !== undefined && outputShapeKey(before) === outputShapeKey(after);
   });
   return kept.length > 0 ? Object.fromEntries(kept) : undefined;
+}
+
+/** Adds an Executor server's app catalog to its cache entry on disk, if that entry is still the same, persistable listing. */
+export function saveExecutorCatalog(serverName: string, configHash: string, catalog: NonNullable<ServerCacheEntry["executorApps"]>): void {
+  updateMetadataCacheFile(servers => {
+    const entry = servers[serverName];
+    if (!entry || entry.configHash !== configHash || entry.discoveryFailed || entry.cacheScope === "private" || entry.ttlMs === 0) return undefined;
+    return { ...servers, [serverName]: { ...entry, executorApps: catalog } };
+  });
 }
 
 export function isServerCacheValid(

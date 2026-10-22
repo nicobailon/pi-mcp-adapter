@@ -29,7 +29,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The `resume` schema check keeps out Executor's browser mode, whose `resume` takes only a
  * requestId because the operator answers in the browser.
  */
-function isExecutorConnection(conn: Pick<ServerConnection, "client" | "tools">): boolean {
+export function isExecutorConnection(conn: Pick<ServerConnection, "client" | "tools">): boolean {
   const name = conn.client.getServerVersion?.()?.name;
   if (name !== undefined && name !== "Executor") return false;
   const resume = conn.tools.find(tool => tool.name === "resume")?.inputSchema?.properties;

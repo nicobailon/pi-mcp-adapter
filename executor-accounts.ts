@@ -67,7 +67,7 @@ function appSlug(path: string): string {
   return slug;
 }
 
-function canonicalPath(path: string): string {
+export function canonicalPath(path: string): string {
   const trimmed = path.trim();
   if (trimmed !== "tools" && !trimmed.startsWith("tools.") && !trimmed.startsWith("tools[")) return trimmed;
   const segments: string[] = [];

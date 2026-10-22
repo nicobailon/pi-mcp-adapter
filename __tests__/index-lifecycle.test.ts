@@ -90,6 +90,7 @@ vi.mock("../init.ts", async () => {
     flushMetadataCache: mocks.flushMetadataCache,
     updateMetadataCache: mocks.updateMetadataCache,
     notifyToolMetadataUpdated: mocks.notifyToolMetadataUpdated,
+    refreshExecutorCatalog: vi.fn(),
   };
 });
 
@@ -2979,6 +2980,7 @@ describe("mcpAdapter session lifecycle", () => {
           flushMetadataCache: mocks.flushMetadataCache,
           updateMetadataCache: mocks.updateMetadataCache,
           notifyToolMetadataUpdated: mocks.notifyToolMetadataUpdated,
+          refreshExecutorCatalog: vi.fn(),
         };
       });
     } else {

@@ -149,6 +149,10 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
   if (state.scriptToolIssues?.length) {
     lines.push(...state.scriptToolIssues.map((issue) => `⚠ ${issue}`), "");
   }
+  const executorCatalogNotes = [...state.executorCatalogNotes?.values() ?? []].flat();
+  if (executorCatalogNotes.length > 0) {
+    lines.push(...executorCatalogNotes.map((note) => `⚠ ${sanitizeTerminalText(note)}`), "");
+  }
   if (!state.programmaticConfig) {
     lines.push(
       "Shared MCP config: .mcp.json for this project/team or ~/.config/mcp/mcp.json for all projects.",

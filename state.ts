@@ -51,6 +51,8 @@ export interface McpExtensionState {
   scriptToolIssues?: string[];
   /** The script-tool issues of the config files this state loaded; unset for a supplied config. */
   scriptToolLoadIssues?: string[];
+  /** `/mcp-adapter` lines about each Executor server's app catalog: the apps it could not list, or why the catalog is unavailable. */
+  executorCatalogNotes?: Map<string, string[]>;
   /**
    * Whether the result of the tool call `toolCallId` goes to a script rather than to the model, so
    * it skips the output guard. Unset, or false for an unknown call, keeps the guard.
