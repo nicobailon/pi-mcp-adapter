@@ -120,12 +120,14 @@ const fixtureLinks = {
   hosted: { url: "https://executor.test/org/acme/connections/conn_hosted_1", id: "conn_hosted_1" },
 };
 const callArgs = { calls: { path: 'tools["needs-account"].read', input: {} } };
+let handOffs = 0;
 
-async function connectAccountExecutor({ mode = "local", select = [], env = {}, session = "tui" }: {
+async function connectAccountExecutor({ mode = "local", select = [], env = {}, session = "tui", approve = false }: {
   mode?: "local" | "hosted";
   select?: Array<string | undefined>;
   env?: Record<string, string>;
   session?: "tui" | "non-tui" | "headless";
+  approve?: boolean;
 } = {}) {
   const ui = { select: vi.fn(async () => select.shift()), input: vi.fn(), notify: vi.fn() };
   const tempDir = await mkdtemp(`${tmpdir()}/pi-mcp-executor-accounts-`);
@@ -136,6 +138,7 @@ async function connectAccountExecutor({ mode = "local", select = [], env = {}, s
     args: [fixture],
     protocolVersion: "2026-07-28" as const,
     env: { EXECUTOR_LOG_FILE: logPath, EXECUTOR_ACCOUNT_MODE: mode, ...env },
+    ...(approve ? { approveTools: ["call"] } : {}),
   };
   const manager = new McpServerManager();
   manager.setDefaultRequestTimeoutMs(2_000);
@@ -159,16 +162,26 @@ async function connectAccountExecutor({ mode = "local", select = [], env = {}, s
   return { state, ui, sent };
 }
 
-function runCall(state: McpExtensionState, path: "proxy" | "direct" = "proxy") {
-  return path === "proxy"
-    ? executeCall(state, "executor_call", callArgs, "executor")
-    : createDirectToolExecutor(() => state, () => null, {
-        serverName: "executor",
-        prefixedName: "executor_call",
-        originalName: "call",
-        description: "Executor call",
-        inputSchema: { type: "object", properties: {} },
-      })("call-1", callArgs, undefined, undefined, undefined as never);
+// proxy: the in-proxy call (frozen or `__none__` surface); direct: the registered `mcp__executor__call`;
+// hand-off: `mcp({ tool })` handed to that registered tool, which runs it as the proxy would;
+// script: a codemode script's nested call to the registered tool, which gets the whole result.
+function runCall(state: McpExtensionState, path: "proxy" | "direct" | "hand-off" | "script" = "proxy") {
+  if (path === "proxy") return executeCall(state, "executor_call", callArgs, "executor");
+  if (path === "hand-off") {
+    const handOff = async ({ serverName, toolMeta, args }: { serverName: string; toolMeta: { name: string }; args: Record<string, unknown> | undefined }) => {
+      handOffs++;
+      return executeCall(state, toolMeta.name, args, serverName);
+    };
+    return executeCall(state, "executor_call", callArgs, "executor", undefined, undefined, undefined, undefined, undefined, handOff);
+  }
+  if (path === "script") state.deliversToScript = toolCallId => toolCallId?.includes("/") === true;
+  return createDirectToolExecutor(() => state, () => null, {
+    serverName: "executor",
+    prefixedName: "executor_call",
+    originalName: "call",
+    description: "Executor call",
+    inputSchema: { type: "object", properties: {} },
+  })(path === "script" ? "codemode-1/1" : "call-1", callArgs, undefined, undefined, undefined as never);
 }
 
 function visible(result: { content?: Array<{ type: string; text?: string }>; details?: unknown }): string {
@@ -176,6 +189,7 @@ function visible(result: { content?: Array<{ type: string; text?: string }>; det
 }
 
 afterEach(async () => {
+  handOffs = 0;
   vi.mocked(open).mockClear();
   await Promise.all(managers.splice(0).map(manager => manager.closeAll()));
   await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
@@ -198,6 +212,21 @@ describe("connecting a missing Executor account", () => {
     expect(await sent("call")).toBe(2);
     expect(visible(result)).not.toMatch(/fixture-secret|token=|conn_|executor\.test|127\.0\.0\.1/);
     expect(JSON.stringify(ui.notify.mock.calls)).not.toMatch(/fixture-secret|token=|conn_|executor\.test|127\.0\.0\.1/);
+  });
+
+  it.each(["proxy", "direct", "hand-off", "script"] as const)("asks approval once and connects once on the %s path", async (path) => {
+    const { state, ui, sent } = await connectAccountExecutor({ approve: true, select: ["Allow once", "Open", "Continue"] });
+
+    const result = await runCall(state, path);
+
+    expect(visible(result)).toContain("needs-account data");
+    expect(ui.select).toHaveBeenCalledTimes(3);
+    expect(handOffs).toBe(path === "hand-off" ? 1 : 0);
+    expect(ui.select).toHaveBeenNthCalledWith(1, expect.stringContaining("MCP: executor wants to run call"), expect.any(Array));
+    expect(ui.select).toHaveBeenNthCalledWith(2, expect.stringContaining("needs-account needs your service account"), ["Open", "Decline"]);
+    expect(open).toHaveBeenCalledOnce();
+    expect(await sent("call")).toBe(2);
+    expect(await sent("execute")).toBe(2);
   });
 
   it("rethrows an abort during the Continue dialog without retrying the call", async () => {
