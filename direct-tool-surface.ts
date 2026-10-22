@@ -262,6 +262,9 @@ export function buildProxyDescription(config: McpConfig): string {
   desc += `  mcp({ connect: "server-name" })       → Connect to a server and refresh metadata\n`;
   desc += `  mcp({ tool: "name", args: { key: "value" } })         → Call a tool (object args; JSON string also accepted)\n`;
   desc += `  mcp({ action: "ui-messages" })        → Retrieve accumulated messages from completed UI sessions\n`;
+  if (config.settings?.allowScriptToolSave !== false) {
+    desc += `  mcp({ action: "save-script", args: { name, description, code, inputSchema } }) → Save a script as a reusable tool (asks you first)\n`;
+  }
   desc += `  mcp({ action: "auth-start", server: "name" })      → Open OAuth and watch for completion\n`;
   desc += `  mcp({ action: "auth-complete", server: "name", args: { redirectUrl: "..." } }) → Complete manual OAuth\n`;
   desc += `\nMode: action > tool (call) > connect > describe > instructions > search > server (list) > nothing (status)`;

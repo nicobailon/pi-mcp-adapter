@@ -9,11 +9,12 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { NestedCallHandOff } from "./proxy-modes.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
-import { approveProjectServer, describeBlockedScriptTool, excludeProjectServersAtLoadTime, hasProjectScriptToolDefinitions, hasProjectServerDefinitions, loadedScriptToolIssues } from "./project-server-trust.ts";
+import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getProjectPiConfigPath, loadMcpConfig, loadMcpConfigWithSources, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
+import { approveProjectScriptTool, approveProjectServer, describeBlockedScriptTool, excludeProjectServersAtLoadTime, hasProjectScriptToolDefinitions, hasProjectServerDefinitions, loadedScriptToolIssues } from "./project-server-trust.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
-import { findScriptTool, nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolOwnerKey, type ScriptToolSpec } from "./script-tool-surface.ts";
+import { findScriptTool, nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolNameConflict, scriptToolOwnerKey, type ScriptToolReservation, type ScriptToolSpec } from "./script-tool-surface.ts";
+import { buildScriptToolSavePrompt, checkScriptToolCode, checkScriptToolSave, writeScriptToolSave } from "./script-tool-save.ts";
 import { parseScriptTools } from "./script-tools.ts";
 import { namespaceProxyName } from "./mcp-references.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -419,6 +420,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const registeredScriptTools = new Map<string, string>();
   // The registered script tools, by Pi name, for the gateway.
   const registeredScriptSpecs = new Map<string, ScriptToolSpec>();
+  // The names the last script-tool sync kept from script tools, so a save is checked against them.
+  let scriptToolReservations: ScriptToolReservation[] = [];
   // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
   const registeredToolNames = new Map<string, string>();
   // The deferredToolKey each deferred name was first given to. Never cleared, so within a session a
@@ -589,12 +592,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // tools take theirs. Like the deferred surface, an unchanged tool is not registered again.
   function syncScriptTools(config: McpConfig, taken: Set<string>, reservedDirectNames: ReadonlySet<string>, foreignNames: readonly string[]): void {
     const proxyNames = new Set([...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName)]);
-    const { specs, issues } = resolveScriptToolSpecs(config.scriptTools, [
+    scriptToolReservations = [
       // No built-in reservation: every candidate is mcp__script__<name>, which no built-in tool is.
       { names: reservedDirectNames, reason: "is already the name of a direct MCP tool" },
       { names: proxyNames, reason: "is already the name of an MCP server's namespace tool" },
       { names: new Set(foreignNames), reason: "is already registered by another extension" },
-    ], deferredNameOwners);
+    ];
+    const { specs, issues } = resolveScriptToolSpecs(config.scriptTools, scriptToolReservations, deferredNameOwners);
     scriptToolSurfaceIssues = issues;
     if (state) state.scriptToolIssues = scriptToolIssuesOf(state);
     const nextNames = new Set<string>();
@@ -2494,7 +2498,117 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     };
   }
 
-  function registerProxyTool(description: string): void {
+  /**
+   * `mcp({ action: "save-script" })`: shows the operator the save, then the script in an editor, and
+   * writes only what they approve. Every refusal before the dialogs asks nothing and writes nothing.
+   */
+  async function executeSaveScript(
+    targetState: McpExtensionState,
+    args: Record<string, unknown> | undefined,
+    topLevelTarget: string | undefined,
+    toolCallId: string,
+    ctx: ExtensionContext,
+    signal?: AbortSignal,
+  ): Promise<AgentToolResult<Record<string, unknown>>> {
+    const saveOwner = currentOwner;
+    const throwIfStopped = () => {
+      signal?.throwIfAborted();
+      saveOwner?.throwIfInactive();
+    };
+    throwIfStopped();
+    const { target: argsTarget, ...saveArgs } = args ?? {};
+    const requestedName = typeof saveArgs.name === "string" ? saveArgs.name : undefined;
+    const result = (text: string, details: Record<string, unknown>) => ({
+      content: [{ type: "text" as const, text }],
+      details: { mode: "save-script", ...(requestedName !== undefined ? { name: requestedName } : {}), ...details },
+    });
+    if (programmaticConfig) {
+      return result("Saving a script tool is unavailable when the adapter uses programmatic configuration.", { error: "programmatic_config" });
+    }
+    if (targetState.config.settings?.allowScriptToolSave === false) {
+      return result("Saving script tools is disabled by configuration.", { error: "save_disabled" });
+    }
+    const target = argsTarget ?? topLevelTarget ?? "global";
+    if (target !== "global" && target !== "project") {
+      return result("Script tool save target must be 'global' or 'project'.", { error: "invalid_target" });
+    }
+    if (target === "project" && process.env.PI_MCP_CONFIG_MODE?.trim().toLowerCase() === "exclusive"
+      && resolve(getProjectPiConfigPath(ctx.cwd)) !== resolve(getPiGlobalConfigPath(earlyConfigPath))) {
+      return result("Saving to the project config is unavailable in exclusive config mode; use the global target.", { error: "inactive_target" });
+    }
+    if (calledByAnotherTool(toolCallId)) {
+      return result('Saving a script tool cannot be requested from inside another tool. Call mcp({ action: "save-script" }) directly.', { error: "nested_save" });
+    }
+    const core = await loadForRuntime(loadCoreRuntime, captureRuntimeGuard(targetState));
+    // An RPC client has a UI too, but the operator must read the diff and the script, so only the TUI asks.
+    if (!core.isTuiMode(ctx)) {
+      return result(`Saving a script tool needs an interactive terminal session, because it writes files only after you approve them. This session is ${ctx.mode}.`, { error: "headless" });
+    }
+    if (target === "project" && !ctx.isProjectTrusted()) {
+      return result("Saving to the project config needs project trust. Trust this project and try again.", { error: "project_trust_required" });
+    }
+    const checked = checkScriptToolSave({
+      args: saveArgs, target, cwd: ctx.cwd, ...(earlyConfigPath !== undefined ? { configOverridePath: earlyConfigPath } : {}),
+      scriptTools: targetState.config.scriptTools,
+      projectScriptTools: loadMcpConfigWithSources(earlyConfigPath, ctx.cwd).projectScriptTools,
+    });
+    if (!checked.ok) return result(checked.message, { error: checked.error, ...(checked.shadowedBy ? { shadowedBy: checked.shadowedBy } : {}) });
+    const { name, scriptPath, configPath } = checked;
+    const toolName = `${SCRIPT_TOOL_NAMESPACE}__${name}`;
+    const unavailable = scriptToolNameConflict(name, scriptToolReservations, deferredNameOwners);
+    if (unavailable) return result(`Cannot save script tool "${name}": ${toolName} ${unavailable}.`, { error: "name_unavailable" });
+
+    const failed = (error: unknown, text: (message: string) => string) => {
+      const message = error instanceof Error ? error.message : String(error);
+      return result(text(message), { error: "script_save_failed", message });
+    };
+    let summary: string;
+    try {
+      summary = buildScriptToolSavePrompt(checked);
+    } catch (error) {
+      return failed(error, (message) => `Cannot save script tool "${name}": ${message}`);
+    }
+    const declined = () => result("The save was declined, so nothing was written.", { error: "declined" });
+    // Deny first, so a stray Enter declines.
+    const choice = await ctx.ui.select(summary, ["Don't save", "Review the script"], signal ? { signal } : {});
+    throwIfStopped();
+    if (choice !== "Review the script") return declined();
+    const code = await ctx.ui.editor(`Review the script for ${toolName} (${scriptPath}). Saving writes the script and its config entry; Escape writes nothing.`, checked.code);
+    throwIfStopped();
+    if (code === undefined) return declined();
+    const codeRefusal = checkScriptToolCode(name, code);
+    if (codeRefusal) return result(codeRefusal.message, { error: codeRefusal.error });
+    try {
+      await withFileMutationQueue(configPath, async () => {
+        throwIfStopped();
+        writeScriptToolSave({ ...checked, code });
+      });
+    } catch (error) {
+      if (signal?.aborted || (saveOwner && !saveOwner.isActive())) throw error;
+      return failed(error, (message) => `The script tool was approved, but could not be saved: ${message}`);
+    }
+
+    const entry = { ...checked.entry, file: scriptPath };
+    if (target === "project" && targetState.blockedScriptTools !== undefined) {
+      // The approval is keyed on the entry as the loader returns it.
+      approveProjectScriptTool(ctx.cwd, name, loadMcpConfig(earlyConfigPath, ctx.cwd).scriptTools?.[name] ?? entry);
+    }
+    targetState.blockedScriptTools?.delete(name);
+    targetState.config.scriptTools = { ...targetState.config.scriptTools, [name]: entry };
+    if (!directToolsFrozen) syncToolSurface(ctx);
+    const registered = deferredRegistryLive && !directToolsFrozen && registeredScriptSpecs.has(toolName);
+    const lines = [registered
+      ? `Saved script tool "${name}". Call it as ${toolName} or mcp({ tool: "${name}", args }).`
+      : !deferredRegistryLive
+        ? `Saved script tool "${name}". This session registers no script tools, so call it with mcp({ tool: "${name}", args }).`
+        : `Saved script tool "${name}". ${directToolsFrozen ? "The tool surface is frozen in this session" : `${toolName} was not registered in this session`}, so it is callable after /reload.`];
+    const edited = code !== checked.code;
+    if (edited) lines.push("The operator edited the script before saving, so the saved code differs from the code you sent.");
+    lines.push(`Script: ${scriptPath}`, `Config: ${configPath}`);
+    return result(lines.join("\n"), { tool: toolName, path: configPath, scriptPath, target, registered, edited });
+  }
+
+  function registerProxyTool(description: string, allowScriptToolSave: boolean): void {
     callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)({
       name: "mcp",
       label: "MCP",
@@ -2521,7 +2635,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         limit: optionalNumber({ minimum: 1, description: "Maximum search results to return (default: 12)" }),
         offset: optionalNumber({ minimum: 0, description: "Search result offset (default: 0)" }),
         server: Type.Optional(Type.String({ description: "Server name: filters searches, disambiguates calls and describe operations, and optionally names an install" })),
-        action: Type.Optional(Type.String({ description: "Action: 'install', 'ui-messages', 'auth-start', or 'auth-complete'" })),
+        action: Type.Optional(Type.String({ description: allowScriptToolSave
+          ? "Action: 'install', 'ui-messages', 'auth-start', 'auth-complete', or 'save-script'"
+          : "Action: 'install', 'ui-messages', 'auth-start', or 'auth-complete'" })),
         url: Type.Optional(Type.String({ description: "MCP endpoint URL for action: 'install'" })),
         target: Type.Optional(Type.String({ description: "Install target: 'global' (default) or 'project'" })),
       }),
@@ -2626,6 +2742,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         if (params.action === "ui-messages") {
           return proxyModes.executeUiMessages(proxyState);
+        }
+        if (params.action === "save-script") {
+          return executeSaveScript(proxyState, parsedArgs, params.target, toolCallId, _ctx, signal);
         }
         if (params.action === "auth-start") {
           if (!params.server) {
@@ -2744,7 +2863,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const description = buildProxyDescription(config);
       if (!proxyToolRegistered || proxyToolDescription !== description) {
         finalizationRegistrations?.add("mcp");
-        registerProxyTool(description);
+        registerProxyTool(description, config.settings?.allowScriptToolSave !== false);
         finalizationGuard?.();
       }
       const activeTools = getActiveToolsIfReady();

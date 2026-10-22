@@ -111,6 +111,20 @@ describe("buildProxyDescription", () => {
     expect(buildProxyDescription(leftover)).toBe(buildProxyDescription({ mcpServers: {} }));
   });
 
+  it("documents the save-script action in one line, which allowScriptToolSave: false removes", () => {
+    const uiMessages = `  mcp({ action: "ui-messages" })        → Retrieve accumulated messages from completed UI sessions\n`;
+    const saveScript = `  mcp({ action: "save-script", args: { name, description, code, inputSchema } }) → Save a script as a reusable tool (asks you first)\n`;
+    const config: McpConfig = { mcpServers: { demo: { command: "demo" } } };
+    const withSave = buildProxyDescription(config);
+    const withoutSave = buildProxyDescription({ ...config, settings: { allowScriptToolSave: false } });
+
+    expect(withSave).toContain(uiMessages + saveScript);
+    expect(withSave.split("save-script")).toHaveLength(2);
+    expect(withoutSave).toBe(withSave.replace(saveScript, ""));
+    expect(withoutSave).not.toContain("save-script");
+    expect(buildProxyDescription({ ...config, settings: { allowScriptToolSave: true } })).toBe(withSave);
+  });
+
   it("documents the ui-messages action", () => {
     const config: McpConfig = {
       mcpServers: {

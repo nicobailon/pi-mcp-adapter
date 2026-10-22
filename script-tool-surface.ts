@@ -34,13 +34,19 @@ export function resolveScriptToolSpecs(
   const issues: string[] = [];
   for (const [name, definition] of Object.entries(scriptTools ?? {})) {
     const toolName = `${SCRIPT_TOOL_NAMESPACE}__${name}`;
-    const owner = owners.get(toolName);
-    const reason = reservations.find((reservation) => reservation.names.has(toolName))?.reason
-      ?? (owner !== undefined && owner !== scriptToolOwnerKey(name) ? "was given to an MCP tool earlier in this session" : undefined);
+    const reason = scriptToolNameConflict(name, reservations, owners);
     if (reason) issues.push(`Script tool "${name}" was not loaded — ${toolName} ${reason}.`);
     else specs.push({ name, toolName, definition });
   }
   return { specs, issues };
+}
+
+/** Why `mcp__script__<name>` cannot go to the script tool `name`, or undefined when it can. */
+export function scriptToolNameConflict(name: string, reservations: readonly ScriptToolReservation[], owners: ReadonlyMap<string, string>): string | undefined {
+  const toolName = `${SCRIPT_TOOL_NAMESPACE}__${name}`;
+  const owner = owners.get(toolName);
+  return reservations.find((reservation) => reservation.names.has(toolName))?.reason
+    ?? (owner !== undefined && owner !== scriptToolOwnerKey(name) ? "was given to an MCP tool earlier in this session" : undefined);
 }
 
 /** The `deferredNameOwners` key of a script tool; never equal to an MCP tool's deferredToolKey. */
