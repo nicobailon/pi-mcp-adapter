@@ -644,11 +644,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       && registeredScriptSpecs.has(spec.toolName) && toolCtx.tools.some((tool) => tool.name === spec.toolName)) {
       const outcome = await toolCtx.executeTool(spec.toolName, input);
       const details = outcome.result.details as Record<string, unknown> | undefined;
+      // Keep Pi's verdict, so a failed script reads as failed here as it does when called directly.
+      const flag = outcome.isError ? { isError: true as const } : {};
       // Blocked by a tool_call hook or rejected before the script tool ran.
       if (details?.mode !== "script_tool") {
-        return withShadowNote({ content: outcome.result.content, details: { mode: "script_tool", tool: spec.name, error: "nested_call_failed" } });
+        return withShadowNote({ ...flag, content: outcome.result.content, details: { mode: "script_tool", tool: spec.name, error: "nested_call_failed" } });
       }
-      return withShadowNote({ content: outcome.result.content, details });
+      return withShadowNote({ ...flag, content: outcome.result.content, details });
     }
     // The script runs here, not in the script tool, so the caller check runs here too.
     if (calledByAnotherTool(mcpCallId)) return withShadowNote(nestedScriptToolResult(spec.name));

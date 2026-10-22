@@ -9,9 +9,11 @@ describe("toolErrorOverride", () => {
   });
 
   it("flags a script tool that could not run or was refused", () => {
-    for (const code of ["codemode_unavailable", "nested_script_tool", "script_file_missing", "script_file_unreadable", "script_file_empty", "script_file_too_large"]) {
+    for (const code of ["codemode_unavailable", "nested_call_failed", "nested_script_tool", "script_file_missing", "script_file_unreadable", "script_file_empty", "script_file_too_large"]) {
       expect(toolErrorOverride({ mode: "script_tool", tool: "close_stale", error: code }), code).toEqual({ isError: true });
     }
+    // The MCP hand-off reports a blocked nested call the same way.
+    expect(toolErrorOverride({ mode: "call", error: "nested_call_failed", server: "fixture" })).toEqual({ isError: true });
     expect(toolErrorOverride({ mode: "script_tool", tool: "close_stale", calls: [] })).toBeUndefined();
   });
 

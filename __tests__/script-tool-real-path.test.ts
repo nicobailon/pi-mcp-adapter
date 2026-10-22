@@ -9,6 +9,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { toolErrorOverride } from "../error-signal.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
 type ToolCall = { name: string; id: string; parent: string | undefined };
@@ -16,7 +17,8 @@ type ToolCall = { name: string; id: string; parent: string | undefined };
 // A real Pi session with the adapter, Pi's codemode, the fixture MCP server and one script tool,
 // close_stale, whose file is `script`, and a script tool echo that shadows the fixture's echo.
 // Needs `env -u MCP_DIRECT_TOOLS`, as the suite runs.
-async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[]; script: string }) => Promise<void>, settings: Record<string, unknown> = {}): Promise<void> {
+// `blockTools` names tools a tool_call hook blocks, as a permission extension would.
+async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[]; script: string }) => Promise<void>, settings: Record<string, unknown> = {}, blockTools: string[] = []): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "pi-mcp-script-tool-"));
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalArgv = [...process.argv];
@@ -42,7 +44,10 @@ async function withScriptTool(run: (pi: { session: Session; toolCalls: ToolCall[
     const loader = new DefaultResourceLoader({
       cwd, agentDir, settingsManager, additionalExtensionPaths: [resolve("index.ts")],
       extensionFactories: [createCodemodeExtension(), (pi) => {
-        pi.on("tool_call", (event) => { toolCalls.push({ name: event.toolName, id: event.toolCallId, parent: event.parentToolCallId }); });
+        pi.on("tool_call", (event) => {
+          toolCalls.push({ name: event.toolName, id: event.toolCallId, parent: event.parentToolCallId });
+          return blockTools.includes(event.toolName) ? { block: true, reason: "Blocked by the test" } : undefined;
+        });
       }],
     });
     await loader.reload();
@@ -172,6 +177,41 @@ describe("a script tool through the mcp gateway in a real session", () => {
         { name: "mcp__fixture__echo", id: "mcp-1/1", parent: "mcp-1" },
       ]);
     }, { freezeDirectTools: true });
+  }, 30_000);
+
+  it("flags a script that throws as an error, called directly, handed off by mcp, or run in the proxy", async () => {
+    const failing = "throw new Error('boom');";
+    await withScriptTool(async ({ session, script }) => {
+      await writeFile(script, failing);
+      const direct = await callAs(session, "mcp__script__close_stale", "st-1", { repo: "a/b" });
+      const handedOff = await callAs(session, "mcp", "mcp-1", { tool: "close_stale", args: { repo: "a/b" } });
+
+      expect(textOf(direct)).toContain("Error: boom");
+      expect(direct.isError).toBe(true);
+      expect(textOf(handedOff)).toContain("Error: boom");
+      expect(handedOff.isError).toBe(true);
+      expect(handedOff.details).toMatchObject({ mode: "script_tool", tool: "close_stale" });
+    });
+    await withScriptTool(async ({ session, script }) => {
+      await writeFile(script, failing);
+      const inProxy = await callAs(session, "mcp", "mcp-1", { tool: "close_stale", args: { repo: "a/b" } });
+
+      expect(textOf(inProxy)).toContain("Error: boom");
+      expect(inProxy.isError).toBe(true);
+    }, { freezeDirectTools: true });
+  }, 60_000);
+
+  it("flags mcp({ tool }) as nested_call_failed when a tool_call hook blocks the script tool", async () => {
+    await withScriptTool(async ({ session, toolCalls, script }) => {
+      await writeFile(script, body);
+      const result = await callAs(session, "mcp", "mcp-1", { tool: "close_stale", args: { repo: "a/b" } });
+
+      expect(textOf(result)).toContain("Blocked by the test");
+      expect(result.isError).toBe(true);
+      expect(result.details).toEqual({ mode: "script_tool", tool: "close_stale", error: "nested_call_failed" });
+      expect(toolErrorOverride(result.details)).toEqual({ isError: true });
+      expect(toolCalls.map(call => call.name)).toEqual(["mcp", "mcp__script__close_stale"]);
+    }, {}, ["mcp__script__close_stale"]);
   }, 30_000);
 
   it("runs the script tool over a same-named MCP tool and says how to reach that one", async () => {
