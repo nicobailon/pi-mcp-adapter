@@ -1907,6 +1907,13 @@ describe("config discovery", () => {
     });
   });
 
+  it("counts lines as diff -u does when it shows context, and lists every line without it", async () => {
+    const { buildUnifiedDiff } = await import("../config.ts");
+    expect(buildUnifiedDiff("", "a\nb\n", { context: 3 })).toBe("--- before\n+++ after\n@@ -0,0 +1,2 @@\n+ a\n+ b");
+    expect(buildUnifiedDiff("a\n", "a", { context: 3 })).toBe("--- before\n+++ after\n(only the final newline differs)");
+    expect(buildUnifiedDiff("", "a\n")).toBe("--- before\n+++ after\n+ a\n  ");
+  });
+
   it("refuses a script tool entry for a non-object scriptTools, malformed JSON or a dangling symlink, writing nothing", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-mcp-script-tool-entry-invalid-"));
     const { previewScriptToolEntry, writeScriptToolEntry } = await import("../config.ts");

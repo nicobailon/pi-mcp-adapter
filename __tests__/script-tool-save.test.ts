@@ -191,7 +191,9 @@ describe("buildScriptToolSavePrompt", () => {
       "Config change:",
       diffText,
     ].join("\n"));
-    expect(diffText).toMatch(/^--- before\n\+\+\+ after\n@@ -1,1 \+1,\d+ @@\n/);
+    // A missing file has no lines, so nothing is removed.
+    expect(diffText).toMatch(/^--- before\n\+\+\+ after\n@@ -0,0 \+1,\d+ @@\n/);
+    expect(diffText.split("\n").filter((line) => line.startsWith("- "))).toEqual([]);
     expect(diffText).toContain('+       "file": "mcp-scripts/stale_issues.js"');
   });
 
@@ -210,9 +212,9 @@ describe("buildScriptToolSavePrompt", () => {
     ]);
     const scriptDiff = prompt.slice(prompt.indexOf("Script change:") + 1);
     expect(scriptDiff).toHaveLength(61);
-    expect(scriptDiff.slice(0, 4)).toEqual(["--- before", "+++ after", "@@ -1,100 +1,3 @@", "- // old 0"]);
-    // 3 headers + 100 removed + 3 added lines (the code's trailing newline adds an empty one).
-    expect(scriptDiff[60]).toBe("… (46 more lines)");
+    expect(scriptDiff.slice(0, 4)).toEqual(["--- before", "+++ after", "@@ -1,100 +1,2 @@", "- // old 0"]);
+    // 3 headers + 100 removed + 2 added lines.
+    expect(scriptDiff[60]).toBe("… (45 more lines)");
   });
 
   it("shows only the changed lines and 3 lines around them, so a change deep in a long file is shown", () => {

@@ -1597,8 +1597,13 @@ function serializeRawConfig(raw) {
 export function buildUnifiedDiff(beforeText, afterText, options = {}) {
     if (beforeText === afterText)
         return "(no changes)";
-    const before = beforeText.split("\n");
-    const after = afterText.split("\n");
+    // With context, lines are counted as in `diff -u`: a final newline ends a line rather than starting
+    // a blank one, so an empty text has no lines.
+    const split = (text) => options.context !== undefined && (text === "" || text.endsWith("\n"))
+        ? text.split("\n").slice(0, -1)
+        : text.split("\n");
+    const before = split(beforeText);
+    const after = split(afterText);
     const rows = before.length;
     const cols = after.length;
     const lcs = Array.from({ length: rows + 1 }, () => Array(cols + 1).fill(0));
@@ -1634,6 +1639,9 @@ export function buildUnifiedDiff(beforeText, afterText, options = {}) {
         }
     }
     const body = options.context === undefined ? lines : contextHunks(lines, options.context);
+    // The texts differ, so with no changed line only the final newline was added or removed.
+    if (body.length === 0)
+        body.push("(only the final newline differs)");
     return ["--- before", "+++ after", ...body].join("\n");
 }
 // Removals come before additions within each run of changes, as in `diff -u`.
