@@ -17,6 +17,7 @@ import {
   reconstructPromptMetadata,
   reconstructToolMetadata,
   saveExecutorCatalog,
+  saveExecutorSignature,
   saveMetadataCache,
   serializePrompts,
   serializeResources,
@@ -865,7 +866,7 @@ export function cacheExecutorSignature(state: McpExtensionState, serverName: str
   if (!entry || !catalog) return;
   const next = { ...catalog, tools: catalog.tools.map(tool => tool.path === path ? { ...tool, signature } : tool) };
   state.sessionMetadata!.set(serverName, { ...entry, executorApps: next });
-  if (entry.cacheScope !== "private" && entry.ttlMs !== 0) saveExecutorCatalog(serverName, entry.configHash, next);
+  if (entry.cacheScope !== "private" && entry.ttlMs !== 0) saveExecutorSignature(serverName, entry.configHash, path, signature);
 }
 
 export function flushMetadataCache(state: McpExtensionState): void {

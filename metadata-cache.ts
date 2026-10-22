@@ -229,6 +229,25 @@ export function saveExecutorCatalog(serverName: string, configHash: string, cata
   });
 }
 
+/**
+ * Adds one Executor app tool's full signature to the catalog on disk, if that entry is still the
+ * same listing and its catalog still has the tool. Only that item changes, so a newer catalog
+ * another session saved meanwhile is kept.
+ * @internal
+ */
+export function saveExecutorSignature(serverName: string, configHash: string, path: string, signature: string): void {
+  updateMetadataCacheFile(servers => {
+    const entry = servers[serverName];
+    const catalog = entry?.executorApps;
+    if (!entry || entry.configHash !== configHash || !Array.isArray(catalog?.tools)) return undefined;
+    const index = catalog.tools.findIndex(tool => isUsableCachedAppTool(tool) && tool.path === path);
+    if (index === -1) return undefined;
+    const tools = [...catalog.tools];
+    tools[index] = { ...tools[index]!, signature };
+    return { ...servers, [serverName]: { ...entry, executorApps: { ...catalog, tools } } };
+  });
+}
+
 export function isServerCacheValid(
   entry: ServerCacheEntry,
   definition: ServerEntry,

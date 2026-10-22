@@ -317,6 +317,25 @@ describe("mcp({ describe }) on an Executor app tool", () => {
   const signature = "(input: {\n  id: string,\n  limit?: number,\n  [key: string]: unknown,\n}): Promise<unknown>";
   const describes = async (root: string) => (await receipts(root)).filter(entry => entry.name === "describe");
 
+  it("adds a fetched signature to the catalog on disk without replacing a newer one", async () => {
+    const root = await agentDir();
+    await withSession(root, { env: { EXECUTOR_CATALOG_TRUNCATED: "1" } }, async ({ session, call }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+      await vi.waitFor(async () => expect(await cachedCatalog(root)).toBeDefined());
+      // Another session saved a newer catalog: it still has alpha.tool_001, no longer beta.tool_001, and a new tool.
+      const cache = JSON.parse(await readFile(join(root, "mcp-cache.json"), "utf8"));
+      const tool = (path: string) => ({ path, canonicalPath: path.slice("tools.".length), description: "From the newer catalog", inputType: "{ id: str…", inputTruncated: true });
+      const newer = { tools: [tool("tools.alpha.tool_001"), tool("tools.zeta.tool_000")], total: 2, cap: 1000, fetchedAt: Date.now() + 1 };
+      cache.servers.executor.executorApps = newer;
+      await writeFile(join(root, "mcp-cache.json"), JSON.stringify(cache));
+
+      await call("mcp", { describe: "alpha.tool_001" });
+      await call("mcp", { describe: "beta.tool_001" });
+
+      expect(await cachedCatalog(root)).toEqual({ ...newer, tools: [{ ...newer.tools[0], signature }, newer.tools[1]] });
+    });
+  }, 30_000);
+
   it("fetches and caches the full signature when Executor cut the input type", async () => {
     const root = await agentDir();
     await withSession(root, { env: { EXECUTOR_CATALOG_TRUNCATED: "1" } }, async ({ session, call }) => {
