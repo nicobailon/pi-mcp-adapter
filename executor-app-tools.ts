@@ -12,9 +12,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The Executor `call` that runs one app tool: always the object form of `calls`, never an array,
  * so the pause and account handling for a single call applies (`findAccountGap`).
  */
-export function executorCallParams(spec: { executorPath?: string }, args: Record<string, unknown>): ToolCallParams {
-  if (spec.executorPath === undefined) throw new Error("Not an Executor app tool");
-  return { name: "call", arguments: { calls: { path: spec.executorPath, input: args } } };
+export function executorCallParams(path: string, input: Record<string, unknown>): ToolCallParams {
+  return { name: "call", arguments: { calls: { path, input } } };
 }
 
 function malformed(path: string): never {

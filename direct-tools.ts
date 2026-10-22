@@ -329,7 +329,7 @@ export function createDirectToolExecutor(
       const requestMeta = withToolCallIdMeta(uiSession?.requestMeta, toolCallId);
       const recordOutput = observedOutputRecorder(state, spec.serverName, spec.originalName);
       const callParams = spec.executorPath !== undefined
-        ? executorCallParams(spec, normalizedParams)
+        ? executorCallParams(spec.executorPath, normalizedParams)
         : { name: spec.originalName, arguments: normalizedParams };
       const callResult = await withSessionRecovery<ClientCallToolResult>(
         {

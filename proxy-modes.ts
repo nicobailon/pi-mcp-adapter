@@ -1853,7 +1853,7 @@ export async function executeCall(
     const requestMeta = withToolCallIdMeta(uiSession?.requestMeta, toolCallId);
     const recordOutput = observedOutputRecorder(state, serverName, toolMeta.originalName);
     const callParams = toolMeta.executorPath !== undefined
-      ? executorCallParams(toolMeta, normalizedArgs)
+      ? executorCallParams(toolMeta.executorPath, normalizedArgs)
       : { name: toolMeta.originalName, arguments: normalizedArgs };
     const callResult = await withSessionRecovery<ClientCallToolResult>(
       {
