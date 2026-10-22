@@ -27,7 +27,7 @@ import {
 import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { loadMetadataCache, reconstructPromptMetadata, withSessionMetadata } from "./metadata-cache.ts";
-import { buildToolMetadata, executorAppToolsLine, executorAppToolsStatus } from "./tool-metadata.ts";
+import { buildToolMetadata, cacheReader, executorAppToolsLine, executorAppToolsStatus } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { inspectBearerTokenForUrl, removeBearerToken } from "./mcp-bearer-store.ts";
@@ -161,6 +161,7 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     );
   }
 
+  const readCache = cacheReader();
   for (const name of Object.keys(state.config.mcpServers)) {
     const definition = state.config.mcpServers[name];
     const block = state.blockedProjectServers?.get(name);
@@ -207,7 +208,7 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
 
     const toolSuffix = failed ? "" : ` (${toolCount} tools${status.startsWith("cached") ? ", cached" : ""})`;
     lines.push(`${statusIcon} ${name}: ${status}${toolSuffix}`);
-    const appTools = executorAppToolsStatus(state, name);
+    const appTools = executorAppToolsStatus(state, name, readCache);
     if (appTools) lines.push(`  ${appTools}`);
   }
 
@@ -268,8 +269,9 @@ export async function showTools(state: McpExtensionState, ctx: ExtensionContext)
     .filter(([serverName]) => !isServerInActiveFailureBackoff(state, serverName));
   // Executor's app tools are counted in one line per server, not listed: there can be a thousand.
   const allTools = servers.flatMap(([, metadata]) => metadata.filter(m => m.executorPath === undefined).map(m => m.name));
+  const readCache = cacheReader();
   const appToolLines = servers.flatMap(([serverName]) => {
-    const line = executorAppToolsLine(state, serverName);
+    const line = executorAppToolsLine(state, serverName, readCache);
     return line ? [`  ${serverName}: ${line}`] : [];
   });
 

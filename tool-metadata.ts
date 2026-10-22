@@ -5,7 +5,7 @@ import { createToolSelectorCandidateIndex, EXECUTOR_APP_TOOL_CAP, formatToolName
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolAnnotations, extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
-import { loadMetadataCache } from "./metadata-cache.ts";
+import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 
 export function buildToolMetadata(
   tools: McpTool[],
@@ -143,8 +143,8 @@ export function getToolNames(state: McpExtensionState, serverName: string): stri
  * The one line that stands for an Executor server's app tools wherever its tools are listed by
  * name, since there can be a thousand of them; undefined for any other server.
  */
-export function executorAppToolsLine(state: McpExtensionState, serverName: string): string | undefined {
-  const { count, catalog, cap, capped } = executorAppToolCounts(state, serverName);
+export function executorAppToolsLine(state: McpExtensionState, serverName: string, readCache?: () => MetadataCache | null): string | undefined {
+  const { count, catalog, cap, capped } = executorAppToolCounts(state, serverName, readCache);
   if (count === 0) return undefined;
   const scope = !catalog
     ? "in Executor's catalog"
@@ -155,17 +155,32 @@ export function executorAppToolsLine(state: McpExtensionState, serverName: strin
 }
 
 /** The `/mcp-adapter` status line for an Executor server's app tools; undefined for any other server. */
-export function executorAppToolsStatus(state: McpExtensionState, serverName: string): string | undefined {
-  const { count, catalog, capped } = executorAppToolCounts(state, serverName);
+export function executorAppToolsStatus(state: McpExtensionState, serverName: string, readCache?: () => MetadataCache | null): string | undefined {
+  const { count, catalog, capped } = executorAppToolCounts(state, serverName, readCache);
   if (!catalog && count === 0) return undefined;
   return capped
     ? `${serverName}: ${count} of ${catalog!.total} Executor app tools registered (cap)`
     : `${serverName}: ${count} Executor app tools`;
 }
 
-function executorAppToolCounts(state: McpExtensionState, serverName: string) {
+/**
+ * A server's Executor app catalog: this session's, or the cache file's. `readCache` lets a caller
+ * that asks about many servers read the cache file once.
+ */
+export function executorCatalogOf(state: McpExtensionState, serverName: string, readCache: () => MetadataCache | null = loadMetadataCache) {
+  return (state.sessionMetadata?.get(serverName) ?? readCache()?.servers[serverName])?.executorApps;
+}
+
+/** Reads the metadata cache file on first use only. */
+export function cacheReader(): () => MetadataCache | null {
+  let cache: MetadataCache | null | undefined;
+  return () => cache === undefined ? (cache = loadMetadataCache()) : cache;
+}
+
+function executorAppToolCounts(state: McpExtensionState, serverName: string, readCache?: () => MetadataCache | null) {
   const count = state.toolMetadata.get(serverName)?.filter(m => m.executorPath !== undefined).length ?? 0;
-  const catalog = (state.sessionMetadata?.get(serverName) ?? loadMetadataCache()?.servers[serverName])?.executorApps;
+  // Only an Executor server can have a catalog, so any other server skips the cache file.
+  const catalog = count === 0 && !state.sessionMetadata?.get(serverName)?.executorApps ? undefined : executorCatalogOf(state, serverName, readCache);
   // A catalog cached under a larger cap is still read only up to this one.
   const cap = catalog ? Math.min(catalog.cap, EXECUTOR_APP_TOOL_CAP) : EXECUTOR_APP_TOOL_CAP;
   const capped = catalog !== undefined && catalog.total > cap;

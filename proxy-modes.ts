@@ -7,10 +7,10 @@ import { getServerPrefix, getToolNameCandidates, isServerDisabled, parseUiPrompt
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure, refreshExecutorCatalog, cacheExecutorSignature, EXECUTOR_UNKNOWN_PATH_REASON } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { buildToolMetadata, executorAppToolsLine, getToolNames, formatSchema, isPlainTypeSchema } from "./tool-metadata.ts";
+import { buildToolMetadata, executorAppToolsLine, executorCatalogOf, getToolNames, formatSchema, isPlainTypeSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import { getObservedOutput, observedOutputRecorder, renderOutputShape } from "./output-shape.ts";
-import { loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
+import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
@@ -827,8 +827,7 @@ async function findExecutorAppToolAfterRepage(
 }
 
 function cachedExecutorAppTool(state: McpExtensionState, serverName: string, path: string) {
-  const catalog = (state.sessionMetadata?.get(serverName) ?? loadMetadataCache()?.servers[serverName])?.executorApps;
-  return catalog?.tools.find(tool => tool?.path === path);
+  return executorCatalogOf(state, serverName)?.tools.find(tool => tool?.path === path);
 }
 
 // An app tool whose input type Executor cut short gets its full signature from one Executor
