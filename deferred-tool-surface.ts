@@ -25,13 +25,18 @@ export function deferredToolKey(serverName: string, originalName: string, resour
   return JSON.stringify([serverName, originalName, resourceUri ?? null]);
 }
 
+/** `mcp__<server namespace>__<tool>` with anything but `[A-Za-z0-9_]` turned into `_`, before any hash. */
+function plainDeferredToolName(serverName: string, toolName: string): string {
+  return `mcp__${formatServerNamespace(serverName)}__${toolName}`.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
 /**
  * `mcp__<server namespace>__<tool>`, as Pi's built-in MCP names its tools, so the name is also the
  * identifier codemode scripts call it by. Anything but `[A-Za-z0-9_]` becomes `_`; a name that is
  * too long or taken gets an 8-hex hash of the raw server and tool names.
  */
 export function formatDeferredToolName(serverName: string, toolName: string, isTaken: (name: string) => boolean): string {
-  const name = `mcp__${formatServerNamespace(serverName)}__${toolName}`.replace(/[^A-Za-z0-9_]/g, "_");
+  const name = plainDeferredToolName(serverName, toolName);
   if (name.length <= MAX_TOOL_NAME_LENGTH && !isTaken(name)) return name;
   const hash = createHash("sha256").update(`${serverName}\0${toolName}`).digest("hex").slice(0, 8);
   return `${name.slice(0, MAX_TOOL_NAME_LENGTH - hash.length - 1)}_${hash}`;
@@ -53,23 +58,34 @@ export function resolveDeferredToolSpecs(
   const direct = new Set(reserved.directTools.map((spec) => deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri)));
   const taken = new Set(reserved.names);
   const selectorIndexFor = createServerSelectorIndexResolver(config, cache, prefix);
-  const specs: DeferredToolSpec[] = [];
-
+  const candidates: DirectToolSpec[] = [];
   for (const [serverName, definition] of Object.entries(config.mcpServers)) {
     if (isServerDisabled(definition)) continue;
     const serverCache = cache.servers[serverName];
     if (!serverCache || !isServerCacheValid(serverCache, definition)) continue;
     const serverSpecs = resolveServerToolSpecs(serverName, definition, serverCache, resolveToolPrefix(definition, prefix), true, selectorIndexFor(definition));
     for (const spec of serverSpecs) {
-      if (direct.has(deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri))) continue;
-      const name = formatDeferredToolName(serverName, spec.originalName, (candidate) => taken.has(candidate));
-      if (taken.has(name)) {
-        console.warn(`MCP: skipping deferred tool "${name}" for "${spec.originalName}" on "${serverName}" (name already taken)`);
-        continue;
-      }
-      taken.add(name);
-      specs.push({ ...spec, name });
+      if (!direct.has(deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri))) candidates.push(spec);
     }
+  }
+
+  // Every tool whose plain name another tool shares gets the hash, as in Pi's built-in MCP, so list
+  // order never decides which tool a name calls.
+  const plainNameCounts = new Map<string, number>();
+  for (const spec of candidates) {
+    const plain = plainDeferredToolName(spec.serverName, spec.originalName);
+    plainNameCounts.set(plain, (plainNameCounts.get(plain) ?? 0) + 1);
+  }
+  const specs: DeferredToolSpec[] = [];
+  for (const spec of candidates) {
+    const name = formatDeferredToolName(spec.serverName, spec.originalName,
+      (candidate) => taken.has(candidate) || (plainNameCounts.get(candidate) ?? 0) > 1);
+    if (taken.has(name)) {
+      console.warn(`MCP: skipping deferred tool "${name}" for "${spec.originalName}" on "${spec.serverName}" (name already taken)`);
+      continue;
+    }
+    taken.add(name);
+    specs.push({ ...spec, name });
   }
   return specs;
 }

@@ -80,17 +80,27 @@ describe("deferred tool names", () => {
 
   it("hashes a name that sanitizing, the 64-character limit, or a reserved name would make collide", () => {
     const long = "x".repeat(80);
-    const [plain, collapsed, capped, reserved] = deferredNames(
-      { "a-b": [{ command: "a" }, ["a-b", "a_b", long]], docs: [{ command: "d" }, ["find"]] },
+    const [dashed, collapsed, capped, reserved, plain] = deferredNames(
+      { "a-b": [{ command: "a" }, ["a-b", "a_b", long]], docs: [{ command: "d" }, ["find", "list"]] },
       {},
       { names: ["mcp__docs__find"] },
     );
-    expect(plain).toBe("mcp__a_b__a_b");
+    expect(dashed).toMatch(/^mcp__a_b__a_b_[0-9a-f]{8}$/);
     expect(collapsed).toMatch(/^mcp__a_b__a_b_[0-9a-f]{8}$/);
     expect(capped).toHaveLength(64);
     expect(capped).toMatch(/^mcp__a_b__x+_[0-9a-f]{8}$/);
     expect(reserved).toMatch(/^mcp__docs__find_[0-9a-f]{8}$/);
-    expect(new Set([plain, collapsed, capped, reserved]).size).toBe(4);
+    expect(plain).toBe("mcp__docs__list");
+    expect(new Set([dashed, collapsed, capped, reserved, plain]).size).toBe(5);
+  });
+
+  it("hashes every tool sharing a plain name, so list order never decides which one keeps it", () => {
+    const names = deferredNames({ s: [{ command: "s" }, ["a-b", "a_b"]] });
+    const reversed = deferredNames({ s: [{ command: "s" }, ["a_b", "a-b"]] });
+
+    expect(names).toHaveLength(2);
+    expect(names).not.toContain("mcp__s__a_b");
+    expect(reversed).toEqual([...names].reverse());
   });
 });
 
