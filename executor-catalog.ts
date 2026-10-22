@@ -3,14 +3,10 @@ import { throwIfAborted } from "./abort.ts";
 import { canonicalPath } from "./executor-accounts.ts";
 import { hasExecutorModelTools, isExecutorConnection } from "./executor-pauses.ts";
 import type { ServerConnection } from "./server-manager.ts";
-import type { CachedExecutorAppTool, ServerCacheEntry } from "./types.ts";
+import { EXECUTOR_APP_TOOL_CAP, type CachedExecutorAppTool, type ServerCacheEntry } from "./types.ts";
 
-/**
- * Most Executor app tools kept per server. Pi rebuilds its whole tool registry on every
- * registration, so registering N tools costs O(N²); paging stops here, which also bounds the
- * number of `search` calls.
- */
-export const EXECUTOR_APP_TOOL_CAP = 1_000;
+// Paging stops at the cap, which also bounds the number of `search` calls.
+export { EXECUTOR_APP_TOOL_CAP };
 /** How long a cached Executor app catalog is used before a connect pages it again in the background. */
 export const EXECUTOR_CATALOG_TTL_MS = 3_600_000;
 // Executor also ends a page at a byte budget (25,000 bytes by default), so a page usually holds fewer.

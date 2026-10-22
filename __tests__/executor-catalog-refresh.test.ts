@@ -221,6 +221,28 @@ describe("Executor app catalog refresh", () => {
     });
   }, 30_000);
 
+  it("registers no more than the cap from a cached catalog that holds more, and shows the cap", async () => {
+    const root = await agentDir();
+    await withSession(root, {}, async ({ session }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+    });
+    await vi.waitFor(async () => expect(await cachedCatalog(root)).toBeDefined());
+    const cache = JSON.parse(await readFile(join(root, "mcp-cache.json"), "utf8"));
+    // Cached under a larger cap, as after an upgrade that lowers it, or edited by hand.
+    const tools = Array.from({ length: 1500 }, (_, index) => {
+      const path = `tools.alpha.tool_${String(index).padStart(4, "0")}`;
+      return { path, canonicalPath: path.slice("tools.".length), description: "A cached tool", inputType: "{}" };
+    });
+    cache.servers.executor.executorApps = { tools, total: 1500, cap: 2000, fetchedAt: Date.now() };
+    await writeFile(join(root, "mcp-cache.json"), JSON.stringify(cache));
+
+    await withSession(root, {}, async ({ session, call, command }) => {
+      expect(deferredAppTools(session)).toHaveLength(1000);
+      expect(textOf(await call("mcp", { server: "executor" }))).toContain("+1000 Executor app tools (1500 in Executor's catalog, capped at 1000)");
+      expect((await command("status")).join("\n")).toContain("\n  executor: 1000 of 1500 Executor app tools registered (cap)");
+    });
+  }, 40_000);
+
   it("shows the app tool count, the cap and each unavailable app with its reason in /mcp-adapter status", async () => {
     const root = await agentDir();
     await withSession(root, { env: { EXECUTOR_CATALOG_UNAVAILABLE: "delta" } }, async ({ session, command }) => {

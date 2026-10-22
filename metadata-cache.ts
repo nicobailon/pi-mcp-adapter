@@ -21,7 +21,7 @@ import type {
   ToolMetadata,
   PromptMetadata,
 } from "./types.ts";
-import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership, type ToolPrefix, type ToolSelectorCandidateIndex } from "./types.ts";
+import { createToolSelectorCandidateIndex, EXECUTOR_APP_TOOL_CAP, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership, type ToolPrefix, type ToolSelectorCandidateIndex } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import {
   extractToolAnnotations,
@@ -397,7 +397,7 @@ export function executorAppToolMetadata(
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
   const taken = takenNames ? new Set(takenNames) : undefined;
-  for (const tool of entry.executorApps?.tools ?? []) {
+  for (const tool of (entry.executorApps?.tools ?? []).slice(0, EXECUTOR_APP_TOOL_CAP)) {
     if (!isUsableCachedAppTool(tool) || !isExecutorAppToolAllowed(tool, serverName, effectivePrefix, definition, selectorCandidateIndex)) continue;
     const name = formatToolName(tool.canonicalPath, serverName, effectivePrefix);
     if (taken) {
@@ -458,7 +458,7 @@ export function createCachedToolSelectorCandidateIndex(
         for (const candidate of getToolNameCandidates(baseName, serverName, effectivePrefix, false)) candidates.add(candidate);
       }
     }
-    for (const tool of entry.executorApps?.tools ?? []) {
+    for (const tool of (entry.executorApps?.tools ?? []).slice(0, EXECUTOR_APP_TOOL_CAP)) {
       if (!isUsableCachedAppTool(tool) || isExecutorOwnTool(tool)) continue;
       for (const candidate of getToolNameCandidates(tool.canonicalPath, serverName, effectivePrefix, false)) candidates.add(candidate);
     }

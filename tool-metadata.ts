@@ -1,7 +1,7 @@
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
-import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.ts";
+import { createToolSelectorCandidateIndex, EXECUTOR_APP_TOOL_CAP, formatToolName, getToolNameCandidates, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolAnnotations, extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
@@ -144,12 +144,12 @@ export function getToolNames(state: McpExtensionState, serverName: string): stri
  * name, since there can be a thousand of them; undefined for any other server.
  */
 export function executorAppToolsLine(state: McpExtensionState, serverName: string): string | undefined {
-  const { count, catalog, capped } = executorAppToolCounts(state, serverName);
+  const { count, catalog, cap, capped } = executorAppToolCounts(state, serverName);
   if (count === 0) return undefined;
   const scope = !catalog
     ? "in Executor's catalog"
     : capped
-      ? `${catalog.total} in Executor's catalog, capped at ${catalog.cap}`
+      ? `${catalog.total} in Executor's catalog, capped at ${cap}`
       : `${catalog.total} in Executor's catalog`;
   return `+${count} Executor app tools (${scope}); find them with mcp({ search: "..." }).`;
 }
@@ -166,8 +166,10 @@ export function executorAppToolsStatus(state: McpExtensionState, serverName: str
 function executorAppToolCounts(state: McpExtensionState, serverName: string) {
   const count = state.toolMetadata.get(serverName)?.filter(m => m.executorPath !== undefined).length ?? 0;
   const catalog = (state.sessionMetadata?.get(serverName) ?? loadMetadataCache()?.servers[serverName])?.executorApps;
-  const capped = catalog !== undefined && catalog.tools.length >= catalog.cap && catalog.total > catalog.cap;
-  return { count, catalog, capped };
+  // A catalog cached under a larger cap is still read only up to this one.
+  const cap = catalog ? Math.min(catalog.cap, EXECUTOR_APP_TOOL_CAP) : EXECUTOR_APP_TOOL_CAP;
+  const capped = catalog !== undefined && catalog.total > cap;
+  return { count, catalog, cap, capped };
 }
 
 export function totalToolCount(state: McpExtensionState): number {
