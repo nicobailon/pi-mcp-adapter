@@ -1,4 +1,4 @@
-import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { buildUnifiedDiff, getPiGlobalConfigPath, getProjectPiConfigPath, previewScriptToolEntry, writeScriptToolEntry } from "./config.ts";
 import { MAX_SCRIPT_BYTES, SCRIPT_TOOL_NAMESPACE } from "./script-tool-surface.ts";
@@ -192,6 +192,15 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
   return lines.join("\n");
 }
 
+// Another save may have written into the directory meanwhile, and then it stays.
+function removeIfEmpty(dir: string): void {
+  try {
+    rmdirSync(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOTEMPTY") throw error;
+  }
+}
+
 function writeFileAtomic(path: string, data: string | Buffer, mode: number | undefined): void {
   const tmpPath = `${path}.${process.pid}.tmp`;
   rmSync(tmpPath, { force: true });
@@ -207,17 +216,19 @@ function writeFileAtomic(path: string, data: string | Buffer, mode: number | und
 
 /**
  * Write the script, then the config entry. When the config write fails, a script file this save
- * created is removed and one it replaced is restored, then the config error is thrown.
+ * created is removed, with its `mcp-scripts/` directory if the save created it and it is empty, and
+ * one it replaced is restored; then the config error is thrown.
  */
 export function writeScriptToolSave(plan: Pick<ScriptToolSavePlan, "name" | "configPath" | "scriptPath" | "entry" | "code">): void {
   const { scriptPath } = plan;
   let previous: { bytes: Buffer; mode: number } | undefined;
+  let createdDir = false;
   try {
     const existing = lstatSync(scriptPath, { throwIfNoEntry: false });
     // Renaming over a symlink would replace the link, so only a regular file is replaced.
     if (existing && !existing.isFile()) throw new Error("it is not a regular file");
     if (existing) previous = { bytes: readFileSync(scriptPath), mode: existing.mode & 0o777 };
-    mkdirSync(dirname(scriptPath), { recursive: true });
+    createdDir = mkdirSync(dirname(scriptPath), { recursive: true }) !== undefined;
     writeFileAtomic(scriptPath, plan.code, previous?.mode);
   } catch (error) {
     throw new Error(`Failed to write script tool file at ${scriptPath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
@@ -227,7 +238,10 @@ export function writeScriptToolSave(plan: Pick<ScriptToolSavePlan, "name" | "con
   } catch (error) {
     try {
       if (previous) writeFileAtomic(scriptPath, previous.bytes, previous.mode);
-      else rmSync(scriptPath, { force: true });
+      else {
+        rmSync(scriptPath, { force: true });
+        if (createdDir) removeIfEmpty(dirname(scriptPath));
+      }
     } catch (restoreError) {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}; the script file ${scriptPath} could not be restored either: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`,

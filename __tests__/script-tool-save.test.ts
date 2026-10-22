@@ -256,14 +256,19 @@ describe("writeScriptToolSave", () => {
   });
 
   // These break a file after the check, which refuses a broken one before any dialog.
-  it("removes a script it created when the config write fails", () => {
+  it("removes a script and the empty mcp-scripts directory it created when the config write fails", () => {
     const configPath = join(agentDir, "mcp-adapter.json");
     const saved = plan();
     mkdirSync(agentDir, { recursive: true });
     writeFileSync(configPath, "{ malformed");
     expect(() => writeScriptToolSave(saved)).toThrow(`Failed to read MCP config at ${configPath}`);
-    expect(files(join(agentDir, "mcp-scripts"))).toEqual([]);
+    expect(existsSync(join(agentDir, "mcp-scripts"))).toBe(false);
     expect(readFileSync(configPath, "utf8")).toBe("{ malformed");
+
+    // A directory that was already there stays.
+    mkdirSync(join(agentDir, "mcp-scripts"));
+    expect(() => writeScriptToolSave(saved)).toThrow(`Failed to read MCP config at ${configPath}`);
+    expect(files(join(agentDir, "mcp-scripts"))).toEqual([]);
   });
 
   it("leaves a script it replaced byte-identical when the config write fails", () => {
