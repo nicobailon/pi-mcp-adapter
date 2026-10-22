@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Highlights
+
+- If you use [Executor](https://executor.sh), Pi now asks you before an app tool does anything that needs approval. Before, the model could approve it for you.
+- When an Executor app needs an account you haven't connected, Pi opens the sign-in link in your browser and finishes the call once you're done.
+- Your Executor apps' tools are now regular Pi tools. You can search for them, set approval rules on them such as `github.*`, and call them from Pi's codemode.
+- A workflow you repeat can be saved as a tool with a name and fixed inputs, so next time it's one call. When the agent writes a script that works, it can offer to save it, and you review it first.
+- MCP works again in the Pendant VS Code extension and other hosts that freeze Pi's theme. Before, every MCP call failed there.
+- `mcpScript` is gone. Pi's own codemode does the same job and works with the rest of Pi; see Breaking. The new features need Pi 0.99 or later.
+
 ### Added
 
 - On its default URL, [Executor](https://executor.sh) hands an app tool's approval or question to the model and asks it to check with you, but nothing stopped the model from approving by itself. Pi now asks you instead: the adapter shows the request in Pi's dialogs, resumes the program with your answer, and gives the model only the result. The adapter refuses a `resume` call from the model, and in a session that can't show dialogs the call fails. Executor's `execute` and `call` also get a 6-minute timeout unless the server sets `requestTimeoutMs`, so programs no longer stop at the 60-second default. See [#860](https://github.com/nicobailon/pi-mcp-adapter/issues/860).
