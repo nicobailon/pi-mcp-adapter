@@ -1848,7 +1848,9 @@ function contextHunks(lines: readonly string[], context: number): string[] {
     }
     const run: string[] = [];
     while (k < lines.length && !lines[k]!.startsWith(" ")) run.push(lines[k++]!);
-    ordered.push(...run.filter((line) => line.startsWith("-")), ...run.filter((line) => line.startsWith("+")));
+    // Loops, not push(...run): a spread past about 100,000 arguments throws RangeError.
+    for (const line of run) if (line.startsWith("-")) ordered.push(line);
+    for (const line of run) if (line.startsWith("+")) ordered.push(line);
   }
   const changed = ordered.flatMap((line, index) => line.startsWith(" ") ? [] : [index]);
   const hunks: string[] = [];
@@ -1867,7 +1869,8 @@ function contextHunks(lines: readonly string[], context: number): string[] {
     const hunk = ordered.slice(start, end);
     const beforeCount = hunk.filter((line) => !line.startsWith("+")).length;
     const afterCount = hunk.filter((line) => !line.startsWith("-")).length;
-    hunks.push(`@@ -${beforeCount === 0 ? beforeLine - 1 : beforeLine},${beforeCount} +${afterCount === 0 ? afterLine - 1 : afterLine},${afterCount} @@`, ...hunk);
+    hunks.push(`@@ -${beforeCount === 0 ? beforeLine - 1 : beforeLine},${beforeCount} +${afterCount === 0 ? afterLine - 1 : afterLine},${afterCount} @@`);
+    for (const line of hunk) hunks.push(line);
   }
   return hunks;
 }

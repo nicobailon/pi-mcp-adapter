@@ -262,6 +262,18 @@ describe("buildScriptToolSavePrompt", () => {
     expect(prompt).toMatch(/Script change:\n--- before\n\+\+\+ after\n@@ -1,1 \+1,1 @@\n- a+…\n… \(1 more line\)$/);
   });
 
+  it("shows a bounded diff when a 150,000-line script is replaced by one line", () => {
+    const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
+    mkdirSync(dirname(scriptPath), { recursive: true });
+    writeFileSync(scriptPath, "a\n".repeat(150_000));
+
+    const prompt = buildScriptToolSavePrompt(plan({}, { code: "return 1;" })).split("\n");
+    const scriptDiff = prompt.slice(prompt.indexOf("Script change:") + 1);
+    expect(scriptDiff.slice(0, 4)).toEqual(["--- before", "+++ after", "@@ -1,150000 +1,1 @@", "- a"]);
+    expect(scriptDiff).toHaveLength(61);
+    expect(scriptDiff[60]).toBe("… (149944 more lines)");
+  });
+
   it("leaves out the rewrite sentence for a file the writer would reproduce, and warns a project save about later script edits", () => {
     const configPath = join(cwd, ".pi", "mcp-adapter.json");
     mkdirSync(dirname(configPath), { recursive: true });
