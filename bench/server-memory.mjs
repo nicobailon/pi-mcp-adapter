@@ -1,7 +1,7 @@
 // Dev-only benchmark for issue #783: how many MCP server processes stay alive,
 // and how much memory they use, with many configured local stdio servers.
 //
-//   node bench/server-memory.mjs [--scenario 1,2,3,real] [--adapter <checkout>]
+//   node bench/server-memory.mjs [--scenario 1,2,3,real,executor] [--adapter <checkout>]
 //     [--servers 100] [--tools 50] [--runs 3] [--hold-minutes 2]
 //     [--pi <pi-coding-agent dir>] [--everything <dir with node_modules>]
 //     [--out <results.jsonl>]
@@ -10,6 +10,10 @@
 // Scenario 2: valid cache, idleTimeout 1 minute; call 3 servers, wait for the
 //             idle stop, call 1 again.
 // Scenario 3: Pi's built-in MCP (no adapter) with the same servers.
+// executor:   the same servers plus the Executor catalog fixture (3 apps × 400 tools),
+//             against the same servers alone: ready time with no cache and with a
+//             warm cache holding the capped app catalog, the time from Executor's
+//             own tools to its app tools being registered, and the `search` calls.
 // real:       one @modelcontextprotocol/server-everything process.
 //             Install it first and pass the directory as --everything:
 //             npm install --prefix /tmp/everything @modelcontextprotocol/server-everything@2026.8.31
@@ -52,6 +56,7 @@ const { values: opts } = parseArgs({
   },
 });
 const fixture = join(repo, "__tests__/fixtures/tools-only-server.mjs");
+const executorFixture = join(repo, "__tests__/fixtures/executor-catalog-server.mjs");
 const serverTag = `--bench-run=${process.pid}`;
 const serverCount = Number(opts.servers);
 const toolCount = Number(opts.tools);
@@ -179,10 +184,10 @@ function mcpServers() {
 
 // --- adapter session child ---------------------------------------------------
 
-function startSession(dirs) {
+function startSession(dirs, env = {}) {
   const child = track(spawn(process.execPath, ["--import", "tsx", join(repo, "bench/session.ts")], {
     cwd: repo,
-    env: { ...isolatedEnv(dirs), BENCH_ADAPTER: adapterEntry, BENCH_PROJECT_DIR: dirs.projectDir, BENCH_PI: resolve(opts.pi) },
+    env: { ...isolatedEnv(dirs), BENCH_ADAPTER: adapterEntry, BENCH_PROJECT_DIR: dirs.projectDir, BENCH_PI: resolve(opts.pi), ...env },
     stdio: ["pipe", "pipe", "inherit"],
   }));
   const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
@@ -205,8 +210,8 @@ function startSession(dirs) {
   };
 }
 
-function writeAdapterConfig(dirs, settings = {}) {
-  writeFileSync(join(dirs.agentDir, "mcp-adapter.json"), JSON.stringify({ mcpServers: mcpServers(), settings }));
+function writeAdapterConfig(dirs, settings = {}, servers = mcpServers()) {
+  writeFileSync(join(dirs.agentDir, "mcp-adapter.json"), JSON.stringify({ mcpServers: servers, settings }));
 }
 
 async function scenario1(run) {
@@ -284,6 +289,89 @@ async function scenario2(run) {
     };
   } finally {
     rmSync(dirs.root, { recursive: true, force: true });
+  }
+}
+
+// --- Executor app tools ------------------------------------------------------
+
+function withExecutor(dirs) {
+  const executor = { command: process.execPath, args: [executorFixture, serverTag], protocolVersion: "2026-07-28", env: { EXECUTOR_LOG_FILE: join(dirs.root, "executor.jsonl") } };
+  return { ...mcpServers(), executor };
+}
+
+function searchCalls(dirs) {
+  try {
+    return readFileSync(join(dirs.root, "executor.jsonl"), "utf8").split("\n").filter(line => line.includes('"name":"search"')).length;
+  } catch {
+    return 0;
+  }
+}
+
+function cachedAppTools(dirs) {
+  try {
+    return JSON.parse(readFileSync(join(dirs.agentDir, "mcp-cache.json"), "utf8")).servers.executor?.executorApps?.tools.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function readyOnce(dirs, env) {
+  const session = startSession(dirs, env);
+  const ready = await session.send({ op: "ready" });
+  return { session, ready };
+}
+
+async function scenarioExecutor(run) {
+  const plain = makeDirs("ex-plain");
+  const executor = makeDirs("ex-executor");
+  const watched = makeDirs("ex-watched");
+  try {
+    writeAdapterConfig(plain);
+    writeAdapterConfig(executor, {}, withExecutor(executor));
+    writeAdapterConfig(watched, {}, withExecutor(watched));
+    const timed = async (dirs) => {
+      const { session, ready } = await readyOnce(dirs);
+      await session.shutdown();
+      await killLeftovers(serverTag);
+      return ready;
+    };
+
+    // No cache: the catalog pass runs in the background, after ready.
+    const coldPlain = await timed(plain);
+    const cold = await readyOnce(executor);
+    const deadline = Date.now() + 120_000;
+    while (cachedAppTools(executor) === 0 && Date.now() < deadline) await sleep(50);
+    const catalogTools = cachedAppTools(executor);
+    if (catalogTools === 0) throw new Error("The Executor catalog was never cached");
+    await cold.session.shutdown();
+    await killLeftovers(serverTag);
+    const coldSearches = searchCalls(executor);
+
+    // The same cold start, polled for when the app tools are registered; not timed for ready.
+    const watch = await readyOnce(watched, { BENCH_WATCH_APP_TOOLS: String(catalogTools) });
+    const registered = await watch.session.send({ op: "appTools" });
+    await watch.session.shutdown();
+    await killLeftovers(serverTag);
+
+    // Warm cache: the catalog is registered from the cache, with no connect and no search.
+    const warmPlain = await timed(plain);
+    const warm = await timed(executor);
+    return {
+      scenario: "executor", run,
+      piVersion: warm.piVersion,
+      coldReadyMs: { plain: Math.round(coldPlain.ms), executor: Math.round(cold.ready.ms) },
+      warmReadyMs: { plain: Math.round(warmPlain.ms), executor: Math.round(warm.ms) },
+      warmAddedMs: Math.round(warm.ms - warmPlain.ms),
+      ownToAppToolsMs: registered.appMs === undefined || registered.ownMs === undefined ? null : Math.round(registered.appMs - registered.ownMs),
+      appToolsRegisteredMs: registered.appMs === undefined ? null : Math.round(registered.appMs),
+      catalogTools,
+      searchCalls: coldSearches,
+      warmSearchCalls: searchCalls(executor) - coldSearches,
+      appToolsAtWarmReady: warm.appTools,
+      deferredToolsAtWarmReady: warm.deferredTools,
+    };
+  } finally {
+    for (const dirs of [plain, executor, watched]) rmSync(dirs.root, { recursive: true, force: true });
   }
 }
 
@@ -378,6 +466,7 @@ try {
     if (name === "1") for (let run = 1; run <= runCount; run++) record(await scenario1(run));
     if (name === "2") for (let run = 1; run <= runCount; run++) record(await scenario2(run));
     if (name === "3") record(await scenario3());
+    if (name === "executor") for (let run = 1; run <= runCount; run++) record(await scenarioExecutor(run));
     if (name === "real") for (let run = 1; run <= runCount; run++) record(await realServer(run));
   }
 } finally {

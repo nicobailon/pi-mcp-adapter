@@ -55,6 +55,20 @@ const { session } = await createAgentSession({
   settingsManager,
   tools: ["mcp"],
 });
+
+// An Executor app tool is any mcp__executor__* tool but Executor's own.
+const executorOwnTools = new Set(["search", "describe", "call", "execute", "resume", "skills"].map(name => `mcp__executor__${name}`));
+const appToolCount = () => session.getAllTools().filter(tool => tool.name.startsWith("mcp__executor__") && !executorOwnTools.has(tool.name)).length;
+// BENCH_WATCH_APP_TOOLS=<n>: note when Executor's own tools, then n app tools, are registered.
+// Polling costs time, so the bench uses it only in a session it does not time.
+const watchFor = Number(process.env.BENCH_WATCH_APP_TOOLS ?? 0);
+const watched: { ownMs?: number; appMs?: number } = {};
+const watcher = watchFor > 0 ? setInterval(() => {
+  if (watched.ownMs === undefined && session.getAllTools().some(tool => tool.name === "mcp__executor__search")) watched.ownMs = performance.now() - sessionStart;
+  if (watched.appMs === undefined && appToolCount() >= watchFor) watched.appMs = performance.now() - sessionStart;
+  if (watched.ownMs !== undefined && watched.appMs !== undefined) clearInterval(watcher);
+}, 10) : undefined;
+
 await session.bindExtensions({ mode: "print", onError: error => console.error(error.error) });
 
 const mcp = session.getToolDefinition("mcp");
@@ -79,7 +93,12 @@ for await (const line of createInterface({ input: process.stdin })) {
       cacheIoMs: cacheIo.ms,
       maxLoopDelayMs: loopDelay.max / 1e6,
       deferredTools: session.getAllTools().filter(tool => tool.exposure === "deferred").length,
+      appTools: appToolCount(),
     });
+  } else if (command.op === "appTools") {
+    const deadline = performance.now() + 120_000;
+    while (watched.appMs === undefined && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    reply({ op: "appTools", ...watched });
   } else if (command.op === "call") {
     const start = performance.now();
     const result = await execute({ tool: "action_0", server: command.server, args: {} });
