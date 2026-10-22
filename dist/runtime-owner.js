@@ -62,27 +62,31 @@ export function combineAbortSignals(...signals) {
 export function createOwnedUi(ui, owner) {
     const proxies = new WeakMap();
     const wrap = (value) => {
-        if ((typeof value !== "object" || value === null) && typeof value !== "function") {
+        if (typeof value !== "object" || value === null) {
             return value;
         }
         const object = value;
         const existing = proxies.get(object);
         if (existing)
             return existing;
-        const proxy = new Proxy(object, {
-            get(target, property, receiver) {
+        // The proxy stands in front of an empty object, not the UI object itself. A host may freeze its
+        // UI or theme, and a proxy over a frozen object must return each property's own value, so it
+        // could neither wrap methods nor fence them after the owner stops.
+        const proxy = new Proxy(Object.create(Object.getPrototypeOf(object)), {
+            get(_shadow, property, receiver) {
                 if (!owner.isActive())
                     return undefined;
-                const member = Reflect.get(target, property, receiver);
+                const member = Reflect.get(object, property, receiver);
                 if (typeof member === "function") {
                     return (...args) => {
                         if (!owner.isActive())
                             return undefined;
-                        return Reflect.apply(member, target, args);
+                        return Reflect.apply(member, object, args);
                     };
                 }
                 return owner.isActive() ? wrap(member) : undefined;
             },
+            has: (_shadow, property) => Reflect.has(object, property),
         });
         proxies.set(object, proxy);
         return proxy;

@@ -33,6 +33,22 @@ describe("MCP runtime ownership", () => {
     expect(ui.theme.fg).toHaveBeenCalledTimes(1);
   });
 
+  it("works with a frozen UI and theme, and still fences them after the owner stops", async () => {
+    const owner = createMcpRuntimeOwner();
+    const notify = vi.fn();
+    const ui = Object.freeze({ notify, theme: Object.freeze({ fg: (_color: string, text: string) => `<${text}>` }) }) as any;
+    const owned = createOwnedUi(ui, owner) as any;
+
+    expect(owned.theme.fg("accent", "MCP")).toBe("<MCP>");
+    expect("notify" in owned).toBe(true);
+    const send = owned.notify;
+    await owner.stop("reload");
+    send("late");
+    expect(owned.notify).toBeUndefined();
+    expect(owned.theme).toBeUndefined();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it("does not read stale UI getters after the owner stops", async () => {
     const owner = createMcpRuntimeOwner();
     const ui = {} as any;

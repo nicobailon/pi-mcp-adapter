@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The adapter had its own script tool, `mcpScript`, next to Pi's `codemode`. Pi's `codemode` now reaches every adapter tool by name ([#861](https://github.com/nicobailon/pi-mcp-adapter/issues/861)) and lets permission extensions see each call, where `mcpScript` showed them one call, so `mcpScript` is gone. So are `jev.evaluate()`, the `settings.scriptMode` and `settings.scriptSkill` settings, the `settings.jev` keys `scriptEvaluation`, `maxEvaluationsPerScript`, `maxEvaluationBytesPerScript` and `maxEvaluationTokensPerScript`, the bundled `mcp-scripting` skill, the `examples/jev-*.mjs` recipes and the `quickjs-wasi` dependency. To script MCP calls, add `"+codemode"` to `defaultTools` in Pi's settings ([MCP scripting](docs/scripting.md#scripting-mcp-calls-with-pis-codemode)). A config that still sets the removed keys loads as before and shows a notice that names the file and the keys. Jev now serves semantic search only. Results a codemode script asks for reach it whole, as they did in `mcpScript`, while results that go to the model are guarded as before. Observed output shapes, which only script sessions saved, are now saved to `mcp-cache.json` by every session unless the server's tool list is private. Type changes: `McpSettings` loses `scriptMode` and `scriptSkill`, `McpSettings.jev` loses the four keys above, `JevErrorCode` loses `"budget_exhausted"`, `JevBudget` is gone, and `ResolvedJevSettings` loses the same four fields. See [#862](https://github.com/nicobailon/pi-mcp-adapter/issues/862).
 
+### Fixed
+
+- On hosts that freeze `ctx.ui.theme`, such as the Pendant VS Code extension, every MCP call failed with "'get' on proxy: property 'fg' is a read-only and non-configurable data property", so no server could be used. MCP now works there, and its UI calls still stop after a reload as they do elsewhere. Thanks to [@ocean1798](https://github.com/ocean1798) for [#872](https://github.com/nicobailon/pi-mcp-adapter/issues/872).
+
 ## [5.4.0] - 2026-10-19
 
 ### Highlights
