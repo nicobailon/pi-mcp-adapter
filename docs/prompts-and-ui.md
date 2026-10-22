@@ -26,6 +26,10 @@ Time spent answering a server's prompt does not count against its tool calls' `r
 
 On its default URL, [Executor](https://executor.sh) pauses a program when an app tool needs your approval or input and hands the pause to the model, which could then approve it without asking you. The adapter answers these pauses itself: it shows Executor's form in Pi's dialogs, sends your answer with Executor's `resume`, and gives the model only the final result. The model never sees the request ID, and the adapter refuses a `resume` call from the model. In a session that can't show dialogs (headless, or `settings.elicitation: false`), the call fails with a message that it needs an interactive Pi session. Executor's `execute` and `call` get a 6-minute timeout, which covers its 5-minute program limit, unless the server entry sets `requestTimeoutMs`. Executor's browser mode, where you answer in the browser, is left alone.
 
+### Executor accounts
+
+When a single Executor `call` fails because no account is linked to the app for you, Pi helps you connect one and runs the call again. The adapter gets Executor's own connection link and shows it with the same browser consent prompt as URL elicitation. The link is never shown to the model. Finish connecting in the browser, then choose Continue in Pi. Pi checks the connection once and retries the call once; if the connection is still pending, the model is told to try the call again. Only a single `call` where nothing has run yet is retried. A batch of calls, `execute`, a headless or non-TUI session, a declined prompt, or an app with more than one missing account all return Executor's own message unchanged. Opening the link is TUI-only, like URL mode above.
+
 ## MCP UI Integration
 
 MCP servers can ship interactive UIs via the [MCP UI](https://github.com/MCP-UI-Org/mcp-ui) standard. When you call a tool that has a UI resource, the adapter opens it in a native macOS window via [Glimpse](https://github.com/hazat/glimpse) if available, otherwise falls back to the browser.
