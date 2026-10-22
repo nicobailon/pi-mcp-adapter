@@ -33,6 +33,13 @@ export declare function parseDirectToolSelectors(selectors: string[]): {
 };
 export declare function getMissingConfiguredDirectToolServers(config: McpConfig, cache: MetadataCache | null, envOverride?: string[]): string[];
 export declare function reconstructToolMetadata(serverName: string, entry: ServerCacheEntry, prefix: ToolPrefix, definition: Pick<ServerEntry, "exposeResources" | "includeTools" | "excludeTools" | "toolPrefix">, configuredServers?: Record<string, ServerEntry>, cache?: MetadataCache, sharedSelectorCandidateIndex?: ToolSelectorCandidateIndex): ToolMetadata[];
+/**
+ * The tool metadata of an Executor server's cached app tools, named by canonical path, after
+ * includeTools/excludeTools. Executor's own `tools.executor.*` tools are never app tools, and an
+ * app tool never takes the name of one of the server's own tools. Executor gives no JSON Schema,
+ * so the input is any object and the description carries the TypeScript input type.
+ */
+export declare function executorAppToolMetadata(serverName: string, entry: ServerCacheEntry, effectivePrefix: ToolPrefix, definition: Pick<ServerEntry, "includeTools" | "excludeTools">, selectorCandidateIndex: ToolSelectorCandidateIndex | undefined, takenNames: ReadonlySet<string>): ToolMetadata[];
 export declare function createCachedToolSelectorCandidateIndex(configuredServers: Record<string, ServerEntry>, cache: MetadataCache, prefix: ToolPrefix): ToolSelectorCandidateIndex;
 export declare function serializeTools(tools: McpTool[]): CachedTool[];
 export declare function serializeResources(resources: McpResource[]): CachedResource[];

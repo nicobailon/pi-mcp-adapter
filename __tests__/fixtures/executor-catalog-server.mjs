@@ -15,6 +15,7 @@ import readline from "node:readline";
 // EXECUTOR_CATALOG_UNAVAILABLE: comma-separated app names `search` reports as unavailable.
 // EXECUTOR_CATALOG_MALFORMED=no-path|items|remaining: every page after the first is malformed that way.
 // EXECUTOR_SEARCH_GATE: a path; `search` answers only once that file exists.
+// EXECUTOR_CATALOG_OWN=1: the catalog starts with Executor's own `tools.executor.*` tools, as a real one does.
 const lines = readline.createInterface({ input: process.stdin });
 const logFile = process.env.EXECUTOR_LOG_FILE;
 const serverInfo = { name: process.env.EXECUTOR_SERVER_NAME ?? "Executor", version: "0.1.0" };
@@ -36,14 +37,17 @@ function toolResult(structuredContent) {
 
 const appNames = ["alpha", "beta", "gamma", "delta", "epsilon"].slice(0, Number(process.env.EXECUTOR_CATALOG_APPS ?? 3));
 const toolsPerApp = Number(process.env.EXECUTOR_CATALOG_TOOLS ?? 400);
-const catalog = appNames.flatMap(app => Array.from({ length: toolsPerApp }, (_, index) => {
+const ownTools = process.env.EXECUTOR_CATALOG_OWN === "1"
+  ? [{ path: "tools.executor.apps.list", description: "List the apps of this Executor.", input: "{ query?: { owner?: string | null } }" }]
+  : [];
+const catalog = [...ownTools, ...appNames.flatMap(app => Array.from({ length: toolsPerApp }, (_, index) => {
   const tool = `tool_${String(index).padStart(3, "0")}`;
   return {
     path: `tools.${app}.${tool}`,
     description: `Read the ${app} fixture record number ${index}, the way an Executor app tool describes itself on one line.`,
     input: "{ id: string, limit?: number, [key: string]: unknown }",
   };
-}));
+}))];
 const unavailable = (process.env.EXECUTOR_CATALOG_UNAVAILABLE ?? "").split(",").filter(Boolean);
 
 function namespacesOf(items) {

@@ -473,6 +473,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       resourceUri: spec.resourceUri,
       uiResourceUri: spec.uiResourceUri,
       uiStreamMode: spec.uiStreamMode,
+      executorPath: spec.executorPath,
       // A mode-only change (search ↔ eager) must re-register, or the tool
       // keeps the activation behavior of the mode it was registered under.
       lazy: spec.lazy === true,
@@ -487,7 +488,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // The fields Pi's built-in MCP registers its tools with (extensions/mcp/tools.js).
   function piDeferredToolFields(spec: DirectToolSpec, config: McpConfig, cache: MetadataCache | null, cachedTools?: ReadonlyMap<string, CachedTool>): Record<string, unknown> {
     const serverCache = cache?.servers[spec.serverName];
-    const tool = spec.resourceUri
+    const tool = spec.resourceUri || spec.executorPath !== undefined
       ? undefined
       : cachedTools ? cachedTools.get(spec.originalName) : serverCache?.tools?.find((candidate) => candidate.name === spec.originalName);
     const description = config.mcpServers[spec.serverName]?.description?.trim();

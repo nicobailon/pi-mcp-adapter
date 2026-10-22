@@ -4619,6 +4619,39 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(deferredNames()).toEqual([...first, "mcp__proxy__late"]);
     });
 
+    it("registers an Executor app tool once across unchanged syncs, again when its input type changes, and never activates it", async () => {
+      const executor = { command: "executor", lifecycle: "eager" };
+      const catalog = (inputType: string) => ({
+        version: 1,
+        servers: {
+          executor: cacheEntry(executor, {
+            tools: [{ name: "search" }],
+            executorApps: {
+              tools: [{ path: "tools.github.issues.list", canonicalPath: "github.issues.list", description: "List issues", inputType }],
+              total: 1, cap: 1000, fetchedAt: Date.now(),
+            },
+          }),
+        },
+      });
+      const { api, state, activeTools } = await bootCached({ executor: [executor, [{ name: "search" }]] });
+      mocks.loadMetadataCache.mockReturnValue(catalog("{ repo: string }"));
+      await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+      state.onToolMetadataUpdated("executor", "resync");
+      api.setActiveTools.mockClear();
+
+      state.onToolMetadataUpdated("executor", "resync");
+      expect(registrations(api, "mcp__executor__github_issues_list")).toEqual([
+        expect.objectContaining({ exposure: "deferred", description: "List issues\n\nExecutor app tool github.issues.list. Input: { repo: string }" }),
+      ]);
+
+      mocks.loadMetadataCache.mockReturnValue(catalog("{ repo: string, state?: string }"));
+      state.onToolMetadataUpdated("executor", "resync");
+      expect(registrations(api, "mcp__executor__github_issues_list").map((tool: { description: string }) => tool.description.split("Input: ")[1]))
+        .toEqual(["{ repo: string }", "{ repo: string, state?: string }"]);
+      expect(api.setActiveTools).not.toHaveBeenCalled();
+      expect(activeTools()).not.toContain("mcp__executor__github_issues_list");
+    });
+
     it("re-registers the deferred tools of a disabled or removed server as hidden", async () => {
       const { api, config, proxyTool } = await bootCached({ proxy: [{ command: "x" }, [echoTool]], gone: [{ command: "g" }, [{ name: "run" }]] });
       (config.mcpServers.proxy as Record<string, unknown>).disabled = true;

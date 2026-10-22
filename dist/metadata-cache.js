@@ -311,7 +311,35 @@ export function reconstructToolMetadata(serverName, entry, prefix, definition, c
             });
         }
     }
-    return resolveUniqueNameOwnership(metadata, (tool) => tool.name).unique;
+    const unique = resolveUniqueNameOwnership(metadata, (tool) => tool.name).unique;
+    const takenNames = new Set(unique.map((tool) => tool.name));
+    return [...unique, ...executorAppToolMetadata(serverName, entry, effectivePrefix, definition, selectorCandidateIndex, takenNames)];
+}
+/**
+ * The tool metadata of an Executor server's cached app tools, named by canonical path, after
+ * includeTools/excludeTools. Executor's own `tools.executor.*` tools are never app tools, and an
+ * app tool never takes the name of one of the server's own tools. Executor gives no JSON Schema,
+ * so the input is any object and the description carries the TypeScript input type.
+ */
+export function executorAppToolMetadata(serverName, entry, effectivePrefix, definition, selectorCandidateIndex, takenNames) {
+    const metadata = [];
+    for (const tool of entry.executorApps?.tools ?? []) {
+        if (tool.canonicalPath.startsWith("executor."))
+            continue;
+        if (!isToolAllowed(tool.canonicalPath, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex))
+            continue;
+        const name = formatToolName(tool.canonicalPath, serverName, effectivePrefix);
+        if (takenNames.has(name))
+            continue;
+        metadata.push({
+            name,
+            originalName: tool.canonicalPath,
+            description: `${tool.description ? `${tool.description}\n\n` : ""}Executor app tool ${tool.canonicalPath}. Input: ${tool.inputType}${tool.inputTruncated ? " (cut short by Executor)" : ""}`,
+            inputSchema: { type: "object", properties: {} },
+            executorPath: tool.path,
+        });
+    }
+    return metadata;
 }
 export function createCachedToolSelectorCandidateIndex(configuredServers, cache, prefix) {
     const candidates = new Set();
@@ -332,6 +360,12 @@ export function createCachedToolSelectorCandidateIndex(configuredServers, cache,
                 for (const candidate of getToolNameCandidates(baseName, serverName, effectivePrefix, false))
                     candidates.add(candidate);
             }
+        }
+        for (const tool of entry.executorApps?.tools ?? []) {
+            if (tool.canonicalPath.startsWith("executor."))
+                continue;
+            for (const candidate of getToolNameCandidates(tool.canonicalPath, serverName, effectivePrefix, false))
+                candidates.add(candidate);
         }
     }
     return createToolSelectorCandidateIndex(candidates);

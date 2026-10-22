@@ -85,6 +85,10 @@ function createSelectorCandidateIndex(config: McpConfig, cache: MetadataCache, p
         for (const candidate of getToolNameCandidates(baseName, otherServerName, otherPrefix, false)) candidates.add(candidate);
       }
     }
+    for (const tool of otherCache.executorApps?.tools ?? []) {
+      if (tool.canonicalPath.startsWith("executor.")) continue;
+      for (const candidate of getToolNameCandidates(tool.canonicalPath, otherServerName, otherPrefix, false)) candidates.add(candidate);
+    }
   }
   return createToolSelectorCandidateIndex(candidates);
 }

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { DirectToolSpec, McpConfig } from "./types.ts";
 import { formatServerNamespace, isServerDisabled, resolveToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
-import { isServerCacheValid } from "./metadata-cache.ts";
+import { executorAppToolMetadata, isServerCacheValid } from "./metadata-cache.ts";
 import { createServerSelectorIndexResolver, resolveServerToolSpecs } from "./direct-tool-surface.ts";
 
 /** Provider tool names are limited to 64 characters of `[A-Za-z0-9_-]`. */
@@ -63,15 +63,31 @@ export function resolveDeferredToolSpecs(
   const taken = new Set(reserved.names);
   const selectorIndexFor = createServerSelectorIndexResolver(config, cache, prefix);
   const candidates: DirectToolSpec[] = [];
+  const appCandidates: DirectToolSpec[] = [];
   for (const [serverName, definition] of Object.entries(config.mcpServers)) {
     if (isServerDisabled(definition)) continue;
     const serverCache = cache.servers[serverName];
     if (!serverCache || !isServerCacheValid(serverCache, definition)) continue;
-    const serverSpecs = resolveServerToolSpecs(serverName, definition, serverCache, resolveToolPrefix(definition, prefix), true, selectorIndexFor(definition));
+    const effectivePrefix = resolveToolPrefix(definition, prefix);
+    const serverSpecs = resolveServerToolSpecs(serverName, definition, serverCache, effectivePrefix, true, selectorIndexFor(definition));
     for (const spec of serverSpecs) {
       if (!direct.has(deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri))) candidates.push(spec);
     }
+    // Executor app tools are only ever deferred, whatever directTools selects. Their Pi names follow
+    // the rules below, so one whose adapter name a server tool has still gets its own.
+    for (const tool of executorAppToolMetadata(serverName, serverCache, effectivePrefix, definition, selectorIndexFor(definition), new Set())) {
+      appCandidates.push({
+        serverName,
+        originalName: tool.originalName,
+        prefixedName: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        executorPath: tool.executorPath!,
+      });
+    }
   }
+  // App tools take their names after every other tool.
+  candidates.push(...appCandidates);
 
   // Every tool whose plain name another tool shares gets the hash, as in Pi's built-in MCP, so list
   // order never decides which tool a name calls.

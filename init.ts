@@ -8,6 +8,7 @@ import { McpLifecycleManager } from "./lifecycle.ts";
 import {
   computeServerHash,
   createCachedToolSelectorCandidateIndex,
+  executorAppToolMetadata,
   getMissingConfiguredDirectToolServers,
   isServerCacheValid,
   keepOutputShapes,
@@ -454,7 +455,7 @@ export async function initializeMcp(
     }
 
     const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix, config.mcpServers, startupKnownMetadata, true);
-    toolMetadata.set(name, metadata);
+    toolMetadata.set(name, withExecutorAppMetadata(state, name, metadata));
     resourceCounts.set(name, connection.resources.length);
     if (!connection.promptDiscoveryFailed) {
       promptMetadata.set(name, reconstructPromptMetadata(name, connection.prompts ?? [], prefix, definition));
@@ -608,7 +609,7 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
   const prefix = state.config.settings?.toolPrefix ?? "server";
 
   const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix, state.config.mcpServers, state.toolMetadata);
-  state.toolMetadata.set(serverName, metadata);
+  state.toolMetadata.set(serverName, withExecutorAppMetadata(state, serverName, metadata));
   state.resourceCounts?.set(serverName, connection.resources.length);
   if (!connection.promptDiscoveryFailed) {
     state.promptMetadata?.set(serverName, reconstructPromptMetadata(serverName, connection.prompts ?? [], prefix, definition));
@@ -629,6 +630,19 @@ export function updateMetadataCache(
   if (!connection || connection.status !== "connected") return;
   const entry = captureMetadata(state, serverName, connection, loadMetadataCache);
   if (entry) saveMetadataCache({ version: 1, servers: { [serverName]: entry } });
+  const metadata = state.toolMetadata?.get(serverName);
+  if (metadata) state.toolMetadata.set(serverName, withExecutorAppMetadata(state, serverName, metadata));
+}
+
+/** A connected server's tool metadata with this session's cached Executor app tools in place of any earlier ones. */
+function withExecutorAppMetadata(state: McpExtensionState, serverName: string, metadata: ToolMetadata[]): ToolMetadata[] {
+  const serverTools = metadata.filter((tool) => tool.executorPath === undefined);
+  const entry = state.sessionMetadata?.get(serverName);
+  const definition = state.config.mcpServers[serverName];
+  if (!entry?.executorApps || !definition) return serverTools;
+  const prefix = resolveToolPrefix(definition, state.config.settings?.toolPrefix ?? "server");
+  const takenNames = new Set(serverTools.map((tool) => tool.name));
+  return [...serverTools, ...executorAppToolMetadata(serverName, entry, prefix, definition, undefined, takenNames)];
 }
 
 /** Builds a server's cache entry from a connection's catalog and records it as this session's metadata. */
@@ -746,6 +760,9 @@ export function refreshExecutorCatalog(state: McpExtensionState, serverName: str
       if (current.cacheScope !== "private" && current.ttlMs !== 0) saveExecutorCatalog(serverName, current.configHash, catalog);
       state.sessionMetadata!.set(serverName, { ...current, executorApps: catalog });
       setExecutorCatalogNotes(state, serverName, unavailableAppNotes(serverName, catalog.unavailableApps));
+      const metadata = state.toolMetadata.get(serverName);
+      if (metadata) state.toolMetadata.set(serverName, withExecutorAppMetadata(state, serverName, metadata));
+      notifyToolMetadataUpdated(state, serverName, "executor-catalog");
     } catch (error) {
       if (signal.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
