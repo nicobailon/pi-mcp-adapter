@@ -1873,10 +1873,7 @@ function contextHunks(lines: readonly string[], context: number): string[] {
 }
 
 function buildConfigWritePreview(filePath: string, nextRaw: Record<string, unknown>): ConfigWritePreview {
-  const existed = existsSync(filePath);
-  const beforeRaw = readRawConfigObject(filePath);
-  const beforeText = existed ? serializeRawConfig(beforeRaw) : "";
-  const afterText = serializeRawConfig(nextRaw);
+  const { existed, beforeText, afterText } = configWriteTexts(filePath, nextRaw);
   return {
     path: filePath,
     existed,
@@ -1885,6 +1882,14 @@ function buildConfigWritePreview(filePath: string, nextRaw: Record<string, unkno
     afterText,
     diffText: buildUnifiedDiff(beforeText, afterText),
   };
+}
+
+function configWriteTexts(filePath: string, nextRaw: Record<string, unknown>): Pick<ConfigWritePreview, "existed" | "beforeText" | "afterText"> {
+  const existed = existsSync(filePath);
+  const beforeRaw = readRawConfigObject(filePath);
+  const beforeText = existed ? serializeRawConfig(beforeRaw) : "";
+  const afterText = serializeRawConfig(nextRaw);
+  return { existed, beforeText, afterText };
 }
 
 function readRawConfigObject(filePath: string): Record<string, unknown> {
@@ -2200,9 +2205,23 @@ function getScriptToolsObject(raw: Record<string, unknown>, filePath: string): R
 }
 
 export function previewScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): ConfigWritePreview {
+  return buildConfigWritePreview(filePath, withScriptToolEntry(filePath, name, entry));
+}
+
+/** The file's text before and after the entry is written, without `previewScriptToolEntry`'s full diff. */
+export function previewScriptToolEntryTexts(filePath: string, name: string, entry: ScriptToolDefinition): Pick<ConfigWritePreview, "existed" | "beforeText" | "afterText"> {
+  return configWriteTexts(filePath, withScriptToolEntry(filePath, name, entry));
+}
+
+/** The file's `scriptTools` entry for `name` as written, or undefined when it has none. */
+export function readScriptToolEntry(filePath: string, name: string): unknown {
+  const scriptTools = getScriptToolsObject(readRawConfigObject(filePath), filePath);
+  return Object.hasOwn(scriptTools, name) ? scriptTools[name] : undefined;
+}
+
+function withScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): Record<string, unknown> {
   const raw = readRawConfigObject(filePath);
-  const nextRaw = { ...raw, scriptTools: { ...getScriptToolsObject(raw, filePath), [name]: entry } };
-  return buildConfigWritePreview(filePath, nextRaw);
+  return { ...raw, scriptTools: { ...getScriptToolsObject(raw, filePath), [name]: entry } };
 }
 
 export function writeScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): string {

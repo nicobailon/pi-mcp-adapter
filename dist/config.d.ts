@@ -167,6 +167,10 @@ export declare function writeStarterProjectConfig(cwd?: string): string;
 export declare function previewSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): ConfigWritePreview;
 export declare function writeSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): string;
 export declare function previewScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): ConfigWritePreview;
+/** The file's text before and after the entry is written, without `previewScriptToolEntry`'s full diff. */
+export declare function previewScriptToolEntryTexts(filePath: string, name: string, entry: ScriptToolDefinition): Pick<ConfigWritePreview, "existed" | "beforeText" | "afterText">;
+/** The file's `scriptTools` entry for `name` as written, or undefined when it has none. */
+export declare function readScriptToolEntry(filePath: string, name: string): unknown;
 export declare function writeScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): string;
 export declare function getServerProvenance(overridePath?: string, cwd?: string): Map<string, ServerProvenance>;
 export declare function writeDirectToolsConfig(changes: Map<string, true | string[] | false>, provenance: Map<string, ServerProvenance>, fullConfig: McpConfig, onFileWritten?: () => void): void;

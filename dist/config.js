@@ -1682,10 +1682,7 @@ function contextHunks(lines, context) {
     return hunks;
 }
 function buildConfigWritePreview(filePath, nextRaw) {
-    const existed = existsSync(filePath);
-    const beforeRaw = readRawConfigObject(filePath);
-    const beforeText = existed ? serializeRawConfig(beforeRaw) : "";
-    const afterText = serializeRawConfig(nextRaw);
+    const { existed, beforeText, afterText } = configWriteTexts(filePath, nextRaw);
     return {
         path: filePath,
         existed,
@@ -1694,6 +1691,13 @@ function buildConfigWritePreview(filePath, nextRaw) {
         afterText,
         diffText: buildUnifiedDiff(beforeText, afterText),
     };
+}
+function configWriteTexts(filePath, nextRaw) {
+    const existed = existsSync(filePath);
+    const beforeRaw = readRawConfigObject(filePath);
+    const beforeText = existed ? serializeRawConfig(beforeRaw) : "";
+    const afterText = serializeRawConfig(nextRaw);
+    return { existed, beforeText, afterText };
 }
 function readRawConfigObject(filePath) {
     if (!lstatSync(filePath, { throwIfNoEntry: false }))
@@ -1979,9 +1983,20 @@ function getScriptToolsObject(raw, filePath) {
     return (raw.scriptTools ?? {});
 }
 export function previewScriptToolEntry(filePath, name, entry) {
+    return buildConfigWritePreview(filePath, withScriptToolEntry(filePath, name, entry));
+}
+/** The file's text before and after the entry is written, without `previewScriptToolEntry`'s full diff. */
+export function previewScriptToolEntryTexts(filePath, name, entry) {
+    return configWriteTexts(filePath, withScriptToolEntry(filePath, name, entry));
+}
+/** The file's `scriptTools` entry for `name` as written, or undefined when it has none. */
+export function readScriptToolEntry(filePath, name) {
+    const scriptTools = getScriptToolsObject(readRawConfigObject(filePath), filePath);
+    return Object.hasOwn(scriptTools, name) ? scriptTools[name] : undefined;
+}
+function withScriptToolEntry(filePath, name, entry) {
     const raw = readRawConfigObject(filePath);
-    const nextRaw = { ...raw, scriptTools: { ...getScriptToolsObject(raw, filePath), [name]: entry } };
-    return buildConfigWritePreview(filePath, nextRaw);
+    return { ...raw, scriptTools: { ...getScriptToolsObject(raw, filePath), [name]: entry } };
 }
 export function writeScriptToolEntry(filePath, name, entry) {
     const raw = readRawConfigObject(filePath);

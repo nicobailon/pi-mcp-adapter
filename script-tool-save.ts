@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { buildUnifiedDiff, getPiGlobalConfigPath, getProjectPiConfigPath, previewScriptToolEntry, writeScriptToolEntry } from "./config.ts";
+import { buildUnifiedDiff, getPiGlobalConfigPath, getProjectPiConfigPath, previewScriptToolEntryTexts, readScriptToolEntry, writeScriptToolEntry } from "./config.ts";
 import { MAX_SCRIPT_BYTES, SCRIPT_TOOL_NAMESPACE } from "./script-tool-surface.ts";
 import { resolveScriptToolPath, validateScriptToolEntry } from "./script-tools.ts";
 import type { ScriptToolDefinition } from "./types.ts";
@@ -167,7 +167,7 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
   if (existing && existing.size > MAX_SCRIPT_BYTES) return saveFailed(name, `${target.scriptPath} is larger than 1 MiB`);
   let baseline: ScriptToolSaveBaseline;
   try {
-    baseline = readBaseline(target.configPath, target.scriptPath, name, entry);
+    baseline = readBaseline(target.configPath, target.scriptPath, name);
   } catch (error) {
     return saveFailed(name, errorMessage(error));
   }
@@ -190,8 +190,9 @@ function entryText(configText: string, name: string): string | undefined {
 }
 
 // Throws when the config or the script cannot be read.
-function readBaseline(configPath: string, scriptPath: string, name: string, entry: ScriptToolDefinition): ScriptToolSaveBaseline {
-  const configEntry = entryText(previewScriptToolEntry(configPath, name, entry).beforeText, name);
+function readBaseline(configPath: string, scriptPath: string, name: string): ScriptToolSaveBaseline {
+  const current = readScriptToolEntry(configPath, name);
+  const configEntry = current === undefined ? undefined : JSON.stringify(current);
   const script = lstatSync(scriptPath, { throwIfNoEntry: false }) ? readFileSync(scriptPath) : undefined;
   return {
     ...(script ? { scriptHash: createHash("sha256").update(script).digest("hex") } : {}),
@@ -204,7 +205,7 @@ function readBaseline(configPath: string, scriptPath: string, name: string, entr
  * changed after the operator was shown them. Throws when either cannot be read.
  */
 export function scriptToolSaveChange(plan: ScriptToolSavePlan): string | undefined {
-  const now = readBaseline(plan.configPath, plan.scriptPath, plan.name, plan.entry);
+  const now = readBaseline(plan.configPath, plan.scriptPath, plan.name);
   return now.scriptHash === plan.baseline.scriptHash && now.configEntry === plan.baseline.configEntry
     ? undefined
     : "the script file or its config entry changed after you approved the save, so nothing was written";
@@ -212,7 +213,7 @@ export function scriptToolSaveChange(plan: ScriptToolSavePlan): string | undefin
 
 /** The summary the operator approves before reviewing the script: both files, the config diff and any script diff. */
 export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
-  const preview = previewScriptToolEntry(plan.configPath, plan.name, plan.entry);
+  const preview = previewScriptToolEntryTexts(plan.configPath, plan.name, plan.entry);
   const scriptExisted = plan.overwrite?.scriptExisted === true;
   const lineCount = countLines(plan.code);
   const configState = !preview.existed ? "new file" : entryText(preview.beforeText, plan.name) !== undefined ? "entry replaced" : "new entry";
