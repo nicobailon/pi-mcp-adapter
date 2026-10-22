@@ -105,6 +105,7 @@
     "direct-tool-surface.ts",
     "deferred-tool-surface.ts",
     "lazy-loader.ts",
+    "codemode-bridge.ts",
     "namespace-tools.ts",
     "mcp-references.ts",
     "commands.ts",
