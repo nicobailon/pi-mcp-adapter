@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { previewScriptToolEntry } from "../config.ts";
+import { buildUnifiedDiff, previewScriptToolEntry } from "../config.ts";
 import {
   buildScriptToolSavePrompt,
   checkScriptToolCode,
@@ -178,7 +178,8 @@ describe("checkScriptToolSave", () => {
 describe("buildScriptToolSavePrompt", () => {
   it("names the tool, both new paths, the config diff and the line count, without the code", () => {
     const saved = plan();
-    const { diffText } = previewScriptToolEntry(saved.configPath, saved.name, saved.entry);
+    const { beforeText, afterText } = previewScriptToolEntry(saved.configPath, saved.name, saved.entry);
+    const diffText = buildUnifiedDiff(beforeText, afterText, { context: 3 });
     expect(buildScriptToolSavePrompt(saved)).toBe([
       'Save script tool "stale_issues" as mcp__script__stale_issues?',
       "",
@@ -188,6 +189,7 @@ describe("buildScriptToolSavePrompt", () => {
       "Config change:",
       diffText,
     ].join("\n"));
+    expect(diffText).toMatch(/^--- before\n\+\+\+ after\n@@ -1,1 \+1,\d+ @@\n/);
     expect(diffText).toContain('+       "file": "mcp-scripts/stale_issues.js"');
   });
 
@@ -206,9 +208,30 @@ describe("buildScriptToolSavePrompt", () => {
     ]);
     const scriptDiff = prompt.slice(prompt.indexOf("Script change:") + 1);
     expect(scriptDiff).toHaveLength(61);
-    expect(scriptDiff.slice(0, 3)).toEqual(["--- before", "+++ after", `+ ${CODE.split("\n")[0]}`]);
-    // 2 headers + 3 added lines (the code's trailing newline adds an empty one) + 100 removed.
-    expect(scriptDiff[60]).toBe("… (45 more lines)");
+    expect(scriptDiff.slice(0, 4)).toEqual(["--- before", "+++ after", "@@ -1,100 +1,3 @@", "- // old 0"]);
+    // 3 headers + 100 removed + 3 added lines (the code's trailing newline adds an empty one).
+    expect(scriptDiff[60]).toBe("… (46 more lines)");
+  });
+
+  it("shows only the changed lines and 3 lines around them, so a change deep in a long file is shown", () => {
+    const configPath = join(agentDir, "mcp-adapter.json");
+    const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
+    mkdirSync(dirname(scriptPath), { recursive: true });
+    const servers = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`server${i}`, { command: `cmd${i}` }]));
+    writeFileSync(configPath, `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`);
+    const lines = Array.from({ length: 200 }, (_, i) => `return ${i};`);
+    writeFileSync(scriptPath, lines.join("\n"));
+    lines[150] = "return 'changed';";
+
+    const prompt = buildScriptToolSavePrompt(plan({}, { code: lines.join("\n") })).split("\n");
+    const configDiff = prompt.slice(prompt.indexOf("Config change:") + 1, prompt.indexOf("Script change:") - 1);
+    expect(configDiff.length).toBeLessThan(20);
+    expect(configDiff).toContain('+   "scriptTools": {');
+    expect(configDiff).toContain('+       "file": "mcp-scripts/stale_issues.js"');
+    expect(prompt.slice(prompt.indexOf("Script change:") + 1)).toEqual([
+      "--- before", "+++ after", "@@ -148,7 +148,7 @@",
+      "  return 147;", "  return 148;", "  return 149;", "- return 150;", "+ return 'changed';", "  return 151;", "  return 152;", "  return 153;",
+    ]);
   });
 
   it("leaves out the rewrite sentence for a file the writer would reproduce, and warns a project save about later script edits", () => {

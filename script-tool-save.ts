@@ -54,7 +54,8 @@ export interface ScriptToolSavePlan extends ScriptToolSaveTarget {
 const OPTIONS_PREFIX = "// @options:";
 // `target` is read by the save action itself.
 const SAVE_ARGS = new Set(["name", "description", "code", "inputSchema", "target"]);
-const MAX_SCRIPT_DIFF_LINES = 60;
+const MAX_DIFF_LINES = 60;
+const DIFF_CONTEXT = 3;
 const MISSING_INPUT = 'save-script requires args with name, description and code. Example: mcp({ action: "save-script", args: { name: "stale_issues", description: "...", code: "..." } })';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -177,7 +178,7 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
   if (plan.target === "project") {
     lines.push("", "Approving a project script tool covers its entry, not the script. The script file can change without asking you again.");
   }
-  lines.push("", "Config change:", preview.diffText);
+  lines.push("", "Config change:", ...boundedDiff(preview.beforeText, preview.afterText));
   if (scriptExisted) {
     let before: string;
     try {
@@ -185,11 +186,15 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
     } catch (error) {
       throw new Error(`Failed to read script tool file at ${plan.scriptPath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
-    const diff = buildUnifiedDiff(before, plan.code).split("\n");
-    lines.push("", "Script change:", ...diff.slice(0, MAX_SCRIPT_DIFF_LINES));
-    if (diff.length > MAX_SCRIPT_DIFF_LINES) lines.push(`… (${diff.length - MAX_SCRIPT_DIFF_LINES} more lines)`);
+    lines.push("", "Script change:", ...boundedDiff(before, plan.code));
   }
   return lines.join("\n");
+}
+
+function boundedDiff(before: string, after: string): string[] {
+  const diff = buildUnifiedDiff(before, after, { context: DIFF_CONTEXT }).split("\n");
+  if (diff.length <= MAX_DIFF_LINES) return diff;
+  return [...diff.slice(0, MAX_DIFF_LINES), `… (${diff.length - MAX_DIFF_LINES} more lines)`];
 }
 
 // Another save may have written into the directory meanwhile, and then it stays.

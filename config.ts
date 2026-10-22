@@ -1782,7 +1782,11 @@ function serializeRawConfig(raw: Record<string, unknown>): string {
   return `${JSON.stringify(raw, null, 2)}\n`;
 }
 
-export function buildUnifiedDiff(beforeText: string, afterText: string): string {
+/**
+ * A line diff of two texts. By default every line is listed; with `context`, only changed lines and
+ * that many lines around them, in `@@` hunks.
+ */
+export function buildUnifiedDiff(beforeText: string, afterText: string, options: { context?: number } = {}): string {
   if (beforeText === afterText) return "(no changes)";
 
   const before = beforeText.split("\n");
@@ -1802,7 +1806,7 @@ export function buildUnifiedDiff(beforeText: string, afterText: string): string 
     }
   }
 
-  const lines: string[] = ["--- before", "+++ after"];
+  const lines: string[] = [];
   let i = 0;
   let j = 0;
   while (i < rows || j < cols) {
@@ -1823,7 +1827,42 @@ export function buildUnifiedDiff(beforeText: string, afterText: string): string 
     }
   }
 
-  return lines.join("\n");
+  const body = options.context === undefined ? lines : contextHunks(lines, options.context);
+  return ["--- before", "+++ after", ...body].join("\n");
+}
+
+// Removals come before additions within each run of changes, as in `diff -u`.
+function contextHunks(lines: readonly string[], context: number): string[] {
+  const ordered: string[] = [];
+  for (let k = 0; k < lines.length;) {
+    if (lines[k]!.startsWith(" ")) {
+      ordered.push(lines[k++]!);
+      continue;
+    }
+    const run: string[] = [];
+    while (k < lines.length && !lines[k]!.startsWith(" ")) run.push(lines[k++]!);
+    ordered.push(...run.filter((line) => line.startsWith("-")), ...run.filter((line) => line.startsWith("+")));
+  }
+  const changed = ordered.flatMap((line, index) => line.startsWith(" ") ? [] : [index]);
+  const hunks: string[] = [];
+  // Line numbers of ordered[cursor] in the before and after texts.
+  let cursor = 0;
+  let beforeLine = 1;
+  let afterLine = 1;
+  for (let k = 0; k < changed.length; k++) {
+    const start = Math.max(0, changed[k]! - context);
+    while (k + 1 < changed.length && changed[k + 1]! - changed[k]! - 1 <= 2 * context) k++;
+    const end = Math.min(ordered.length, changed[k]! + context + 1);
+    for (; cursor < start; cursor++) {
+      if (!ordered[cursor]!.startsWith("+")) beforeLine++;
+      if (!ordered[cursor]!.startsWith("-")) afterLine++;
+    }
+    const hunk = ordered.slice(start, end);
+    const beforeCount = hunk.filter((line) => !line.startsWith("+")).length;
+    const afterCount = hunk.filter((line) => !line.startsWith("-")).length;
+    hunks.push(`@@ -${beforeCount === 0 ? beforeLine - 1 : beforeLine},${beforeCount} +${afterCount === 0 ? afterLine - 1 : afterLine},${afterCount} @@`, ...hunk);
+  }
+  return hunks;
 }
 
 function buildConfigWritePreview(filePath: string, nextRaw: Record<string, unknown>): ConfigWritePreview {
