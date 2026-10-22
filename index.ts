@@ -11,7 +11,7 @@ import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectServer, describeBlockedScriptTool, excludeProjectServersAtLoadTime, hasProjectScriptToolDefinitions, hasProjectServerDefinitions, loadedScriptToolIssues } from "./project-server-trust.ts";
-import { BUILTIN_NAMES, buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
+import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
 import { findScriptTool, nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolOwnerKey, type ScriptToolSpec } from "./script-tool-surface.ts";
 import { parseScriptTools } from "./script-tools.ts";
@@ -590,7 +590,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function syncScriptTools(config: McpConfig, taken: Set<string>, reservedDirectNames: ReadonlySet<string>, foreignNames: readonly string[]): void {
     const proxyNames = new Set([...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName)]);
     const { specs, issues } = resolveScriptToolSpecs(config.scriptTools, [
-      { names: BUILTIN_NAMES, reason: "is the name of a Pi built-in tool" },
+      // No built-in reservation: every candidate is mcp__script__<name>, which no built-in tool is.
       { names: reservedDirectNames, reason: "is already the name of a direct MCP tool" },
       { names: proxyNames, reason: "is already the name of an MCP server's namespace tool" },
       { names: new Set(foreignNames), reason: "is already registered by another extension" },
