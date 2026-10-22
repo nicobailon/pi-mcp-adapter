@@ -149,6 +149,10 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
     `Script: ${plan.scriptPath} (${scriptExisted ? "replaced" : "new"}, ${lineCount} ${lineCount === 1 ? "line" : "lines"})`,
     `Config: ${plan.configPath} (${configState})`,
   ];
+  // The loaded entry can come from a file other than the target, which the config diff cannot show.
+  if (plan.overwrite?.entry && configState !== "entry replaced") {
+    lines.push(`This name already runs ${plan.overwrite.entry.file}, from another config file; the new entry takes precedence.`);
+  }
   // The writer re-serializes the parsed config, which the diff cannot show.
   if (preview.existed && readFileSync(plan.configPath, "utf8") !== preview.beforeText) {
     lines.push("Comments and formatting in this file will be rewritten.");

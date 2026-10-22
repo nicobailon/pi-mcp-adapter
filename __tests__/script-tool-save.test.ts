@@ -195,6 +195,13 @@ describe("buildScriptToolSavePrompt", () => {
     expect(prompt).not.toContain("Comments and formatting");
     expect(prompt).not.toContain("Script change:");
   });
+
+  it("names the script an entry from another config file runs, which the save replaces", () => {
+    const loaded = { description: "Old global", file: join(agentDir, "mcp-scripts", "stale_issues.js") };
+    const configPath = join(cwd, ".pi", "mcp-adapter.json");
+    const prompt = buildScriptToolSavePrompt(plan({ target: "project", scriptTools: { stale_issues: loaded } }));
+    expect(prompt).toContain(`Config: ${configPath} (new file)\nThis name already runs ${loaded.file}, from another config file; the new entry takes precedence.\n`);
+  });
 });
 
 describe("writeScriptToolSave", () => {
