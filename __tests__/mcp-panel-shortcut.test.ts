@@ -21,7 +21,7 @@ describe("mcp.panel.open keybinding", () => {
   function load(keybindings?: string, options?: Parameters<typeof createMcpAdapter>[0]) {
     if (keybindings !== undefined) writeFileSync(join(agentDir, "keybindings.json"), keybindings);
     const fns = new Map<PropertyKey, ReturnType<typeof vi.fn>>();
-    const pi = new Proxy({ events: { on: vi.fn(), emit: vi.fn() }, getFlag: () => undefined } as Record<PropertyKey, unknown>, {
+    const pi = new Proxy({ events: { on: vi.fn(), emit: vi.fn() }, getFlag: () => undefined, getAllTools: () => [] } as Record<PropertyKey, unknown>, {
       get: (target, key) => target[key] ?? fns.get(key) ?? fns.set(key, vi.fn()).get(key),
     });
     createMcpAdapter(options)(pi as never);
