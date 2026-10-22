@@ -20,13 +20,5 @@ export function toolErrorOverride(details: unknown): { isError: true } | undefin
       return { isError: true };
     }
   }
-  if (details && typeof details === "object" && (details as { mode?: unknown }).mode === "script") {
-    const calls = (details as { calls?: unknown }).calls;
-    if (Array.isArray(calls) && calls.some((call) => (
-      !!call && typeof call === "object" && (call as { error?: unknown }).error === INPUT_REQUIRED_NEEDS_UI
-    ))) {
-      return { isError: true };
-    }
-  }
   return undefined;
 }

@@ -115,7 +115,7 @@ describe("syncNamespaceProxyTools", () => {
     const { syncNamespaceProxyTools } = await importSync();
     const { pi, registered } = makePi();
     if (!canUnregister) delete pi.unregisterTool;
-    let activeTools = ["mcp", "mcpScript", "demo_search", "mcp__demo"];
+    let activeTools = ["mcp", "bash", "demo_search", "mcp__demo"];
     pi.getActiveTools = vi.fn(() => activeTools);
     pi.setActiveTools = vi.fn((names: string[]) => { activeTools = names; });
     registered.set("mcp__demo", { name: "mcp__demo", execute: vi.fn() });
@@ -135,7 +135,7 @@ describe("syncNamespaceProxyTools", () => {
 
     expect(pi.registerTool).not.toHaveBeenCalled();
     expect(result.deactivated).toEqual(["mcp__demo"]);
-    expect(activeTools).toEqual(["mcp", "mcpScript", "demo_search"]);
+    expect(activeTools).toEqual(["mcp", "bash", "demo_search"]);
     if (canUnregister) expect(registered.has("mcp__demo")).toBe(false);
   });
 

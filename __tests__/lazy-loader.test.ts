@@ -32,7 +32,7 @@ describe("lazy runtime import boundaries", () => {
       expect(result.status, result.stderr).toBe(0);
       const loaded = readFileSync(tracePath, "utf8").split("\n").filter(Boolean);
       expect(loaded.some((url) => url.endsWith("/index.ts"))).toBe(true);
-      for (const moduleName of ["init", "mcp-auth-flow", "proxy-modes", "direct-tools", "commands", "mcp-code", "mcp-install"]) {
+      for (const moduleName of ["init", "mcp-auth-flow", "proxy-modes", "direct-tools", "commands", "mcp-install"]) {
         expect(loaded.some((url) => url.endsWith(`/${moduleName}.ts`)), moduleName).toBe(false);
       }
     } finally {
