@@ -49,7 +49,7 @@ export function scriptToolOwnerKey(name: string): string {
 }
 
 /** The script tool `mcp({ tool })` or `mcp({ describe })` names, by its config name or its Pi name. */
-export function findScriptTool(specs: readonly ScriptToolSpec[], name: string): ScriptToolSpec | undefined {
+export function findScriptTool<T extends Pick<ScriptToolSpec, "name" | "toolName">>(specs: readonly T[], name: string): T | undefined {
   return specs.find((spec) => spec.name === name || spec.toolName === name);
 }
 

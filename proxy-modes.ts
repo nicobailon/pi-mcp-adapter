@@ -27,6 +27,7 @@ import { semanticSearch, type SemanticSearchBackend, type SemanticSearchEvaluato
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { describeProjectServerBlock, disabledServerReason } from "./project-server-trust.ts";
+import { findScriptTool } from "./script-tool-surface.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 /**
@@ -843,7 +844,7 @@ function scriptToolMeta(spec: { name: string; definition: { description: string;
 }
 
 function findScriptToolMeta(state: McpExtensionState, name: string): { tool: ToolMetadata; toolName: string } | undefined {
-  const spec = state.listScriptTools?.().find((candidate) => candidate.name === name || candidate.toolName === name);
+  const spec = findScriptTool(state.listScriptTools?.() ?? [], name);
   return spec ? { tool: scriptToolMeta(spec), toolName: spec.toolName } : undefined;
 }
 
