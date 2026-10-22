@@ -4868,6 +4868,9 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
       const registered = api.registerTool.mock.calls.length;
 
+      // A connect restamps the entry's cachedAt (withSessionMetadata does on every sync) with the same tools.
+      mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: { ...cacheEntry(config.mcpServers.proxy!, { tools: [echoTool] }), cachedAt: Date.now() + 1 } } });
+      state.onToolMetadataUpdated("proxy", "lazy-connect");
       state.onToolMetadataUpdated("proxy", "lazy-connect");
       expect(api.registerTool.mock.calls.length).toBe(registered);
 

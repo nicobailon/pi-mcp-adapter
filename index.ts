@@ -407,8 +407,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
   const registeredToolNames = new Map<string, string>();
   const syncedServers = new Set<string>();
-  // The inputs of the last deferred sync, so a sync with the same inputs is skipped.
-  let lastDeferredSyncKey: string | undefined;
   // Every name this adapter registered a direct, search-mode or deferred tool under; Pi keeps hidden ones.
   const adapterToolNames = new Set<string>();
   // Proxy calls handed to a registered tool, by the proxy's tool call id.
@@ -731,31 +729,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     return resolveDirectTools(config, cache, config.settings?.toolPrefix ?? "server", envDirectToolOverride, new Set(), new Set());
   }
 
-  // What decides the deferred surface: config, each valid cache entry's identity, taken names, direct tools and backoff.
-  // A cache entry is rewritten with a new cachedAt whenever its content changes.
-  function deferredSyncKey(config: McpConfig, cache: MetadataCache | null, taken: ReadonlySet<string>, directSpecs: DirectToolSpec[]): string {
-    const servers = Object.entries(config.mcpServers).map(([serverName, definition]) => {
-      const entry = cache?.servers[serverName];
-      return entry && isServerCacheValid(entry, definition)
-        ? [serverName, entry.configHash, entry.cachedAt, (entry.tools ?? []).map((tool) => tool.name), (entry.resources ?? []).map((resource) => resource.uri)]
-        : [serverName];
-    });
-    return JSON.stringify([
-      config.mcpServers, config.settings ?? null, servers, [...taken],
-      directSpecs.map((spec) => [spec.serverName, spec.originalName, spec.prefixedName, spec.resourceUri ?? null]),
-      [...activeFailureServers()],
-    ]);
-  }
-
   // Pi 0.99+ only. Runs after syncDirectTools, whose names it must not take, and before the namespace proxies.
+  // A tool whose fingerprint is unchanged is not registered again, so an unchanged sync costs Pi nothing.
   function syncDeferredTools(config: McpConfig, cache: MetadataCache | null, reservedDirectNames: ReadonlySet<string>, directSpecs: DirectToolSpec[]): void {
     const taken = deferredRegistryLive
       ? new Set([...reservedDirectNames, ...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName), ...foreignToolNames()])
       : undefined;
-    // Resolving and comparing thousands of tools is the cost of a sync; skip it when nothing that decides them changed.
-    const syncKey = taken && deferredSyncKey(config, cache, taken, directSpecs);
-    if (syncKey !== undefined && syncKey === lastDeferredSyncKey) return;
-    lastDeferredSyncKey = syncKey;
     const specs: DeferredToolSpec[] = taken
       ? resolveDeferredToolSpecs(config, cache, { names: taken, directTools: directToolsIgnoringBackoff(config, cache, directSpecs) })
       : [];
@@ -1402,7 +1381,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             registeredNamespaceProxyTools.delete(name);
             registeredDeferredTools.delete(name);
           }
-          lastDeferredSyncKey = undefined;
           for (const [key, name] of registeredToolNames) {
             if (registeredDuringFinalization.has(name)) registeredToolNames.delete(key);
           }
