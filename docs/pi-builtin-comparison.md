@@ -8,7 +8,7 @@ What you get with the adapter:
 
 - **Idle servers cost nothing.** The built-in starts every enabled server in every Pi session and keeps it running until the session ends. By default, the adapter starts a server when the model first calls it and stops it after 10 idle minutes. With 100 servers installed and their tools cached, that's 7.0 GB of server memory against none at session start ([measurements](#measured-with-100-servers)).
 - **More servers work fully.** Servers can ask you questions through forms, show interactive UIs, offer prompt templates as slash commands, ask the model for a reply, and run long jobs as MCP Tasks (with `"protocolVersion": "auto"`). The built-in supports none of these.
-- **Fewer tokens on everyday calls.** By default, the built-in runs every MCP call as a `codemode` script. The adapter's default is one small JSON call through `mcp`, which cost 10–33% less in our tests. For bulk work across many records, turn on Pi's `codemode` with `"+codemode"` in `defaultTools`; without scripts the adapter passes every record through the model, which cost up to 7× more ([measurements](#measured-token-cost)).
+- **Everyday calls cost about the same.** By default, the built-in runs every MCP call as a `codemode` script, and the adapter makes one small JSON call through `mcp`. A single lookup cost 1.8 cents against 2.1, and a question from the docs 1.9 cents with both. Bulk work across many records costs more with the adapter: up to 5.5× the built-in without scripts, where every record passes through the model, and up to 2.9× with Pi's `codemode` turned on (`"+codemode"` in `defaultTools`) ([measurements](#measured-token-cost)).
 - **Sign-in tokens go in your OS keychain** by default (an encrypted file is opt-in), not in a plain JSON file.
 - **Find tools by what you mean.** The built-in's `tool_search` only matches words. With a System One key, the adapter's semantic search ranks tools by meaning: in a test of 12 everyday requests across 95 tools, it put the right tool first in 10 of 11, where word search did in 5 ([Jev semantic search](scripting.md#jev-semantic-search)).
 - **Adding servers is easier.** Give the agent a server's URL and it installs it and checks its tools in the same session, opening sign-in first if the server needs it. Configs from Cursor, Claude Code, Codex, VS Code, and other clients can be imported with `/mcp-adapter setup`, which also adds presets.
@@ -90,25 +90,21 @@ Measured on Pi 0.99.2. 100 local test servers with 50 tools each, Node 25.2.1, A
 
 ## Measured token cost
 
-Measured on Pi 0.99.2, before the adapter's own script tool was removed; these numbers will be measured again with Pi's `codemode`. Headless Pi (`pi -p`) with two local test servers: an issue tracker (150 issues, 70 pull requests) and a notes service. Models: `gpt-6.1-sol` and `claude-sonnet-5`, medium thinking. Each task ran 3 times per setup, and every answer was checked against the servers' data and write log. The built-in used its default `codemode` exposure; the adapter used its defaults, and for the bulk tasks also ran with its old script tool turned on.
+Measured on this release's code with Pi 1.3.0, headless (`pi -p`), and two local test servers: an issue tracker (150 issues, 70 pull requests) and a notes service. The model was `claude-sonnet-5` through the pi-claude bridge (`pi-claude/claude-sonnet-5`), with medium thinking. GPT wasn't measured this time. Each task ran 3 times per setup, and every answer was checked against the servers' data and write log. The built-in used its default `codemode` exposure. The adapter used its defaults, and for the bulk tasks also ran with Pi's `codemode` turned on (`-e builtin:codemode --tools +codemode`).
 
 Median cost per run, in US cents:
 
-| Task | Model | Pi 0.99.2 built-in | pi-mcp-adapter | Adapter with its old script tool |
-|---|---|---|---|---|
-| Look up one issue's title | GPT | 1.9 | 1.3 | |
-| | Claude | 2.1 | 1.7 | |
-| Answer a question from the docs | GPT | 1.0 | 0.7 | |
-| | Claude | 1.9 | 1.7 | |
-| Find 15 old bugs with no linked PR | GPT | 4.0 | 3.1 | 2.4 |
-| | Claude | 5.6 | 7.4 | 4.2 |
-| Close and comment on 23 stale issues | GPT | 5.7 | 8.4 | 1.9 |
-| | Claude | 2.9 | 20.7 | 3.5 |
-| Copy a 15 KB transcript into a new note | GPT | 1.7 | 7.8 | 2.8 |
-| | Claude | 4.9 | 16.1 | 4.8 |
+| Task | Pi's built-in | pi-mcp-adapter | Adapter with `codemode` |
+|---|---|---|---|
+| Look up one issue's title | 2.1 | 1.8 | |
+| Answer a question from the docs | 1.9 | 1.9 | |
+| Find 15 old bugs with no linked PR | 5.6 | 7.4 | 5.8 |
+| Close and comment on 23 stale issues | 3.9 | 21.5 | 11.0 |
+| Copy a 15 KB transcript into a new note | 5.5 | 15.7 | 15.8 |
 
-- **Single calls:** the adapter's default is one JSON call to the `mcp` tool, while the built-in's default writes a script for every call. With GPT, the fixed part of each turn (system prompt and tool definitions) was also smaller: 2,100 tokens against 3,133. With Claude, it was about 4,100 for both.
-- **Bulk work:** without scripts, every record passes through the model, which costs more. The old script tool added about 300 (GPT) to 500 (Claude) tokens to each turn.
-- **Accuracy:** 76 of 78 runs were correct. The 2 wrong answers were Claude runs of the bug search on the adapter, one of them with scripts, which listed 3 and 5 extra issues.
-- GPT costs are as reported by the provider. Claude costs are computed from token counts at Sonnet prices: $3 per million input tokens, $3.75 for cache writes, $0.30 for cache reads, and $15 for output.
-- **To reproduce:** `node bench/token-cost/run.mjs`; the comment at its top explains the setups, models, and options. Model output varies between runs, so expect medians close to these, not identical.
+- **Single calls:** the adapter's default is one JSON call to the `mcp` tool, while the built-in's default writes a script for every call. They cost about the same, though the adapter's fixed part of each turn (system prompt and tool definitions) was larger: about 4,250 tokens against 3,300.
+- **Bulk work:** without scripts, every record passes through the model, which costs more. Turning on `codemode` adds about 900 tokens to each turn. It cut the bug search to about the built-in's cost and halved the cost of closing the stale issues, which still cost 2.8× the built-in.
+- **Copying the transcript:** with the adapter, Claude read the transcript and wrote the note through the model in all 3 runs, with or without `codemode`, instead of using a script. That's the model's choice, not a limit, and it's why both adapter setups cost about 3× the built-in here.
+- **Accuracy:** 39 of 39 runs were correct.
+- Costs are computed from token counts at Sonnet prices: $3 per million input tokens, $3.75 for cache writes, $0.30 for cache reads, and $15 for output.
+- **To reproduce:** `node bench/token-cost/run.mjs --model claude=pi-claude/claude-sonnet-5 --extension <pi-claude-bridge checkout>`; the comment at the top of `run.mjs` explains the setups, models, and options. Model output varies between runs, so expect medians close to these, not identical.
