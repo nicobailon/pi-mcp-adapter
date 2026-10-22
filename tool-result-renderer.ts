@@ -430,7 +430,8 @@ export function renderMcpToolResult(
     return new Text(activeTheme.fg("warning", "Running MCP tool..."), 0, 0);
   }
 
-  const hasErrorDetails = Boolean(result.details.error);
+  // Partial updates from a script tool carry codemode's own details, or none.
+  const hasErrorDetails = Boolean(result.details?.error);
   const expanded = options.expanded || context?.isError === true || hasErrorDetails;
   if (!expanded && renderOptions.resultRendering === "compact") {
     const display = formatMcpToolResultLines(result, false, renderOptions.collapsedResultLines);

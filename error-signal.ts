@@ -1,5 +1,15 @@
 import { INPUT_REQUIRED_NEEDS_UI } from "./errors.ts";
 
+// A script tool that could not run, or was refused, is a failed call too.
+const SCRIPT_TOOL_FAILURES = new Set([
+  "codemode_unavailable",
+  "nested_script_tool",
+  "script_file_missing",
+  "script_file_unreadable",
+  "script_file_empty",
+  "script_file_too_large",
+]);
+
 /**
  * Decide the `isError` override for a finished tool result in the `tool_result` hook.
  *
@@ -16,7 +26,7 @@ import { INPUT_REQUIRED_NEEDS_UI } from "./errors.ts";
 export function toolErrorOverride(details: unknown): { isError: true } | undefined {
   if (details && typeof details === "object" && "error" in details) {
     const code = (details as { error?: unknown }).error;
-    if (code === "tool_error" || code === "call_failed" || code === INPUT_REQUIRED_NEEDS_UI) {
+    if (code === "tool_error" || code === "call_failed" || code === INPUT_REQUIRED_NEEDS_UI || (typeof code === "string" && SCRIPT_TOOL_FAILURES.has(code))) {
       return { isError: true };
     }
   }

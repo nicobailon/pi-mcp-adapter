@@ -97,7 +97,7 @@ describe("prompt surface with deferred MCP tools", () => {
 });
 
 describe("prompt surface with scriptTools in the config", () => {
-  it("keeps the declared tools, the system prompt and mcp({}) byte-identical, with good and bad script tools", async () => {
+  it("keeps the declared tools, their mcp and codemode descriptions, the system prompt and mcp({}) byte-identical, with deferred and bad script tools", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-mcp-prompt-surface-scripts-"));
     const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
     const originalArgv = [...process.argv];
@@ -130,7 +130,8 @@ describe("prompt surface with scriptTools in the config", () => {
       expect(withScriptTools.status).toBe(without.status);
       expect(withScriptTools.declared).toEqual(without.declared);
       expect(withScriptTools.systemPrompt).toBe(without.systemPrompt);
-      expect(withScriptTools.deferred).toEqual(without.deferred);
+      // The script tool is only reachable from codemode and tool_search.
+      expect(withScriptTools.deferred).toEqual(["mcp__script__close_stale", ...without.deferred]);
     } finally {
       process.argv.splice(0, process.argv.length, ...originalArgv);
       if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

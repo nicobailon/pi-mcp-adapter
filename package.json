@@ -107,6 +107,7 @@
     "lazy-loader.ts",
     "codemode-bridge.ts",
     "script-tools.ts",
+    "script-tool-surface.ts",
     "namespace-tools.ts",
     "mcp-references.ts",
     "commands.ts",

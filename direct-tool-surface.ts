@@ -7,7 +7,7 @@ export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 
-const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
+export const BUILTIN_NAMES: ReadonlySet<string> = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 export const DIRECT_TOOLS_ADVISORY_THRESHOLD = 75;
 
 export function getLargeDirectToolsAdvisory(config: McpConfig, specs: readonly DirectToolSpec[]): string | undefined {

@@ -350,6 +350,16 @@ describe("MCP tool result renderer", () => {
 
     expect(output).toContain("Running MCP tool...");
   });
+
+  it("renders a script tool's updates, which carry codemode's details without mode or tool, or none", () => {
+    for (const options of [{ expanded: false, isPartial: true }, collapsedOptions]) {
+      for (const details of [{ calls: [{ id: "st-1/1", name: "mcp__fixture__echo", status: "running" }] }, undefined]) {
+        const output = renderMcpToolResult({ content: [{ type: "text", text: "partial" }], details } as unknown as TestResult, options)
+          .render(80).join("\n");
+        expect(output).toContain(options.isPartial ? "Running MCP tool..." : "partial");
+      }
+    }
+  });
 });
 
 describe("MCP tool call renderers without a theme", () => {

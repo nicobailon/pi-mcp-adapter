@@ -11,8 +11,9 @@ import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getScriptToolIssues, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectServer, excludeProjectServersAtLoadTime, hasProjectServerDefinitions } from "./project-server-trust.ts";
-import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
+import { BUILTIN_NAMES, buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
+import { nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolOwnerKey, type ScriptToolSpec } from "./script-tool-surface.ts";
 import { namespaceProxyName } from "./mcp-references.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { isServerCacheValid, loadMetadataCache, parseDirectToolSelectors, withSessionMetadata, type MetadataCache } from "./metadata-cache.ts";
@@ -400,6 +401,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const deferredToolDefinitions = new Map<string, Record<string, unknown>>();
   // Pi 0.99+: cached tools with no direct or search-mode registration, as Pi deferred tools, by Pi name.
   const registeredDeferredTools = new Map<string, string>();
+  // Script tools, by Pi name: the fingerprint each was last registered with.
+  const registeredScriptTools = new Map<string, string>();
   // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
   const registeredToolNames = new Map<string, string>();
   // The deferredToolKey each deferred name was first given to. Never cleared, so within a session a
@@ -421,6 +424,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let largeDirectToolsAdvisoryDelivered = false;
   let sessionMigrationNotices: string[] = [];
   let sessionScriptToolIssues: string[] = [];
+  // Script tools the last sync left out, with the reason.
+  let scriptToolSurfaceIssues: string[] = [];
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
@@ -501,12 +506,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   // The deferred surface registers without a promptSnippet, like Pi's built-in MCP: Pi re-normalizes
   // every snippet on every registerTool, and an activated tool then adds no line to the prompt.
-  function registerDirectTool(spec: DirectToolSpec, config: McpConfig, deferred: Record<string, unknown> | undefined, name = spec.prefixedName, promptSnippet = true): void {
+  // `script` runs a script tool instead of the MCP call.
+  function registerDirectTool(spec: DirectToolSpec, config: McpConfig, deferred: Record<string, unknown> | undefined, name = spec.prefixedName, promptSnippet = true, script?: ScriptToolSpec): void {
     finalizationRegistrations?.add(name);
     adapterToolNames.add(name);
     const definition = {
       name,
-      label: `MCP: ${spec.originalName}`,
+      label: script ? `Script: ${script.name}` : `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       ...(promptSnippet ? { promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}` } : {}),
       parameters: toToolParameters(normalizeDirectToolInputSchema(spec.inputSchema)),
@@ -515,6 +521,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         : {}),
       ...deferred,
       async execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Record<string, unknown>>> {
+        if (script) return executeScriptTool(script, toolCallId, params, signal, onUpdate, ctx as ExtensionToolContext);
         const handedOff = takeProxyHandOff(toolCallId, name);
         if (handedOff) return handedOff(params, signal);
         let executor: ReturnType<(typeof import("./direct-tools.ts"))["createDirectToolExecutor"]>;
@@ -542,13 +549,52 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       renderCall: createMcpDirectToolCallRenderer(name, toolRenderOptions),
       renderResult: renderMcpToolResult,
     };
-    if (deferred) {
+    if (deferred && !script) {
       const run = definition.execute;
       definition.execute = async (...args) => toCallToolResult(await run(...args));
     }
     callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)(definition));
     if (deferred) deferredToolDefinitions.set(name, definition);
     else deferredToolDefinitions.delete(name);
+  }
+
+  function executeScriptTool(script: ScriptToolSpec, toolCallId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionToolContext): Promise<AgentToolResult<Record<string, unknown>>> {
+    // Called by a tool other than the model or the adapter's proxies, such as a codemode script.
+    if (deliversToScript(toolCallId)) return Promise.resolve(nestedScriptToolResult(script.name));
+    return runScriptTool({
+      pi, ctx, toolCallId, signal, onUpdate: onUpdate as AgentToolUpdateCallback<unknown> | undefined,
+      spec: script, input: params, settings: (state?.config ?? earlyConfig).settings,
+    });
+  }
+
+  // Registers the configured script tools and adds their names to `taken`, before the deferred MCP
+  // tools take theirs. Like the deferred surface, an unchanged tool is not registered again.
+  function syncScriptTools(config: McpConfig, taken: Set<string>, reservedDirectNames: ReadonlySet<string>, foreignNames: readonly string[]): void {
+    const proxyNames = new Set([...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName)]);
+    const { specs, issues } = resolveScriptToolSpecs(config.scriptTools, [
+      { names: BUILTIN_NAMES, reason: "is the name of a Pi built-in tool" },
+      { names: reservedDirectNames, reason: "is already the name of a direct MCP tool" },
+      { names: proxyNames, reason: "is already the name of an MCP server's namespace tool" },
+      { names: new Set(foreignNames), reason: "is already registered by another extension" },
+    ], deferredNameOwners);
+    scriptToolSurfaceIssues = issues;
+    if (state) state.scriptToolIssues = [...sessionScriptToolIssues, ...issues];
+    const nextNames = new Set<string>();
+    for (const spec of specs) {
+      taken.add(spec.toolName);
+      nextNames.add(spec.toolName);
+      if (!deferredNameOwners.has(spec.toolName)) deferredNameOwners.set(spec.toolName, scriptToolOwnerKey(spec.name));
+      const deferred = spec.definition.declare === true ? undefined : { exposure: "deferred", namespace: { name: SCRIPT_TOOL_NAMESPACE } };
+      const fingerprint = JSON.stringify([spec.definition, deferred ?? null]);
+      if (registeredScriptTools.get(spec.toolName) === fingerprint) continue;
+      const directSpec = { serverName: SCRIPT_TOOL_NAMESPACE, originalName: spec.name, prefixedName: spec.toolName, description: spec.definition.description, inputSchema: spec.definition.inputSchema };
+      registerDirectTool(directSpec, config, deferred, spec.toolName, false, spec);
+      finalizationGuard?.();
+      registeredScriptTools.set(spec.toolName, fingerprint);
+    }
+    const removed = [...registeredScriptTools.keys()].filter((name) => !nextNames.has(name));
+    for (const name of removed) registeredScriptTools.delete(name);
+    deactivateTools(removed);
   }
 
   // Pi registers a tool active. A lazy tool must not stay that way: hold every
@@ -732,9 +778,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // Pi 0.99+ only. Runs after syncDirectTools, whose names it must not take, and before the namespace proxies.
   // A tool whose fingerprint is unchanged is not registered again, so an unchanged sync costs Pi nothing.
   function syncDeferredTools(config: McpConfig, cache: MetadataCache | null, reservedDirectNames: ReadonlySet<string>, directSpecs: DirectToolSpec[]): void {
+    const foreignNames = deferredRegistryLive ? foreignToolNames() : [];
     const taken = deferredRegistryLive
-      ? new Set([...reservedDirectNames, ...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName), ...foreignToolNames()])
+      ? new Set([...reservedDirectNames, ...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName), ...foreignNames])
       : undefined;
+    if (taken) syncScriptTools(config, taken, reservedDirectNames, foreignNames);
+    else if (!deferSearchTools && Object.keys(config.scriptTools ?? {}).length > 0) {
+      scriptToolSurfaceIssues = ["Script tools need Pi 0.99.0 or later, so none were loaded."];
+      if (state) state.scriptToolIssues = [...sessionScriptToolIssues, ...scriptToolSurfaceIssues];
+    }
     const specs: DeferredToolSpec[] = taken
       ? resolveDeferredToolSpecs(config, cache, { names: taken, directTools: directToolsIgnoringBackoff(config, cache, directSpecs), owners: deferredNameOwners })
       : [];
@@ -1311,7 +1363,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       let statusPublicationAttempted = false;
       state = nextState;
       nextState.migrationNotices = [...sessionMigrationNotices];
-      nextState.scriptToolIssues = [...sessionScriptToolIssues];
+      nextState.scriptToolIssues = [...sessionScriptToolIssues, ...scriptToolSurfaceIssues];
       nextState.deliversToScript = deliversToScript;
       finalizationGuard = guard;
       finalizationRegistrations = registeredDuringFinalization;
