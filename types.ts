@@ -844,6 +844,7 @@ export interface CachedPrompt {
  * Most Executor app tools kept and registered per server. Pi rebuilds its whole tool registry on
  * every registration, so registering N tools costs O(N²). Paging stops here, and every read of a
  * cached catalog takes no more, whatever the cache holds.
+ * @internal
  */
 export const EXECUTOR_APP_TOOL_CAP = 1_000;
 
