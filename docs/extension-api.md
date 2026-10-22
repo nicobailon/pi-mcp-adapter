@@ -76,7 +76,7 @@ export default function plugin(pi) {
 
 The config uses the format of Pi's `mcp.json` and is translated the same way as that file (see [configuration](configuration.md#file-layout)); a server the adapter can't run, such as an SSE server, is not connected and is reported. Registrations made while extensions load connect with the session; registering or unregistering later applies right away. Registering a name again with a different config replaces the server (the same config keeps the existing connection, as in Pi's built-in MCP), and `pi.unregisterMcpServer(name)` disconnects it.
 
-These servers are proxy-tool-only, like the adapter's own runtime registrations below. Of Pi's exposure settings only `"exposure": "hidden"` and `"enabled": false` apply, both as `disabled: true`; `direct` and `deferred` exposure are ignored and reported. A config entry with the same name wins, and so does an earlier registration through the adapter's event below; the other registration is reported as overridden.
+These servers get no direct tools, like the adapter's own runtime registrations below; on Pi 0.99 and later their cached tools are Pi deferred tools like every other server's. Of Pi's exposure settings only `"exposure": "hidden"` and `"enabled": false` apply, both as `disabled: true`; `direct` and `deferred` exposure are ignored and reported. A config entry with the same name wins, and so does an earlier registration through the adapter's event below; the other registration is reported as overridden.
 
 The adapter's own registration event still works on every supported Pi version, for example for a plugin host that discovers plugins after load:
 
@@ -117,7 +117,7 @@ export default function pluginHost(pi) {
 
 Cross-extension registration uses Pi's shared event bus and does not require a runtime import from `pi-mcp-adapter`. Emit during `session_start` or later so the adapter listener is installed. The adapter writes `request.result` synchronously; the first adapter listener to respond wins.
 
-Runtime registrations are session scoped and never written to config files. Duplicate server names fail closed against configured servers and other registrations. Registered servers use the normal lazy connection, OAuth, approval, and shutdown behavior, but they are proxy-tool-only and their tools become visible at the next tool sync. To change a definition, dispose the registration and register again.
+Runtime registrations are session scoped and never written to config files. Duplicate server names fail closed against configured servers and other registrations. Registered servers use the normal lazy connection, OAuth, approval, and shutdown behavior, but they get no direct tools, and their tools become visible at the next tool sync. On Pi 0.99 and later, their cached tools are Pi deferred tools like every other server's (see [codemode and tool_search](tools.md#codemode-and-tool_search)). To change a definition, dispose the registration and register again.
 
 ## Runtime tool calls from other extensions
 

@@ -196,6 +196,20 @@ When you change direct-tool toggles in `/mcp-adapter`, the extension updates dir
 
 **Subagent integration:** If you use the subagent extension, agents can request direct MCP tools in their frontmatter with `mcp:server-name` syntax. See the subagent README for details.
 
+## Codemode and tool_search
+
+On Pi 0.99 and later, every cached tool the model could reach through `mcp` is also a Pi deferred tool, so Pi's `codemode` scripts and `tool_search` can find and call it. That includes resource tools (`read_<resource>`) and the tools a `directTools: ["a", "b"]` list leaves out. Tools that already have a direct or search-mode registration keep it instead.
+
+- **Names.** They're registered as `mcp__<server>__<tool>`, like Pi's built-in MCP names its tools. Anything but letters, digits and `_` becomes `_`. A name over 64 characters, or one already used by another tool, gets an 8-character hash suffix. A tool whose suffixed name is also taken is skipped with a warning, and `mcp({ tool })` then answers `tool_not_registered` for it. Existing direct and search-mode tool names don't change, so one server can have tools under both naming schemes.
+- **Nothing new is declared to the model.** Deferred tools aren't in the tool list or in codemode's description, and they carry no prompt snippet. A tool that `tool_search` activates is declared from then on, with no snippet line in the system prompt, the same as Pi's built-in MCP tools.
+- **Calls still go through the adapter**: lazy connect, `approveTools`, and output limits. Codemode scripts get the MCP `CallToolResult` (`content`, `structuredContent`, `isError`).
+- **Proxy calls run under the real tool name.** `mcp({ tool, args })` and `mcp__<server>({ tool, args })` run the call as a nested Pi tool call of the registered tool, so Pi's `tool_call` and `tool_result` hooks and permission extensions see the real name and its annotations. A matching `approveTools` rule still asks once. The call stays inside the proxy, as before, under `MCP_DIRECT_TOOLS=__none__`, when the tool has no registration because `freezeDirectTools` froze the surface first, when the registered tool isn't callable (for example a direct tool you deactivated), when the tool's input schema is one the adapter can't evaluate, and for `mcpScript` and extension calls.
+- **Servers connected later.** On Pi 1.2 and later, a codemode script that names `mcp__<server>...` for a server whose tools aren't registered yet connects that server first, waiting up to 10 seconds. A call that reaches every tool, such as `tool_search`, waits only for connections already in progress. A server that lists new tools (`notifications/tools/list_changed`) registers them right away.
+- **Controls.** `MCP_DIRECT_TOOLS=__none__` registers none of these tools. `excludeTools` and `disabled: true` keep tools out, and so does a project server you haven't approved. `settings.freezeDirectTools` freezes this surface too.
+- **`--tools` on Pi 1.1 and later.** A `--tools` list without an `mcp__` entry still keeps MCP tools registered and reachable from codemode and `tool_search`. To keep a session free of MCP, use `--exclude-tools 'mcp__*'`.
+
+Registering thousands of tools costs startup time, because Pi rebuilds its tool registry on every registration after the session starts. With 100 servers of 50 tools each and a warm metadata cache, MCP is ready about 90 ms later than before. The first session without cached metadata takes about 2.6 seconds longer; with 20 servers of 30 tools it's about 60 ms.
+
 ## Tool Approval
 
 Use `approveTools` when a tool should stay visible but not run without confirmation. This is useful for destructive or high-cost actions where hiding the tool would make planning harder, but running it silently is too risky.
@@ -237,7 +251,7 @@ pi.events.on(MCP_TOOL_APPROVAL_REQUEST_EVENT, (request: McpToolApprovalRequest) 
 
 The request includes `serverName`, `originalToolName`, `prefixedToolName`, `args`, `origin`, and optional `signal`. The first synchronous claim wins. Brokered approval runs for every resolved MCP call reaching the approval gate, including calls matching session grants restored from the active branch, regardless of `approveTools` configuration, across proxy, direct, `mcpScript`, resource, and iframe origins. `allow_once` permits only the current call; `allow_for_session` updates the same session-scoped approval cache and persistence path as the built-in dialog; `deny` blocks the current MCP call even if cached, without revoking its grant. Only `abstain` or no claim consults the cache, then the configured approval/UI fallback above if no matching grant exists. With no broker listener, fallback behavior is unchanged.
 
-Pi's `tool_call` hooks see a call to `mcp` or `mcpScript` as one call with its arguments. They don't see the MCP tools that call runs, so permission extensions that want each MCP call should use the broker event above. `approveTools` applies to every MCP call, whether it comes from `mcp`, `mcpScript`, or a direct tool. If another extension also asks before `mcp` or `mcpScript` runs, one action can show two prompts.
+On Pi 0.99 and later, a call through `mcp` or `mcp__<server>` reaches Pi's `tool_call` and `tool_result` hooks as a nested call under the registered tool name (see [Codemode and tool_search](#codemode-and-tool_search)). A call through `mcpScript`, or one that stays inside the proxy, is one call to `mcp` or `mcpScript` with its arguments, so permission extensions that want every MCP call should use the broker event above. `approveTools` applies to every MCP call, whether it comes from `mcp`, `mcpScript`, or a direct tool. If another extension also asks before `mcp` or `mcpScript` runs, one action can show two prompts.
 
 ## Output Guard
 
