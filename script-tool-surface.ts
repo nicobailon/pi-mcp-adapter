@@ -4,7 +4,7 @@ import { CODEMODE_UNAVAILABLE, runCodemodeScript } from "./codemode-bridge.ts";
 import type { ContentBlock, McpSettings, ScriptToolDefinition } from "./types.ts";
 
 export const SCRIPT_TOOL_NAMESPACE = "mcp__script";
-const MAX_SCRIPT_BYTES = 1024 * 1024;
+export const MAX_SCRIPT_BYTES = 1024 * 1024;
 
 export interface ScriptToolSpec {
   /** The name in `scriptTools`. */

@@ -14,11 +14,13 @@ describe("toolErrorOverride", () => {
     }
     // The MCP hand-off reports a blocked nested call the same way.
     expect(toolErrorOverride({ mode: "call", error: "nested_call_failed", server: "fixture" })).toEqual({ isError: true });
+    // An approved script tool save that wrote nothing.
+    expect(toolErrorOverride({ mode: "save-script", name: "close_stale", error: "script_save_failed", message: "boom" })).toEqual({ isError: true });
     expect(toolErrorOverride({ mode: "script_tool", tool: "close_stale", calls: [] })).toBeUndefined();
   });
 
   it("leaves the adapter's other details.error codes as successes (auth, connection, validation, routing)", () => {
-    for (const code of ["auth_required", "not_connected", "empty_query", "tool_not_found"]) {
+    for (const code of ["auth_required", "not_connected", "empty_query", "tool_not_found", "missing_input", "invalid_entry", "code_empty", "code_too_large", "code_invalid", "name_shadowed"]) {
       expect(toolErrorOverride({ error: code }), code).toBeUndefined();
     }
     expect(toolErrorOverride({ ok: true })).toBeUndefined(); // no error breadcrumb at all

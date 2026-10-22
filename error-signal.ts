@@ -1,7 +1,8 @@
 import { INPUT_REQUIRED_NEEDS_UI } from "./errors.ts";
 
 // A script tool that could not run, or was refused, is a failed call too. So is a call the gateway
-// handed off as a nested Pi call that Pi blocked or rejected before the tool ran.
+// handed off as a nested Pi call that Pi blocked or rejected before the tool ran, and an approved
+// script tool save that wrote nothing, so the model does not believe the tool exists.
 const SCRIPT_TOOL_FAILURES = new Set([
   "codemode_unavailable",
   "nested_call_failed",
@@ -10,6 +11,7 @@ const SCRIPT_TOOL_FAILURES = new Set([
   "script_file_unreadable",
   "script_file_empty",
   "script_file_too_large",
+  "script_save_failed",
 ]);
 
 /**

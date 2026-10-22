@@ -1590,7 +1590,7 @@ function extractServers(config, kind) {
 function serializeRawConfig(raw) {
     return `${JSON.stringify(raw, null, 2)}\n`;
 }
-function buildUnifiedDiff(beforeText, afterText) {
+export function buildUnifiedDiff(beforeText, afterText) {
     if (beforeText === afterText)
         return "(no changes)";
     const before = beforeText.split("\n");
@@ -1919,6 +1919,23 @@ export function writeSharedServerEntry(filePath, serverName, entry) {
     const servers = getServersObject(raw, filePath);
     servers[serverName] = entry;
     setServersObject(raw, servers);
+    writeRawConfigObject(filePath, raw);
+    return filePath;
+}
+function getScriptToolsObject(raw, filePath) {
+    if (Object.hasOwn(raw, "scriptTools") && !isRecord(raw.scriptTools)) {
+        throw new Error(`Failed to update MCP config at ${filePath}: scriptTools must be an object`);
+    }
+    return (raw.scriptTools ?? {});
+}
+export function previewScriptToolEntry(filePath, name, entry) {
+    const raw = readRawConfigObject(filePath);
+    const nextRaw = { ...raw, scriptTools: { ...getScriptToolsObject(raw, filePath), [name]: entry } };
+    return buildConfigWritePreview(filePath, nextRaw);
+}
+export function writeScriptToolEntry(filePath, name, entry) {
+    const raw = readRawConfigObject(filePath);
+    raw.scriptTools = { ...getScriptToolsObject(raw, filePath), [name]: entry };
     writeRawConfigObject(filePath, raw);
     return filePath;
 }

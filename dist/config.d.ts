@@ -1,5 +1,5 @@
 import { type AgentPluginSummary } from "./agent-plugin-loader.ts";
-import { type HostConfigDiscovery, type McpConfig, type ServerEntry, type ImportKind, type ServerProvenance } from "./types.ts";
+import { type HostConfigDiscovery, type McpConfig, type ServerEntry, type ImportKind, type ScriptToolDefinition, type ServerProvenance } from "./types.ts";
 export interface KnownServerPreset {
     id: string;
     name: string;
@@ -132,6 +132,7 @@ export declare function translatePiMcpServer(name: string, value: unknown): {
     entry: ServerEntry;
     ignored: string[];
 } | string;
+export declare function buildUnifiedDiff(beforeText: string, afterText: string): string;
 export declare function writeSharedConfigText(filePath: string, text: string): void;
 export declare function writeJevSemanticSearchConfig(overridePath: string | undefined, cwd: string, allowedServers: string[], effectiveJev?: unknown): {
     path: string;
@@ -159,6 +160,8 @@ export declare function previewStarterProjectConfig(cwd?: string): ConfigWritePr
 export declare function writeStarterProjectConfig(cwd?: string): string;
 export declare function previewSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): ConfigWritePreview;
 export declare function writeSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): string;
+export declare function previewScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): ConfigWritePreview;
+export declare function writeScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): string;
 export declare function getServerProvenance(overridePath?: string, cwd?: string): Map<string, ServerProvenance>;
 export declare function writeDirectToolsConfig(changes: Map<string, true | string[] | false>, provenance: Map<string, ServerProvenance>, fullConfig: McpConfig, onFileWritten?: () => void): void;
 export declare function resolveConfiguredOAuthDir(raw: unknown, cwd?: string): string | undefined;

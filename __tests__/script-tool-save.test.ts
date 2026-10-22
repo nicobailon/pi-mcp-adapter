@@ -1,0 +1,245 @@
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { previewScriptToolEntry } from "../config.ts";
+import {
+  buildScriptToolSavePrompt,
+  checkScriptToolCode,
+  checkScriptToolSave,
+  resolveScriptToolSaveTarget,
+  writeScriptToolSave,
+  type ScriptToolSavePlan,
+  type ScriptToolSaveRequest,
+} from "../script-tool-save.ts";
+import { MAX_SCRIPT_BYTES } from "../script-tool-surface.ts";
+import { resolveScriptToolPath, validateScriptToolEntry } from "../script-tools.ts";
+
+const CODE = "const issues = await mcp.github.list_issues({ state: input.state });\nreturn issues.length;\n";
+const SCHEMA = { type: "object", properties: { state: { type: "string" } } };
+
+let root: string;
+let agentDir: string;
+let cwd: string;
+
+beforeEach(() => {
+  root = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-script-save-")));
+  agentDir = join(root, "agent");
+  cwd = join(root, "project");
+  mkdirSync(cwd, { recursive: true });
+  vi.stubEnv("PI_PACKAGE_DIR", "");
+  vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(root, { recursive: true, force: true });
+});
+
+function request(args: unknown, overrides: Partial<ScriptToolSaveRequest> = {}): ScriptToolSaveRequest {
+  return { args, target: "global", cwd, scriptTools: undefined, projectScriptTools: undefined, ...overrides };
+}
+
+function plan(overrides: Partial<ScriptToolSaveRequest> = {}, args: Record<string, unknown> = {}): ScriptToolSavePlan {
+  const result = checkScriptToolSave(request({ name: "stale_issues", description: "List stale issues", code: CODE, ...args }, overrides));
+  if (!result.ok) throw new Error(result.message);
+  return result;
+}
+
+describe("resolveScriptToolSaveTarget", () => {
+  it("puts the script in mcp-scripts/ beside the target config, where the loader resolves the entry's file", () => {
+    const override = join(root, "custom", "cfg.json");
+    const cases = [
+      [resolveScriptToolSaveTarget("global", "stale_issues", { cwd }), join(agentDir, "mcp-adapter.json")],
+      [resolveScriptToolSaveTarget("global", "stale_issues", { cwd, configOverridePath: override }), override],
+      [resolveScriptToolSaveTarget("project", "stale_issues", { cwd, configOverridePath: override }), join(cwd, ".pi", "mcp-adapter.json")],
+    ] as const;
+    for (const [target, configPath] of cases) {
+      expect(target).toEqual({
+        configPath,
+        scriptPath: join(dirname(configPath), "mcp-scripts", "stale_issues.js"),
+        file: "mcp-scripts/stale_issues.js",
+      });
+      expect(resolveScriptToolPath(target.file, dirname(target.configPath))).toBe(target.scriptPath);
+    }
+  });
+});
+
+describe("checkScriptToolCode", () => {
+  it.each([
+    ["empty", "", "code_empty", "the code is empty"],
+    ["blank", " \n\t\n", "code_empty", "the code is empty"],
+    ["over 1 MiB", "x".repeat(MAX_SCRIPT_BYTES + 1), "code_too_large", "the code is larger than 1 MiB"],
+    ["over 1 MiB in UTF-8 bytes", "é".repeat(MAX_SCRIPT_BYTES / 2 + 1), "code_too_large", "the code is larger than 1 MiB"],
+    ["with a NUL byte", "return 1;\0", "code_invalid", "the code contains a NUL byte"],
+    ["only an options line", "\n  // @options: {\"timeout_ms\": 1000}\n\n", "code_invalid", "the code is only a // @options: line, with no script after it"],
+  ])("refuses code that is %s", (_kind, code, error, reason) => {
+    expect(checkScriptToolCode("a", code)).toEqual({ ok: false, error, name: "a", message: `Cannot save script tool "a": ${reason}.` });
+  });
+
+  it("accepts code it cannot parse, because it never compiles it", () => {
+    expect(checkScriptToolCode("a", "x".repeat(MAX_SCRIPT_BYTES))).toBeUndefined();
+    expect(checkScriptToolCode("a", "// @options: {}\nreturn 1;")).toBeUndefined();
+    expect(checkScriptToolCode("a", "return )( not javascript")).toBeUndefined();
+  });
+});
+
+describe("checkScriptToolSave", () => {
+  const MISSING = 'save-script requires args with name, description and code. Example: mcp({ action: "save-script", args: { name: "stale_issues", description: "...", code: "..." } })';
+
+  it.each([
+    ["no args", undefined, undefined],
+    ["a non-object", "stale_issues", undefined],
+    ["a non-string name", { name: 1, description: "D", code: CODE }, undefined],
+    ["no description", { name: "a", code: CODE }, "a"],
+    ["a non-string code", { name: "a", description: "D", code: ["x"] }, "a"],
+  ])("refuses %s as missing input", (_kind, args, name) => {
+    expect(checkScriptToolSave(request(args))).toEqual({ ok: false, error: "missing_input", message: MISSING, ...(name ? { name } : {}) });
+  });
+
+  it("passes validateScriptToolEntry's reason through, and checks the code, before touching any path", () => {
+    expect(checkScriptToolSave(request({ name: "../escape", description: "D", code: CODE }))).toEqual({
+      ok: false, error: "invalid_entry", name: "../escape",
+      message: 'Cannot save script tool "../escape": its name must start with a lowercase letter and have only lowercase letters, digits and underscores, at most 48 characters.',
+    });
+    expect(checkScriptToolSave(request({ name: "a", description: " ", code: CODE }))).toMatchObject({
+      error: "invalid_entry", message: 'Cannot save script tool "a": description must be a non-empty string.',
+    });
+    expect(checkScriptToolSave(request({ name: "a", description: "D", code: CODE, inputSchema: { type: "string" } }))).toMatchObject({
+      error: "invalid_entry", message: 'Cannot save script tool "a": inputSchema must be a JSON Schema object with "type": "object".',
+    });
+    expect(checkScriptToolSave(request({ name: "a", description: "D", code: "  " }))).toMatchObject({ error: "code_empty" });
+    expect(existsSync(agentDir)).toBe(false);
+  });
+
+  it("returns the entry it would write, with a relative file and no declare", () => {
+    expect(plan({}, { inputSchema: SCHEMA, declare: true })).toEqual({
+      ok: true, name: "stale_issues", target: "global",
+      configPath: join(agentDir, "mcp-adapter.json"),
+      scriptPath: join(agentDir, "mcp-scripts", "stale_issues.js"),
+      file: "mcp-scripts/stale_issues.js",
+      entry: { description: "List stale issues", file: "mcp-scripts/stale_issues.js", inputSchema: SCHEMA },
+      code: CODE,
+    });
+  });
+
+  it("reports an overwrite when the loaded config has the name or the script file exists", () => {
+    const loaded = { description: "Old", file: join(root, "elsewhere.js") };
+    expect(plan({ scriptTools: { stale_issues: loaded } }).overwrite).toEqual({ entry: loaded, scriptExisted: false });
+    mkdirSync(join(agentDir, "mcp-scripts"), { recursive: true });
+    writeFileSync(join(agentDir, "mcp-scripts", "stale_issues.js"), "return 0;\n");
+    expect(plan().overwrite).toEqual({ scriptExisted: true });
+    expect(plan({ scriptTools: { other: loaded } }).overwrite).toEqual({ scriptExisted: true });
+  });
+
+  it("refuses a global save of a name a project config defines, and allows a project save of it", () => {
+    const projectScriptTools = new Map([["stale_issues", { path: join(cwd, ".mcp.json") }]]);
+    const args = { name: "stale_issues", description: "D", code: CODE };
+    expect(checkScriptToolSave(request(args, { projectScriptTools }))).toEqual({
+      ok: false, error: "name_shadowed", name: "stale_issues", shadowedBy: join(cwd, ".mcp.json"),
+      message: `Cannot save script tool "stale_issues" globally: ${join(cwd, ".mcp.json")} already defines it and takes precedence. Save it with target: "project", or remove the project entry.`,
+    });
+    expect(checkScriptToolSave(request(args, { projectScriptTools, target: "project" }))).toMatchObject({ ok: true, configPath: join(cwd, ".pi", "mcp-adapter.json") });
+  });
+
+  it("never compiles, evaluates or loads the code, and reads no implicit cwd or home directory", () => {
+    const source = readFileSync(new URL("../script-tool-save.ts", import.meta.url), "utf8");
+    for (const pattern of [/node:vm/, /\bFunction\s*\(/, /AsyncFunction/, /\beval\s*\(/, /\brequire\s*\(/, /\bimport\s*\(/, /process\.cwd/, /homedir/]) {
+      expect(source, String(pattern)).not.toMatch(pattern);
+    }
+  });
+});
+
+describe("buildScriptToolSavePrompt", () => {
+  it("names the tool, both new paths, the config diff and the line count, without the code", () => {
+    const saved = plan();
+    const { diffText } = previewScriptToolEntry(saved.configPath, saved.name, saved.entry);
+    expect(buildScriptToolSavePrompt(saved)).toBe([
+      'Save script tool "stale_issues" as mcp__script__stale_issues?',
+      "",
+      `Script: ${join(agentDir, "mcp-scripts", "stale_issues.js")} (new, 2 lines)`,
+      `Config: ${join(agentDir, "mcp-adapter.json")} (new file)`,
+      "",
+      "Config change:",
+      diffText,
+    ].join("\n"));
+    expect(diffText).toContain('+       "file": "mcp-scripts/stale_issues.js"');
+  });
+
+  it("marks replaced files, says a rewritten config loses its comments, and bounds the script diff", () => {
+    const configPath = join(agentDir, "mcp-adapter.json");
+    mkdirSync(join(agentDir, "mcp-scripts"), { recursive: true });
+    writeFileSync(configPath, '{\n  // keep me\n  "scriptTools": { "stale_issues": { "description": "Old", "file": "mcp-scripts/stale_issues.js" } }\n}\n');
+    const oldScript = Array.from({ length: 100 }, (_, i) => `// old ${i}`).join("\n");
+    writeFileSync(join(agentDir, "mcp-scripts", "stale_issues.js"), oldScript);
+
+    const prompt = buildScriptToolSavePrompt(plan()).split("\n");
+    expect(prompt.slice(2, 5)).toEqual([
+      `Script: ${join(agentDir, "mcp-scripts", "stale_issues.js")} (replaced, 2 lines)`,
+      `Config: ${configPath} (entry replaced)`,
+      "Comments and formatting in this file will be rewritten.",
+    ]);
+    const scriptDiff = prompt.slice(prompt.indexOf("Script change:") + 1);
+    expect(scriptDiff).toHaveLength(61);
+    expect(scriptDiff.slice(0, 3)).toEqual(["--- before", "+++ after", `+ ${CODE.split("\n")[0]}`]);
+    // 2 headers + 3 added lines (the code's trailing newline adds an empty one) + 100 removed.
+    expect(scriptDiff[60]).toBe("… (45 more lines)");
+  });
+
+  it("leaves out the rewrite sentence for a file the writer would reproduce, and warns a project save about later script edits", () => {
+    const configPath = join(cwd, ".pi", "mcp-adapter.json");
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`);
+    const prompt = buildScriptToolSavePrompt(plan({ target: "project" }));
+    expect(prompt).toContain(`Config: ${configPath} (new entry)\n\nApproving a project script tool covers its entry, not the script. The script file can change without asking you again.\n`);
+    expect(prompt).not.toContain("Comments and formatting");
+    expect(prompt).not.toContain("Script change:");
+  });
+});
+
+describe("writeScriptToolSave", () => {
+  const files = (dir: string) => readdirSync(dir).sort();
+
+  it("writes the script and then the entry the loader resolves to it", () => {
+    const configPath = join(agentDir, "mcp-adapter.json");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(configPath, '{"settings":{"toolPrefix":"short"}}\n');
+    const saved = plan({}, { inputSchema: SCHEMA });
+    writeScriptToolSave(saved);
+
+    expect(readFileSync(saved.scriptPath, "utf8")).toBe(CODE);
+    expect(files(join(agentDir, "mcp-scripts"))).toEqual(["stale_issues.js"]);
+    const raw = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(raw).toEqual({ settings: { toolPrefix: "short" }, scriptTools: { stale_issues: saved.entry } });
+    expect(validateScriptToolEntry("stale_issues", raw.scriptTools.stale_issues, dirname(configPath))).toEqual({ ...saved.entry, file: saved.scriptPath });
+  });
+
+  it("removes a script it created when the config write fails", () => {
+    const configPath = join(agentDir, "mcp-adapter.json");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(configPath, "{ malformed");
+    expect(() => writeScriptToolSave(plan())).toThrow(`Failed to read MCP config at ${configPath}`);
+    expect(files(join(agentDir, "mcp-scripts"))).toEqual([]);
+    expect(readFileSync(configPath, "utf8")).toBe("{ malformed");
+  });
+
+  it("leaves a script it replaced byte-identical when the config write fails", () => {
+    const configPath = join(agentDir, "mcp-adapter.json");
+    const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
+    mkdirSync(dirname(scriptPath), { recursive: true });
+    writeFileSync(configPath, '{"scriptTools": []}');
+    writeFileSync(scriptPath, "return 'old';\r\n");
+    chmodSync(scriptPath, 0o640);
+    expect(() => writeScriptToolSave(plan())).toThrow(`Failed to update MCP config at ${configPath}: scriptTools must be an object`);
+    expect(readFileSync(scriptPath, "utf8")).toBe("return 'old';\r\n");
+    expect(statSync(scriptPath).mode & 0o777).toBe(0o640);
+    expect(files(dirname(scriptPath))).toEqual(["stale_issues.js"]);
+  });
+
+  it("refuses to replace something that is not a regular file, writing nothing", () => {
+    const scriptPath = join(agentDir, "mcp-scripts", "stale_issues.js");
+    mkdirSync(scriptPath, { recursive: true });
+    expect(() => writeScriptToolSave(plan())).toThrow(`Failed to write script tool file at ${scriptPath}: it is not a regular file`);
+    expect(existsSync(join(agentDir, "mcp-adapter.json"))).toBe(false);
+  });
+});

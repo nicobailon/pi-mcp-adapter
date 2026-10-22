@@ -11,7 +11,7 @@ import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.ts";
 import { REMOVED_JEV_KEYS, validateJevSettings } from "./jev-client.ts";
 import { parseScriptTools } from "./script-tools.ts";
-import { formatServerNamespace, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type OAuthConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
+import { formatServerNamespace, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type OAuthConfig, type ServerEntry, type McpSettings, type ImportKind, type ScriptToolDefinition, type ServerProvenance } from "./types.ts";
 import { getMissingEnvVars, parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.ts";
 
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
@@ -1782,7 +1782,7 @@ function serializeRawConfig(raw: Record<string, unknown>): string {
   return `${JSON.stringify(raw, null, 2)}\n`;
 }
 
-function buildUnifiedDiff(beforeText: string, afterText: string): string {
+export function buildUnifiedDiff(beforeText: string, afterText: string): string {
   if (beforeText === afterText) return "(no changes)";
 
   const before = beforeText.split("\n");
@@ -2142,6 +2142,26 @@ export function writeSharedServerEntry(filePath: string, serverName: string, ent
   const servers = getServersObject(raw, filePath);
   servers[serverName] = entry;
   setServersObject(raw, servers);
+  writeRawConfigObject(filePath, raw);
+  return filePath;
+}
+
+function getScriptToolsObject(raw: Record<string, unknown>, filePath: string): Record<string, ScriptToolDefinition> {
+  if (Object.hasOwn(raw, "scriptTools") && !isRecord(raw.scriptTools)) {
+    throw new Error(`Failed to update MCP config at ${filePath}: scriptTools must be an object`);
+  }
+  return (raw.scriptTools ?? {}) as Record<string, ScriptToolDefinition>;
+}
+
+export function previewScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): ConfigWritePreview {
+  const raw = readRawConfigObject(filePath);
+  const nextRaw = { ...raw, scriptTools: { ...getScriptToolsObject(raw, filePath), [name]: entry } };
+  return buildConfigWritePreview(filePath, nextRaw);
+}
+
+export function writeScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): string {
+  const raw = readRawConfigObject(filePath);
+  raw.scriptTools = { ...getScriptToolsObject(raw, filePath), [name]: entry };
   writeRawConfigObject(filePath, raw);
   return filePath;
 }

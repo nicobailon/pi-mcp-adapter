@@ -108,6 +108,7 @@
     "codemode-bridge.ts",
     "script-tools.ts",
     "script-tool-surface.ts",
+    "script-tool-save.ts",
     "namespace-tools.ts",
     "mcp-references.ts",
     "commands.ts",
