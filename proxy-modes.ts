@@ -1045,6 +1045,7 @@ export function findTools(state: McpExtensionState, input: ToolSearchInput): Too
   }
   const ranked = rankToolMatches(state, query, server);
   if (server) return { matches: ranked };
+  // Scored as "script", not "mcp__script", which would make any query with "mcp" match every script tool.
   const scripts = scriptToolMatches(state, tool => scoreToolMatch(tool, "script", query));
   if (scripts.length === 0) return { matches: ranked };
   return { matches: [...ranked, ...scripts].sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name)) };
