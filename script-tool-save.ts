@@ -63,6 +63,8 @@ export interface ScriptToolSavePlan {
 interface ScriptToolSaveBaseline {
   /** The SHA-256 of the script file, when there is one. */
   scriptHash?: string;
+  /** The script file as UTF-8, read with the hash, so the summary needs no second read. */
+  scriptText?: string;
   /** The target config file's entry for the name, as JSON, when it has one. */
   configEntry?: string;
 }
@@ -185,19 +187,13 @@ function countLines(text: string): number {
   return text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
-function entryText(configText: string, name: string): string | undefined {
-  if (configText === "") return undefined;
-  const scriptTools = (JSON.parse(configText) as Record<string, unknown>).scriptTools;
-  return isRecord(scriptTools) && Object.hasOwn(scriptTools, name) ? JSON.stringify(scriptTools[name]) : undefined;
-}
-
 // Throws when the config or the script cannot be read.
 function readBaseline(configPath: string, scriptPath: string, name: string): ScriptToolSaveBaseline {
   const current = readScriptToolEntry(configPath, name);
   const configEntry = current === undefined ? undefined : JSON.stringify(current);
   const script = lstatSync(scriptPath, { throwIfNoEntry: false }) ? readFileSync(scriptPath) : undefined;
   return {
-    ...(script ? { scriptHash: createHash("sha256").update(script).digest("hex") } : {}),
+    ...(script ? { scriptHash: createHash("sha256").update(script).digest("hex"), scriptText: script.toString("utf8") } : {}),
     ...(configEntry !== undefined ? { configEntry } : {}),
   };
 }
@@ -218,7 +214,7 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
   const preview = previewScriptToolEntryTexts(plan.configPath, plan.name, plan.entry);
   const scriptExisted = plan.overwrite?.scriptExisted === true;
   const lineCount = countLines(plan.code);
-  const configState = !preview.existed ? "new file" : entryText(preview.beforeText, plan.name) !== undefined ? "entry replaced" : "new entry";
+  const configState = !preview.existed ? "new file" : plan.baseline.configEntry !== undefined ? "entry replaced" : "new entry";
   const lines = [
     `Save script tool "${plan.name}" as ${SCRIPT_TOOL_NAMESPACE}__${plan.name}?`,
     "",
@@ -238,14 +234,8 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
     lines.push("", "Approving a project script tool covers its entry, not the script. The script file can change without asking you again.");
   }
   lines.push("", "Config change:", ...boundedDiff(preview.beforeText, preview.afterText, `Only the "${plan.name}" entry in scriptTools changes.`));
-  if (scriptExisted) {
-    let before: string;
-    try {
-      before = readFileSync(plan.scriptPath, "utf8");
-    } catch (error) {
-      throw new Error(`Failed to read script tool file at ${plan.scriptPath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
-    lines.push("", "Script change:", ...boundedDiff(before, plan.code, "Review the new script in the editor."));
+  if (plan.baseline.scriptText !== undefined) {
+    lines.push("", "Script change:", ...boundedDiff(plan.baseline.scriptText, plan.code, "Review the new script in the editor."));
   }
   return lines.join("\n");
 }
