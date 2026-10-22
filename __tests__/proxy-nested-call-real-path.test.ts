@@ -170,14 +170,17 @@ describe("proxy calls through Pi's nested tool calls", () => {
   }, 30_000);
 
   it("returns the same aborted result for a slow call aborted through the hand-off as in the proxy", async () => {
-    await withPiSession(handoffFixture, async ({ runner, tool, toolCalls }) => {
+    await withPiSession(handoffFixture, async ({ runner, tool, toolCalls, receipts }) => {
       await vi.waitFor(() => expect(runner.createToolContext("probe", undefined).tools.map(callable => callable.name))
         .toContain("mcp__handoff__slow"), { timeout: 10_000 });
       const abortedCall = async (id: string, nested: boolean) => {
         const controller = new AbortController();
         const ctx = nested ? runner.createToolContext(id, controller.signal) : runner.createContext();
+        const received = (await receipts()).length;
         const pending = tool("mcp").execute(id, { tool: "handoff_slow", args: {} }, controller.signal, undefined, ctx);
-        setTimeout(() => controller.abort(new Error("user cancelled")), 300);
+        // Abort only once the server has the call, so both legs are cut off mid-call however slow the connect is.
+        await vi.waitFor(async () => expect((await receipts()).length).toBe(received + 1), { timeout: 10_000 });
+        controller.abort(new Error("user cancelled"));
         return pending;
       };
 
