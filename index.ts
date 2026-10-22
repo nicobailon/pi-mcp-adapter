@@ -614,8 +614,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   }
 
-  // Tools other extensions registered, such as Pi's built-in MCP, which a deferred name must not
-  // replace. Names this adapter registered earlier stay its own, so deferred names don't drift.
+  // Tools other extensions registered while the session runs, such as Pi's built-in MCP, which a deferred
+  // name registered later must not replace. During extension loading Pi can't list tools, so names claimed
+  // then aren't checked. Names this adapter registered earlier stay its own, so deferred names don't drift.
   function foreignToolNames(): string[] {
     let tools: ToolInfo[];
     try {
