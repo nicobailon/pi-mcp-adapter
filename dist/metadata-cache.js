@@ -5,7 +5,7 @@ import { getAgentPath } from "./agent-dir.js";
 import { createHash } from "node:crypto";
 import { isBuiltInAgentPlugin } from "./agent-plugin-provenance.js";
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.js";
-import { createToolSelectorCandidateIndex, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.js";
+import { createToolSelectorCandidateIndex, EXECUTOR_APP_TOOL_CAP, formatPromptCommandName, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
 import { extractToolAnnotations, extractToolUiStreamMode, interpolateEnvRecord, interpolateEnvVars, resolveBearerToken, resolveConfigPath, resolveServerUrl, stableStringify, } from "./utils.js";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.js";
@@ -330,7 +330,7 @@ export function reconstructToolMetadata(serverName, entry, prefix, definition, c
 export function executorAppToolMetadata(serverName, entry, effectivePrefix, definition, selectorCandidateIndex, takenNames) {
     const metadata = [];
     const taken = takenNames ? new Set(takenNames) : undefined;
-    for (const tool of entry.executorApps?.tools ?? []) {
+    for (const tool of (entry.executorApps?.tools ?? []).slice(0, EXECUTOR_APP_TOOL_CAP)) {
         if (!isUsableCachedAppTool(tool) || !isExecutorAppToolAllowed(tool, serverName, effectivePrefix, definition, selectorCandidateIndex))
             continue;
         const name = formatToolName(tool.canonicalPath, serverName, effectivePrefix);
@@ -383,7 +383,7 @@ export function createCachedToolSelectorCandidateIndex(configuredServers, cache,
                     candidates.add(candidate);
             }
         }
-        for (const tool of entry.executorApps?.tools ?? []) {
+        for (const tool of (entry.executorApps?.tools ?? []).slice(0, EXECUTOR_APP_TOOL_CAP)) {
             if (!isUsableCachedAppTool(tool) || isExecutorOwnTool(tool))
                 continue;
             for (const candidate of getToolNameCandidates(tool.canonicalPath, serverName, effectivePrefix, false))
