@@ -54,13 +54,9 @@ function namesMissingAccount(value: unknown): boolean {
     && isAccountCode(outcome.error.response.code));
 }
 
-/** Request paths in batch order; a single call is the object form of `calls`, a batch the array form. */
-function requestPaths(params: ToolCallParams): { single: boolean; paths: string[] } {
-  const calls = isRecord(params.arguments) ? params.arguments.calls : undefined;
-  if (isRecord(calls) && typeof calls.path === "string") return { single: true, paths: [calls.path] };
-  if (Array.isArray(calls) && calls.length > 0 && calls.every(call => isRecord(call) && typeof call.path === "string")) {
-    return { single: false, paths: calls.map(call => call.path as string) };
-  }
+/** The path of a single call, the object form of `calls`. */
+function requestPath(calls: unknown): string {
+  if (isRecord(calls) && typeof calls.path === "string") return calls.path;
   throw new Error("Executor reported a missing account for a call request without paths");
 }
 
@@ -88,12 +84,15 @@ function canonicalPath(path: string): string {
 /**
  * Finds a missing-account failure in a final Executor `call` result. Executor reports it inside a
  * successful batch (`execution.ok` is true), as the failed outcome of the call that needed the account.
- * `execute` results name no app, so they return undefined and reach the model unchanged.
+ * `execute` results name no app, and re-running a batch would re-run every call in it, so both
+ * return undefined and reach the model unchanged.
  * Only a result whose outcome carries an account code is parsed strictly; any other shape passes
  * through, so an Executor shape change cannot break unrelated calls.
  */
 export function findAccountGap(params: ToolCallParams, result: object): AccountGap | undefined {
   if (params.name !== "call") return undefined;
+  const calls = isRecord(params.arguments) ? params.arguments.calls : undefined;
+  if (Array.isArray(calls)) return undefined;
   const content = (result as { structuredContent?: unknown }).structuredContent;
   if (!isRecord(content) || content.status !== "completed" || !isRecord(content.execution)) return undefined;
   const execution = content.execution;
@@ -105,20 +104,15 @@ export function findAccountGap(params: ToolCallParams, result: object): AccountG
     }
     return call.outcome;
   });
-  const batch = Array.isArray(execution.value);
-  const outcomes = (batch ? execution.value as unknown[] : [execution.value]).map(parseOutcome);
-  // Connecting the account cannot help a batch whose other calls already succeeded.
-  if (outcomes.includes("success")) return undefined;
-  const code = outcomes.find(isAccountCode);
-  if (!code) malformed();
-  const { single, paths } = requestPaths(params);
-  if (single === batch || paths.length !== outcomes.length) malformed();
+  if (Array.isArray(execution.value)) malformed();
+  const code = parseOutcome(execution.value);
+  if (code === "success") return undefined;
+  if (!isAccountCode(code)) malformed();
+  const path = requestPath(calls);
   // AccountRequired is raised while binding credentials, before any upstream request, so its one
-  // `failure` entry ran nothing. A batch is never safe: re-running it re-runs every call in it.
-  const retrySafe = single
-    && toolCalls.every(outcome => outcome === "failure")
-    && toolCalls.length <= 1;
-  return { code, slug: appSlug(paths[outcomes.indexOf(code)]!), retrySafe };
+  // `failure` entry ran nothing.
+  const retrySafe = toolCalls.every(outcome => outcome === "failure") && toolCalls.length <= 1;
+  return { code, slug: appSlug(path), retrySafe };
 }
 
 // Adapter-authored programs: fixed templates with only JSON.stringify-injected values. CodeMode

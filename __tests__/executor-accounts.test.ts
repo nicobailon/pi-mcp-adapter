@@ -59,10 +59,11 @@ describe("findAccountGap", () => {
     expect(findAccountGap(single, completed(failed("x", "AccountRequired"), toolCalls))?.retrySafe).toBe(false);
   });
 
-  it("names the failing call's app in a batch with no success, and never retries a batch", () => {
-    const calls = [{ path: "tools.broken.read", input: {} }, { path: "needs-account.read", input: {} }];
-    const result = completed([failed("tools.broken.read"), failed("needs-account.read", "AppAccountRequired")]);
-    expect(findAccountGap(request(calls), result)).toEqual({ code: "AppAccountRequired", slug: "needs-account", retrySafe: false });
+  it("finds no gap in a batch, which is never retried, even with a malformed sibling", () => {
+    const calls = request([{ path: "tools.broken.read", input: {} }, { path: "needs-account.read", input: {} }]);
+    const gap = failed("needs-account.read", "AppAccountRequired");
+    expect(findAccountGap(calls, completed([failed("tools.broken.read"), gap]))).toBeUndefined();
+    expect(findAccountGap(calls, completed([{ ok: "maybe" }, gap]))).toBeUndefined();
   });
 
   it.each([
