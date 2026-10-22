@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
+import { isServerDisabled, type CachedTool, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { NestedCallHandOff } from "./proxy-modes.ts";
 import { Type } from "typebox";
@@ -458,9 +458,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   // The fields Pi's built-in MCP registers its tools with (extensions/mcp/tools.js).
-  function piDeferredToolFields(spec: DirectToolSpec, config: McpConfig, cache: MetadataCache | null): Record<string, unknown> {
+  function piDeferredToolFields(spec: DirectToolSpec, config: McpConfig, cache: MetadataCache | null, cachedTools?: ReadonlyMap<string, CachedTool>): Record<string, unknown> {
     const serverCache = cache?.servers[spec.serverName];
-    const tool = spec.resourceUri ? undefined : serverCache?.tools?.find((candidate) => candidate.name === spec.originalName);
+    const tool = spec.resourceUri
+      ? undefined
+      : cachedTools ? cachedTools.get(spec.originalName) : serverCache?.tools?.find((candidate) => candidate.name === spec.originalName);
     const description = config.mcpServers[spec.serverName]?.description?.trim();
     const instructions = serverCache?.instructions;
     const { title: _title, ...annotations } = tool?.annotations ?? {};
@@ -715,9 +717,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       })
       : [];
     const nextNames = new Set<string>();
+    // One map per server, so looking up each spec's cached tool is O(1).
+    const toolsByServer = new Map<string, Map<string, CachedTool>>();
+    const cachedToolsOf = (serverName: string): Map<string, CachedTool> => {
+      let tools = toolsByServer.get(serverName);
+      if (!tools) {
+        tools = new Map();
+        for (const tool of cache?.servers[serverName]?.tools ?? []) if (!tools.has(tool.name)) tools.set(tool.name, tool);
+        toolsByServer.set(serverName, tools);
+      }
+      return tools;
+    };
     for (const spec of specs) {
       nextNames.add(spec.name);
-      const fields = piDeferredToolFields(spec, config, cache);
+      const fields = piDeferredToolFields(spec, config, cache, cachedToolsOf(spec.serverName));
       const fingerprint = directToolFingerprint(spec) + JSON.stringify(fields);
       if (registeredDeferredTools.get(spec.name) === fingerprint) continue;
       registerDirectTool(spec, config, fields, spec.name);
