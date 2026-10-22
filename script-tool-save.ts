@@ -67,6 +67,8 @@ interface ScriptToolSaveBaseline {
   scriptText?: string;
   /** The target config file's entry for the name, as JSON, when it has one. */
   configEntry?: string;
+  /** The real path of `mcp-scripts`, when it exists; absent, the write will create it. */
+  scriptDir?: string;
 }
 
 const OPTIONS_PREFIX = "// @options:";
@@ -187,26 +189,35 @@ function countLines(text: string): number {
   return text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
-// Throws when the config or the script cannot be read.
+// Throws when the config, the script or the folder mcp-scripts leads to cannot be read.
 function readBaseline(configPath: string, scriptPath: string, name: string): ScriptToolSaveBaseline {
   const current = readScriptToolEntry(configPath, name);
   const configEntry = current === undefined ? undefined : JSON.stringify(current);
   const script = lstatSync(scriptPath, { throwIfNoEntry: false }) ? readFileSync(scriptPath) : undefined;
+  const dir = dirname(scriptPath);
+  const scriptDir = lstatSync(dir, { throwIfNoEntry: false }) ? realpathSync(dir) : undefined;
   return {
     ...(script ? { scriptHash: createHash("sha256").update(script).digest("hex"), scriptText: script.toString("utf8") } : {}),
     ...(configEntry !== undefined ? { configEntry } : {}),
+    ...(scriptDir !== undefined ? { scriptDir } : {}),
   };
 }
 
 /**
- * Why the save must not be written now, or undefined: the script file or the target file's entry
- * changed after the operator was shown them. Throws when either cannot be read.
+ * Why the save must not be written now, or undefined: the script file, the target file's entry or
+ * the folder `mcp-scripts` leads to changed after the operator was shown them. Throws when one
+ * cannot be read.
  */
 export function scriptToolSaveChange(plan: ScriptToolSavePlan): string | undefined {
   const now = readBaseline(plan.configPath, plan.scriptPath, plan.name);
-  return now.scriptHash === plan.baseline.scriptHash && now.configEntry === plan.baseline.configEntry
-    ? undefined
-    : "the script file or its config entry changed after you approved the save, so nothing was written";
+  if (now.scriptHash !== plan.baseline.scriptHash || now.configEntry !== plan.baseline.configEntry) {
+    return "the script file or its config entry changed after you approved the save, so nothing was written";
+  }
+  // A relinked or newly created mcp-scripts link would send the bytes somewhere the operator wasn't shown.
+  if (now.scriptDir !== plan.baseline.scriptDir) {
+    return `${dirname(plan.scriptPath)} leads to a different folder than when you approved the save, so nothing was written`;
+  }
+  return undefined;
 }
 
 /** The summary the operator approves before reviewing the script: both files, the config diff and any script diff. */

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -288,6 +288,27 @@ describe("mcp({ action: \"save-script\" }) in a real session", () => {
       expect(textOf(result)).toBe(`The script tool was approved, but could not be saved: ${message}`);
       expect(result.details).toEqual({ mode: "save-script", name: "greet", error: "script_save_failed", message });
       expect(readFileSync(scriptPath, "utf8")).toBe("return 'written meanwhile';");
+      expect(readFileSync(configPath)).toEqual(before);
+    });
+  }, 30_000);
+
+  it("writes nothing when mcp-scripts is relinked to another folder after the operator approved the save", async () => {
+    await withSession(async ({ session, ui, agentDir, configPath }) => {
+      const [a, b, link] = [join(agentDir, "..", "a"), join(agentDir, "..", "b"), join(agentDir, "mcp-scripts")];
+      await Promise.all([mkdir(a), mkdir(b)]);
+      await symlink(a, link);
+      const before = readFileSync(configPath);
+      ui.editor.mockImplementationOnce(async (_title: string, prefill: string) => {
+        await unlink(link);
+        await symlink(b, link);
+        return prefill;
+      });
+      const result = await save(session, "save-1");
+
+      expect(result.details).toMatchObject({ mode: "save-script", name: "greet", error: "script_save_failed" });
+      expect(result.details.message).toBe(`${link} leads to a different folder than when you approved the save, so nothing was written`);
+      expect(toolErrorOverride(result.details)).toEqual({ isError: true });
+      expect([existsSync(join(a, "greet.js")), existsSync(join(b, "greet.js"))]).toEqual([false, false]);
       expect(readFileSync(configPath)).toEqual(before);
     });
   }, 30_000);
