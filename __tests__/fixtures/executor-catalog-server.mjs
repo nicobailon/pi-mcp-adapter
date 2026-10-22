@@ -135,7 +135,8 @@ async function waitForGate() {
 // `call` with the object form of `calls`, answered with Executor's CallOutcome. An even-numbered
 // tool returns an object, an odd-numbered one a string; `input.fail` fails the tool with a curated
 // response, `input.big: n` returns n characters, `input.malformed` returns a result Executor never
-// sends, and `input.hold` never answers. EXECUTOR_CALL_APPROVAL=1 pauses every call for approval.
+// sends, `input.timeout` fails the whole run the way Executor's own time limit does, `input.list`
+// returns an array, and `input.hold` never answers. EXECUTOR_CALL_APPROVAL=1 pauses every call for approval.
 function finished(path, value) {
   return { status: "completed", execution: { ok: true, value, toolCalls: [{ name: path, outcome: value.ok ? "success" : "failure" }] }, unavailableApps: [] };
 }
@@ -148,6 +149,10 @@ function callOutcome(calls) {
     return finished(path, { path, ok: false, error: { kind: "UnknownTool", message: `No tool at ${path}.` }, matches: catalog.slice(0, 2).map(tool => tool.path) });
   }
   if (input.malformed) return { status: "completed", execution: { ok: true, toolCalls: [] }, unavailableApps: [] };
+  if (input.timeout) {
+    return { status: "completed", execution: { ok: false, error: { kind: "TimeoutExceeded", message: "Timed out after 300000 ms" } }, unavailableApps: [] };
+  }
+  if (input.list) return finished(path, { path, ok: true, value: [{ id: 1 }, { id: 2 }] });
   if (input.fail) {
     const response = { code: "NotFound", status: 404, message: "No such record.", recovery: { action: "Check the id." }, retryable: false };
     return finished(path.slice("tools.".length), { path: path.slice("tools.".length), ok: false, error: { kind: "ToolFailure", message: "NotFound (HTTP 404): No such record.", response } });

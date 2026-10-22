@@ -157,6 +157,19 @@ describe("Executor app tools as Pi deferred tools", () => {
     });
   }, 30_000);
 
+  it("gives a codemode script an app tool's array value as data, while the model sees its JSON text", async () => {
+    const root = await agentDir();
+    await withSession(root, {}, async ({ session, call }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+      const code = "const { structuredContent: list } = await tools.mcp__executor__alpha_tool_000({ list: true }); return Array.isArray(list) ? `array of ${list.length}, ids ${list.map(item => item.id).join(\"+\")}` : typeof list;";
+      const script = textOf(await call("codemode", { code }));
+      expect(script).toContain("Script completed");
+      expect(script).toContain("array of 2, ids 1+2");
+      const outcome = await session.extensionRunner.createToolContext("model-call", undefined).executeTool("mcp__executor__alpha_tool_000", { list: true });
+      expect(JSON.parse(textOf(outcome.result))).toEqual([{ id: 1 }, { id: 2 }]);
+    });
+  }, 30_000);
+
   it("reaches an app tool from ctx.tools and ctx.executeTool, and registers a cached catalog before any request", async () => {
     const root = await agentDir();
     await withSession(root, {}, async ({ session }) => {

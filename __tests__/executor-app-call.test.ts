@@ -139,10 +139,27 @@ describe("calling an Executor app tool", () => {
   });
 
   it("passes Pi's own text, such as a redacted unavailable outcome, through unchanged", () => {
-    const redacted = { content: [{ type: "text", text: "That request is no longer waiting." }], isError: false };
+    const redacted = { content: [{ type: "text" as const, text: "That request is no longer waiting." }], isError: false };
     expect(unwrapExecutorCallResult("tools.alpha.tool_000", redacted)).toBe(redacted);
-    expect(() => unwrapExecutorCallResult("tools.alpha.tool_000", { content: [], structuredContent: { status: "capacity-exceeded" } }))
-      .toThrow("Executor did not complete the call to tools.alpha.tool_000 (capacity-exceeded)");
+  });
+
+  it("returns Executor being at capacity as an error to try again", () => {
+    expect(unwrapExecutorCallResult("tools.alpha.tool_000", { content: [], structuredContent: { status: "capacity-exceeded" } }))
+      .toEqual({ content: [{ type: "text", text: "Executor is at capacity for this call; try it again." }], isError: true });
+  });
+
+  it.each(["direct", "proxy"] as const)("returns a run Executor failed as a tool error and keeps the connection on the %s leg", async (leg) => {
+    const { state, calls } = await connectExecutor();
+    const connection = state.manager.getConnection("executor");
+
+    const result = await callApp(state, leg, "tools.alpha.tool_000", { timeout: true });
+
+    expect(result.details).toMatchObject({ error: "tool_error" });
+    expect(textOf(result)).toContain("Executor could not run tools.alpha.tool_000: Timed out after 300000 ms");
+    expect(state.manager.getConnection("executor")).toBe(connection);
+    expect(connection?.status).toBe("connected");
+    expect(textOf(await callApp(state, leg, "tools.alpha.tool_001", { id: "7" }))).toBe("tools.alpha.tool_001 record 7");
+    expect((await calls()).map(call => call.name)).toEqual(["call", "call"]);
   });
 
   it.each(["direct", "proxy"] as const)("answers Executor's approval pause in Pi and resumes on the %s leg", async (leg) => {
