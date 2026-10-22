@@ -9,7 +9,7 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { NestedCallHandOff } from "./proxy-modes.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getProjectPiConfigPath, loadMcpConfig, loadMcpConfigWithSources, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
+import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getProjectPiConfigPath, isExclusiveConfigMode, loadMcpConfig, loadMcpConfigWithSources, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectScriptTool, approveProjectServer, describeBlockedScriptTool, excludeProjectServersAtLoadTime, hasProjectScriptToolDefinitions, hasProjectServerDefinitions, loadedScriptToolIssues } from "./project-server-trust.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
@@ -2309,7 +2309,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
 
     const destination = target === "project" ? getProjectConfigPath(cwd) : getPiGlobalConfigPath(earlyConfigPath);
-    if (target === "project" && process.env.PI_MCP_CONFIG_MODE?.trim().toLowerCase() === "exclusive"
+    if (target === "project" && isExclusiveConfigMode()
       && resolve(destination) !== resolve(getPiGlobalConfigPath(earlyConfigPath))) {
       return {
         content: [{ type: "text" as const, text: "Project installation is unavailable in exclusive config mode; use the global target." }],
@@ -2539,7 +2539,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (target !== "global" && target !== "project") {
       return result("Script tool save target must be 'global' or 'project'.", { error: "invalid_target" });
     }
-    if (target === "project" && process.env.PI_MCP_CONFIG_MODE?.trim().toLowerCase() === "exclusive"
+    if (target === "project" && isExclusiveConfigMode()
       && resolve(getProjectPiConfigPath(ctx.cwd)) !== resolve(getPiGlobalConfigPath(earlyConfigPath))) {
       return result("Saving to the project config is unavailable in exclusive config mode; use the global target.", { error: "inactive_target" });
     }
@@ -2579,12 +2579,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const message = error instanceof Error ? error.message : String(error);
       return result(text(message), { error: "script_save_failed", message });
     };
-    let summary: string;
-    try {
-      summary = buildScriptToolSavePrompt(checked);
-    } catch (error) {
-      return failed(error, (message) => `Cannot save script tool "${name}": ${message}`);
-    }
+    const summary = buildScriptToolSavePrompt(checked);
     const declined = () => result("The save was declined, so nothing was written.", { error: "declined" });
     // Deny first, so a stray Enter declines.
     const choice = await ctx.ui.select(summary, ["Don't save", "Review the script"], signal ? { signal } : {});

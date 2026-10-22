@@ -1042,7 +1042,7 @@ function getAncestorProjectDirs(cwd: string, root: string): string[] {
   return dirs;
 }
 
-function isExclusiveConfigMode(): boolean {
+export function isExclusiveConfigMode(): boolean {
   return process.env.PI_MCP_CONFIG_MODE?.trim().toLowerCase() === "exclusive";
 }
 

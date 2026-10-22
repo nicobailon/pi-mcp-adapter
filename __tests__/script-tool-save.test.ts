@@ -112,22 +112,23 @@ describe("checkScriptToolSave", () => {
     expect(existsSync(agentDir)).toBe(false);
   });
 
-  it("returns the entry it would write, with a relative file, and accepts the target key the action reads", () => {
-    expect(plan({}, { inputSchema: SCHEMA, target: "global" })).toEqual({
+  it("returns the entry it would write, with a relative file", () => {
+    expect(plan({}, { inputSchema: SCHEMA })).toEqual({
       ok: true, name: "stale_issues", target: "global",
       configPath: join(agentDir, "mcp-adapter.json"),
       scriptPath: join(agentDir, "mcp-scripts", "stale_issues.js"),
-      file: "mcp-scripts/stale_issues.js",
       entry: { description: "List stale issues", file: "mcp-scripts/stale_issues.js", inputSchema: SCHEMA },
       code: CODE,
       baseline: {},
     });
   });
 
-  it("refuses any other key, declare included", () => {
+  it("refuses any other key, declare and target included", () => {
     expect(checkScriptToolSave(request({ name: "a", description: "D", code: CODE, declare: true }))).toEqual({
       ok: false, error: "invalid_entry", name: "a", message: 'Cannot save script tool "a": unknown field "declare".',
     });
+    // The action reads `target` itself and passes the rest here.
+    expect(checkScriptToolSave(request({ name: "a", description: "D", code: CODE, target: "global" }))).toMatchObject({ error: "invalid_entry" });
   });
 
   it("reports an overwrite when the loaded config has the name or the script file exists", () => {

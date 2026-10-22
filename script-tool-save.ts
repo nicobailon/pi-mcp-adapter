@@ -43,9 +43,11 @@ export interface ScriptToolSaveRefusal {
   reason?: string;
 }
 
-export interface ScriptToolSavePlan extends ScriptToolSaveTarget {
+export interface ScriptToolSavePlan {
   ok: true;
   name: string;
+  configPath: string;
+  scriptPath: string;
   target: ScriptToolSaveTargetKind;
   /** The entry as written, with `file` relative. */
   entry: ScriptToolDefinition;
@@ -66,8 +68,7 @@ interface ScriptToolSaveBaseline {
 }
 
 const OPTIONS_PREFIX = "// @options:";
-// `target` is read by the save action itself.
-const SAVE_ARGS = new Set(["name", "description", "code", "inputSchema", "target"]);
+const SAVE_ARGS = new Set(["name", "description", "code", "inputSchema"]);
 const MAX_DIFF_LINES = 60;
 // Each diff in the summary is cut here too, so a minified script can't make a huge dialog; the two
 // diffs stay within 16 KB.
@@ -174,7 +175,8 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
   const existingEntry = request.scriptTools?.[name];
   const scriptExisted = existing !== undefined;
   return {
-    ok: true, name, target: request.target, ...target, entry, code, baseline, ...(scriptRealPath ? { scriptRealPath } : {}),
+    ok: true, name, target: request.target, configPath: target.configPath, scriptPath: target.scriptPath, entry, code, baseline,
+    ...(scriptRealPath ? { scriptRealPath } : {}),
     ...(existingEntry || scriptExisted ? { overwrite: { ...(existingEntry ? { entry: existingEntry } : {}), scriptExisted } } : {}),
   };
 }

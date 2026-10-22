@@ -127,6 +127,7 @@ export declare function loadMcpConfig(overridePath?: string, cwd?: string): McpC
 export declare function loadMcpConfigWithSources(overridePath?: string, cwd?: string): LoadedMcpConfig;
 export declare function resolveConfiguredClaudePluginMcp(config: McpConfig, cwd?: string): McpConfig;
 export declare function discoverConfiguredClaudePluginSkills(config: McpConfig, cwd?: string): string[];
+export declare function isExclusiveConfigMode(): boolean;
 /** Returns why the entry is skipped when Pi would reject it or the adapter can't run it. */
 export declare function translatePiMcpServer(name: string, value: unknown): {
     entry: ServerEntry;

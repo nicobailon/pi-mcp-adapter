@@ -103,7 +103,10 @@ vi.mock("../mcp-auth-flow.ts", async () => {
   };
 });
 
-vi.mock("../config.ts", () => ({
+vi.mock("../config.ts", async (importOriginal) => ({
+  // Pure path and environment checks.
+  isExclusiveConfigMode: (await importOriginal<typeof import("../config.ts")>()).isExclusiveConfigMode,
+  getProjectPiConfigPath: (await importOriginal<typeof import("../config.ts")>()).getProjectPiConfigPath,
   loadMcpConfig: mocks.loadMcpConfig,
   cloneMcpConfig: mocks.cloneMcpConfig,
   discoverConfiguredClaudePluginSkills: mocks.discoverConfiguredClaudePluginSkills,

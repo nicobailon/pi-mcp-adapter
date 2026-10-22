@@ -862,7 +862,7 @@ function getAncestorProjectDirs(cwd, root) {
     }
     return dirs;
 }
-function isExclusiveConfigMode() {
+export function isExclusiveConfigMode() {
     return process.env.PI_MCP_CONFIG_MODE?.trim().toLowerCase() === "exclusive";
 }
 function mergeConfigs(base, next) {
