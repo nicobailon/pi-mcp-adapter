@@ -224,7 +224,10 @@ export function createDirectToolExecutor(
     const requestOptions = state.manager.getRequestOptions?.(spec.serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
 
     // A script gets the server's whole result; Pi limits what the script returns to the model.
-    const outputGuardOptions = { ...resolveMcpOutputGuardOptions(state.config.settings), ...(state.deliversToScript?.(toolCallId) ? { enabled: false } : {}) };
+    // The script never reads details, so the raw result is left out of them instead of copied unbounded.
+    const toScript = state.deliversToScript?.(toolCallId) === true;
+    const outputGuardOptions = { ...resolveMcpOutputGuardOptions(state.config.settings), ...(toScript ? { enabled: false } : {}) };
+    const rawDetails = state.config.settings?.directToolResultDetails === "bounded" && !toScript;
     const appendStructuredContent = state.config.mcpServers[spec.serverName]?.appendStructuredContent !== false;
     const recoverAuthConnection = async () => {
       const current = state.manager.getConnection(spec.serverName);
@@ -300,7 +303,7 @@ export function createDirectToolExecutor(
         const content = transformMcpResourceContents(result.contents ?? [], state.owner?.signal);
         const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], {
           ...outputGuardOptions,
-          ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
+          ...(rawDetails ? { rawMcpResult: result } : {}),
         });
         return {
           content: guarded.content,
@@ -366,7 +369,7 @@ export function createDirectToolExecutor(
           ...outputGuardOptions,
           prefix: "Error: ",
           emptyTextFallback: "Tool execution failed",
-          ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
+          ...(rawDetails ? { rawMcpResult: result } : {}),
         });
         return {
           content: guarded.content,
@@ -382,7 +385,7 @@ export function createDirectToolExecutor(
         const guarded = await guardMcpOutput(outputContent, {
           ...outputGuardOptions,
           suffix: `\n\n${uiSummary.message}`,
-          ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
+          ...(rawDetails ? { rawMcpResult: result } : {}),
         });
         return {
           content: guarded.content,
@@ -400,7 +403,7 @@ export function createDirectToolExecutor(
 
       const guarded = await guardMcpOutput(outputContent, {
         ...outputGuardOptions,
-        ...(state.config.settings?.directToolResultDetails === "bounded" ? { rawMcpResult: result } : {}),
+        ...(rawDetails ? { rawMcpResult: result } : {}),
       });
       return {
         content: guarded.content,

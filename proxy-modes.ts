@@ -1615,7 +1615,9 @@ export async function executeCall(
   );
 
   // A script gets the server's whole result; Pi limits what the script returns to the model.
-  const outputGuardOptions = { ...resolveMcpOutputGuardOptions(state.config.settings), ...(state.deliversToScript?.(toolCallId) ? { enabled: false } : {}) };
+  // The script never reads details, so the raw result is left out of them instead of copied unbounded.
+  const toScript = state.deliversToScript?.(toolCallId) === true;
+  const outputGuardOptions = { ...resolveMcpOutputGuardOptions(state.config.settings), ...(toScript ? { enabled: false } : {}) };
   const appendStructuredContent = state.config.mcpServers[serverName]?.appendStructuredContent !== false;
   const recoverAuthConnection = async () => {
     const current = state.manager.getConnection(serverName);
@@ -1766,7 +1768,7 @@ export async function executeCall(
       if (result.isError) {
         const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
         const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed", rawMcpResult: result });
+        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed", rawMcpResult: toScript ? undefined : result });
         return {
           content: guarded.content,
           details: { mode: "call", error: "tool_error", ...callIdentity, ...guardedMcpDetails(guarded) },
@@ -1776,7 +1778,7 @@ export async function executeCall(
       const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
       const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
       const uiSummary = summarizeUiSessionResult(uiSession);
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiSummary.message}`, rawMcpResult: result });
+      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiSummary.message}`, rawMcpResult: toScript ? undefined : result });
       return {
         content: guarded.content,
         details: {
@@ -1793,7 +1795,7 @@ export async function executeCall(
     if (result.isError) {
       const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
       const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed", rawMcpResult: result });
+      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed", rawMcpResult: toScript ? undefined : result });
       return {
         content: guarded.content,
         details: { mode: "call", error: "tool_error", ...callIdentity, ...guardedMcpDetails(guarded) },
@@ -1802,7 +1804,7 @@ export async function executeCall(
 
     const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
     const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-    const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: result });
+    const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: toScript ? undefined : result });
     return {
       content: guarded.content,
       details: { mode: "call", ...guardedMcpDetails(guarded), ...callIdentity },
