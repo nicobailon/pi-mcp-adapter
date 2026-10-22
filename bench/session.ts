@@ -78,6 +78,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       cacheWrites: cacheIo.writes,
       cacheIoMs: cacheIo.ms,
       maxLoopDelayMs: loopDelay.max / 1e6,
+      deferredTools: session.getAllTools().filter(tool => tool.exposure === "deferred").length,
     });
   } else if (command.op === "call") {
     const start = performance.now();

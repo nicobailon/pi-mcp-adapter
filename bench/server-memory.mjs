@@ -271,6 +271,7 @@ async function scenario2(run) {
       piVersion: ready.piVersion,
       readyMs: Math.round(ready.ms),
       liveAtReady,
+      deferredTools: ready.deferredTools,
       firstCallMs: firstCalls,
       liveAfterCalls,
       idleStopSecAfterLastCall: idleStopSec,
