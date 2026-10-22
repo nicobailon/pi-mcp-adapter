@@ -1032,6 +1032,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (deliveredScriptToolIssues.has(issue)) continue;
       deliveredScriptToolIssues.add(issue);
       if (ctx.hasUI) callReentrant(() => ctx.ui.notify(issue, "warning"));
+      else console.warn(`MCP: ${issue}`);
     }
   }
 
@@ -1630,6 +1631,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     deliveredScriptToolIssues = new Set(sessionScriptToolIssues);
     if (ctx.hasUI) {
       for (const notice of [...sessionMigrationNotices, ...sessionScriptToolIssues]) ctx.ui.notify(notice, "warning");
+    } else {
+      for (const issue of sessionScriptToolIssues) console.warn(`MCP: ${issue}`);
     }
     // Reset before any await so replacement sessions cannot inherit activation.
     searchActivatedTools.clear();

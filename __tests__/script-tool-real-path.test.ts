@@ -367,4 +367,61 @@ describe("a script tool entry a config file gets wrong, in a real session", () =
       }
     }
   }, 30_000);
+
+  it.each([
+    ["no servers", {}],
+    // An eager server also starts initialization when the extension loads, before session_start.
+    ["an eager server", { fixture: { command: process.execPath, args: [resolve("__tests__/fixtures/structured-echo-server.mjs")], lifecycle: "eager" } }],
+  ])("prints the warning to stderr once in a session without UI, with %s", async (_case, mcpServers) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-mcp-script-tool-issue-headless-"));
+    const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const originalArgv = [...process.argv];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let session: Session | undefined;
+    try {
+      const agentDir = join(root, "agent");
+      const cwd = join(root, "project");
+      await Promise.all([mkdir(agentDir), mkdir(cwd)]);
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      const configPath = join(agentDir, "mcp-adapter.json");
+      await writeFile(join(root, "close-stale.js"), 'return "ran";');
+      await writeFile(configPath, JSON.stringify({
+        mcpServers,
+        settings: { sampling: false, elicitation: false },
+        scriptTools: {
+          Bad: { description: "Bad name", file: join(root, "close-stale.js") },
+          close_stale: { description: "Close stale issues", file: join(root, "close-stale.js") },
+        },
+      }));
+      process.argv.push("--mcp-config", configPath);
+      const issue = `${configPath}: script tool "Bad" was not loaded — its name must start with a lowercase letter and have only lowercase letters, digits and underscores, at most 48 characters.`;
+      const settingsManager = SettingsManager.inMemory();
+      const loader = new DefaultResourceLoader({
+        cwd, agentDir, settingsManager, additionalExtensionPaths: [resolve("index.ts")], extensionFactories: [createCodemodeExtension()],
+      });
+      await loader.reload();
+      ({ session } = await createAgentSession({
+        cwd, agentDir, resourceLoader: loader, sessionManager: SessionManager.inMemory(cwd), settingsManager, noTools: "builtin",
+      }));
+      await session.bindExtensions({ mode: "print" });
+      const runner = session.extensionRunner;
+      await vi.waitFor(() => expect(runner.getAllRegisteredTools().map(tool => tool.definition.name)).toContain("mcp__script__close_stale"), { timeout: 10_000 });
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(`MCP: ${issue}`), { timeout: 10_000 });
+      // Let any later sync run, so a repeat would show.
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      expect(warn.mock.calls.filter(([text]) => text === `MCP: ${issue}`)).toHaveLength(1);
+    } finally {
+      try {
+        await session?.extensionRunner.emit({ type: "session_shutdown", reason: "test" });
+      } finally {
+        session?.dispose();
+        warn.mockRestore();
+        process.argv.splice(0, process.argv.length, ...originalArgv);
+        if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }, 30_000);
 });
