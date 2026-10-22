@@ -291,4 +291,28 @@ describe("mcp({ action: \"save-script\" }) in a real session", () => {
       expect(readFileSync(configPath)).toEqual(before);
     });
   }, 30_000);
+
+  it("replaces a tool it saved earlier in the session, and the new code runs", async () => {
+    await withSession(async ({ session, scriptPath }) => {
+      await save(session, "save-1");
+      const replaced = await save(session, "save-2", { code: 'return "goodbye " + input.who;' });
+
+      expect(replaced.details).toMatchObject({ tool: "mcp__script__greet", registered: true, edited: false });
+      expect(readFileSync(scriptPath, "utf8")).toBe('return "goodbye " + input.who;');
+      expect(textOf(await callAs(session, "mcp__script__greet", "st-1", { who: "Ada" }))).toContain("goodbye Ada");
+    });
+  }, 30_000);
+
+  it("refuses a global save of a name a project config defines, naming that file", async () => {
+    await withSession(async ({ session, ui, cwd, scriptPath }) => {
+      const projectConfig = join(cwd, ".pi", "mcp-adapter.json");
+      await mkdir(join(cwd, ".pi"), { recursive: true });
+      await writeFile(projectConfig, JSON.stringify({ scriptTools: { greet: { description: "Project greet", file: "greet.js" } } }));
+      const result = await save(session, "save-1");
+
+      expect(result.details).toEqual({ mode: "save-script", name: "greet", error: "name_shadowed", shadowedBy: projectConfig });
+      expect(ui.select).not.toHaveBeenCalled();
+      expect(existsSync(scriptPath)).toBe(false);
+    });
+  }, 30_000);
 });

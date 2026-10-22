@@ -2593,6 +2593,24 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.initializeMcp.mock.calls[0][3].config).not.toBe(config);
   });
 
+  it("refuses to save a script tool when the adapter uses programmatic configuration", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { createMcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    createMcpAdapter({ config: { mcpServers: {} } })(api);
+    await handlers.get("session_start")?.({}, { hasUI: false });
+    const select = vi.fn();
+    const result = await registeredTool(api, "mcp").execute("save-1", { action: "save-script", args: { name: "greet", description: "D", code: "return 1;" } }, undefined, undefined,
+      { cwd: "/tmp/project", hasUI: true, mode: "tui", isProjectTrusted: () => true, ui: { select, editor: vi.fn() } });
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "Saving a script tool is unavailable when the adapter uses programmatic configuration." }],
+      details: { mode: "save-script", name: "greet", error: "programmatic_config" },
+    });
+    expect(select).not.toHaveBeenCalled();
+  });
+
   it("keeps programmatic relative Claude plugin paths stable when the session cwd differs", async () => {
     const processCwd = "/process-project";
     const sessionCwd = "/active-project";
@@ -5245,6 +5263,21 @@ describe("directTools: \"search\" — registered inactive, activated by search o
           details: { mode: "save-script", name: "greet", error: "unsupported_pi" },
         });
         expect(select).not.toHaveBeenCalled();
+      });
+
+      it("refuses a project save in exclusive config mode, asking nothing", async () => {
+        const { api, state } = await bootScripts({});
+        await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+        vi.stubEnv("PI_MCP_CONFIG_MODE", "exclusive");
+        try {
+          const select = vi.fn();
+          const result = await registeredTool(api, "mcp").execute("save-1", { action: "save-script", args: { name: "greet", description: "D", code: "return 1;", target: "project" } }, undefined, undefined,
+            { cwd: "/tmp/project", hasUI: true, mode: "tui", isProjectTrusted: () => true, ui: { select, editor: vi.fn() } });
+          expect(result.details).toEqual({ mode: "save-script", name: "greet", error: "inactive_target" });
+          expect(select).not.toHaveBeenCalled();
+        } finally {
+          vi.unstubAllEnvs();
+        }
       });
     });
   });

@@ -20,7 +20,7 @@ describe("toolErrorOverride", () => {
   });
 
   it("leaves the adapter's other details.error codes as successes (auth, connection, validation, routing)", () => {
-    for (const code of ["auth_required", "not_connected", "empty_query", "tool_not_found", "missing_input", "invalid_entry", "code_empty", "code_too_large", "code_invalid", "name_shadowed"]) {
+    for (const code of ["auth_required", "not_connected", "empty_query", "tool_not_found", "missing_input", "invalid_entry", "code_empty", "code_too_large", "code_invalid", "name_shadowed", "declined", "headless", "name_unavailable", "unsupported_pi"]) {
       expect(toolErrorOverride({ error: code }), code).toBeUndefined();
     }
     expect(toolErrorOverride({ ok: true })).toBeUndefined(); // no error breadcrumb at all
