@@ -2,7 +2,7 @@ import { Check, Errors } from "typebox/value";
 import type { DirectToolSpec, McpConfig, ServerCacheEntry, ServerEntry, ToolPrefix, ToolSelectorCandidateIndex } from "./types.ts";
 import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates, isServerDisabled, isToolAllowed, resolveToolPrefix, resolveUniqueNameOwnership } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
-import { isExecutorOwnTool, isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
+import { isExecutorOwnTool, isServerCacheValid, isUsableCachedAppTool, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
@@ -86,7 +86,7 @@ function createSelectorCandidateIndex(config: McpConfig, cache: MetadataCache, p
       }
     }
     for (const tool of otherCache.executorApps?.tools ?? []) {
-      if (isExecutorOwnTool(tool)) continue;
+      if (!isUsableCachedAppTool(tool) || isExecutorOwnTool(tool)) continue;
       for (const candidate of getToolNameCandidates(tool.canonicalPath, otherServerName, otherPrefix, false)) candidates.add(candidate);
     }
   }

@@ -153,6 +153,29 @@ describe("Executor app tool names", () => {
       expect(specs.map((spec) => spec.originalName)).toEqual(directTools === true || directTools === "search" ? ["search"] : []);
     }
   });
+
+  it("gives two app tools with one adapter name one proxy entry, the first in Executor's order, and each its own Pi tool", () => {
+    const paths = ["tools.a.b_c", "tools.a_b.c"];
+    const cache = executorCache(executor, ["search"], paths);
+    const metadata = reconstructToolMetadata("executor", cache.servers.executor!, "server", executor, { executor }, cache);
+    expect(metadata.filter((tool) => tool.executorPath !== undefined).map((tool) => [tool.name, tool.originalName])).toEqual([["executor_a_b_c", "a.b_c"]]);
+    expect(appNames(paths)).toEqual([
+      ["a.b_c", expect.stringMatching(/^mcp__executor__a_b_c_[0-9a-f]{8}$/)],
+      ["a_b.c", expect.stringMatching(/^mcp__executor__a_b_c_[0-9a-f]{8}$/)],
+    ]);
+  });
+
+  it("skips a corrupt cached catalog item instead of failing", () => {
+    // excludeTools makes both readers build the cross-server candidate index, which reads the catalog too.
+    const definition: ServerEntry = { ...executor, excludeTools: ["nothing"] };
+    const cache = executorCache(definition, ["search"], ["tools.a.x"]);
+    const apps = cache.servers.executor!.executorApps!;
+    apps.tools = [null, { path: "tools" }, ...apps.tools] as never;
+    const config: McpConfig = { mcpServers: { executor: definition } };
+    expect(reconstructToolMetadata("executor", cache.servers.executor!, "server", config.mcpServers.executor!, config.mcpServers, cache)
+      .filter((tool) => tool.executorPath !== undefined).map((tool) => tool.originalName)).toEqual(["a.x"]);
+    expect(resolveDeferredToolSpecs(config, cache, { names: new Set(), directTools: [] }).filter((spec) => spec.executorPath).map((spec) => spec.originalName)).toEqual(["a.x"]);
+  });
 });
 
 describe("buildProxyDescription", () => {

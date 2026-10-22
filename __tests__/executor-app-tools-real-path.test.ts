@@ -240,6 +240,23 @@ describe("Executor app tools as Pi deferred tools", () => {
     }, 30_000);
   });
 
+  it("starts normally from a cached catalog with corrupt items, and leaves them out", async () => {
+    const root = await agentDir();
+    await withSession(root, {}, async ({ session }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+    });
+    const cachePath = join(root, "mcp-cache.json");
+    const cache = JSON.parse(await readFile(cachePath, "utf8"));
+    cache.servers.executor.executorApps.tools.unshift(null, { path: "tools" });
+    await writeFile(cachePath, JSON.stringify(cache));
+
+    await withSession(root, {}, async ({ session, call }) => {
+      expect(deferredAppTools(session)).toEqual(appToolNames);
+      expect(textOf(await call("mcp", { describe: "alpha.tool_001" }))).toContain("Executor app tool alpha.tool_001");
+      expect(textOf(await call("mcp", { server: "executor" }))).toContain("+6 Executor app tools");
+    });
+  }, 30_000);
+
   it("lists Executor's own tools and one line for its app tools, with mcp({ server }) and mcp({ connect })", async () => {
     const root = await agentDir();
     await withSession(root, { env: { EXECUTOR_CATALOG_TOOLS: "400" } }, async ({ call }) => {

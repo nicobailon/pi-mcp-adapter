@@ -75,7 +75,7 @@ export function resolveDeferredToolSpecs(
     }
     // Executor app tools are only ever deferred, whatever directTools selects. Their Pi names follow
     // the rules below, so one whose adapter name a server tool has still gets its own.
-    for (const tool of executorAppToolMetadata(serverName, serverCache, effectivePrefix, definition, selectorIndexFor(definition), new Set())) {
+    for (const tool of executorAppToolMetadata(serverName, serverCache, effectivePrefix, definition, selectorIndexFor(definition), undefined)) {
       appCandidates.push({
         serverName,
         originalName: tool.originalName,
