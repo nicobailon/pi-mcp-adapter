@@ -1681,7 +1681,9 @@ export function writeJevSemanticSearchConfig(overridePath, cwd, allowedServers, 
     if (currentJev !== undefined && currentJev !== false && !isRecord(currentJev)) {
         throw new Error(`Failed to update Jev settings at ${filePath}: settings.jev must be an object or false`);
     }
-    const jev = isRecord(effectiveJev) ? effectiveJev : isRecord(currentJev) ? currentJev : {};
+    const source = isRecord(effectiveJev) ? effectiveJev : isRecord(currentJev) ? currentJev : {};
+    // Settings of the removed jev.evaluate() would only earn the file a migration notice.
+    const jev = Object.fromEntries(Object.entries(source).filter(([key]) => !REMOVED_JEV_KEYS.has(key)));
     const nextServers = [...new Set(allowedServers)].sort((a, b) => a.localeCompare(b));
     const nextJev = { ...jev, semanticSearch: true, allowedServers: nextServers };
     validateJevSettings(nextJev);
