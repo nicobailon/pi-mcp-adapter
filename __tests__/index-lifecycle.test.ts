@@ -4860,6 +4860,20 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(registeredTool(api, "mcp__docs__find")).toBeUndefined();
     });
 
+    it("re-registers a deferred tool whose cached description changed, and nothing on an unchanged re-sync", async () => {
+      const { api, config, state } = await bootCached({ proxy: [{ command: "x", lifecycle: "eager" }, [echoTool]] });
+      await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+      const registered = api.registerTool.mock.calls.length;
+
+      state.onToolMetadataUpdated("proxy", "lazy-connect");
+      expect(api.registerTool.mock.calls.length).toBe(registered);
+
+      mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: { ...cacheEntry(config.mcpServers.proxy!, { tools: [{ ...echoTool, description: "Echo, now louder" }] }), cachedAt: Date.now() + 1 } } });
+      state.onToolMetadataUpdated("proxy", "tools-list-changed");
+
+      expect(registrations(api, "mcp__proxy__echo").at(-1)).toMatchObject({ description: "Echo, now louder", exposure: "deferred" });
+    });
+
     it("adds and withdraws deferred tools when a server's tool list changes", async () => {
       const { api, config, state } = await bootCached({ proxy: [{ command: "x", lifecycle: "eager" }, [echoTool, { name: "old" }]] });
       await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
