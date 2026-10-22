@@ -9,7 +9,7 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { NestedCallHandOff } from "./proxy-modes.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
+import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getScriptToolIssues, loadMcpConfig, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectServer, excludeProjectServersAtLoadTime, hasProjectServerDefinitions } from "./project-server-trust.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
@@ -420,6 +420,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let directToolsFrozen = false;
   let largeDirectToolsAdvisoryDelivered = false;
   let sessionMigrationNotices: string[] = [];
+  let sessionScriptToolIssues: string[] = [];
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
@@ -1310,6 +1311,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       let statusPublicationAttempted = false;
       state = nextState;
       nextState.migrationNotices = [...sessionMigrationNotices];
+      nextState.scriptToolIssues = [...sessionScriptToolIssues];
       nextState.deliversToScript = deliversToScript;
       finalizationGuard = guard;
       finalizationRegistrations = registeredDuringFinalization;
@@ -1475,8 +1477,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     sessionMigrationNotices = programmaticConfig
       ? []
       : getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath);
+    sessionScriptToolIssues = programmaticConfig
+      ? []
+      : getScriptToolIssues(ctx.cwd, earlyConfigPath);
     if (ctx.hasUI) {
-      for (const notice of sessionMigrationNotices) ctx.ui.notify(notice, "warning");
+      for (const notice of [...sessionMigrationNotices, ...sessionScriptToolIssues]) ctx.ui.notify(notice, "warning");
     }
     // Reset before any await so replacement sessions cannot inherit activation.
     searchActivatedTools.clear();

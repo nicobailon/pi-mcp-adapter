@@ -53,6 +53,23 @@ describe("MCP status failure reasons", () => {
     expect(output).not.toContain("https://secret.invalid/status");
   });
 
+  it("lists script tools that were not loaded, after the migration notices", async () => {
+    const { showStatus } = await import("../commands.ts");
+    const ui = { notify: vi.fn() };
+    const issue = '/project/.pi/mcp-adapter.json: script tool "close_stale" was not loaded — description must be a non-empty string.';
+    await showStatus({
+      config: { mcpServers: {} },
+      manager: { getConnection: () => undefined },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+      migrationNotices: ["move old mcp.json to mcp-adapter.json"],
+      scriptToolIssues: [issue],
+    } as any, { hasUI: true, ui } as any);
+
+    const output: string = ui.notify.mock.calls[0][0];
+    expect(output).toContain(`⚠ move old mcp.json to mcp-adapter.json\n\n⚠ ${issue}\n`);
+  });
+
   it("uses known metadata during reconnect filtering", async () => {
     const { reconnectServer } = await import("../commands.ts");
     const connection = {

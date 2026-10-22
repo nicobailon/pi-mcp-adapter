@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -98,6 +98,42 @@ test("public metadata, config, and type helpers load in plain Node from node_mod
       encoding: "utf8"
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("public config loads scriptTools in plain Node, and the types export ScriptToolDefinition", async () => {
+  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "pi-mcp-public-script-tools-"));
+  try {
+    await extractPackedPackage(fixtureRoot);
+    const configPath = path.join(fixtureRoot, "scripts.json");
+    await writeFile(configPath, JSON.stringify({
+      scriptTools: {
+        close_stale: { description: "Close stale issues", file: "./close-stale.js" },
+        Broken: { description: "Bad name", file: "./broken.js" },
+      },
+    }));
+    const result = spawnSync(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      [
+        'const config = await import("pi-mcp-adapter/config");',
+        `const loaded = config.loadMcpConfig(${JSON.stringify(configPath)}, process.cwd());`,
+        'process.stdout.write(JSON.stringify(loaded.scriptTools));',
+      ].join("\n")
+    ], {
+      cwd: fixtureRoot,
+      env: { ...process.env, HOME: fixtureRoot, PI_CODING_AGENT_DIR: path.join(fixtureRoot, "agent") },
+      encoding: "utf8"
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      close_stale: { description: "Close stale issues", file: path.join(fixtureRoot, "close-stale.js") },
+    });
+    const types = await readFile(path.join(fixtureRoot, "node_modules", "pi-mcp-adapter", "dist", "types.d.ts"), "utf8");
+    assert.match(types, /export interface ScriptToolDefinition \{/);
+    assert.match(types, /scriptTools\?: Record<string, ScriptToolDefinition>;/);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }

@@ -10,6 +10,7 @@ import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPl
 import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
 import { REMOVED_JEV_KEYS, validateJevSettings } from "./jev-client.js";
+import { parseScriptTools } from "./script-tools.js";
 import { formatServerNamespace, isServerDisabled } from "./types.js";
 import { getMissingEnvVars, parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.js";
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
@@ -173,6 +174,13 @@ export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath) 
 }
 /** Settings that only configured mcpScript, besides the jev ones in REMOVED_JEV_KEYS. They still load, and do nothing. */
 const REMOVED_SCRIPT_SETTINGS = ["scriptMode", "scriptSkill"];
+/**
+ * One line per script tool a config file defines but the adapter did not load, with the reason.
+ * Kept apart from the migration notices, which also reach `mcp({})` and so the model.
+ */
+export function getScriptToolIssues(cwd = process.cwd(), overridePath) {
+    return getConfigSources(overridePath, cwd).flatMap((source) => readSourceConfig(source.id, source.readPath)?.scriptToolIssues ?? []);
+}
 /** One notice per config file that still sets a setting mcpScript's removal left without effect. */
 function getRemovedScriptSettingNotices(cwd, overridePath) {
     return getConfigSources(overridePath, cwd).flatMap((source) => {
@@ -855,11 +863,14 @@ function mergeConfigs(base, next) {
     const imports = mergeImports(base.imports, next.imports);
     const settings = next.settings ? { ...base.settings, ...next.settings } : base.settings;
     const claudePlugins = next.claudePlugins ?? base.claudePlugins;
+    // A later file's script tool replaces a same-named one whole, never field by field.
+    const scriptTools = next.scriptTools ? { ...base.scriptTools, ...next.scriptTools } : base.scriptTools;
     return {
         mcpServers: mergeServerMaps(base.mcpServers, next.mcpServers),
         ...(imports !== undefined ? { imports } : {}),
         ...(settings !== undefined ? { settings } : {}),
         ...(claudePlugins !== undefined ? { claudePlugins } : {}),
+        ...(scriptTools !== undefined ? { scriptTools } : {}),
     };
 }
 // Credential-bearing fields whose value is bound to a specific server `url`.
@@ -975,6 +986,7 @@ function expandImports(config, cwd = process.cwd()) {
             imports: config.imports,
             ...(config.settings !== undefined ? { settings: config.settings } : {}),
             ...(config.claudePlugins !== undefined ? { claudePlugins: config.claudePlugins } : {}),
+            ...(config.scriptTools !== undefined ? { scriptTools: config.scriptTools } : {}),
             mcpServers: mergeServerMaps(importedServers, config.mcpServers),
         },
         serverSources,
@@ -1116,7 +1128,7 @@ function readValidatedConfig(path, label) {
         const text = readFileSync(path, "utf-8");
         if (stripJsonComments(text, { trailingCommas: true }).trim() === "")
             return null;
-        return validateConfig(parseJsonWithComments(text));
+        return validateConfig(parseJsonWithComments(text), path);
     }
     catch (error) {
         console.warn(`Failed to load ${label}:`, error);
@@ -1151,7 +1163,7 @@ function readPiMcpConfig(path) {
     }
     const file = {
         mcpServers: {},
-        adapterKeys: ["settings", "imports", "claudePlugins", "mcp-servers"].filter((key) => raw[key] !== undefined),
+        adapterKeys: ["settings", "imports", "claudePlugins", "scriptTools", "mcp-servers"].filter((key) => raw[key] !== undefined),
         skipped: [],
         ignoredSettings: new Map(),
     };
@@ -1293,15 +1305,25 @@ function translatePiOAuth(oauth) {
     }
     return { oauth: result, ignored: Object.keys(unknown).map((key) => `oauth.${key}`) };
 }
-function validateConfig(raw) {
+/**
+ * `sourcePath` is the config file's own path. Only a file read from a path has script tools,
+ * because their relative `file` paths resolve against it; Claude plugin configs have none.
+ */
+function validateConfig(raw, sourcePath) {
     if (!isRecord(raw)) {
         return { mcpServers: {} };
     }
+    const parsedScriptTools = sourcePath !== undefined && raw.scriptTools !== undefined
+        ? parseScriptTools(raw.scriptTools, sourcePath)
+        : undefined;
+    const hasScriptTools = parsedScriptTools !== undefined && Object.keys(parsedScriptTools.scriptTools).length > 0;
     return {
         mcpServers: toServerEntries(raw.mcpServers ?? raw["mcp-servers"]),
         ...(Array.isArray(raw.imports) ? { imports: raw.imports } : {}),
         ...(raw.settings !== undefined ? { settings: parseSettings(raw.settings) } : {}),
         ...(raw.claudePlugins !== undefined ? { claudePlugins: parseClaudePlugins(raw.claudePlugins) } : {}),
+        ...(hasScriptTools ? { scriptTools: parsedScriptTools.scriptTools } : {}),
+        ...(parsedScriptTools?.issues.length ? { scriptToolIssues: parsedScriptTools.issues } : {}),
     };
 }
 function parseSettings(value) {

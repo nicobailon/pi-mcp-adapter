@@ -508,11 +508,22 @@ export interface ClaudePluginConfig {
     /** Expose the plugin's root skills/ directory to Pi resource discovery. */
     skills?: boolean;
 }
+/** One entry of `scriptTools`: a saved script that becomes a Pi tool. The key is the tool's name. */
+export interface ScriptToolDefinition {
+    description: string;
+    /** The script file. A loaded config holds it as an absolute path. */
+    file: string;
+    /** JSON Schema for the tool's arguments, with `type: "object"`. Without it the tool takes none. */
+    inputSchema?: Record<string, unknown>;
+    /** Declare the tool to the model directly. By default only codemode and tool_search reach it. */
+    declare?: boolean;
+}
 export interface McpConfig {
     mcpServers: Record<string, ServerEntry>;
     imports?: ImportKind[];
     settings?: McpSettings;
     claudePlugins?: ClaudePluginConfig[];
+    scriptTools?: Record<string, ScriptToolDefinition>;
 }
 export interface McpAdapterOptions {
     config?: McpConfig;

@@ -2643,3 +2643,178 @@ describe("server description", () => {
     rmSync(home, { recursive: true, force: true });
   });
 });
+
+describe("scriptTools", () => {
+  let home: string;
+  let project: string;
+  let globalPath: string;
+  let projectPath: string;
+
+  beforeEach(() => {
+    home = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-script-tools-home-")));
+    project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-script-tools-project-")));
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("PI_PACKAGE_DIR", "");
+    vi.stubEnv("PI_CODING_AGENT_DIR", "");
+    vi.stubEnv("PI_MCP_CONFIG_MODE", "merge");
+    vi.resetModules();
+    globalPath = join(home, ".pi", "agent", "mcp-adapter.json");
+    projectPath = join(project, ".pi", "mcp-adapter.json");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  });
+
+  const schema = { type: "object", properties: { repo: { type: "string" } }, required: ["repo"] };
+
+  it("loads script tools from a global and a project file, a project entry replacing a global one whole", async () => {
+    writeJson(globalPath, {
+      mcpServers: { docs: { url: "https://docs.test/mcp" } },
+      scriptTools: {
+        close_stale: { description: "Global close", file: "./global.js", inputSchema: schema, declare: true },
+        triage: { description: "Triage", file: "./triage.js" },
+      },
+    });
+    writeJson(projectPath, { scriptTools: { close_stale: { description: "Project close", file: "./project.js" } } });
+
+    const { getScriptToolIssues, loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(undefined, project);
+
+    expect(config.mcpServers.docs).toEqual({ url: "https://docs.test/mcp" });
+    expect(config.scriptTools).toEqual({
+      close_stale: { description: "Project close", file: join(project, ".pi", "project.js") },
+      triage: { description: "Triage", file: join(home, ".pi", "agent", "triage.js") },
+    });
+    expect(getScriptToolIssues(project)).toEqual([]);
+  });
+
+  it("drops each bad entry with the config path, its name and the reason, and keeps the file's servers", async () => {
+    const patternProperties = { "(": { type: "string" } };
+    writeJson(globalPath, {
+      mcpServers: { docs: { url: "https://docs.test/mcp" } },
+      settings: { toolPrefix: "short" },
+      scriptTools: {
+        "Close-Stale": { description: "Bad name", file: "./a.js" },
+        [`a${"b".repeat(48)}`]: { description: "Too long", file: "./a.js" },
+        not_object: "./a.js",
+        no_description: { file: "./a.js" },
+        blank_description: { description: "  ", file: "./a.js" },
+        no_file: { description: "No file" },
+        empty_file: { description: "Empty file", file: "" },
+        string_schema: { description: "String schema", file: "./a.js", inputSchema: { type: "string" } },
+        array_schema: { description: "Array schema", file: "./a.js", inputSchema: [] },
+        broken_schema: { description: "Broken schema", file: "./a.js", inputSchema: { type: "object", patternProperties } },
+        string_declare: { description: "String declare", file: "./a.js", declare: "yes" },
+        extra_key: { description: "Extra key", file: "./a.js", command: "node" },
+        good: { description: "Good", file: "./good.js" },
+      },
+    });
+
+    const { getLegacyMcpMigrationNotices, getScriptToolIssues, loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(undefined, project);
+
+    expect(config.mcpServers.docs).toEqual({ url: "https://docs.test/mcp" });
+    expect(config.settings?.toolPrefix).toBe("short");
+    expect(config.scriptTools).toEqual({ good: { description: "Good", file: join(home, ".pi", "agent", "good.js") } });
+    const dropped = (name: string, reason: string) => `${globalPath}: script tool ${JSON.stringify(name)} was not loaded — ${reason}.`;
+    const badName = "its name must start with a lowercase letter and have only lowercase letters, digits and underscores, at most 48 characters";
+    const objectSchema = 'inputSchema must be a JSON Schema object with "type": "object"';
+    expect(getScriptToolIssues(project)).toEqual([
+      dropped("Close-Stale", badName),
+      dropped(`a${"b".repeat(48)}`, badName),
+      dropped("not_object", "it must be an object"),
+      dropped("no_description", "description must be a non-empty string"),
+      dropped("blank_description", "description must be a non-empty string"),
+      dropped("no_file", "file must be a non-empty string"),
+      dropped("empty_file", "file must be a non-empty string"),
+      dropped("string_schema", objectSchema),
+      dropped("array_schema", objectSchema),
+      dropped("broken_schema", "inputSchema is not a usable JSON Schema (Invalid regular expression: /(/u: Unterminated group)"),
+      dropped("string_declare", "declare must be true or false"),
+      dropped("extra_key", 'it has unknown key "command"'),
+    ]);
+    // Script-tool problems are not migration notices, which reach mcp({}).
+    expect(getLegacyMcpMigrationNotices(project)).toEqual([]);
+  });
+
+  it("reports a scriptTools block that is not an object, and keeps the file's servers", async () => {
+    writeJson(projectPath, { mcpServers: { docs: { url: "https://docs.test/mcp" } }, scriptTools: ["close_stale"] });
+
+    const { getScriptToolIssues, loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(undefined, project);
+
+    expect(config.mcpServers.docs).toEqual({ url: "https://docs.test/mcp" });
+    expect(config.scriptTools).toBeUndefined();
+    expect(getScriptToolIssues(project)).toEqual([
+      `${projectPath}: scriptTools was not loaded — it must be an object that maps tool names to script tools.`,
+    ]);
+  });
+
+  it("resolves file against home, as an absolute path, or against the defining file's directory", async () => {
+    const absolute = join(project, "elsewhere", "abs.js");
+    writeJson(globalPath, {
+      scriptTools: {
+        tilde: { description: "Tilde", file: "~/scripts/tilde.js" },
+        absolute: { description: "Absolute", file: absolute },
+        global_relative: { description: "Relative", file: "scripts/rel.js" },
+      },
+    });
+    writeJson(join(project, ".mcp.json"), { scriptTools: { shared_relative: { description: "Shared", file: "./scripts/shared.js" } } });
+    writeJson(projectPath, { scriptTools: { project_relative: { description: "Project", file: "../scripts/up.js" } } });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const files = Object.fromEntries(Object.entries(loadMcpConfig(undefined, project).scriptTools ?? {}).map(([name, tool]) => [name, tool.file]));
+
+    expect(files).toEqual({
+      tilde: join(home, "scripts", "tilde.js"),
+      absolute,
+      global_relative: join(home, ".pi", "agent", "scripts", "rel.js"),
+      shared_relative: join(project, "scripts", "shared.js"),
+      project_relative: join(project, "scripts", "up.js"),
+    });
+  });
+
+  it("never touches the script file at load", async () => {
+    const unreadable = join(project, "unreadable.js");
+    writeText(unreadable, "return 1;");
+    chmodSync(unreadable, 0o000);
+    const insideFile = join(unreadable, "nested.js");
+    writeJson(projectPath, {
+      scriptTools: {
+        missing: { description: "Missing", file: "./does/not/exist.js" },
+        unreadable: { description: "Unreadable", file: unreadable },
+        not_a_path: { description: "Under a file", file: insideFile },
+      },
+    });
+
+    try {
+      const { getScriptToolIssues, loadMcpConfig } = await import("../config.ts");
+      expect(Object.keys(loadMcpConfig(undefined, project).scriptTools ?? {})).toEqual(["missing", "unreadable", "not_a_path"]);
+      expect(getScriptToolIssues(project)).toEqual([]);
+    } finally {
+      chmodSync(unreadable, 0o644);
+    }
+  });
+
+  it("loads a file that has scriptTools and no mcpServers", async () => {
+    writeJson(projectPath, { scriptTools: { close_stale: { description: "Close", file: "./close.js", inputSchema: schema, declare: false } } });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(undefined, project);
+
+    expect(config.mcpServers).toEqual({});
+    expect(config.scriptTools).toEqual({
+      close_stale: { description: "Close", file: join(project, ".pi", "close.js"), inputSchema: schema, declare: false },
+    });
+  });
+
+  it("keeps the config the same without script tools", async () => {
+    writeJson(globalPath, { mcpServers: { docs: { url: "https://docs.test/mcp" } } });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, project)).toEqual({ mcpServers: { docs: { url: "https://docs.test/mcp" } } });
+  });
+});

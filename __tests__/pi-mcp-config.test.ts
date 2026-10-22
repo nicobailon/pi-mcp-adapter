@@ -165,6 +165,21 @@ describe("Pi mcp.json config sources", () => {
     ]);
   });
 
+  it("loads no script tools from Pi's mcp.json, and says to move them", async () => {
+    writeJson(piGlobal, {
+      mcpServers: { kept: { command: "kept" } },
+      scriptTools: { close_stale: { description: "Close", file: "./close.js" } },
+    });
+    const { getLegacyMcpMigrationNotices, loadMcpConfig } = await loadConfigModule();
+
+    const config = loadMcpConfig(undefined, cwd);
+    expect(config.mcpServers).toEqual({ kept: { command: "kept" } });
+    expect(config.scriptTools).toBeUndefined();
+    expect(getLegacyMcpMigrationNotices(cwd)).toEqual([
+      `${piGlobal}: pi-mcp-adapter does not read scriptTools in this file; move them into ${join(home, ".pi", "agent", "mcp-adapter.json")}.`,
+    ]);
+  });
+
   it("strips project-scope auth.provider servers, including project overrides of global ones, with one notice", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     writeJson(piGlobal, {
