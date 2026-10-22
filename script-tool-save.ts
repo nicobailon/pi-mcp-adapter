@@ -52,6 +52,8 @@ export interface ScriptToolSavePlan extends ScriptToolSaveTarget {
 }
 
 const OPTIONS_PREFIX = "// @options:";
+// `target` is read by the save action itself.
+const SAVE_ARGS = new Set(["name", "description", "code", "inputSchema", "target"]);
 const MAX_SCRIPT_DIFF_LINES = 60;
 const MISSING_INPUT = 'save-script requires args with name, description and code. Example: mcp({ action: "save-script", args: { name: "stale_issues", description: "...", code: "..." } })';
 
@@ -100,6 +102,8 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
   if (typeof name !== "string" || typeof description !== "string" || typeof code !== "string") {
     return { ok: false, error: "missing_input", message: MISSING_INPUT, ...(typeof name === "string" ? { name } : {}) };
   }
+  const unknownKey = Object.keys(args).find((key) => !SAVE_ARGS.has(key));
+  if (unknownKey !== undefined) return refusal("invalid_entry", name, `unknown field ${JSON.stringify(unknownKey)}`);
   const target = resolveScriptToolSaveTarget(request.target, name, request);
   const entry: ScriptToolDefinition = { description, file: target.file, ...(inputSchema !== undefined ? { inputSchema: inputSchema as Record<string, unknown> } : {}) };
   // Validated before any path built from the name is touched.
