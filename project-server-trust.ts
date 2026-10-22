@@ -20,6 +20,8 @@ interface ApprovalRecord {
   serverName: string;
   definitionHash: string;
   approvedAt: string;
+  /** Set on a script tool's approval; a server's has none. Matched exactly, so neither stands in for the other. */
+  kind?: "scriptTool";
 }
 
 interface ApprovalStore {
@@ -173,7 +175,7 @@ function saveApproval(record: ApprovalRecord): void {
   const path = approvalPath();
   const store = loadApprovals();
   store.approvals = store.approvals.filter(entry =>
-    entry.projectRoot !== record.projectRoot || entry.serverName !== record.serverName);
+    entry.projectRoot !== record.projectRoot || entry.serverName !== record.serverName || entry.kind !== record.kind);
   store.approvals.push(record);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
@@ -199,13 +201,14 @@ export function approveProjectScriptTool(cwd: string, name: string, definition: 
     serverName: scriptToolApprovalKey(name),
     definitionHash: hashProjectServerDefinition(definition),
     approvedAt: new Date().toISOString(),
+    kind: "scriptTool",
   });
 }
 
-function isApproved(approvals: ApprovalStore, projectRoot: string, serverName: string, definition: ServerDefinition | ScriptToolDefinition): boolean {
+function isApproved(approvals: ApprovalStore, projectRoot: string, serverName: string, definition: ServerDefinition | ScriptToolDefinition, kind?: "scriptTool"): boolean {
   const definitionHash = hashProjectServerDefinition(definition);
   return approvals.approvals.some(entry =>
-    entry.projectRoot === projectRoot && entry.serverName === serverName && entry.definitionHash === definitionHash);
+    entry.projectRoot === projectRoot && entry.serverName === serverName && entry.definitionHash === definitionHash && entry.kind === kind);
 }
 
 function isProjectTrusted(ctx: Pick<ExtensionContext, "isProjectTrusted">): boolean {
@@ -302,7 +305,7 @@ export async function applyProjectServerTrust(
   for (const [name, source] of projectScriptTools) {
     const definition = config.scriptTools?.[name];
     if (!definition) continue;
-    const approved = isApproved(approvals, projectRoot, scriptToolApprovalKey(name), definition);
+    const approved = isApproved(approvals, projectRoot, scriptToolApprovalKey(name), definition, "scriptTool");
     if (projectTrusted && (approved || allowUnapproved)) continue;
 
     let reason: ProjectServerBlockReason;

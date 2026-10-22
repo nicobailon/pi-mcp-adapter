@@ -439,5 +439,31 @@ describe("project MCP server trust", () => {
       expect(both.blockedServers.get("close_stale")?.reason).toBe("approval-required");
       expect(Object.keys(both.config.scriptTools ?? {})).toEqual(["close_stale"]);
     });
+
+    it("never lets a server approval stand in for a script tool's, nor the reverse", async () => {
+      const definition = { description: "Close stale issues", file: "/abs/close.js" };
+      writeJson(projectPath(), {
+        mcpServers: { "scriptTools/close_stale": { ...definition } },
+        scriptTools: { close_stale: { ...definition } },
+      });
+      // Allow the server, deny the script tool.
+      const select = vi.fn(async (title: string) => title.startsWith("Allow project MCP server") ? "Allow" : "Don't allow");
+      const first = await gate(tui(select));
+      expect(first.blockedScriptTools?.get("close_stale")?.reason).toBe("denied");
+
+      vi.resetModules();
+      const second = await gate(context());
+      expect(Object.keys(second.config.scriptTools ?? {})).toEqual([]);
+      expect(second.blockedScriptTools?.get("close_stale")?.reason).toBe("approval-required");
+
+      // Now allow only the script tool: the server stays unapproved.
+      rmSync(join(home, ".pi", "agent", "mcp-project-approvals.json"));
+      vi.resetModules();
+      await gate(tui(vi.fn(async (title: string) => title.startsWith("Allow project script tool") ? "Allow" : "Don't allow")));
+      vi.resetModules();
+      const third = await gate(context());
+      expect(Object.keys(third.config.scriptTools ?? {})).toEqual(["close_stale"]);
+      expect(third.blockedServers.get("scriptTools/close_stale")?.reason).toBe("approval-required");
+    });
   });
 });

@@ -141,7 +141,7 @@ function loadApprovals() {
 function saveApproval(record) {
     const path = approvalPath();
     const store = loadApprovals();
-    store.approvals = store.approvals.filter(entry => entry.projectRoot !== record.projectRoot || entry.serverName !== record.serverName);
+    store.approvals = store.approvals.filter(entry => entry.projectRoot !== record.projectRoot || entry.serverName !== record.serverName || entry.kind !== record.kind);
     store.approvals.push(record);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
@@ -167,11 +167,12 @@ export function approveProjectScriptTool(cwd, name, definition) {
         serverName: scriptToolApprovalKey(name),
         definitionHash: hashProjectServerDefinition(definition),
         approvedAt: new Date().toISOString(),
+        kind: "scriptTool",
     });
 }
-function isApproved(approvals, projectRoot, serverName, definition) {
+function isApproved(approvals, projectRoot, serverName, definition, kind) {
     const definitionHash = hashProjectServerDefinition(definition);
-    return approvals.approvals.some(entry => entry.projectRoot === projectRoot && entry.serverName === serverName && entry.definitionHash === definitionHash);
+    return approvals.approvals.some(entry => entry.projectRoot === projectRoot && entry.serverName === serverName && entry.definitionHash === definitionHash && entry.kind === kind);
 }
 function isProjectTrusted(ctx) {
     try {
@@ -263,7 +264,7 @@ export async function applyProjectServerTrust(loaded, ctx, options = {}) {
         const definition = config.scriptTools?.[name];
         if (!definition)
             continue;
-        const approved = isApproved(approvals, projectRoot, scriptToolApprovalKey(name), definition);
+        const approved = isApproved(approvals, projectRoot, scriptToolApprovalKey(name), definition, "scriptTool");
         if (projectTrusted && (approved || allowUnapproved))
             continue;
         let reason;
