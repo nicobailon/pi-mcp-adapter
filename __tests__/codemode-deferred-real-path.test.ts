@@ -126,8 +126,8 @@ describe("Pi codemode reach to proxy-only MCP tools", () => {
   // The fixture's `large` result is over the 50 KB output guard limit.
   it("gives a codemode script the whole result, called directly and through the namespace proxy", async () => {
     let flood: (() => Promise<void>) | undefined;
-    // Between the script's two calls: more calls of the script than the record keeps, all blocked
-    // before they ran, so none gets a tool_result. The script's own record must survive them.
+    // Between the script's two calls: thousands of other calls of the script that never finish.
+    // However many there are, the script's own record must survive them.
     const extend = (pi: ExtensionAPI) => pi.on("tool_result", async (event) => {
       if (event.toolCallId === "cm-1/1") await flood?.();
     });
