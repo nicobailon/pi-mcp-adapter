@@ -32,19 +32,26 @@ function completed(result, outcome = "success") {
 }
 
 const expiresAt = Date.now() + 15 * 60 * 1000;
-const pending = {
-  call: {
+const sendArgs = { to: "a@example.com" };
+
+// Same message shape as Executor's approvalElicitation: the tool name, then its exact arguments.
+function approval(requestId) {
+  return {
     status: "approval-required",
-    requestId: "apr_1",
-    invocation: { app: "gmail", tool: "send_email", args: { to: "a@example.com" } },
+    requestId,
+    invocation: { app: "gmail", tool: "send_email", args: sendArgs },
     elicitation: {
       mode: "form",
-      message: "Approve gmail.send_email?",
+      message: `Approve gmail.send_email?\n\nArguments:\n${JSON.stringify(sendArgs, null, 2)}`,
       requestedSchema: { type: "object", properties: {} },
       _meta: { "executor/approval": true },
     },
     expiresAt,
-  },
+  };
+}
+
+const pending = {
+  call: approval("apr_1"),
   execute: {
     status: "input-required",
     requestId: "elc_1",
@@ -65,6 +72,11 @@ function resume({ requestId, response }) {
       : completed(`send_email was not approved: ${response?.action}`, "failure");
   }
   if (requestId === "apr_2" && response?.action === "accept") return pending.execute;
+  const chain = /^apr_pause_(\d+)_of_(\d+)$/.exec(requestId);
+  if (chain && response?.action === "accept") {
+    const [step, total] = [Number(chain[1]), Number(chain[2])];
+    return step < total ? approval(`apr_pause_${step + 1}_of_${total}`) : completed(`done after ${total} pauses`);
+  }
   if (requestId === "elc_1" && response?.action === "accept") {
     return completed(`inbox ${response.content?.inbox}`);
   }
@@ -77,7 +89,9 @@ function resume({ requestId, response }) {
 }
 
 function start(name, args) {
-  if (name === "execute" && args?.code === "chain") return { ...pending.call, requestId: "apr_2" };
+  if (name === "execute" && args?.code === "chain") return approval("apr_2");
+  const pauses = /^pauses:(\d+)$/.exec(args?.code ?? "");
+  if (name === "execute" && pauses) return approval(`apr_pause_1_of_${pauses[1]}`);
   return pending[name];
 }
 

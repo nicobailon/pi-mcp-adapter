@@ -2,12 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import type { RequestOptions } from "@modelcontextprotocol/client";
+import { SdkErrorCode, SdkHttpError, type RequestOptions } from "@modelcontextprotocol/client";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { callToolAnsweringExecutorPauses } from "../executor-pauses.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { executeCall } from "../proxy-modes.ts";
-import { McpServerManager } from "../server-manager.ts";
+import { McpServerManager, type ServerConnection } from "../server-manager.ts";
+import { withSessionRecovery } from "../session-recovery.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { ToolMetadata } from "../types.ts";
 
@@ -69,6 +70,28 @@ function textOf(result: { content?: Array<{ type: string; text?: string }> }): s
   return result.content?.find(block => block.type === "text")?.text ?? "";
 }
 
+const approvalPending = {
+  content: [],
+  structuredContent: {
+    status: "approval-required",
+    requestId: "apr_1",
+    elicitation: { mode: "form", message: "Approve?", requestedSchema: { type: "object", properties: {} } },
+  },
+};
+
+function fakeExecutorConnection(definition: { requestTimeoutMs?: number }): ServerConnection {
+  return {
+    client: { getServerVersion: () => undefined },
+    transport: { sessionId: "session-1" },
+    definition,
+    tools: [
+      { name: "execute" },
+      { name: "call" },
+      { name: "resume", inputSchema: { type: "object", properties: { requestId: {}, response: {} } } },
+    ],
+  } as never;
+}
+
 afterEach(async () => {
   await Promise.all(managers.splice(0).map(manager => manager.closeAll()));
   await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
@@ -83,6 +106,7 @@ describe("Executor pauses", () => {
     expect(textOf(result)).toContain("email sent");
     expect(`${textOf(result)} ${JSON.stringify(result.details)}`).not.toMatch(/apr_|requestId|approval-required/);
     expect(ui.select).toHaveBeenCalledOnce();
+    expect(ui.select).toHaveBeenCalledWith(expect.stringContaining('Arguments:\n{\n  "to": "a@example.com"\n}'), ["Continue", "Decline"]);
     expect(await resumes()).toEqual([{ requestId: "apr_1", response: { action: "accept" } }]);
   });
 
@@ -184,34 +208,64 @@ describe("Executor pauses", () => {
     expect(JSON.stringify(result.details)).not.toMatch(/elc_|requestId/);
   });
 
+  it.each([
+    [16, "done after 16 pauses"],
+    [17, "Executor paused more than 16 times in one call"],
+  ])("answers up to 16 pauses in one call (%i pauses)", async (pauses, text) => {
+    const { state } = await connectExecutor({ select: Array(pauses).fill("Continue") });
+
+    const result = await executeCall(state, "executor_execute", { code: `pauses:${pauses}` }, "executor");
+
+    expect(textOf(result)).toContain(text);
+  });
+
+  it("does not let session recovery re-run a program after its resume fails", async () => {
+    const conn = fakeExecutorConnection({});
+    const reconnect = vi.fn();
+    const sent: string[] = [];
+
+    const run = withSessionRecovery(
+      {
+        manager: { getConnection: () => conn, reconnect } as never,
+        config: { mcpServers: { executor: { url: "https://example.test/mcp" } } },
+      },
+      "executor",
+      connection => callToolAnsweringExecutorPauses({
+        conn: connection,
+        manager: { promptFormElicitation: async () => ({ action: "accept" }) },
+        serverName: "executor",
+        params: { name: "execute", arguments: {} },
+        requestOptions: undefined,
+        call: async params => {
+          sent.push(params.name);
+          if (params.name === "resume") {
+            throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
+          }
+          return approvalPending;
+        },
+      }),
+    );
+
+    await expect(run).rejects.toMatchObject({
+      message: expect.stringContaining("Executor did not resume the program: Session not found"),
+      cause: expect.any(SdkHttpError),
+    });
+    expect(sent).toEqual(["execute", "resume"]);
+    expect(reconnect).not.toHaveBeenCalled();
+  });
+
   it("gives execute, call and their resumes a 6-minute timeout unless the server sets one", async () => {
     const timeoutsFor = async (requestTimeoutMs: number | undefined, requestOptions: RequestOptions | undefined) => {
       const seen: Array<number | undefined> = [];
-      const pending = {
-        content: [],
-        structuredContent: {
-          status: "approval-required",
-          requestId: "apr_1",
-          elicitation: { mode: "form", message: "Approve?", requestedSchema: { type: "object", properties: {} } },
-        },
-      };
       await callToolAnsweringExecutorPauses({
-        conn: {
-          client: { getServerVersion: () => undefined },
-          definition: requestTimeoutMs === undefined ? {} : { requestTimeoutMs },
-          tools: [
-            { name: "execute" },
-            { name: "call" },
-            { name: "resume", inputSchema: { type: "object", properties: { requestId: {}, response: {} } } },
-          ],
-        } as never,
+        conn: fakeExecutorConnection(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
         manager: { promptFormElicitation: async () => ({ action: "accept" }) },
         serverName: "executor",
         params: { name: "call", arguments: {} },
         requestOptions,
         call: async (params, options) => {
           seen.push(options?.timeout);
-          return params.name === "call" ? pending : { content: [] };
+          return params.name === "call" ? approvalPending : { content: [] };
         },
       });
       return seen;

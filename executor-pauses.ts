@@ -116,9 +116,10 @@ export async function callToolAnsweringExecutorPauses<T extends object>({
     ? requestOptions
     : { ...requestOptions, timeout: Math.max(requestOptions?.timeout ?? 0, EXECUTOR_REQUEST_TIMEOUT_MS) };
   let result = await call(params, options);
-  for (let pauses = 0; pauses < MAX_EXECUTOR_PAUSES; pauses++) {
+  for (let pauses = 0; ; pauses++) {
     const pause = parseExecutorPause(result);
     if (!pause) return redactExecutorOutcome(result);
+    if (pauses === MAX_EXECUTOR_PAUSES) throw new Error(`Executor paused more than ${MAX_EXECUTOR_PAUSES} times in one call`);
     const decision = await manager.promptFormElicitation(serverName, pause.elicitation, signal);
     if (!decision) {
       return textResult(
@@ -131,11 +132,20 @@ export async function callToolAnsweringExecutorPauses<T extends object>({
     throwIfAborted(signal);
     // Send an approval as a bare accept, the shape Executor's own clients use, not Pi's `content: {}`.
     const response = pause.status === "approval-required" && decision.action === "accept" ? { action: "accept" } : decision;
-    result = await call({
-      name: "resume",
-      arguments: { requestId: pause.requestId, response },
-      ...(params._meta ? { _meta: params._meta } : {}),
-    }, options);
+    try {
+      result = await call({
+        name: "resume",
+        arguments: { requestId: pause.requestId, response },
+        ...(params._meta ? { _meta: params._meta } : {}),
+      }, options);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      // A plain Error keeps session recovery from replaying the original execute/call, which would re-run the program.
+      throw new Error(
+        `Executor did not resume the program: ${error instanceof Error ? error.message : String(error)}. `
+          + "Its earlier steps may already have run; check their effects before running it again.",
+        { cause: error },
+      );
+    }
   }
-  throw new Error(`Executor paused more than ${MAX_EXECUTOR_PAUSES} times in one call`);
 }
