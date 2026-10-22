@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildUnifiedDiff, previewScriptToolEntry } from "../config.ts";
+import { buildUnifiedDiff, previewScriptToolEntryTexts } from "../config.ts";
 import {
   buildScriptToolSavePrompt,
   checkScriptToolCode,
@@ -182,7 +182,7 @@ describe("checkScriptToolSave", () => {
 describe("buildScriptToolSavePrompt", () => {
   it("names the tool, both new paths, the config diff and the line count, without the code", () => {
     const saved = plan();
-    const { beforeText, afterText } = previewScriptToolEntry(saved.configPath, saved.name, saved.entry);
+    const { beforeText, afterText } = previewScriptToolEntryTexts(saved.configPath, saved.name, saved.entry);
     const diffText = buildUnifiedDiff(beforeText, afterText, { context: 3 });
     expect(buildScriptToolSavePrompt(saved)).toBe([
       'Save script tool "stale_issues" as mcp__script__stale_issues?',

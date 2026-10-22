@@ -1885,13 +1885,13 @@ describe("config discovery", () => {
 
   it("adds a script tool entry, creating the file and the scriptTools object, and keeps every other key", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-mcp-script-tool-entry-"));
-    const { previewScriptToolEntry, writeScriptToolEntry } = await import("../config.ts");
+    const { buildUnifiedDiff, previewScriptToolEntryTexts, writeScriptToolEntry } = await import("../config.ts");
     const entry = { description: "Close stale issues", file: "mcp-scripts/close_stale.js" };
 
     const missing = join(root, "missing", "mcp-adapter.json");
-    const preview = previewScriptToolEntry(missing, "close_stale", entry);
-    expect(preview).toMatchObject({ path: missing, existed: false, changed: true, beforeText: "" });
-    expect(preview.diffText).toContain('+   "scriptTools": {');
+    const preview = previewScriptToolEntryTexts(missing, "close_stale", entry);
+    expect(preview).toMatchObject({ existed: false, beforeText: "" });
+    expect(buildUnifiedDiff(preview.beforeText, preview.afterText)).toContain('+   "scriptTools": {');
     expect(existsSync(missing)).toBe(false);
     expect(writeScriptToolEntry(missing, "close_stale", entry)).toBe(missing);
     expect(readFileSync(missing, "utf-8")).toBe(preview.afterText);
@@ -1916,26 +1916,26 @@ describe("config discovery", () => {
 
   it("refuses a script tool entry for a non-object scriptTools, malformed JSON or a dangling symlink, writing nothing", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-mcp-script-tool-entry-invalid-"));
-    const { previewScriptToolEntry, writeScriptToolEntry } = await import("../config.ts");
+    const { previewScriptToolEntryTexts, writeScriptToolEntry } = await import("../config.ts");
     const entry = { description: "D", file: "mcp-scripts/a.js" };
 
     const nonObject = join(root, "non-object.json");
     writeText(nonObject, '{"scriptTools":["a"]}\n');
-    for (const call of [previewScriptToolEntry, writeScriptToolEntry]) {
+    for (const call of [previewScriptToolEntryTexts, writeScriptToolEntry]) {
       expect(() => call(nonObject, "a", entry)).toThrow(`Failed to update MCP config at ${nonObject}: scriptTools must be an object`);
     }
     expect(readFileSync(nonObject, "utf-8")).toBe('{"scriptTools":["a"]}\n');
 
     const malformed = join(root, "malformed.json");
     writeText(malformed, "{ malformed");
-    for (const call of [previewScriptToolEntry, writeScriptToolEntry]) {
+    for (const call of [previewScriptToolEntryTexts, writeScriptToolEntry]) {
       expect(() => call(malformed, "a", entry)).toThrow(`Failed to read MCP config at ${malformed}`);
     }
     expect(readFileSync(malformed, "utf-8")).toBe("{ malformed");
 
     const link = join(root, "link.json");
     symlinkSync(join(root, "absent.json"), link);
-    for (const call of [previewScriptToolEntry, writeScriptToolEntry]) {
+    for (const call of [previewScriptToolEntryTexts, writeScriptToolEntry]) {
       expect(() => call(link, "a", entry)).toThrow(`Failed to read MCP config at ${link}`);
     }
     expect(existsSync(join(root, "absent.json"))).toBe(false);

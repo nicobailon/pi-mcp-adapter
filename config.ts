@@ -2204,11 +2204,7 @@ function getScriptToolsObject(raw: Record<string, unknown>, filePath: string): R
   return (raw.scriptTools ?? {}) as Record<string, ScriptToolDefinition>;
 }
 
-export function previewScriptToolEntry(filePath: string, name: string, entry: ScriptToolDefinition): ConfigWritePreview {
-  return buildConfigWritePreview(filePath, withScriptToolEntry(filePath, name, entry));
-}
-
-/** The file's text before and after the entry is written, without `previewScriptToolEntry`'s full diff. */
+/** The file's text before and after the entry is written, for a diff the caller bounds. */
 export function previewScriptToolEntryTexts(filePath: string, name: string, entry: ScriptToolDefinition): Pick<ConfigWritePreview, "existed" | "beforeText" | "afterText"> {
   return configWriteTexts(filePath, withScriptToolEntry(filePath, name, entry));
 }
