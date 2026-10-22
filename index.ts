@@ -1633,6 +1633,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function reachOf(toolName: string, input: unknown): "all" | string[] | undefined {
     if (registeredDirectTools.has(toolName) || registeredDeferredTools.has(toolName)) return undefined;
+    // The proxies connect and register on their own, so their first-call errors stay as they are.
+    if (toolName === "mcp" || toolName === "mcpScript" || registeredNamespaceProxyTools.has(toolName)) return undefined;
     if (!toolReaches.has(toolName)) {
       toolReaches.clear();
       for (const tool of pi.getAllTools()) {
@@ -1654,6 +1656,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   async function waitBounded(work: Promise<unknown>, signal: AbortSignal | undefined): Promise<void> {
+    // An abort listener added after the abort never fires.
+    if (signal?.aborted) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
     await Promise.race([
@@ -1670,30 +1674,36 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   /**
    * Registers the servers a call reaches before it runs. "all" only awaits connections already in
-   * flight; a reach naming one unregistered server connects that server. Failures are recorded by
-   * the connect and reported by the call itself.
+   * flight; a reach that names servers connects every unregistered one it names. Failures are
+   * recorded by the connect and reported by the call itself.
    */
   async function registerReachedServers(reach: "all" | string[], signal: AbortSignal | undefined): Promise<void> {
     const targetState = state;
     if (!targetState) {
       if (!initPromise) return;
       await waitBounded(initPromise, signal);
-    } else {
-      const pending = Object.entries(targetState.config.mcpServers)
-        .filter(([serverName, definition]) => !isServerDisabled(definition) && !syncedServers.has(serverName) && reachesServer(reach, serverName))
-        .map(([serverName]) => serverName);
-      if (pending.length === 0) return;
-      const { lazyConnect } = await loadForRuntime(loadCoreRuntime, captureRuntimeGuard(targetState));
-      const connecting = reach !== "all" && pending.length === 1
-        ? pending
-        : pending.filter((serverName) => targetState.manager.isConnecting(serverName));
-      if (connecting.length === 0) return;
-      await waitBounded(Promise.all(connecting.map((serverName) => lazyConnect(targetState, serverName, signal))), signal);
+      // The session initialization just produced, if it finished within the wait.
+      if (!directToolsFrozen && state) syncToolSurface();
+      return;
     }
-    if (!directToolsFrozen && state) syncToolSurface();
+    const pending = Object.entries(targetState.config.mcpServers)
+      .filter(([serverName, definition]) => !isServerDisabled(definition) && !syncedServers.has(serverName) && reachesServer(reach, serverName))
+      .map(([serverName]) => serverName);
+    if (pending.length === 0) return;
+    const { lazyConnect } = await loadForRuntime(loadCoreRuntime, captureRuntimeGuard(targetState));
+    const connecting = reach === "all"
+      ? pending.filter((serverName) => targetState.manager.isConnecting(serverName))
+      : pending;
+    if (connecting.length === 0) return;
+    let connected = false;
+    await waitBounded(Promise.all(connecting.map(async (serverName) => {
+      if (await lazyConnect(targetState, serverName, signal)) connected = true;
+    })), signal);
+    // A failed connect has nothing new to register, so an unreachable server costs no re-sync.
+    if (connected && !directToolsFrozen && state === targetState) syncToolSurface();
   }
 
-  // A call that may reach other tools (codemode, tool_search, the proxies) first registers what it reaches.
+  // A call that may reach other tools (Pi's codemode and tool_search, other extensions) first registers what it reaches.
   pi.on("tool_call", async (event, ctx) => {
     if (!deferredRegistryLive || directToolsFrozen) return;
     try {

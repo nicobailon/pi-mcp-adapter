@@ -4870,5 +4870,77 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(mocks.lazyConnect).not.toHaveBeenCalled();
       expect(registeredTool(api, "mcp__docs__find")).toBeUndefined();
     });
+
+    it("returns at once for an already-aborted reaching call while initialization is pending", async () => {
+      const config = { settings: { scriptMode: false }, mcpServers: { docs: { command: "d", lifecycle: "eager" } } };
+      mocks.loadMcpConfig.mockReturnValue(config);
+      mocks.initializeMcp.mockReturnValue(new Promise(() => {}));
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers } = createPi({ unregisterTool: false });
+      api.registerMcpServer = vi.fn();
+      api.getMcpServers = vi.fn(() => []);
+      api.getAllTools.mockReturnValue([{ name: "codemode", reachesTools: () => "all" }]);
+      mcpAdapter(api);
+      void handlers.get("session_start")?.({}, {});
+      await vi.waitFor(() => expect(mocks.initializeMcp).toHaveBeenCalled());
+      const controller = new AbortController();
+      controller.abort();
+
+      const call = handlers.get("tool_call")!({ type: "tool_call", toolName: "codemode", toolCallId: "t1", input: {} }, { signal: controller.signal });
+
+      await expect(Promise.race([call.then(() => "returned"), new Promise((resolveLate) => setTimeout(() => resolveLate("still waiting"), 200))]))
+        .resolves.toBe("returned");
+    });
+
+    it("does not re-sync on repeated reaching calls for a server that cannot connect", async () => {
+      const { api, toolCall } = await bootWithUnconnectedServer();
+      api.getAllTools.mockReturnValue([{ name: "codemode", reachesTools: scriptWords }]);
+      mocks.lazyConnect.mockResolvedValue(false);
+      const cacheReads = mocks.loadMetadataCache.mock.calls.length;
+
+      await toolCall("codemode", { code: "tools.mcp__docs__find()" });
+      await toolCall("codemode", { code: "tools.mcp__docs__find()" });
+
+      expect(mocks.loadMetadataCache.mock.calls.length).toBe(cacheReads);
+      expect(registeredTool(api, "mcp__docs__find")).toBeUndefined();
+    });
+
+    it("connects every unregistered server a named reach names", async () => {
+      const { api, config, state, toolCall } = await bootWithUnconnectedServer();
+      config.mcpServers.gh = { command: "g" };
+      const connected = new Set<string>();
+      mocks.lazyConnect.mockImplementation(async (_state: unknown, serverName: string) => {
+        connected.add(serverName);
+        mocks.loadMetadataCache.mockReturnValue({
+          version: 1,
+          servers: {
+            proxy: cacheEntry(config.mcpServers.proxy!, { tools: [echoTool] }),
+            ...(connected.has("docs") ? { docs: cacheEntry(config.mcpServers.docs, { tools: [{ name: "find" }] }) } : {}),
+            ...(connected.has("gh") ? { gh: cacheEntry(config.mcpServers.gh, { tools: [{ name: "issues" }] }) } : {}),
+          },
+        });
+        state.onToolMetadataUpdated(serverName, "lazy-connect");
+        return true;
+      });
+      api.getAllTools.mockReturnValue([{ name: "codemode", reachesTools: scriptWords }]);
+
+      await toolCall("codemode", { code: "await tools.mcp__docs__find({}); await tools.mcp__gh__issues({})" });
+
+      expect([...connected].sort()).toEqual(["docs", "gh"]);
+      expect(registeredTool(api, "mcp__docs__find")).toMatchObject({ exposure: "deferred" });
+      expect(registeredTool(api, "mcp__gh__issues")).toMatchObject({ exposure: "deferred" });
+    });
+
+    it("leaves mcp, mcpScript and the namespace proxies to connect on their own, keeping their first-call errors", async () => {
+      const { api, toolCall } = await bootWithUnconnectedServer();
+      // Even a proxy reach that names the unconnected server must not connect it ahead of the proxy's own call.
+      const reachesDocs = vi.fn(() => ["mcp__docs"]);
+      api.getAllTools.mockReturnValue(["mcp", "mcpScript", "mcp__proxy"].map((name) => ({ name, reachesTools: reachesDocs })));
+
+      for (const name of ["mcp", "mcpScript", "mcp__proxy"]) await toolCall(name, { tool: "find" });
+
+      expect(reachesDocs).not.toHaveBeenCalled();
+      expect(mocks.lazyConnect).not.toHaveBeenCalled();
+    });
   });
 });
