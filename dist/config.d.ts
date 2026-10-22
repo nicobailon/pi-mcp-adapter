@@ -132,7 +132,13 @@ export declare function translatePiMcpServer(name: string, value: unknown): {
     entry: ServerEntry;
     ignored: string[];
 } | string;
-export declare function buildUnifiedDiff(beforeText: string, afterText: string): string;
+/**
+ * A line diff of two texts. By default every line is listed; with `context`, only changed lines and
+ * that many lines around them, in `@@` hunks.
+ */
+export declare function buildUnifiedDiff(beforeText: string, afterText: string, options?: {
+    context?: number;
+}): string;
 export declare function writeSharedConfigText(filePath: string, text: string): void;
 export declare function writeJevSemanticSearchConfig(overridePath: string | undefined, cwd: string, allowedServers: string[], effectiveJev?: unknown): {
     path: string;
