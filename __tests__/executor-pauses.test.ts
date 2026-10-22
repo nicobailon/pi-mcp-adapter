@@ -7,7 +7,7 @@ import { createDirectToolExecutor } from "../direct-tools.ts";
 import { callToolAnsweringExecutorPauses } from "../executor-pauses.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { executeCall } from "../proxy-modes.ts";
-import { McpServerManager, type ServerConnection } from "../server-manager.ts";
+import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { ToolMetadata } from "../types.ts";
 
@@ -95,17 +95,6 @@ describe("Executor pauses", () => {
     expect(await resumes()).toEqual([{ requestId: "apr_1", response: { action: "decline" } }]);
   });
 
-  it("sends the answer to an input pause back through resume", async () => {
-    const { state, ui, resumes } = await connectExecutor({ select: ["Continue", "Enter value", "Submit"], input: ["work"] });
-
-    const result = await executeCall(state, "executor_execute", { code: "pickInbox()" }, "executor");
-
-    expect(textOf(result)).toContain("inbox work");
-    expect(textOf(result)).not.toMatch(/elc_|requestId/);
-    expect(ui.input).toHaveBeenCalledOnce();
-    expect(await resumes()).toEqual([{ requestId: "elc_1", response: { action: "accept", content: { inbox: "work" } } }]);
-  });
-
   it.each(["direct", "mcpScript"] as const)("answers the pause on the %s path", async (path) => {
     const { state, ui } = await connectExecutor({ select: ["Continue"] });
 
@@ -124,8 +113,11 @@ describe("Executor pauses", () => {
     expect(ui.select).toHaveBeenCalledOnce();
   });
 
-  it("passes a lookalike pending result from another server through untouched", async () => {
-    const { state, ui, resumes } = await connectExecutor({ select: ["Continue"], env: { EXECUTOR_SERVER_NAME: "lookalike" } });
+  it.each([
+    ["a server with another name", { EXECUTOR_SERVER_NAME: "lookalike" }],
+    ["Executor's browser mode, whose resume takes no response", { EXECUTOR_RESUME_SCHEMA: "browser" }],
+  ])("passes a pending result from %s through untouched", async (_label, env) => {
+    const { state, ui, resumes } = await connectExecutor({ select: ["Continue"], env });
 
     const result = await executeCall(state, "executor_call", {}, "executor");
 
@@ -134,17 +126,7 @@ describe("Executor pauses", () => {
     expect(await resumes()).toEqual([]);
   });
 
-  it("leaves Executor's browser mode, whose resume takes no response, to the browser", async () => {
-    const { state, ui, resumes } = await connectExecutor({ select: ["Continue"], env: { EXECUTOR_RESUME_SCHEMA: "browser" } });
-
-    const result = await executeCall(state, "executor_call", {}, "executor");
-
-    expect(textOf(result)).toContain('"requestId":"apr_1"');
-    expect(ui.select).not.toHaveBeenCalled();
-    expect(await resumes()).toEqual([]);
-  });
-
-  it("answers two chained pauses before returning the final result", async () => {
+  it("answers an approval and then an input pause before returning the final result", async () => {
     const { state, ui, resumes } = await connectExecutor({
       select: ["Continue", "Continue", "Enter value", "Submit"],
       input: ["work"],
@@ -153,6 +135,7 @@ describe("Executor pauses", () => {
     const result = await executeCall(state, "executor_execute", { code: "chain" }, "executor");
 
     expect(textOf(result)).toContain("inbox work");
+    expect(textOf(result)).not.toMatch(/apr_|elc_|requestId/);
     expect(ui.input).toHaveBeenCalledOnce();
     expect(await resumes()).toEqual([
       { requestId: "apr_2", response: { action: "accept" } },
@@ -190,9 +173,9 @@ describe("Executor pauses", () => {
   });
 
   it.each([
-    ["Decline", "That question was already answered."],
-    [undefined, "Executor is still answering an earlier request for this call; try the call again."],
-  ])("shows an unavailable or busy outcome as its message only (%s)", async (answer, message) => {
+    ["unavailable", "Decline", "That question was already answered."],
+    ["busy", undefined, "Executor is still answering an earlier request for this call; try the call again."],
+  ])("shows a %s outcome as a message without its requestId", async (_status, answer, message) => {
     const { state } = await connectExecutor({ select: [answer] });
 
     const result = await executeCall(state, "executor_execute", { code: "pickInbox()" }, "executor");
@@ -221,7 +204,7 @@ describe("Executor pauses", () => {
             { name: "call" },
             { name: "resume", inputSchema: { type: "object", properties: { requestId: {}, response: {} } } },
           ],
-        } as unknown as Pick<ServerConnection, "client" | "definition" | "tools">,
+        } as never,
         manager: { promptFormElicitation: async () => ({ action: "accept" }) },
         serverName: "executor",
         params: { name: "call", arguments: {} },

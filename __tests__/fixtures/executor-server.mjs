@@ -68,6 +68,7 @@ function resume({ requestId, response }) {
   if (requestId === "elc_1" && response?.action === "accept") {
     return completed(`inbox ${response.content?.inbox}`);
   }
+  // Test shim: Executor returns busy only for a concurrent resume on the same run.
   if (requestId === "elc_1" && response?.action === "cancel") return { status: "busy", requestId };
   if (requestId === "elc_1") {
     return { status: "unavailable", requestId, reason: "answered", message: "That question was already answered." };

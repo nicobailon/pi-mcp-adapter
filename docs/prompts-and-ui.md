@@ -24,7 +24,7 @@ Time spent answering a server's prompt does not count against its tool calls' `r
 
 ### Executor approvals
 
-[Executor](https://executor.sh) pauses a program when an app tool needs your approval or input, and on its default URL it hands that pause to the model to answer. The adapter answers it instead: it shows Executor's form in Pi's dialogs, sends your answer with Executor's `resume`, and gives the model only the final result. The model never sees the request ID, and a `resume` call from the model is refused. A session that cannot show dialogs (headless, or `settings.elicitation: false`) fails the call with a message saying it needs an interactive Pi session. Executor's `execute` and `call` get a 6-minute timeout, enough for its 5-minute program limit, unless the server entry sets `requestTimeoutMs`. Executor's browser mode is left alone, since you answer there in the browser.
+On its default URL, [Executor](https://executor.sh) pauses a program when an app tool needs your approval or input and hands the pause to the model, which could then approve it without asking you. The adapter answers these pauses itself: it shows Executor's form in Pi's dialogs, sends your answer with Executor's `resume`, and gives the model only the final result. The model never sees the request ID, and the adapter refuses a `resume` call from the model. In a session that can't show dialogs (headless, or `settings.elicitation: false`), the call fails with a message that it needs an interactive Pi session. Executor's `execute` and `call` get a 6-minute timeout, which covers its 5-minute program limit, unless the server entry sets `requestTimeoutMs`. Executor's browser mode, where you answer in the browser, is left alone.
 
 ## MCP UI Integration
 

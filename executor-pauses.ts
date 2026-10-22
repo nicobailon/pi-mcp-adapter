@@ -1,19 +1,17 @@
-import type { Client, ElicitRequestFormParams, ElicitResult, RequestOptions } from "@modelcontextprotocol/client";
+import type { Client, ElicitRequestFormParams, RequestOptions } from "@modelcontextprotocol/client";
 import { throwIfAborted } from "./abort.ts";
 import type { McpServerManager, ServerConnection } from "./server-manager.ts";
 
-const EXECUTOR_PAUSING_TOOLS = new Set(["execute", "call"]);
-const EXECUTOR_RESUMING_TOOLS = new Set([...EXECUTOR_PAUSING_TOOLS, "resume"]);
-// Executor's default program budget is 5 minutes (executor packages/mcp/src/contracts/execute.ts)
-// and it sends no progress notifications, so the SDK's 60-second default would kill a program
-// well inside that budget. One extra minute covers transport and prompt overhead.
-export const EXECUTOR_REQUEST_TIMEOUT_MS = 360_000;
+const EXECUTOR_TOOLS = new Set(["execute", "call", "resume"]);
+// Executor programs run for up to 5 minutes and send no progress notifications, so the SDK's
+// 60-second default would cut them off. The extra minute covers transport and prompt time.
+const EXECUTOR_REQUEST_TIMEOUT_MS = 360_000;
 const MAX_EXECUTOR_PAUSES = 16;
 
 type ToolCallParams = Parameters<Client["callTool"]>[0];
-type TextResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+type TextResult = { content: Array<{ type: "text"; text: string }>; isError: boolean };
 
-export interface ExecutorPause {
+interface ExecutorPause {
   status: "approval-required" | "input-required";
   requestId: string;
   elicitation: ElicitRequestFormParams;
@@ -30,25 +28,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The `resume` schema check keeps out Executor's browser mode, whose `resume` takes only a
  * requestId because the operator answers in the browser.
  */
-export function isExecutorConnection(conn: Pick<ServerConnection, "client" | "tools">): boolean {
+function isExecutorConnection(conn: Pick<ServerConnection, "client" | "tools">): boolean {
   const name = conn.client.getServerVersion?.()?.name;
   if (name !== undefined && name !== "Executor") return false;
-  let execute = false;
-  let call = false;
-  let resume = false;
-  for (const tool of conn.tools) {
-    if (tool.name === "execute") execute = true;
-    else if (tool.name === "call") call = true;
-    else if (tool.name === "resume") {
-      const properties = tool.inputSchema?.properties;
-      resume = isRecord(properties) && "requestId" in properties && "response" in properties;
-    }
-  }
-  return execute && call && resume;
+  const resume = conn.tools.find(tool => tool.name === "resume")?.inputSchema?.properties;
+  return conn.tools.some(tool => tool.name === "execute")
+    && conn.tools.some(tool => tool.name === "call")
+    && isRecord(resume) && "requestId" in resume && "response" in resume;
 }
 
-/** Validates Executor's pending `structuredContent`; any other result is not a pause. */
-export function parseExecutorPause(result: object): ExecutorPause | undefined {
+function parseExecutorPause(result: object): ExecutorPause | undefined {
   const content = (result as { structuredContent?: unknown }).structuredContent;
   if (!isRecord(content)) return undefined;
   const { status, requestId, elicitation } = content;
@@ -59,7 +48,7 @@ export function parseExecutorPause(result: object): ExecutorPause | undefined {
     typeof requestId !== "string" || requestId === ""
     || !isRecord(elicitation) || elicitation.mode !== "form" || typeof elicitation.message !== "string"
     || !isRecord(schema) || schema.type !== "object" || !isRecord(properties)
-    // An approval form asks no fields: Executor rejects an accept that carries content.
+    // An approval form asks no fields: Executor rejects an approval that carries field values.
     || (status === "approval-required" && Object.keys(properties).length > 0)
   ) {
     throw new Error("Executor returned a malformed pending interaction");
@@ -76,31 +65,20 @@ export function parseExecutorPause(result: object): ExecutorPause | undefined {
   };
 }
 
-function resumeResponse(pause: ExecutorPause, decision: ElicitResult): Record<string, unknown> {
-  if (decision.action !== "accept") return { action: decision.action };
-  if (pause.status === "approval-required") return { action: "accept" };
-  return { action: "accept", content: decision.content ?? {} };
+function textResult(text: string, isError: boolean): TextResult {
+  return { content: [{ type: "text", text }], isError };
 }
 
-function textResult(text: string, isError?: boolean): TextResult {
-  return { content: [{ type: "text", text }], ...(isError ? { isError } : {}) };
-}
-
-/** `unavailable` and `busy` outcomes carry the requestId; the model gets only what to do next. */
+/** Any outcome still holding a requestId (`unavailable`, `busy`) is replaced: the model gets only what to do next. */
 function redactExecutorOutcome<T extends object>(result: T): T | TextResult {
   const content = (result as { structuredContent?: unknown }).structuredContent;
-  if (!isRecord(content) || (content.status !== "unavailable" && content.status !== "busy")) return result;
-  const isError = (result as { isError?: boolean }).isError === true;
-  if (content.status === "busy") {
-    return textResult("Executor is still answering an earlier request for this call; try the call again.", isError);
-  }
-  if (typeof content.message !== "string") throw new Error("Executor returned a malformed unavailable outcome");
-  return textResult(content.message, isError);
-}
-
-function hasServerTimeout(definition: ServerConnection["definition"]): boolean {
-  const timeout = definition.requestTimeoutMs;
-  return typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0;
+  if (!isRecord(content) || typeof content.requestId !== "string") return result;
+  return textResult(
+    typeof content.message === "string"
+      ? content.message
+      : "Executor is still answering an earlier request for this call; try the call again.",
+    (result as { isError?: boolean }).isError === true,
+  );
 }
 
 /**
@@ -114,7 +92,9 @@ function hasServerTimeout(definition: ServerConnection["definition"]): boolean {
  * A `resume` the caller asks for is refused without contacting the server, so only Pi answers
  * Executor's pauses. The loop's own `resume` goes straight to `call` and is not refused.
  */
-export async function callToolAnsweringExecutorPauses<T extends object>(args: {
+export async function callToolAnsweringExecutorPauses<T extends object>({
+  conn, manager, serverName, params, requestOptions, signal, call,
+}: {
   conn: Pick<ServerConnection, "client" | "definition" | "tools">;
   manager: Pick<McpServerManager, "promptFormElicitation">;
   serverName: string;
@@ -123,39 +103,37 @@ export async function callToolAnsweringExecutorPauses<T extends object>(args: {
   signal?: AbortSignal | undefined;
   call: (params: ToolCallParams, options: RequestOptions | undefined) => Promise<T>;
 }): Promise<T | TextResult> {
-  const { conn, params, call } = args;
-  if (!EXECUTOR_RESUMING_TOOLS.has(params.name) || !isExecutorConnection(conn)) {
-    return call(params, args.requestOptions);
-  }
-  if (!EXECUTOR_PAUSING_TOOLS.has(params.name)) {
+  if (!EXECUTOR_TOOLS.has(params.name) || !isExecutorConnection(conn)) return call(params, requestOptions);
+  if (params.name === "resume") {
     return textResult(
       "Pi answers Executor's approval and input requests itself and then resumes the program. "
         + "Call `execute` or `call` again instead; do not call `resume`.",
       true,
     );
   }
-  const options = !hasServerTimeout(conn.definition)
-    && (args.requestOptions?.timeout ?? 0) < EXECUTOR_REQUEST_TIMEOUT_MS
-    ? { ...args.requestOptions, timeout: EXECUTOR_REQUEST_TIMEOUT_MS }
-    : args.requestOptions;
+  const serverTimeout = conn.definition.requestTimeoutMs ?? 0;
+  const options = Number.isFinite(serverTimeout) && serverTimeout > 0
+    ? requestOptions
+    : { ...requestOptions, timeout: Math.max(requestOptions?.timeout ?? 0, EXECUTOR_REQUEST_TIMEOUT_MS) };
   let result = await call(params, options);
   for (let pauses = 0; pauses < MAX_EXECUTOR_PAUSES; pauses++) {
     const pause = parseExecutorPause(result);
     if (!pause) return redactExecutorOutcome(result);
-    const decision = await args.manager.promptFormElicitation(args.serverName, pause.elicitation, args.signal);
+    const decision = await manager.promptFormElicitation(serverName, pause.elicitation, signal);
     if (!decision) {
-      const reason = pause.status === "approval-required" ? "your approval" : "your input";
       return textResult(
-        `MCP tool "${params.name}" on server "${args.serverName}" paused for ${reason}. `
-          + "Pi must ask you in an interactive session, so this call did not continue. "
-          + "Run it in an interactive Pi session with MCP input enabled, then try again.",
+        `MCP tool "${params.name}" on server "${serverName}" paused for your `
+          + `${pause.status === "approval-required" ? "approval" : "input"}, which Pi can only ask for `
+          + "in an interactive Pi session with MCP input enabled. Run it there and try again.",
         true,
       );
     }
-    throwIfAborted(args.signal);
+    throwIfAborted(signal);
+    // Send an approval as a bare accept, the shape Executor's own clients use, not Pi's `content: {}`.
+    const response = pause.status === "approval-required" && decision.action === "accept" ? { action: "accept" } : decision;
     result = await call({
       name: "resume",
-      arguments: { requestId: pause.requestId, response: resumeResponse(pause, decision) },
+      arguments: { requestId: pause.requestId, response },
       ...(params._meta ? { _meta: params._meta } : {}),
     }, options);
   }
