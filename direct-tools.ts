@@ -3,7 +3,7 @@ import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/
 import type { McpExtensionState } from "./state.ts";
 import { disabledServerReason } from "./project-server-trust.ts";
 import type { DirectToolSpec, McpContent } from "./types.ts";
-import { lazyConnect, clearFailure, refreshExecutorCatalog, EXECUTOR_UNKNOWN_PATH_REASON } from "./init.ts";
+import { lazyConnect, clearFailure, repageExecutorCatalog } from "./init.ts";
 import { describeFailure } from "./failure-backoff.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { formatSchema } from "./tool-metadata.ts";
@@ -367,7 +367,7 @@ export function createDirectToolExecutor(
       const result = spec.executorPath !== undefined ? unwrapExecutorCallResult(spec.executorPath, callResult) : callResult;
       const executorMatches = spec.executorPath !== undefined ? executorUnknownToolMatches(spec.executorPath, callResult) : undefined;
       if (executorMatches) {
-        await refreshExecutorCatalog(state, spec.serverName, EXECUTOR_UNKNOWN_PATH_REASON);
+        await repageExecutorCatalog(state, spec.serverName, ownedSignal);
         return {
           content: [{ type: "text" as const, text: executorUnknownToolText(spec.originalName, executorMatches) }],
           details: { error: "tool_not_found", server: spec.serverName, suggestions: executorMatches },

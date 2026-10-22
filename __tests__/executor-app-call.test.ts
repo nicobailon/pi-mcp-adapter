@@ -296,6 +296,29 @@ describe("an Executor catalog pass", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("lets an aborted call stop waiting for the re-page of an unknown path, which still finishes", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/pi-mcp-executor-pass-`);
+    tempDirs.push(dir);
+    vi.stubEnv("PI_CODING_AGENT_DIR", dir);
+    const gate = `${dir}/search-gate`;
+    const { state, calls } = await connectExecutor({ env: { EXECUTOR_SEARCH_GATE: gate } });
+    const controller = new AbortController();
+
+    try {
+      const pending = executeCall(state, "alpha.tool_999", {}, "executor", undefined, controller.signal);
+      await vi.waitFor(async () => expect((await calls()).map(call => call.name)).toContain("search"));
+      controller.abort(new Error("stopped by the operator"));
+      await expect(pending).rejects.toThrow("stopped by the operator");
+
+      await writeFile(gate, "");
+      // The pass the call started is still the one in flight, and it lands.
+      await refreshExecutorCatalog(state, "executor");
+      expect(state.sessionMetadata!.get("executor")!.executorApps!.tools).toHaveLength(6);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("listing Executor's tools in /mcp-adapter tools", () => {

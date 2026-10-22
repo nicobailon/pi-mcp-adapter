@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
 import { getServerPrefix, getToolNameCandidates, isServerDisabled, parseUiPromptHandoff, resolveToolPrefix, type ServerEntry } from "./types.ts";
-import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure, refreshExecutorCatalog, cacheExecutorSignature, EXECUTOR_UNKNOWN_PATH_REASON } from "./init.ts";
+import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure, repageExecutorCatalog, cacheExecutorSignature } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { buildToolMetadata, executorAppToolsLine, executorCatalogOf, getToolNames, formatSchema, isPlainTypeSchema, ownTools } from "./tool-metadata.ts";
@@ -820,7 +820,7 @@ async function findExecutorAppToolAfterRepage(
     : Object.keys(state.config.mcpServers).filter(name => !isServerDisabled(state.config.mcpServers[name]) && isExecutorServer(name));
   for (const server of servers) {
     if (!isExecutorServer(server) || !(await lazyConnect(state, server, signal))) continue;
-    await refreshExecutorCatalog(state, server, EXECUTOR_UNKNOWN_PATH_REASON);
+    await repageExecutorCatalog(state, server, signal);
     throwIfAborted(signal);
     const tool = state.toolMetadata.get(server)?.find(candidate => candidate.executorPath !== undefined && candidate.originalName === path);
     if (tool) return { server, tool };
@@ -1900,7 +1900,7 @@ export async function executeCall(
     const result = toolMeta.executorPath !== undefined ? unwrapExecutorCallResult(toolMeta.executorPath, callResult) : callResult;
     const executorMatches = toolMeta.executorPath !== undefined ? executorUnknownToolMatches(toolMeta.executorPath, callResult) : undefined;
     if (executorMatches) {
-      await refreshExecutorCatalog(state, serverName, EXECUTOR_UNKNOWN_PATH_REASON);
+      await repageExecutorCatalog(state, serverName, ownedSignal);
       return {
         content: [{ type: "text" as const, text: executorUnknownToolText(toolMeta.originalName, executorMatches) }],
         details: { mode: "call", error: "tool_not_found", ...callIdentity, requestedTool: toolName, suggestions: executorMatches },

@@ -31,7 +31,7 @@ import { resourceNameToToolName } from "./resource-tools.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
 import { formatMcpFooterStatus, formatMcpStatus, openUrl, parallelLimit, providerSignInMessage, sanitizeTerminalText } from "./utils.ts";
 import { logger } from "./logger.ts";
-import { throwIfAborted } from "./abort.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 import { getAuthStorageOptions } from "./mcp-auth.ts";
 import { createOAuthRuntime, hasPendingAuth, shutdownOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import {
@@ -762,7 +762,7 @@ const EXECUTOR_CATALOG_REPAGE_INTERVAL_MS = 60_000;
 // Metadata update reasons where the user or Executor asked for the current catalog.
 const FORCED_CATALOG_REASONS = new Set(["proxy-connect", "command-reconnect", "tools-list-changed"]);
 /** The `refreshExecutorCatalog` reason for a call naming a path the cached catalog doesn't have. */
-export const EXECUTOR_UNKNOWN_PATH_REASON = "executor-unknown-path";
+const EXECUTOR_UNKNOWN_PATH_REASON = "executor-unknown-path";
 
 function setExecutorCatalogNotes(state: McpExtensionState, serverName: string, notes: string[]): void {
   if (notes.length > 0) (state.executorCatalogNotes ??= new Map()).set(serverName, notes);
@@ -848,6 +848,16 @@ export function refreshExecutorCatalog(state: McpExtensionState, serverName: str
   })();
   running.set(serverName, pass);
   return pass;
+}
+
+/**
+ * Pages an Executor server's catalog again for a call naming a path it may not have (at most once
+ * a minute, see `refreshExecutorCatalog`), and waits for the pass until `signal` aborts. Other
+ * calls can share the pass, so an abort ends only this wait, never the pass.
+ */
+export async function repageExecutorCatalog(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<void> {
+  const pass = refreshExecutorCatalog(state, serverName, EXECUTOR_UNKNOWN_PATH_REASON);
+  if (pass) await abortable(pass, signal);
 }
 
 /**
