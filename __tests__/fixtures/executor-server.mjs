@@ -5,6 +5,11 @@ import readline from "node:readline";
 // return a pending structuredContent, and `resume({requestId, response})` continues the program.
 // EXECUTOR_SERVER_NAME lets a test present the same tools under another server name.
 // EXECUTOR_RESUME_SCHEMA=browser gives `resume` browser mode's input, a requestId only.
+// EXECUTOR_ACCOUNT_MODE=local|hosted makes `call` into tools["needs-account"] fail with
+// AppAccountRequired until an account is connected, and answers the adapter's Executor-app
+// programs with that product's shapes, matched by program text. EXECUTOR_ACCOUNT_STATE sets the
+// connection state the read returns (default completed); EXECUTOR_ACCOUNT_LINKS=never keeps the
+// account missing after a completed connection; EXECUTOR_NO_EXECUTOR_APP=1 has no Executor app.
 const lines = readline.createInterface({ input: process.stdin });
 const logFile = process.env.EXECUTOR_LOG_FILE;
 const serverInfo = { name: process.env.EXECUTOR_SERVER_NAME ?? "Executor", version: "0.1.0" };
@@ -88,7 +93,58 @@ function resume({ requestId, response }) {
   return { status: "unavailable", requestId, reason: "not-found", message: "That request is no longer waiting." };
 }
 
+const accountMode = process.env.EXECUTOR_ACCOUNT_MODE;
+const links = {
+  local: { connection: "conn_local_1", url: "http://127.0.0.1:4788/account-connect#token=fixture-secret", expiresAt: "2026-10-22T00:30:00.000Z" },
+  hosted: {
+    id: "conn_hosted_1",
+    target: { app: "app_1", requirement: "service", name: "Needs Account" },
+    url: "https://executor.test/org/acme/connections/conn_hosted_1",
+    state: { status: "pending" },
+    expiresAt: "2026-10-22T00:30:00.000Z",
+  },
+};
+let linked = false;
+
+function finished(execution) {
+  return { status: "completed", execution: { toolCalls: [], ...execution }, unavailableApps: [] };
+}
+
+function accountCall(path) {
+  if (linked) {
+    return finished({ ok: true, value: { path, ok: true, value: "needs-account data" }, toolCalls: [{ name: path, outcome: "success" }] });
+  }
+  const response = {
+    code: "AppAccountRequired",
+    status: 409,
+    message: "This app needs an account, and none is linked to it for you.",
+    recovery: { action: "Connect an account", instructions: "Connect an account in Executor, then start a new execution." },
+    retryable: false,
+  };
+  return finished({ ok: true, value: { path, ok: false, error: { kind: "ToolFailure", message: response.message, response } } });
+}
+
+// Executor runs the adapter's program; this fixture recognises each fixed template instead.
+function executorProgram(code) {
+  const unknown = finished({ ok: false, error: { kind: "UnknownTool", message: "Unknown tool namespace 'executor'." } });
+  if (process.env.EXECUTOR_NO_EXECUTOR_APP === "1") return unknown;
+  const link = links[accountMode];
+  const id = accountMode === "hosted" ? link.id : link.connection;
+  if (code.includes("appAccounts.userConnect(") && code.includes('"needs-account"')) {
+    return finished({ ok: true, value: { hosted: accountMode === "hosted", requirement: "service", link } });
+  }
+  const read = accountMode === "hosted" ? "tools.executor.accounts.connection(" : "tools.executor.accountConnections.get(";
+  if (!code.includes(read) || !code.includes(JSON.stringify(id))) return unknown;
+  const status = process.env.EXECUTOR_ACCOUNT_STATE ?? "completed";
+  if (status === "completed" && process.env.EXECUTOR_ACCOUNT_LINKS !== "never") linked = true;
+  return finished({ ok: true, value: status === "completed" ? { status, account: { id: "acc_1" } } : { status } });
+}
+
 function start(name, args) {
+  if (accountMode && name === "call" && JSON.stringify(args?.calls ?? null).includes("needs-account")) {
+    return accountCall(args.calls.path);
+  }
+  if (accountMode && name === "execute" && args?.code?.includes("tools.executor")) return executorProgram(args.code);
   if (name === "execute" && args?.code === "chain") return approval("apr_2");
   const pauses = /^pauses:(\d+)$/.exec(args?.code ?? "");
   if (name === "execute" && pauses) return approval(`apr_pause_1_of_${pauses[1]}`);

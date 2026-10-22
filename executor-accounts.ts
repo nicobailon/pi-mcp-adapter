@@ -1,4 +1,6 @@
 import type { Client } from "@modelcontextprotocol/client";
+import { throwIfAborted } from "./abort.ts";
+import type { McpServerManager } from "./server-manager.ts";
 
 type ToolCallParams = Parameters<Client["callTool"]>[0];
 
@@ -39,7 +41,17 @@ function parseOutcome(value: unknown): Outcome {
   const response = value.error.response;
   if (response === undefined) return "other-failure";
   if (!isRecord(response) || typeof response.code !== "string") malformed();
-  return response.code === "AppAccountRequired" || response.code === "AccountRequired" ? response.code : "other-failure";
+  return isAccountCode(response.code) ? response.code : "other-failure";
+}
+
+function isAccountCode(code: unknown): code is AccountGap["code"] {
+  return code === "AppAccountRequired" || code === "AccountRequired";
+}
+
+function namesMissingAccount(value: unknown): boolean {
+  return (Array.isArray(value) ? value : [value]).some(outcome =>
+    isRecord(outcome) && isRecord(outcome.error) && isRecord(outcome.error.response)
+    && isAccountCode(outcome.error.response.code));
 }
 
 /** Request paths in batch order; a single call is the object form of `calls`, a batch the array form. */
@@ -77,31 +89,28 @@ function canonicalPath(path: string): string {
  * Finds a missing-account failure in a final Executor `call` result. Executor reports it inside a
  * successful batch (`execution.ok` is true), as the failed outcome of the call that needed the account.
  * `execute` results name no app, so they return undefined and reach the model unchanged.
+ * Only a result whose outcome carries an account code is parsed strictly; any other shape passes
+ * through, so an Executor shape change cannot break unrelated calls.
  */
 export function findAccountGap(params: ToolCallParams, result: object): AccountGap | undefined {
   if (params.name !== "call") return undefined;
   const content = (result as { structuredContent?: unknown }).structuredContent;
-  if (!isRecord(content) || content.status !== "completed") return undefined;
+  if (!isRecord(content) || content.status !== "completed" || !isRecord(content.execution)) return undefined;
   const execution = content.execution;
-  if (!isRecord(execution) || !Array.isArray(execution.toolCalls)) malformed();
+  if (!namesMissingAccount(execution.value)) return undefined;
+  if (execution.ok !== true || !Array.isArray(execution.toolCalls)) malformed();
   const toolCalls = execution.toolCalls.map(call => {
     if (!isRecord(call) || typeof call.name !== "string" || typeof call.outcome !== "string" || !TOOL_CALL_OUTCOMES.has(call.outcome)) {
       malformed();
     }
     return call.outcome;
   });
-  if (execution.ok === false) {
-    if (!isDiagnostic(execution.error)) malformed();
-    return undefined;
-  }
-  if (execution.ok !== true || !("value" in execution)) malformed();
   const batch = Array.isArray(execution.value);
   const outcomes = (batch ? execution.value as unknown[] : [execution.value]).map(parseOutcome);
-  if (outcomes.length === 0) malformed();
   // Connecting the account cannot help a batch whose other calls already succeeded.
   if (outcomes.includes("success")) return undefined;
-  const code = outcomes.find((outcome): outcome is AccountGap["code"] => outcome !== "success" && outcome !== "other-failure");
-  if (!code) return undefined;
+  const code = outcomes.find(isAccountCode);
+  if (!code) malformed();
   const { single, paths } = requestPaths(params);
   if (single === batch || paths.length !== outcomes.length) malformed();
   // AccountRequired is raised while binding credentials, before any upstream request, so its one
@@ -110,4 +119,121 @@ export function findAccountGap(params: ToolCallParams, result: object): AccountG
     && toolCalls.every(outcome => outcome === "failure")
     && toolCalls.length <= 1;
   return { code, slug: appSlug(paths[outcomes.indexOf(code)]!), retrySafe };
+}
+
+// Adapter-authored programs: fixed templates with only JSON.stringify-injected values. CodeMode
+// reports every `tools.x.y` reference as a function, so the Executor app's groups are read with
+// Object.keys: hosted has `context`, local has `accountConnections`.
+function connectProgram(slug: string): string {
+  return `const slug = ${JSON.stringify(slug)};
+const executor = tools.executor;
+const groups = Object.keys(executor);
+const hosted = groups.includes("context");
+if (!hosted && !groups.includes("accountConnections")) return null;
+const organization = hosted ? (await executor.context.get({})).organization : null;
+const at = (path) => ({ path: hosted ? { organization, ...path } : path });
+const apps = await executor.appManagement.list(hosted ? { path: { organization } } : {});
+const app = apps.find((candidate) => candidate.slug === slug);
+if (!app) return null;
+const linked = (await executor.appAccounts.userList(at({ app: app.id }))).map((entry) => entry.requirement);
+const missing = Object.entries(app.requirements.accounts)
+  .filter(([name, requirement]) => requirement.scope === "user" && requirement.cardinality === "one" && !linked.includes(name))
+  .map(([name]) => name);
+if (missing.length !== 1) return null;
+const link = await executor.appAccounts.userConnect({ ...at({ app: app.id, requirement: missing[0] }), body: {} });
+return { hosted, requirement: missing[0], link };`;
+}
+
+function readProgram(hosted: boolean, connection: string): string {
+  return hosted
+    ? `const { organization } = await tools.executor.context.get({});
+return (await tools.executor.accounts.connection({ path: { organization, connection: ${JSON.stringify(connection)} } })).state;`
+    : `return (await tools.executor.accountConnections.get({ path: { connection: ${JSON.stringify(connection)} } })).state;`;
+}
+
+/** The program's value, or undefined when Executor reports a failure or a pause, which ends the flow. */
+async function runProgram(call: (params: ToolCallParams) => Promise<object>, code: string): Promise<{ value: unknown } | undefined> {
+  const result = await call({ name: "execute", arguments: { code } });
+  const content = (result as { structuredContent?: unknown }).structuredContent;
+  if (!isRecord(content)) {
+    if ((result as { isError?: unknown }).isError === true) return undefined;
+    throw new Error("Executor returned no structured result for Pi's account program");
+  }
+  if (content.status !== "completed") return undefined;
+  const execution = content.execution;
+  if (isRecord(execution) && execution.ok === false) return undefined;
+  if (!isRecord(execution) || execution.ok !== true || !("value" in execution)) {
+    throw new Error("Executor returned a malformed execution for Pi's account program");
+  }
+  return { value: execution.value };
+}
+
+/** The link fields this flow uses; hosted names the connection `id`, local names it `connection`. */
+function parseLink(value: unknown): { hosted: boolean; requirement: string; connection: string; url: string } | undefined {
+  if (value === null) return undefined;
+  if (!isRecord(value) || typeof value.hosted !== "boolean" || typeof value.requirement !== "string" || value.requirement === "") {
+    throw new Error("Executor returned a malformed account requirement");
+  }
+  const link = value.link;
+  const connection = isRecord(link) ? (value.hosted ? link.id : link.connection) : undefined;
+  if (typeof connection !== "string" || connection === "") throw new Error("Executor returned an account link without a connection id");
+  if (!isRecord(link) || !isHttpUrl(link.url)) {
+    throw new Error("Executor returned an account link without an HTTP URL");
+  }
+  return { hosted: value.hosted, requirement: value.requirement, connection, url: link.url };
+}
+
+function isHttpUrl(value: unknown): value is string {
+  try {
+    return typeof value === "string" && ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+const CONTINUE_FORM = {
+  mode: "form" as const,
+  message: "Finish connecting the account in your browser, then choose Continue.",
+  requestedSchema: { type: "object" as const, properties: {} },
+};
+
+/**
+ * Connects the account a gap needs: Executor issues a connection link, Pi opens it behind the
+ * URL consent dialog, waits for Continue and reads the connection once. Returns "connected" when
+ * the account is linked, "pending" when the operator continued before finishing, and "unchanged"
+ * when nothing was connected and the original result stands. The link's URL and connection id
+ * carry a bearer token on local Executor, so they go only to the consent dialog and the browser.
+ */
+export async function connectAccount({ gap, serverName, manager, signal, call }: {
+  gap: AccountGap;
+  serverName: string;
+  manager: Pick<McpServerManager, "promptFormElicitation" | "urlElicitationPrompt">;
+  signal?: AbortSignal | undefined;
+  call: (params: ToolCallParams) => Promise<object>;
+}): Promise<"connected" | "pending" | "unchanged"> {
+  const promptUrl = manager.urlElicitationPrompt(serverName);
+  if (!promptUrl) return "unchanged";
+  const issued = await runProgram(call, connectProgram(gap.slug));
+  throwIfAborted(signal);
+  const link = issued && parseLink(issued.value);
+  if (!link) return "unchanged";
+  const consent = await promptUrl({
+    mode: "url",
+    elicitationId: `executor-account-${gap.slug}`,
+    url: link.url,
+    message: `${gap.slug} needs your ${link.requirement} account before this call can run. Connect it in Executor, then come back to Pi.`,
+  }, signal);
+  throwIfAborted(signal);
+  if (consent.action !== "accept") return "unchanged";
+  const finished = await manager.promptFormElicitation(serverName, CONTINUE_FORM, signal);
+  throwIfAborted(signal);
+  if (finished?.action !== "accept") return "unchanged";
+  const read = await runProgram(call, readProgram(link.hosted, link.connection));
+  throwIfAborted(signal);
+  if (!read) return "unchanged";
+  if (!isRecord(read.value) || typeof read.value.status !== "string") {
+    throw new Error("Executor returned a malformed account connection state");
+  }
+  if (read.value.status === "completed") return "connected";
+  return read.value.status === "pending" ? "pending" : "unchanged";
 }

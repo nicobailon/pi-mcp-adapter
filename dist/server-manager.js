@@ -280,6 +280,22 @@ export class McpServerManager {
             return undefined;
         return whileAdapterPromptOpen(this.connections.get(name)?.client, () => handleFormElicitation({ ...config, serverName: name }, params, signal));
     }
+    /**
+     * A prompt that shows an adapter-supplied URL with the URL-elicitation consent dialog and opens
+     * it on accept. Undefined when this session cannot open URLs: headless, non-TUI or shut down.
+     */
+    urlElicitationPrompt(name) {
+        const config = this.elicitationConfig;
+        if (this.runtimeSignal?.aborted || !config?.allowUrl)
+            return undefined;
+        return async (params, signal) => {
+            const result = await whileAdapterPromptOpen(this.connections.get(name)?.client, () => handleUrlElicitation({ ...config, serverName: name }, params, signal));
+            // The browser step can outlast the call that started it; give the user one idle timeout to finish.
+            if (result.action === "accept")
+                this.touch(name);
+            return result;
+        };
+    }
     setRuntimeSignal(signal) {
         this.runtimeSignal = signal;
     }

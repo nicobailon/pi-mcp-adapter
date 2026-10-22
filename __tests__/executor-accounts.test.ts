@@ -1,5 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import open from "open";
+import { createDirectToolExecutor } from "../direct-tools.ts";
 import { findAccountGap } from "../executor-accounts.ts";
+import { executeCall } from "../proxy-modes.ts";
+import { McpServerManager } from "../server-manager.ts";
+import type { McpExtensionState } from "../state.ts";
+
+vi.mock("open", () => ({ default: vi.fn(async () => undefined) }));
 
 type Calls = { path: string; input: unknown } | Array<{ path: string; input: unknown }>;
 
@@ -77,19 +87,179 @@ describe("findAccountGap", () => {
     expect(findAccountGap(params, result)).toBeUndefined();
   });
 
+  const malformed = (code?: string) => [
+    ["an execution that is neither shape", { structuredContent: { status: "completed", execution: { ok: "yes", value: failed("x", code), toolCalls: [] } } }],
+    ["an execution without toolCalls", { structuredContent: { status: "completed", execution: { ok: true, value: failed("x", code) } } }],
+    ["an unknown tool call outcome", completed(failed("x", code), [{ name: "a", outcome: "skipped" }])],
+    ["an outcome without a path", completed({ ...failed("x", code), path: undefined })],
+    ["a sibling response without a code", completed([failed("x", code), { ...failed("y"), error: { kind: "ToolFailure", message: "m", response: {} } }])],
+  ] as const;
+
+  it.each(malformed())("passes through %s when no account is missing", (_label, result) => {
+    expect(findAccountGap(single, result)).toBeUndefined();
+  });
+
   it.each([
-    ["an execution that is neither shape", { structuredContent: { status: "completed", execution: { ok: "yes", toolCalls: [] } } }],
-    ["an execution without toolCalls", { structuredContent: { status: "completed", execution: { ok: true, value: null } } }],
-    ["an unknown tool call outcome", completed(failed("x", "AppAccountRequired"), [{ name: "a", outcome: "skipped" }])],
-    ["an outcome without a path", completed({ ok: false, error: { kind: "ToolFailure", message: "m" } })],
-    ["a response without a code", completed({ path: "x", ok: false, error: { kind: "ToolFailure", message: "m", response: {} } })],
+    ...malformed("AppAccountRequired"),
     ["a batch answer to a single call", completed([failed("x", "AppAccountRequired")])],
-  ])("throws on %s", (_label, result) => {
+  ])("throws on %s with a missing account", (_label, result) => {
     expect(() => findAccountGap(single, result)).toThrow("Executor returned a malformed call result");
   });
 
   it("throws when the request path names no app", () => {
     expect(() => findAccountGap(request({ path: "tools", input: {} }), completed(failed("tools", "AppAccountRequired"))))
       .toThrow("which names no app");
+  });
+});
+
+const fixture = fileURLToPath(new URL("./fixtures/executor-server.mjs", import.meta.url));
+const managers: McpServerManager[] = [];
+const tempDirs: string[] = [];
+const fixtureLinks = {
+  local: { url: "http://127.0.0.1:4788/account-connect#token=fixture-secret", id: "conn_local_1" },
+  hosted: { url: "https://executor.test/org/acme/connections/conn_hosted_1", id: "conn_hosted_1" },
+};
+const callArgs = { calls: { path: 'tools["needs-account"].read', input: {} } };
+
+async function connectAccountExecutor({ mode = "local", select = [], env = {}, session = "tui" }: {
+  mode?: "local" | "hosted";
+  select?: Array<string | undefined>;
+  env?: Record<string, string>;
+  session?: "tui" | "non-tui" | "headless";
+} = {}) {
+  const ui = { select: vi.fn(async () => select.shift()), input: vi.fn(), notify: vi.fn() };
+  const tempDir = await mkdtemp(`${tmpdir()}/pi-mcp-executor-accounts-`);
+  tempDirs.push(tempDir);
+  const logPath = `${tempDir}/events.jsonl`;
+  const definition = {
+    command: process.execPath,
+    args: [fixture],
+    protocolVersion: "2026-07-28" as const,
+    env: { EXECUTOR_LOG_FILE: logPath, EXECUTOR_ACCOUNT_MODE: mode, ...env },
+  };
+  const manager = new McpServerManager();
+  manager.setDefaultRequestTimeoutMs(2_000);
+  if (session !== "headless") manager.setElicitationConfig({ ui, allowUrl: session === "tui" });
+  await manager.connect("executor", definition);
+  managers.push(manager);
+  const state = {
+    manager,
+    config: { settings: { toolPrefix: "server" }, mcpServers: { executor: definition } },
+    toolMetadata: new Map([["executor", ["execute", "call", "resume"].map(name => ({
+      name: `executor_${name}`, originalName: name, description: name, inputSchema: { type: "object", properties: {} },
+    }))]]),
+    serverInstructions: new Map(),
+    failureTracker: new Map(),
+    ui,
+    completedUiSessions: [],
+    uiServer: null,
+  } as unknown as McpExtensionState;
+  const sent = async (name: string) => (await readFile(logPath, "utf8").catch(() => ""))
+    .trim().split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(event => event.name === name).length;
+  return { state, ui, sent };
+}
+
+function runCall(state: McpExtensionState, path: "proxy" | "direct" = "proxy") {
+  return path === "proxy"
+    ? executeCall(state, "executor_call", callArgs, "executor")
+    : createDirectToolExecutor(() => state, () => null, {
+        serverName: "executor",
+        prefixedName: "executor_call",
+        originalName: "call",
+        description: "Executor call",
+        inputSchema: { type: "object", properties: {} },
+      })("call-1", callArgs, undefined, undefined, undefined as never);
+}
+
+function visible(result: { content?: Array<{ type: string; text?: string }>; details?: unknown }): string {
+  return `${result.content?.map(block => block.text ?? "").join("\n")} ${JSON.stringify(result.details)}`;
+}
+
+afterEach(async () => {
+  vi.mocked(open).mockClear();
+  await Promise.all(managers.splice(0).map(manager => manager.closeAll()));
+  await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
+});
+
+describe("connecting a missing Executor account", () => {
+  it.each([
+    ["local", "proxy"],
+    ["local", "direct"],
+    ["hosted", "proxy"],
+    ["hosted", "direct"],
+  ] as const)("connects a %s account on the %s path and retries the call once", async (mode, path) => {
+    const { state, ui, sent } = await connectAccountExecutor({ mode, select: ["Open", "Continue"] });
+
+    const result = await runCall(state, path);
+
+    expect(visible(result)).toContain("needs-account data");
+    expect(open).toHaveBeenCalledExactlyOnceWith(fixtureLinks[mode].url);
+    expect(ui.select).toHaveBeenNthCalledWith(1, expect.stringContaining("needs-account needs your service account"), ["Open", "Decline"]);
+    expect(await sent("call")).toBe(2);
+    expect(visible(result)).not.toMatch(/fixture-secret|token=|conn_|executor\.test|127\.0\.0\.1/);
+    expect(JSON.stringify(ui.notify.mock.calls)).not.toMatch(/fixture-secret|token=|conn_|executor\.test|127\.0\.0\.1/);
+  });
+
+  it("rethrows an abort during the Continue dialog without retrying the call", async () => {
+    const controller = new AbortController();
+    const reason = new Error("stopped by the operator");
+    const { state, ui, sent } = await connectAccountExecutor();
+    ui.select.mockImplementationOnce(async () => "Open").mockImplementationOnce(async () => {
+      controller.abort(reason);
+      return "Continue";
+    });
+
+    const result = await executeCall(state, "executor_call", callArgs, "executor", undefined, controller.signal);
+
+    expect(result.details).toMatchObject({ error: "aborted", message: "stopped by the operator" });
+    expect(await sent("call")).toBe(1);
+    expect(await sent("execute")).toBe(1);
+  });
+
+  it.each([
+    ["the browser link", ["Decline"], 0],
+    ["Continue", ["Open", "Decline"], 1],
+  ])("returns the original result when the operator declines %s", async (_label, select, opened) => {
+    const { state, sent } = await connectAccountExecutor({ select });
+
+    const result = await runCall(state);
+
+    expect(visible(result)).toContain("AppAccountRequired");
+    expect(open).toHaveBeenCalledTimes(opened);
+    expect(await sent("call")).toBe(1);
+  });
+
+  it.each(["headless", "non-tui"] as const)("returns the original result in a %s session without asking Executor", async (session) => {
+    const { state, sent } = await connectAccountExecutor({ session, select: ["Open", "Continue"] });
+
+    const result = await runCall(state);
+
+    expect(visible(result)).toContain("AppAccountRequired");
+    expect(open).not.toHaveBeenCalled();
+    expect(await sent("execute")).toBe(0);
+  });
+
+  it.each(["local", "hosted"] as const)("says a %s connection still pending has not finished, naming no link", async (mode) => {
+    const { state, sent } = await connectAccountExecutor({ mode, select: ["Open", "Continue"], env: { EXECUTOR_ACCOUNT_STATE: "pending" } });
+
+    const result = await runCall(state);
+
+    expect(visible(result)).toContain("The needs-account account has not finished connecting in Executor");
+    expect(visible(result)).not.toMatch(/fixture-secret|token=|conn_|executor\.test|127\.0\.0\.1/);
+    expect(await sent("call")).toBe(1);
+  });
+
+  it.each([
+    ["an expired connection", { EXECUTOR_ACCOUNT_STATE: "expired" }, 1, 1],
+    ["no Executor app", { EXECUTOR_NO_EXECUTOR_APP: "1" }, 0, 1],
+    ["a retried call still missing the account", { EXECUTOR_ACCOUNT_LINKS: "never" }, 1, 2],
+  ])("returns Executor's own result for %s", async (_label, env, opened, calls) => {
+    const { state, sent } = await connectAccountExecutor({ select: ["Open", "Continue", "Open", "Continue"], env });
+
+    const result = await runCall(state);
+
+    expect(visible(result)).toContain("AppAccountRequired");
+    expect(open).toHaveBeenCalledTimes(opened);
+    expect(await sent("call")).toBe(calls);
   });
 });

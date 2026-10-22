@@ -1,5 +1,6 @@
 import type { Client, ElicitRequestFormParams, RequestOptions } from "@modelcontextprotocol/client";
 import { throwIfAborted } from "./abort.ts";
+import { connectAccount, findAccountGap } from "./executor-accounts.ts";
 import type { McpServerManager, ServerConnection } from "./server-manager.ts";
 
 const EXECUTOR_TOOLS = new Set(["execute", "call", "resume"]);
@@ -91,12 +92,15 @@ function redactExecutorOutcome<T extends object>(result: T): T | TextResult {
  *
  * A `resume` the caller asks for is refused without contacting the server, so only Pi answers
  * Executor's pauses. The loop's own `resume` goes straight to `call` and is not refused.
+ *
+ * When a single `call` fails because the user has no account linked to the app, Pi connects it
+ * through Executor's own link and retries the call once. Otherwise the result stands unchanged.
  */
 export async function callToolAnsweringExecutorPauses<T extends object>({
   conn, manager, serverName, params, requestOptions, signal, call,
 }: {
   conn: Pick<ServerConnection, "client" | "definition" | "tools">;
-  manager: Pick<McpServerManager, "promptFormElicitation">;
+  manager: Pick<McpServerManager, "promptFormElicitation" | "urlElicitationPrompt">;
   serverName: string;
   params: ToolCallParams;
   requestOptions: RequestOptions | undefined;
@@ -115,6 +119,29 @@ export async function callToolAnsweringExecutorPauses<T extends object>({
   const options = Number.isFinite(serverTimeout) && serverTimeout > 0
     ? requestOptions
     : { ...requestOptions, timeout: Math.max(requestOptions?.timeout ?? 0, EXECUTOR_REQUEST_TIMEOUT_MS) };
+  const answer = () => answerPauses({ manager, serverName, params, options, signal, call });
+  const result = await answer();
+  const gap = findAccountGap(params, result);
+  if (!gap?.retrySafe) return result;
+  const connected = await connectAccount({ gap, serverName, manager, signal, call: program => call(program, options) });
+  if (connected === "pending") {
+    return textResult(
+      `The ${gap.slug} account has not finished connecting in Executor. Finish connecting it, then try the call again.`,
+      true,
+    );
+  }
+  // The retried result is returned as it is: a second missing account is not connected again.
+  return connected === "connected" ? answer() : result;
+}
+
+async function answerPauses<T extends object>({ manager, serverName, params, options, signal, call }: {
+  manager: Pick<McpServerManager, "promptFormElicitation">;
+  serverName: string;
+  params: ToolCallParams;
+  options: RequestOptions | undefined;
+  signal?: AbortSignal | undefined;
+  call: (params: ToolCallParams, options: RequestOptions | undefined) => Promise<T>;
+}): Promise<T | TextResult> {
   let result = await call(params, options);
   for (let pauses = 0; ; pauses++) {
     const pause = parseExecutorPause(result);

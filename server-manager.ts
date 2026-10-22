@@ -20,6 +20,7 @@ import {
   type SubscriptionFilter,
   type CacheableRequestOptions,
   type ElicitRequestFormParams,
+  type ElicitRequestURLParams,
   type ElicitResult,
   type RequestOptions,
   RegistrationRejectedError,
@@ -443,6 +444,24 @@ export class McpServerManager {
       this.connections.get(name)?.client,
       () => handleFormElicitation({ ...config, serverName: name }, params, signal),
     );
+  }
+
+  /**
+   * A prompt that shows an adapter-supplied URL with the URL-elicitation consent dialog and opens
+   * it on accept. Undefined when this session cannot open URLs: headless, non-TUI or shut down.
+   */
+  urlElicitationPrompt(name: string): ((params: ElicitRequestURLParams, signal?: AbortSignal) => Promise<ElicitResult>) | undefined {
+    const config = this.elicitationConfig;
+    if (this.runtimeSignal?.aborted || !config?.allowUrl) return undefined;
+    return async (params, signal) => {
+      const result = await whileAdapterPromptOpen(
+        this.connections.get(name)?.client,
+        () => handleUrlElicitation({ ...config, serverName: name }, params, signal),
+      );
+      // The browser step can outlast the call that started it; give the user one idle timeout to finish.
+      if (result.action === "accept") this.touch(name);
+      return result;
+    };
   }
 
   setRuntimeSignal(signal: AbortSignal | undefined): void {
