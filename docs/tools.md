@@ -209,6 +209,8 @@ On Pi 0.99 and later, every cached tool the model could reach through `mcp` is a
 
 [Script tools](scripting.md#script-tools) share this surface. Each one is a Pi deferred tool named `mcp__script__<name>`, so `tool_search`, codemode's `searchTools()` and `mcp({ search })` find it next to the MCP tools, with nothing added to the model's tool list unless the entry sets `declare: true`. A codemode script can't call one, because a script tool runs its own script; the call returns an error that says to call the tool directly.
 
+[Executor app tools](prompts-and-ui.md#executor-app-tools) share it too. Each tool of an Executor app is a Pi deferred tool named `mcp__<server>__<app>_<tool>`, found by the same searches and never declared to the model, even with `directTools`.
+
 Registering thousands of tools costs startup time, because Pi rebuilds its tool registry on every registration after the session starts. With 100 servers of 50 tools each and a warm metadata cache, MCP is ready about 90 ms later than before. The first session without cached metadata takes about 2.6 seconds longer; with 20 servers of 30 tools it's about 60 ms.
 
 ## Tool Approval

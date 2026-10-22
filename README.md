@@ -36,6 +36,7 @@ The built-in turns `codemode` on by itself; with the adapter, add `"+codemode"` 
 | Token cost | By default, every call is a `codemode` script | Single lookups cost about the same as the built-in's default. Bulk tasks cost up to 5.5× more without scripts, and up to 2.9× more with Pi's `codemode` turned on ([measured](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/pi-builtin-comparison.md#measured-token-cost)) |
 | Tool search | `tool_search`, ranked by words | `mcp({ search })` ranked by words or regex. With a System One key, semantic search ranks tools by meaning ([setup](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md#jev-semantic-search)) |
 | Saved workflows as tools | No | A workflow you repeat becomes one tool with fixed inputs: a saved script that calls MCP and Pi tools, found by search and called like any other tool (`scriptTools`, [Script tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md#script-tools)) |
+| Executor app tools | Only Executor's own six tools; the model reaches app tools through Executor's `search` and `call` | Each tool of your [Executor](https://executor.sh) apps is a Pi tool, found by search and called by name with Pi's approvals ([Executor app tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/prompts-and-ui.md#executor-app-tools)) |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
 | MCP prompts, elicitation, sampling, Tasks | No | Yes; Tasks need `"protocolVersion": "auto"` |
 | MCP UI apps | Left out | Native window or browser |

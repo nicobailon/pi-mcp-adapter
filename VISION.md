@@ -38,6 +38,7 @@ The `/mcp-adapter setup` presets are a short list of general servers that work w
 A server that needs its own paid API key does not get a preset.
 Anything specific to one vendor or server, including a new preset, needs the maintainer's approval before it is accepted.
 It can be rejected without asking.
+Executor is the one exception: the adapter answers its approval pauses and account links in Pi and exposes its app tools as Pi tools, because those can't be expressed as config.
 Any server can still be added as an ordinary config entry, and the README can show how.
 
 ## Follow the protocol and the SDK

@@ -155,6 +155,8 @@ Accepting a browser (URL) request from the server, and its completion, also coun
 
 **Startup discovery.** When a session starts, a server without valid cached tools (new, changed config, corrupt cache, or past a TTL the server declared) is connected once to read its tools, 10 at a time. Plain `lazy` servers are closed as soon as their tools are captured, before the next server starts, and all entries from the pass are saved in one cache write. `lazy-keep-alive`, `idleTimeout: 0`, and servers that need sign-in are not closed. A `lazy` or `lazy-keep-alive` server whose cached entry is private (sign-in-scoped) is not discovered at startup.
 
+A `lazy` [Executor](prompts-and-ui.md#executor-app-tools) server stays connected after discovery until it has read its app catalog, and one whose cache has no catalog yet is connected at startup to read it.
+
 **Failed discovery.** A `lazy` or `lazy-keep-alive` server that fails discovery or needs sign-in is tried once per config. Later sessions don't start it at startup until a setting that defines the server changes (such as its command, arguments, environment, or URL; `lifecycle`, `idleTimeout`, `requestTimeoutMs`, and `debug` don't count), the cache file is missing or corrupt, or it connects successfully, for example when you use it. Temporary HTTP outages are retried next session. `eager` and `keep-alive` servers connect at every start.
 
 ## Settings
