@@ -1658,8 +1658,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   // Re-flag returned MCP tool failures so pi registers them as errors (see toolErrorOverride).
   pi.on("tool_result", (event) => {
-    // A finished call is never asked about again; its ancestors are still running.
-    toolCallsById.delete(event.toolCallId);
     return toolErrorOverride(event.details);
   });
 
@@ -1751,24 +1749,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   // Pi tells a nested call only its parent's id, not which tool that is, so the tool_call handler
-  // below records each call until its tool_result. Without that handler (MCP_DIRECT_TOOLS=__none__,
+  // below records each call until its tool_execution_end, which Pi emits for every call, blocked or
+  // run, so the record holds only calls still running. Without that handler (MCP_DIRECT_TOOLS=__none__,
   // or Pi before 0.99) nothing is recorded and every result keeps the output guard.
   const toolCallsById = new Map<string, { name: string; parent: string | undefined }>();
-  // A backstop for calls blocked before they run, which get no tool_result.
-  const MAX_RECORDED_TOOL_CALLS = 4096;
   const MAX_CALL_DEPTH = 64;
-
-  function recordToolCall(id: string, name: string, parent: string | undefined): void {
-    if (toolCallsById.size >= MAX_RECORDED_TOOL_CALLS) {
-      for (const key of toolCallsById.keys()) {
-        // Pi ids nest as `<parent>/<n>`, so this call's ancestors stay to classify it.
-        if (id === key || id.startsWith(`${key}/`)) continue;
-        toolCallsById.delete(key);
-        break;
-      }
-    }
-    toolCallsById.set(id, { name, parent });
-  }
 
   /**
    * A call's result goes to a script, not the model, when a tool other than the adapter's proxies
@@ -1787,11 +1772,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   if (deferredRegistryLive) pi.on("agent_end", () => toolCallsById.clear());
+  if (deferredRegistryLive) pi.on("tool_execution_end", (event) => { toolCallsById.delete(event.toolCallId); });
 
   // A call that may reach other tools (Pi's codemode and tool_search, other extensions) first registers what it reaches.
   // Registered only when deferred tools are, since Pi runs its tool_call pipeline for every call once a handler exists.
   if (deferredRegistryLive) pi.on("tool_call", async (event, ctx) => {
-    recordToolCall(event.toolCallId, event.toolName, event.parentToolCallId);
+    toolCallsById.set(event.toolCallId, { name: event.toolName, parent: event.parentToolCallId });
     if (directToolsFrozen) return;
     try {
       const reach = reachOf(event.toolName, event.input);
