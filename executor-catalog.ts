@@ -22,11 +22,6 @@ interface SearchPage {
   unavailableApps: UnavailableApp[];
 }
 
-/** An Executor path without its `tools.` prefix: `tools.github.issues.list` and `tools["github"].issues.list` both give `github.issues.list`. */
-export function canonicalExecutorPath(path: string): string {
-  return canonicalPath(path);
-}
-
 /** A model-mode Executor connection that also lists its app catalog with `search`. */
 export function isExecutorCatalogConnection(conn: Pick<ServerConnection, "client" | "tools">): boolean {
   return isExecutorConnection(conn) && conn.tools.some(tool => tool.name === "search");

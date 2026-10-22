@@ -21,7 +21,8 @@ import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses } from "./executor-pauses.ts";
 import { executorCallParams, executorUnknownToolMatches, executorUnknownToolText, unwrapExecutorCallResult } from "./executor-app-tools.ts";
-import { canonicalExecutorPath, describeExecutorAppTool, isExecutorCatalogConnection } from "./executor-catalog.ts";
+import { canonicalPath } from "./executor-accounts.ts";
+import { describeExecutorAppTool, isExecutorCatalogConnection } from "./executor-catalog.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, scoreToolMatch, type RankedToolMatch } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -807,7 +808,7 @@ async function findExecutorAppToolAfterRepage(
   serverName: string | undefined,
   signal: AbortSignal | undefined,
 ): Promise<{ server: string; tool: ToolMetadata } | undefined> {
-  const path = canonicalExecutorPath(toolName);
+  const path = canonicalPath(toolName);
   if (!path.includes(".")) return undefined;
   const isExecutorServer = (name: string) => {
     const connection = state.manager.getConnection(name);
