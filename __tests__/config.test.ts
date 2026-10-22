@@ -2153,6 +2153,49 @@ describe("config discovery", () => {
     expect(getLegacyMcpMigrationNotices(project)).toEqual([]);
   });
 
+  it("loads a config that still sets jev.evaluate()'s settings, and names them in the same notice", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-removed-jev-home-"));
+    const project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-removed-jev-project-")));
+    process.env.HOME = home;
+    process.chdir(project);
+    const adapterPath = join(home, ".pi", "agent", "mcp-adapter.json");
+    const projectPath = join(project, ".pi", "mcp-adapter.json");
+    writeJson(adapterPath, {
+      mcpServers: { docs: { url: "https://docs.test/mcp" } },
+      settings: {
+        scriptMode: false,
+        jev: { semanticSearch: true, scriptEvaluation: true, maxEvaluationsPerScript: 2, maxEvaluationBytesPerScript: 0, maxEvaluationTokensPerScript: 1 },
+      },
+    });
+    writeJson(projectPath, { mcpServers: { local: { command: "local-mcp" } }, settings: { jev: { scriptEvaluation: false } } });
+
+    const { getLegacyMcpMigrationNotices, loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(undefined, project);
+    expect(Object.keys(config.mcpServers).sort()).toEqual(["docs", "local"]);
+    expect(getLegacyMcpMigrationNotices(project)).toEqual([
+      `${adapterPath}: pi-mcp-adapter no longer has mcpScript, so settings.scriptMode, settings.jev.scriptEvaluation, settings.jev.maxEvaluationsPerScript, settings.jev.maxEvaluationBytesPerScript and settings.jev.maxEvaluationTokensPerScript do nothing. Remove them, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`,
+      `${projectPath}: pi-mcp-adapter no longer has mcpScript, so settings.jev.scriptEvaluation does nothing. Remove it, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`,
+    ]);
+  });
+
+  it("still drops a config file with an unknown jev setting, and gives it no mcpScript notice", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-unknown-jev-home-"));
+    const project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-unknown-jev-project-")));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), {
+      mcpServers: { docs: { url: "https://docs.test/mcp" } },
+      settings: { jev: { scriptEvaluation: true, evaluationBudget: 2 } },
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { getLegacyMcpMigrationNotices, loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, project).mcpServers).not.toHaveProperty("docs");
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.objectContaining({ message: "settings.jev.evaluationBudget is not supported" }));
+    expect(getLegacyMcpMigrationNotices(project)).toEqual([]);
+    warning.mockRestore();
+  });
+
   it("reports a key a project OpenCode entry inherits from the global file, against the global file", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-ignored-merge-home-"));
     const project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-opencode-ignored-merge-project-")));
@@ -2529,15 +2572,15 @@ describe("config discovery", () => {
 });
 
 describe("Jev config validation", () => {
-  it("accepts bounded settings and rejects invalid token budgets at the file boundary", async () => {
+  it("accepts bounded settings and rejects out-of-range ones at the file boundary", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-mcp-jev-config-"));
     const valid = join(root, "valid.json");
     const invalid = join(root, "invalid.json");
-    writeJson(valid, { settings: { jev: { scriptEvaluation: true, allowedServers: ["safe"], model: "jev-1.13.0", maxRetries: 1, maxEvaluationTokensPerScript: 32_768 } }, mcpServers: {} });
-    writeJson(invalid, { settings: { jev: { scriptEvaluation: true, maxEvaluationTokensPerScript: 0 } }, mcpServers: {} });
+    writeJson(valid, { settings: { jev: { semanticSearch: true, allowedServers: ["safe"], model: "jev-1.13.0", maxRetries: 1 } }, mcpServers: {} });
+    writeJson(invalid, { settings: { jev: { semanticSearch: true, maxRetries: 3 } }, mcpServers: {} });
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { loadMcpConfig } = await import("../config.ts");
-    expect(loadMcpConfig(valid, root).settings?.jev).toMatchObject({ scriptEvaluation: true, model: "jev-1.13.0", maxRetries: 1, maxEvaluationTokensPerScript: 32_768 });
+    expect(loadMcpConfig(valid, root).settings?.jev).toMatchObject({ semanticSearch: true, model: "jev-1.13.0", maxRetries: 1 });
     expect(loadMcpConfig(invalid, root).settings?.jev).toBeUndefined();
     expect(warning).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.any(Error));
     rmSync(root, { recursive: true, force: true });

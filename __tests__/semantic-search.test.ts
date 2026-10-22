@@ -100,7 +100,7 @@ describe("semantic search", () => {
     vi.stubEnv("SYSTEMONE_API_KEY", "configured-key");
     const inspect = vi.fn(async (_state: McpExtensionState, input: JevEvaluateInput) => {
       expect(input.sources).toEqual(["demo"]);
-      return choiceEvaluator("demo_tool_0")(_state, input, { purpose: "semantic-search" });
+      return choiceEvaluator("demo_tool_0")(_state, input, {});
     });
     const result = await semanticSearch(state, "invoices", undefined, undefined, inspect);
     expect(result.ok && result.matches[0]?.server).toBe("demo");
@@ -139,7 +139,7 @@ describe("semantic search", () => {
       expect(input.sources).toEqual(["demo"]);
       expect(sent.candidates.every(candidate => /^c\d+$/.test(String(candidate.id)))).toBe(true);
       expect(JSON.stringify(sent.candidates)).not.toContain("inputSchema");
-      return choiceEvaluator("none")(_state, input, { purpose: "semantic-search" });
+      return choiceEvaluator("none")(_state, input, {});
     });
     await semanticSearch(state, "anything", undefined, undefined, inspect);
   });
@@ -151,7 +151,7 @@ describe("semantic search", () => {
     const sent: Array<Array<{ path: string; description: string }>> = [];
     const inspect: SemanticSearchEvaluator = async (_state, input) => {
       sent.push((input.state as { candidates: Array<{ path: string; description: string }> }).candidates);
-      return choiceEvaluator("none")(_state, input, { purpose: "semantic-search" });
+      return choiceEvaluator("none")(_state, input, {});
     };
     await semanticSearch(state, "needle", undefined, undefined, inspect);
     await semanticSearch(state, "needle", undefined, undefined, inspect);

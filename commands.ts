@@ -93,10 +93,7 @@ export async function setupJevSemanticSearch(
     ctx.ui.notify("Enable or add an MCP server before setting up Jev semantic search.", "error");
     return false;
   }
-  const configuredJev = state.config.settings?.jev;
-  const payloadDisclosure = configuredJev && configuredJev.scriptEvaluation
-    ? " Allowed servers can also be sources for script evaluations, which may send state and MCP results."
-    : " Semantic search does not send tool results.";
+  const payloadDisclosure = " Semantic search does not send tool results.";
 
   const choice = await ctx.ui.select("Configure Jev semantic search", [
     `Use all ${servers.length} enabled servers (default)`,

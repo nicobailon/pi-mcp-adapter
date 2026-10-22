@@ -45,7 +45,7 @@ describe("Jev host client", () => {
 
   it("is inert while disabled", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const result = await evaluateJev(state({ allowedServers: ["allowed"] }), input, { purpose: "script" });
+    const result = await evaluateJev(state({ semanticSearch: false, allowedServers: ["allowed"] }), input);
     expect(result).toMatchObject({ ok: false, error: { code: "disabled" } });
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(getTestSecureKeyringReadCount()).toBe(0);
@@ -57,7 +57,6 @@ describe("Jev host client", () => {
     const present = vi.fn(() => ({ status: "present" as const, source: "keyring" as const, apiKey: "fixture-key" }));
     expect(resolveSemanticJevSettings(runtime, present)).toMatchObject({
       semanticSearch: true,
-      scriptEvaluation: false,
       allowedServers: ["allowed"],
     });
 
@@ -88,7 +87,7 @@ describe("Jev host client", () => {
       usage: { input_tokens: 1, output_tokens: 1 },
     }), { status: 200, headers: { "content-type": "application/json" } }));
 
-    expect(await evaluateJev(runtime, input, { purpose: "semantic-search" })).toMatchObject({ ok: true });
+    expect(await evaluateJev(runtime, input)).toMatchObject({ ok: true });
     expect(getTestSecureKeyringReadCount()).toBe(1);
   });
 
@@ -105,20 +104,20 @@ describe("Jev host client", () => {
         usage: { input_tokens: 10, output_tokens: 2 },
       }), { status: 200, headers: { "content-type": "application/json" } });
     });
-    const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
+    const result = await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"] }), input);
     expect(result).toEqual({ ok: true, data: { model: "jev-1.13.0", answers: { route: { type: "choice", choice: "yes", confidence: 0.8, probabilities: { yes: 0.8, no: 0.2 } }, }, usage: { inputTokens: 10, outputTokens: 2 } } });
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
   it("re-resolves SYSTEMONE_ENDPOINT for every evaluation and fails closed when it becomes invalid", async () => {
-    const runtime = state({ scriptEvaluation: true, allowedServers: ["allowed"] });
+    const runtime = state({ semanticSearch: true, allowedServers: ["allowed"] });
     const seen = recordDecisionRequests();
-    expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: true });
+    expect(await evaluateJev(runtime, input)).toMatchObject({ ok: true });
     process.env.SYSTEMONE_ENDPOINT = "https://opencode.ai/zen/v1/systemone";
-    expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: true });
+    expect(await evaluateJev(runtime, input)).toMatchObject({ ok: true });
     expect(seen).toEqual(["https://api.typesafe.ai/v1/systemone", "https://opencode.ai/zen/v1/systemone"]);
     process.env.SYSTEMONE_ENDPOINT = "http://evil.test/v1/systemone";
-    expect(await evaluateJev(runtime, input, { purpose: "script" })).toMatchObject({ ok: false, error: { code: "endpoint_unavailable" } });
+    expect(await evaluateJev(runtime, input)).toMatchObject({ ok: false, error: { code: "endpoint_unavailable" } });
     expect(seen).toHaveLength(2);
   });
 
@@ -127,7 +126,7 @@ describe("Jev host client", () => {
     const seen = recordDecisionRequests();
     for (const path of paths) {
       process.env.SYSTEMONE_ENDPOINT = `https://provider.test${path}`;
-      expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" })).toMatchObject({ ok: true });
+      expect(await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"] }), input)).toMatchObject({ ok: true });
     }
     expect(seen).toEqual(paths.map(path => new URL(`https://provider.test${path}`).href));
   });
@@ -143,8 +142,8 @@ describe("Jev host client", () => {
         usage: { input_tokens: 1, output_tokens: 1 },
       }), { status: 200, headers: { "content-type": "application/json" } });
     });
-    expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" })).toMatchObject({ ok: true });
-    expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"], model: "jev-1.13.0" }), input, { purpose: "script" })).toMatchObject({ ok: true });
+    expect(await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"] }), input)).toMatchObject({ ok: true });
+    expect(await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"], model: "jev-1.13.0" }), input)).toMatchObject({ ok: true });
     expect(models).toEqual(["typesafe/jev-1.13", "jev-1.13.0"]);
   });
 
@@ -156,7 +155,7 @@ describe("Jev host client", () => {
       provider: "TypeSafe",
       usage: { cost: 0.000019992, input_tokens: 476, output_tokens: 70 },
     }), { status: 200, headers: { "content-type": "application/json" } }));
-    expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" })).toEqual({ ok: true, data: {
+    expect(await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"] }), input)).toEqual({ ok: true, data: {
       model: "typesafe/jev-1.13-20260917",
       answers: { route: { type: "choice", choice: "yes", confidence: 0.75, probabilities: { yes: 0.75, no: 0.25 } } },
       usage: { inputTokens: 476, outputTokens: 70 },
@@ -165,7 +164,7 @@ describe("Jev host client", () => {
 
   it("rejects malformed responses without leaking their body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ model: "x", answers: {}, usage: { input_tokens: 1, output_tokens: 1 }, secret: "provider body" }), { status: 200, headers: { "content-type": "application/json" } }));
-    const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
+    const result = await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"] }), input);
     expect(result).toEqual({ ok: false, error: { code: "invalid_response", message: "Jev returned an invalid response." } });
     expect(JSON.stringify(result)).not.toContain("provider body");
   });
@@ -180,30 +179,29 @@ describe("Jev host client", () => {
     ];
     for (const fixture of fixtures) {
       vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify(fixture.response), { status: 200, headers: { "content-type": "application/json" } }));
-      expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), fixture.request, { purpose: "script" })).toMatchObject({ ok: false, error: { code: "invalid_response" } });
+      expect(await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"] }), fixture.request)).toMatchObject({ ok: false, error: { code: "invalid_response" } });
     }
   });
 
   it("enforces settings, JSON, question, source, and byte limits", async () => {
     expect(() => validateJevSettings({ model: "jev-latest" })).toThrow("pinned");
     expect(validateJevSettings(undefined).semanticCandidateLimit).toBe(127);
-    expect(validateJevSettings(undefined).maxEvaluationTokensPerScript).toBe(32_768);
-    expect(validateJevSettings({ maxEvaluationTokensPerScript: 1 }).maxEvaluationTokensPerScript).toBe(1);
-    expect(() => validateJevSettings({ maxEvaluationTokensPerScript: 0 })).toThrow("1 to 1000000");
-    expect(() => validateJevSettings({ maxEvaluationTokensPerScript: 1_000_001 })).toThrow("1 to 1000000");
+    // Settings of the removed jev.evaluate() are accepted whatever their value, and do nothing.
+    expect(validateJevSettings({ scriptEvaluation: "yes", maxEvaluationTokensPerScript: 0 })).toEqual(validateJevSettings(undefined));
+    expect(() => validateJevSettings({ maxEvaluationsPerSession: 2 })).toThrow("settings.jev.maxEvaluationsPerSession is not supported");
     expect(validateJevSettings({ semanticCandidateLimit: 127 }).semanticCandidateLimit).toBe(127);
     expect(() => validateJevSettings({ semanticCandidateLimit: 128 })).toThrow("2 to 127");
     expect(validateJevEvaluateInput({ ...input, sources: ["x".repeat(129)] }, validateJevSettings(undefined)).sources).toEqual(["x".repeat(129)]);
     const limits = validateJevSettings({ maxStateBytes: 4 });
     expect(() => validateJevEvaluateInput(input, limits)).toThrow("maxStateBytes");
-    const denied = await evaluateJev(state({ scriptEvaluation: true, allowedServers: [] }), input, { purpose: "script" });
+    const denied = await evaluateJev(state({ semanticSearch: true, allowedServers: [] }), input);
     expect(denied).toMatchObject({ ok: false, error: { code: "data_policy_denied" } });
     expect(() => validateJevEvaluateInput({ ...input, state: { nested: new Date() } }, validateJevSettings(undefined))).toThrow("non-plain object");
   });
 
   it("classifies HTTP request timeouts as retryable timeouts", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("timed out", { status: 408 }));
-    const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
+    const result = await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"] }), input);
     expect(result).toEqual({ ok: false, error: { code: "timeout", message: "Jev evaluation timed out.", retryable: true } });
   });
 
@@ -211,7 +209,7 @@ describe("Jev host client", () => {
     const cases = [[402, "payment_required"], [404, "endpoint_unavailable"], [418, "invalid_request"]] as const;
     for (const [status, code] of cases) {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("provider body mentioning a fund shortfall", { status }));
-      const result = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script" });
+      const result = await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"] }), input);
       expect(result).toMatchObject({ ok: false, error: { code } });
       expect(JSON.stringify(result)).not.toContain("fund shortfall");
       vi.restoreAllMocks();
@@ -225,8 +223,8 @@ describe("Jev host client", () => {
     }));
     const aborted = new AbortController();
     aborted.abort();
-    expect(await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"] }), input, { purpose: "script", signal: aborted.signal })).toMatchObject({ ok: false, error: { code: "aborted" } });
-    const timeoutResult = await evaluateJev(state({ scriptEvaluation: true, allowedServers: ["allowed"], requestTimeoutMs: 100, maxRetries: 2 }), input, { purpose: "script" });
+    expect(await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"] }), input, { signal: aborted.signal })).toMatchObject({ ok: false, error: { code: "aborted" } });
+    const timeoutResult = await evaluateJev(state({ semanticSearch: true, allowedServers: ["allowed"], requestTimeoutMs: 100, maxRetries: 2 }), input);
     expect(timeoutResult).toMatchObject({ ok: false, error: { code: "timeout" } });
   });
 });

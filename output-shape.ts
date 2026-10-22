@@ -8,7 +8,7 @@ import type { ServerCacheEntry, ServerDefinition, ToolMetadata } from "./types.t
  * Output shapes for tools that declare no outputSchema.
  * Field names and broad JSON types only, never values; every dimension is
  * bounded because inference runs on arbitrary upstream payloads after each call.
- * Script sessions also save them in the metadata cache for later sessions.
+ * Sessions also save them in the metadata cache for later sessions, unless the tool listing is private.
  */
 export interface OutputShape {
   type?: "null" | "boolean" | "number" | "string" | "object" | "array";

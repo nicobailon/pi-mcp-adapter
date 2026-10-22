@@ -10,7 +10,7 @@ import { isServerDisabled } from "./types.ts";
 export type SemanticSearchEvaluator = (
   state: McpExtensionState,
   input: JevEvaluateInput,
-  options: { purpose: "semantic-search"; signal?: AbortSignal; observedSources?: readonly string[] },
+  options: { signal?: AbortSignal; observedSources?: readonly string[] },
 ) => Promise<JevEvaluationEnvelope>;
 
 export type SemanticSearchBackend =
@@ -154,7 +154,7 @@ export async function semanticSearch(
     },
     sources: [...new Set(candidates.map(candidate => candidate.server))],
   };
-  const envelope = await evaluator(state, input, { purpose: "semantic-search", ...(signal ? { signal } : {}), ...(observedSources.length > 0 ? { observedSources } : {}) });
+  const envelope = await evaluator(state, input, { ...(signal ? { signal } : {}), ...(observedSources.length > 0 ? { observedSources } : {}) });
   if (!envelope.ok) {
     if (envelope.error.code === "timeout" || envelope.error.code === "rate_limited" || envelope.error.code === "service_unavailable") {
       return {

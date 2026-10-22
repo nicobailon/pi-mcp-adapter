@@ -33,24 +33,26 @@ describe("Jev setup", () => {
   it("enables semantic search for confirmed servers and preserves other settings", async () => {
     const root = mkdtempSync(join(tmpdir(), "mcp-jev-setup-"));
     const path = join(root, "mcp.json");
-    writeFileSync(path, '{"settings":{"scriptMode":true},"custom":"kept"}\n');
+    writeFileSync(path, '{"settings":{"toolPrefix":"short"},"custom":"kept"}\n');
     const ui = {
       select: vi.fn(async () => "Use all 2 enabled servers (default)"),
       confirm: vi.fn(async () => true),
       notify: vi.fn(),
     };
     const currentState = state();
-    currentState.config.settings = { jev: { scriptEvaluation: true, allowedServers: ["prior"] } };
+    // A leftover jev.evaluate() setting no longer adds the script-payload sentence to the consent text.
+    currentState.config.settings = { jev: { model: "jev-1.13.0", scriptEvaluation: true, allowedServers: ["prior"] } as never };
 
     expect(await setupJevSemanticSearch(currentState, { hasUI: true, ui } as any, path)).toBe(true);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
       settings: {
-        scriptMode: true,
-        jev: { scriptEvaluation: true, semanticSearch: true, allowedServers: ["alpha", "zeta"] },
+        toolPrefix: "short",
+        jev: { model: "jev-1.13.0", scriptEvaluation: true, semanticSearch: true, allowedServers: ["alpha", "zeta"] },
       },
       custom: "kept",
     });
-    expect(ui.confirm.mock.calls[0]?.[1]).toContain("script evaluations");
+    expect(ui.confirm.mock.calls[0]?.[1]).toContain("Semantic search does not send tool results.");
+    expect(ui.confirm.mock.calls[0]?.[1]).not.toContain("evaluation");
     expect(ui.notify).toHaveBeenCalledWith("Jev semantic search configured for 2 servers. Reloading Pi…", "info");
   });
 

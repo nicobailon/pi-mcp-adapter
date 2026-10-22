@@ -51,9 +51,7 @@ describe("Jev integration boundaries", () => {
     expect(isToolCallApprovalRequired(runtime.config, "demo", runtime.toolMetadata.get("demo")![0]!, runtime.toolMetadata)).toBe(true);
   });
 
-  it("packages both recipes and documents the privacy and inherited-environment boundary", () => {
-    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    expect(pkg.files).toEqual(expect.arrayContaining(["examples/jev-semantic-filter.mjs", "examples/jev-accessibility-loop.mjs"]));
+  it("documents the privacy and inherited-environment boundary", () => {
     const readme = readFileSync(new URL("../docs/scripting.md", import.meta.url), "utf8");
     expect(readme).toContain("https://api.typesafe.ai");
     expect(readme).toContain("https://docs.typesafe.ai/legal");

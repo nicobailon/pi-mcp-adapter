@@ -449,7 +449,7 @@ describe("mcpAdapter session lifecycle", () => {
     let generation = 0;
     mocks.loadMcpConfig.mockImplementation(() => ({
       mcpServers: {},
-      settings: { scriptMode: false },
+      settings: {},
       claudePlugins: [{ path: `plugin-${++generation}`, skills: true }],
     }));
     mocks.discoverConfiguredClaudePluginSkills.mockImplementation((config: { claudePlugins?: Array<{ path: string }> }) =>
@@ -1484,7 +1484,7 @@ describe("mcpAdapter session lifecycle", () => {
     const actualDirectTools = await vi.importActual<typeof import("../direct-tool-surface.ts")>("../direct-tool-surface.ts");
     const actualCache = await vi.importActual<typeof import("../metadata-cache.ts")>("../metadata-cache.ts");
     const config = {
-      settings: { disableProxyTool: true as const, scriptMode: false, deferWithMissingMetadata: true },
+      settings: { disableProxyTool: true as const, deferWithMissingMetadata: true },
       mcpServers: {
         demo: {
           url: "https://demo.example.com/mcp",
@@ -4118,7 +4118,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
   });
 
   async function boot(settings: Record<string, unknown> = {}, specs = [lazySpec("alpha"), lazySpec("beta"), lazySpec("gamma"), lazySpec("delta")]) {
-    const config = { settings: { scriptMode: false, ...settings }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
+    const config = { settings: { ...settings }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
     const state = createState();
     state.config = config;
     mocks.loadMcpConfig.mockReturnValue(config);
@@ -4292,7 +4292,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
   });
 
   it.each(["connect", "install"])("%s does not report held-inactive search-mode tools as loaded", async (action) => {
-    const config = { settings: { scriptMode: false }, mcpServers: { demo: { url: "https://demo.example/mcp", directTools: "search" } } };
+    const config = { settings: {}, mcpServers: { demo: { url: "https://demo.example/mcp", directTools: "search" } } };
     const state = createState();
     state.config = config;
     mocks.loadMcpConfig.mockReturnValue(config);
@@ -4348,7 +4348,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
   });
 
   describe("on Pi 0.99+, as Pi deferred tools", () => {
-    const searchConfig = { settings: { scriptMode: false }, mcpServers: { demo: { command: "demo", directTools: "search" } } };
+    const searchConfig = { settings: {}, mcpServers: { demo: { command: "demo", directTools: "search" } } };
 
     // Pi 0.99: registering a direct tool activates it, a deferred one stays inactive, and a hidden one leaves the active set.
     function trackPiToolExposure(api: any): () => string[] {
@@ -4406,7 +4406,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         },
       });
 
-      const { api, activeTools } = await bootPi099(undefined, { settings: { scriptMode: false }, mcpServers: { "team-docs": docs, other: proxyOnly } });
+      const { api, activeTools } = await bootPi099(undefined, { settings: {}, mcpServers: { "team-docs": docs, other: proxyOnly } });
 
       const names = api.registerTool.mock.calls.map((call: any[]) => call[0].name);
       expect(names).toContain("team-docs_find");
@@ -4518,7 +4518,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
         version: 1,
         servers: Object.fromEntries(entries.map(([name, [definition, tools]]) => [name, cacheEntry(definition, { tools })])),
       });
-      const config = { settings: { scriptMode: false, ...settings }, mcpServers: Object.fromEntries(entries.map(([name, [definition]]) => [name, definition])) };
+      const config = { settings: { ...settings }, mcpServers: Object.fromEntries(entries.map(([name, [definition]]) => [name, definition])) };
       return { config, ...(await bootPi099(undefined, config, pi099, setup)) };
     }
 
@@ -4890,7 +4890,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       const proxy = { command: "x" };
       const docs = { command: "d" };
       mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: cacheEntry(proxy, { tools: [echoTool] }) } });
-      const { api, handlers, state } = await bootPi099(undefined, { settings: { scriptMode: false, deferWithMissingMetadata: true }, mcpServers: { proxy, docs } });
+      const { api, handlers, state } = await bootPi099(undefined, { settings: { deferWithMissingMetadata: true }, mcpServers: { proxy, docs } });
       api.getAllTools.mockReturnValue([{ name: "tool_search", reachesTools: () => "all" }, { name: "codemode", reachesTools: scriptWords }]);
       mocks.lazyConnect.mockImplementation(async () => {
         mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { proxy: cacheEntry(proxy, { tools: [echoTool] }), docs: cacheEntry(docs, { tools: [{ name: "find" }] }) } });
@@ -4922,7 +4922,7 @@ describe("directTools: \"search\" — registered inactive, activated by search o
     });
 
     it("returns at once for an already-aborted reaching call while initialization is pending", async () => {
-      const config = { settings: { scriptMode: false }, mcpServers: { docs: { command: "d", lifecycle: "eager" } } };
+      const config = { settings: {}, mcpServers: { docs: { command: "d", lifecycle: "eager" } } };
       mocks.loadMcpConfig.mockReturnValue(config);
       mocks.initializeMcp.mockReturnValue(new Promise(() => {}));
       const { default: mcpAdapter } = await import("../index.ts");

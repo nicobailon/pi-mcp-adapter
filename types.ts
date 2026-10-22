@@ -645,21 +645,16 @@ export interface McpSettings {
   warnOnLargeDirectTools?: boolean;
   /** Expose MCP resources as tools (default: true). Set to false to disable globally across all servers. */
   exposeResources?: boolean;
-  /** Optional Jev (System One) integrations. A valid key enables semantic search; script evaluation remains disabled by default. */
+  /** Optional Jev (System One) semantic tool search. A valid key enables it. */
   jev?: false | {
     semanticSearch?: boolean;
-    scriptEvaluation?: boolean;
-    /** Restrict semantic-search metadata and allow script-evaluation sources. Semantic search defaults to every enabled server. */
+    /** Restrict semantic-search metadata to these servers. Defaults to every enabled server. */
     allowedServers?: string[];
     model?: string;
     requestTimeoutMs?: number;
     maxRetries?: number;
     maxStateBytes?: number;
     maxQuestionsPerRequest?: number;
-    maxEvaluationsPerScript?: number;
-    maxEvaluationBytesPerScript?: number;
-    /** Cumulative provider-reported input plus output tokens per script. Defaults to 32768. */
-    maxEvaluationTokensPerScript?: number;
     /** Maximum semantic candidates per request. Defaults to 127; range 2..127. */
     semanticCandidateLimit?: number;
     semanticMinProbability?: number;

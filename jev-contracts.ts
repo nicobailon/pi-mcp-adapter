@@ -24,7 +24,7 @@ export interface JevEvaluationData {
 }
 
 export type JevErrorCode =
-  | "disabled" | "invalid_request" | "data_policy_denied" | "budget_exhausted"
+  | "disabled" | "invalid_request" | "data_policy_denied"
   | "endpoint_unavailable" | "credential_missing" | "credential_unavailable" | "authentication_failed"
   | "payment_required" | "timeout" | "aborted" | "rate_limited" | "service_unavailable" | "invalid_response";
 
@@ -34,20 +34,12 @@ export type JevEvaluationEnvelope =
 
 export interface ResolvedJevSettings {
   semanticSearch: boolean;
-  scriptEvaluation: boolean;
   allowedServers: string[];
   model: string;
   requestTimeoutMs: number;
   maxRetries: number;
   maxStateBytes: number;
   maxQuestionsPerRequest: number;
-  maxEvaluationsPerScript: number;
-  maxEvaluationBytesPerScript: number;
-  maxEvaluationTokensPerScript: number;
   semanticCandidateLimit: number;
   semanticMinProbability: number;
-}
-
-export interface JevBudget {
-  consume(bytes: number): boolean;
 }

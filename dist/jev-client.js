@@ -3,12 +3,17 @@ import { isServerDisabled } from "./types.js";
 import { combineAbortSignals } from "./runtime-owner.js";
 import { JEV_SDK_PATH, OPENROUTER_ORIGIN, resolveJevCredential, resolveJevEndpoint } from "./jev-key-store.js";
 const DEFAULTS = {
-    semanticSearch: false, scriptEvaluation: false, allowedServers: [], model: "jev-1.13.0",
+    semanticSearch: false, allowedServers: [], model: "jev-1.13.0",
     requestTimeoutMs: 5_000, maxRetries: 0, maxStateBytes: 262_144,
-    maxQuestionsPerRequest: 64, maxEvaluationsPerScript: 8,
-    maxEvaluationBytesPerScript: 524_288, maxEvaluationTokensPerScript: 32_768, semanticCandidateLimit: 127,
+    maxQuestionsPerRequest: 64, semanticCandidateLimit: 127,
     semanticMinProbability: 0.2,
 };
+/** Largest Jev request body; the default of the removed `maxEvaluationBytesPerScript`. */
+const MAX_REQUEST_BYTES = 524_288;
+/** Settings for the removed `jev.evaluate()`. A config that still sets them loads, and they do nothing. */
+export const REMOVED_JEV_KEYS = new Set([
+    "scriptEvaluation", "maxEvaluationsPerScript", "maxEvaluationBytesPerScript", "maxEvaluationTokensPerScript",
+]);
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 /** OpenRouter's name for Jev, used there when `settings.jev.model` is not configured. */
 const OPENROUTER_DEFAULT_MODEL = "typesafe/jev-1.13";
@@ -67,7 +72,7 @@ export function validateJevSettings(value) {
     const input = record(value, "settings.jev");
     const allowed = new Set(Object.keys(DEFAULTS));
     for (const key of Object.keys(input))
-        if (!allowed.has(key))
+        if (!allowed.has(key) && !REMOVED_JEV_KEYS.has(key))
             throw new Error(`settings.jev.${key} is not supported`);
     if (input.allowedServers !== undefined && (!Array.isArray(input.allowedServers) || input.allowedServers.some(name => typeof name !== "string" || name.length === 0 || DANGEROUS_KEYS.has(name) || /[\u0000-\u001f\u007f]/.test(name)))) {
         throw new Error("settings.jev.allowedServers must contain non-empty safe server names");
@@ -80,15 +85,11 @@ export function validateJevSettings(value) {
         throw new Error("settings.jev.semanticMinProbability must be from 0 to 1");
     return {
         semanticSearch: boolean(input.semanticSearch, DEFAULTS.semanticSearch, "settings.jev.semanticSearch"),
-        scriptEvaluation: boolean(input.scriptEvaluation, DEFAULTS.scriptEvaluation, "settings.jev.scriptEvaluation"),
         allowedServers: [...new Set(input.allowedServers ?? DEFAULTS.allowedServers)], model,
         requestTimeoutMs: integer(input.requestTimeoutMs, DEFAULTS.requestTimeoutMs, 100, 30_000, "settings.jev.requestTimeoutMs"),
         maxRetries: integer(input.maxRetries, DEFAULTS.maxRetries, 0, 2, "settings.jev.maxRetries"),
         maxStateBytes: integer(input.maxStateBytes, DEFAULTS.maxStateBytes, 1, 1_048_576, "settings.jev.maxStateBytes"),
         maxQuestionsPerRequest: integer(input.maxQuestionsPerRequest, DEFAULTS.maxQuestionsPerRequest, 1, 128, "settings.jev.maxQuestionsPerRequest"),
-        maxEvaluationsPerScript: integer(input.maxEvaluationsPerScript, DEFAULTS.maxEvaluationsPerScript, 1, 32, "settings.jev.maxEvaluationsPerScript"),
-        maxEvaluationBytesPerScript: integer(input.maxEvaluationBytesPerScript, DEFAULTS.maxEvaluationBytesPerScript, 1, 4_194_304, "settings.jev.maxEvaluationBytesPerScript"),
-        maxEvaluationTokensPerScript: integer(input.maxEvaluationTokensPerScript, DEFAULTS.maxEvaluationTokensPerScript, 1, 1_000_000, "settings.jev.maxEvaluationTokensPerScript"),
         semanticCandidateLimit: integer(input.semanticCandidateLimit, DEFAULTS.semanticCandidateLimit, 2, 127, "settings.jev.semanticCandidateLimit"),
         semanticMinProbability: probability,
     };
@@ -200,8 +201,8 @@ export function validateJevEvaluateInput(value, limits) {
             throw new Error("sources must not contain duplicates");
     }
     const normalized = { state: input.state, questions: questions, ...(sources ? { sources } : {}) };
-    if (Buffer.byteLength(JSON.stringify(normalized)) > limits.maxEvaluationBytesPerScript)
-        throw new Error("Jev request exceeds the configured byte limit");
+    if (Buffer.byteLength(JSON.stringify(normalized)) > MAX_REQUEST_BYTES)
+        throw new Error("Jev request exceeds the byte limit");
     return normalized;
 }
 function safeNumber(value, label, integerOnly = false) {
@@ -322,24 +323,21 @@ function failure(error, signal, timedOut) {
         return { ok: false, error: { code: "service_unavailable", message: "Jev service is unavailable.", retryable: true } };
     return { ok: false, error: { code: "invalid_response", message: "Jev returned an invalid response." } };
 }
-export async function evaluateJev(state, value, options) {
+export async function evaluateJev(state, value, options = {}) {
     let settings;
     let input;
     try {
-        settings = options.purpose === "semantic-search" ? resolveSemanticJevSettings(state) : validateJevSettings(state.config.settings?.jev);
+        settings = resolveSemanticJevSettings(state);
         input = validateJevEvaluateInput(value, settings);
     }
     catch {
         return { ok: false, error: { code: "invalid_request", message: "Invalid Jev evaluation request or settings." } };
     }
-    if ((options.purpose === "script" && !settings.scriptEvaluation) || (options.purpose === "semantic-search" && !settings.semanticSearch))
+    if (!settings.semanticSearch)
         return { ok: false, error: { code: "disabled", message: "Jev evaluation is disabled." } };
     const sources = new Set([...(input.sources ?? []), ...(options.observedSources ?? [])]);
     if (!areJevSourcesAllowed(state, settings, sources))
         return { ok: false, error: { code: "data_policy_denied", message: "Evaluation sources are not allowed by policy." } };
-    const bytes = Buffer.byteLength(JSON.stringify(input));
-    if (options.budget && !options.budget.consume(bytes))
-        return { ok: false, error: { code: "budget_exhausted", message: "Jev evaluation budget exhausted." } };
     const resolved = getHost(state, settings);
     if (!("client" in resolved))
         return resolved;

@@ -9,7 +9,7 @@ import { getAgentPluginSummaries, loadAgentPluginConfigs } from "./agent-plugin-
 import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "./agent-plugin-provenance.js";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
-import { validateJevSettings } from "./jev-client.js";
+import { REMOVED_JEV_KEYS, validateJevSettings } from "./jev-client.js";
 import { formatServerNamespace, isServerDisabled } from "./types.js";
 import { getMissingEnvVars, parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.js";
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
@@ -171,7 +171,7 @@ export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath) 
         ...getRemovedScriptSettingNotices(cwd, overridePath),
     ];
 }
-/** Settings that only configured mcpScript. They still load, and do nothing. */
+/** Settings that only configured mcpScript, besides the jev ones in REMOVED_JEV_KEYS. They still load, and do nothing. */
 const REMOVED_SCRIPT_SETTINGS = ["scriptMode", "scriptSkill"];
 /** One notice per config file that still sets a setting mcpScript's removal left without effect. */
 function getRemovedScriptSettingNotices(cwd, overridePath) {
@@ -179,11 +179,16 @@ function getRemovedScriptSettingNotices(cwd, overridePath) {
         const settings = readSourceConfig(source.id, source.readPath)?.settings;
         if (!settings)
             return [];
-        const keys = REMOVED_SCRIPT_SETTINGS.filter((key) => settings[key] !== undefined).map((key) => `settings.${key}`);
+        const jev = settings.jev && typeof settings.jev === "object" ? settings.jev : {};
+        const keys = [
+            ...REMOVED_SCRIPT_SETTINGS.filter((key) => settings[key] !== undefined).map((key) => `settings.${key}`),
+            ...[...REMOVED_JEV_KEYS].filter((key) => jev[key] !== undefined).map((key) => `settings.jev.${key}`),
+        ];
         if (keys.length === 0)
             return [];
         const [verb, pronoun] = keys.length === 1 ? ["does", "it"] : ["do", "them"];
-        return [`${source.readPath}: pi-mcp-adapter no longer has mcpScript, so ${keys.join(" and ")} ${verb} nothing. Remove ${pronoun}, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`];
+        const named = keys.length > 2 ? `${keys.slice(0, -1).join(", ")} and ${keys.at(-1)}` : keys.join(" and ");
+        return [`${source.readPath}: pi-mcp-adapter no longer has mcpScript, so ${named} ${verb} nothing. Remove ${pronoun}, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`];
     });
 }
 function credentialFiles(servers, fileOf) {

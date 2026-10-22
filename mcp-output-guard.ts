@@ -63,8 +63,6 @@ export interface McpOutputGuardOptions {
   enabled?: boolean;
   prefix?: string;
   suffix?: string;
-  /** Optional guidance appended when it fits the output limits. */
-  footer?: string;
   emptyTextFallback?: string;
   maxBytes?: number;
   maxLines?: number;
@@ -117,7 +115,6 @@ export async function guardMcpOutput(
   const detailsMaxBytes = options.detailsMaxBytes ?? DEFAULT_MCP_DETAILS_MAX_BYTES;
   const prefix = options.prefix ?? "";
   const suffix = options.suffix ?? "";
-  const footer = options.footer ?? "";
 
   const normalizedContent = withEmptyTextFallback(
     content.length > 0
@@ -128,7 +125,7 @@ export async function guardMcpOutput(
 
   if (options.enabled === false) {
     return {
-      content: addAffixes(normalizedContent, prefix, `${suffix}${footer}`),
+      content: addAffixes(normalizedContent, prefix, suffix),
       ...(options.rawMcpResult !== undefined ? { mcpResult: options.rawMcpResult } : {}),
     };
   }
@@ -139,18 +136,15 @@ export async function guardMcpOutput(
     .map((block) => (block as { text: string }).text)
     .join("\n");
   const composedOutput = `${prefix}${textOutput}${suffix}`;
-  const truncation = truncateHead(`${composedOutput}${footer}`, { maxBytes, maxLines });
+  const truncation = truncateHead(composedOutput, { maxBytes, maxLines });
 
-  let guardedContent: ContentBlock[] = addAffixes(normalizedContent, prefix, `${suffix}${footer}`);
+  let guardedContent: ContentBlock[] = addAffixes(normalizedContent, prefix, suffix);
   let outputGuard: McpOutputGuardDetails | undefined;
 
   if (truncation.truncated) {
     const { path: fullOutputPath, error: writeError } = await saveArtifact("output", composedOutput);
     const initialNotice = formatTruncationNotice(truncation, fullOutputPath, writeError);
-    // Footers are optional guidance: drop one that would not fit beside the notice rather than exceed the limits.
-    const noticeWithFooter = textStats(`\n\n${initialNotice}${footer}`);
-    const keptFooter = noticeWithFooter.bytes < maxBytes && noticeWithFooter.lines < maxLines ? footer : "";
-    const previewBudget = reserveBudget(maxBytes, maxLines, `${initialNotice}${keptFooter}`);
+    const previewBudget = reserveBudget(maxBytes, maxLines, initialNotice);
     const preview = truncateHead(composedOutput, {
       maxBytes: previewBudget.maxBytes,
       maxLines: previewBudget.maxLines,
@@ -160,7 +154,7 @@ export async function guardMcpOutput(
       fullOutputPath,
       writeError,
     );
-    const finalText = `${preview.content}\n\n${notice}${keptFooter}`;
+    const finalText = `${preview.content}\n\n${notice}`;
     const finalStats = textStats(finalText);
 
     guardedContent = [{ type: "text" as const, text: finalText }, ...imageBlocks];
