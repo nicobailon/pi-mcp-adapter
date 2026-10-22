@@ -8,6 +8,8 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { EXECUTOR_APP_TOOL_CAP, fetchExecutorCatalog } from "../executor-catalog.ts";
+import { loadMetadataCache, saveExecutorCatalog, saveMetadataCache } from "../metadata-cache.ts";
 
 type Receipt = { method?: string; name?: string; arguments?: Record<string, unknown>; served?: string; offset?: number; returned?: number; next?: number | null };
 type Call = (input: Record<string, unknown>) => Promise<unknown>;
@@ -45,6 +47,7 @@ async function withSession(
   root: string,
   env: Record<string, string>,
   run: (pi: { status: () => Promise<string>; call: Call }) => Promise<void>,
+  server: Record<string, unknown> = {},
 ): Promise<void> {
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalArgv = [...process.argv];
@@ -61,6 +64,7 @@ async function withSession(
           lifecycle: "keep-alive",
           protocolVersion: "2026-07-28",
           env: { EXECUTOR_LOG_FILE: join(root, "receipts.jsonl"), ...env },
+          ...server,
         },
       },
       settings: { sampling: false, elicitation: false },
@@ -247,4 +251,64 @@ describe("Executor app catalog", () => {
     });
     expect((await cachedEntry(root))?.executorApps).toBeUndefined();
   }, 30_000);
+
+  it("skips Executor's own tools and excluded paths on ingest, so app tools still fill the cap", async () => {
+    const root = await agentDir();
+    await withSession(root, { EXECUTOR_CATALOG_OWN: "300", EXECUTOR_CATALOG_APPS: "4" }, async () => {
+      await vi.waitFor(async () => expect((await cachedEntry(root))?.executorApps).toBeDefined(), { timeout: 10_000 });
+    }, { excludeTools: ["beta.*"] });
+
+    const apps = (await cachedEntry(root))!.executorApps;
+    expect(apps).toMatchObject({ total: 1200, cap: 1000 });
+    expect(apps.tools.map((tool: { path: string }) => tool.path)).toEqual([
+      ...["alpha", "gamma"].flatMap(app => Array.from({ length: 400 }, (_, index) => toolPath(app, index))),
+      ...Array.from({ length: 200 }, (_, index) => toolPath("delta", index)),
+    ]);
+  }, 30_000);
+});
+
+describe("Executor catalog paging", () => {
+  const item = (path: string) => ({ path, description: "", input: "{}" });
+  const page = (items: unknown[], next: { offset: number } | null, remaining = 0) =>
+    ({ content: [], structuredContent: { items, namespaces: [], remaining, next, unavailableApps: [] } });
+  const fetchPages = (pageAt: (offset: number) => unknown) => fetchExecutorCatalog({
+    client: { callTool: async (params: { arguments?: Record<string, unknown> }) => pageAt(params.arguments!.offset as number) } as never,
+    isAppTool: () => true,
+  });
+
+  it("ends at a page that repeats its offset with no items, as Executor sends when it lost a listing", async () => {
+    const catalog = await fetchPages(offset => offset === 0 ? page([item("tools.a.x")], { offset: 1 }, 5) : page([], { offset: 1 }, 4));
+    expect(catalog).toMatchObject({ tools: [{ path: "tools.a.x" }], total: 5 });
+  });
+
+  it("throws once there are more pages than the cap allows", async () => {
+    let calls = 0;
+    const pages = fetchPages(offset => {
+      calls++;
+      return page([item("tools.a.x")], { offset: offset + 1 }, 1);
+    });
+    await expect(pages).rejects.toThrow("Executor returned a malformed search page: more pages than the cap allows");
+    expect(calls).toBe(EXECUTOR_APP_TOOL_CAP);
+  });
+
+  it("rejects an item whose path names no tool", async () => {
+    await expect(fetchPages(() => page([item("tools")], null))).rejects.toThrow('item "tools" names no tool');
+  });
+});
+
+describe("the startup cache write", () => {
+  it("keeps an Executor catalog another session saved after this one's snapshot, unless the listing is session-only", async () => {
+    vi.stubEnv("PI_CODING_AGENT_DIR", await agentDir());
+    const entry = { configHash: "h1", tools: [], resources: [], cachedAt: 1000 };
+    const catalog = { tools: [{ path: "tools.a.x", canonicalPath: "a.x", description: "", inputType: "{}" }], total: 1, cap: 1000, fetchedAt: 2000 };
+    saveMetadataCache({ version: 1, servers: { srv: entry } });
+    const snapshot = loadMetadataCache()!.servers;
+    saveExecutorCatalog("srv", "h1", catalog);
+
+    saveMetadataCache({ version: 1, servers: { srv: { ...entry, cachedAt: 3000 } } }, { startupSnapshot: snapshot });
+    expect(loadMetadataCache()!.servers.srv).toMatchObject({ cachedAt: 3000, executorApps: catalog });
+
+    saveMetadataCache({ version: 1, servers: { srv: { ...entry, cachedAt: 4000, cacheScope: "private" } } }, { startupSnapshot: snapshot });
+    expect(loadMetadataCache()!.servers.srv.executorApps).toBeUndefined();
+  });
 });

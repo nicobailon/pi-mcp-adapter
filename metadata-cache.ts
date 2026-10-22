@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { isBuiltInAgentPlugin } from "./agent-plugin-provenance.ts";
 import { getToolUiResourceUri } from "./ui-app-bridge-helpers.ts";
 import type {
+  CachedExecutorAppTool,
   CachedPrompt,
   CachedResource,
   CachedTool,
@@ -93,7 +94,11 @@ export function saveMetadataCache(cache: MetadataCache, options: { startupSnapsh
       } else if (disk && !disk.discoveryFailed && disk.configHash === entry.configHash) {
         if ((disk.cachedAt ?? 0) > entry.cachedAt) continue;
         const outputShapes = { ...entry.outputShapes, ...keepOutputShapes(disk, entry.configHash, entry.tools) };
-        next[name] = Object.keys(outputShapes).length > 0 ? { ...entry, outputShapes } : entry;
+        const merged = Object.keys(outputShapes).length > 0 ? { ...entry, outputShapes } : entry;
+        // An Executor app catalog another pass saved since the snapshot stays, unless this listing is session-only.
+        next[name] = merged.executorApps === undefined && disk.executorApps !== undefined
+          ? withoutSessionOnlyCatalog({ ...merged, executorApps: disk.executorApps })
+          : merged;
       } else {
         next[name] = entry;
       }
@@ -390,8 +395,7 @@ export function executorAppToolMetadata(
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
   for (const tool of entry.executorApps?.tools ?? []) {
-    if (tool.canonicalPath.startsWith("executor.")) continue;
-    if (!isToolAllowed(tool.canonicalPath, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex)) continue;
+    if (!isExecutorAppToolAllowed(tool, serverName, effectivePrefix, definition, selectorCandidateIndex)) continue;
     const name = formatToolName(tool.canonicalPath, serverName, effectivePrefix);
     if (takenNames.has(name)) continue;
     metadata.push({
@@ -403,6 +407,23 @@ export function executorAppToolMetadata(
     });
   }
   return metadata;
+}
+
+/** Executor lists its own admin API as `tools.executor.*`; those are never app tools. */
+export function isExecutorOwnTool(tool: Pick<CachedExecutorAppTool, "canonicalPath">): boolean {
+  return tool.canonicalPath.startsWith("executor.");
+}
+
+/** Whether one of an Executor server's catalog tools is an app tool its includeTools/excludeTools allow. */
+export function isExecutorAppToolAllowed(
+  tool: Pick<CachedExecutorAppTool, "canonicalPath">,
+  serverName: string,
+  effectivePrefix: ToolPrefix,
+  definition: Pick<ServerEntry, "includeTools" | "excludeTools">,
+  selectorCandidateIndex?: ToolSelectorCandidateIndex,
+): boolean {
+  return !isExecutorOwnTool(tool)
+    && isToolAllowed(tool.canonicalPath, serverName, effectivePrefix, definition.includeTools, definition.excludeTools, selectorCandidateIndex);
 }
 
 export function createCachedToolSelectorCandidateIndex(
@@ -426,7 +447,7 @@ export function createCachedToolSelectorCandidateIndex(
       }
     }
     for (const tool of entry.executorApps?.tools ?? []) {
-      if (tool.canonicalPath.startsWith("executor.")) continue;
+      if (isExecutorOwnTool(tool)) continue;
       for (const candidate of getToolNameCandidates(tool.canonicalPath, serverName, effectivePrefix, false)) candidates.add(candidate);
     }
   }

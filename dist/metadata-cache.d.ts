@@ -1,4 +1,4 @@
-import type { CachedPrompt, CachedResource, CachedTool, McpConfig, McpTool, McpResource, McpPrompt, MetadataCache, ServerCacheEntry, ServerEntry, ToolMetadata, PromptMetadata } from "./types.ts";
+import type { CachedExecutorAppTool, CachedPrompt, CachedResource, CachedTool, McpConfig, McpTool, McpResource, McpPrompt, MetadataCache, ServerCacheEntry, ServerEntry, ToolMetadata, PromptMetadata } from "./types.ts";
 import { type ToolPrefix, type ToolSelectorCandidateIndex } from "./types.ts";
 export type { CachedPrompt, CachedResource, CachedTool, MetadataCache, ServerCacheEntry } from "./types.ts";
 export declare function getMetadataCachePath(): string;
@@ -40,6 +40,10 @@ export declare function reconstructToolMetadata(serverName: string, entry: Serve
  * so the input is any object and the description carries the TypeScript input type.
  */
 export declare function executorAppToolMetadata(serverName: string, entry: ServerCacheEntry, effectivePrefix: ToolPrefix, definition: Pick<ServerEntry, "includeTools" | "excludeTools">, selectorCandidateIndex: ToolSelectorCandidateIndex | undefined, takenNames: ReadonlySet<string>): ToolMetadata[];
+/** Executor lists its own admin API as `tools.executor.*`; those are never app tools. */
+export declare function isExecutorOwnTool(tool: Pick<CachedExecutorAppTool, "canonicalPath">): boolean;
+/** Whether one of an Executor server's catalog tools is an app tool its includeTools/excludeTools allow. */
+export declare function isExecutorAppToolAllowed(tool: Pick<CachedExecutorAppTool, "canonicalPath">, serverName: string, effectivePrefix: ToolPrefix, definition: Pick<ServerEntry, "includeTools" | "excludeTools">, selectorCandidateIndex?: ToolSelectorCandidateIndex): boolean;
 export declare function createCachedToolSelectorCandidateIndex(configuredServers: Record<string, ServerEntry>, cache: MetadataCache, prefix: ToolPrefix): ToolSelectorCandidateIndex;
 export declare function serializeTools(tools: McpTool[]): CachedTool[];
 export declare function serializeResources(resources: McpResource[]): CachedResource[];

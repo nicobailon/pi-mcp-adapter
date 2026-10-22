@@ -10,6 +10,7 @@ import {
   createCachedToolSelectorCandidateIndex,
   executorAppToolMetadata,
   getMissingConfiguredDirectToolServers,
+  isExecutorAppToolAllowed,
   isServerCacheValid,
   keepOutputShapes,
   loadMetadataCache,
@@ -46,7 +47,7 @@ import {
   restoreSessionApprovalState,
 } from "./session-approvals.ts";
 import { seedObservedOutputs } from "./output-shape.ts";
-import { fetchExecutorCatalog, isExecutorCatalogConnection } from "./executor-catalog.ts";
+import { fetchExecutorCatalog, isExecutorCatalogConnection, isExecutorCatalogEntry } from "./executor-catalog.ts";
 export { getFailureAgeSeconds, getFailureMessage } from "./failure-backoff.ts";
 
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
@@ -311,6 +312,8 @@ export async function initializeMcp(
 
   const cache = serverEntries.length > 0 ? loadMetadataCache() : null;
   const needsDiscovery = new Set<string>();
+  // Servers in needsDiscovery only for their Executor app catalog: their cached listing is valid.
+  const catalogDiscovery = new Set<string>();
   const failedDiscovery = new Set<string>();
 
   const prefix = config.settings?.toolPrefix ?? "server";
@@ -349,6 +352,13 @@ export async function initializeMcp(
         serverInstructions.set(name, cachedEntry.instructions);
       }
       seedObservedOutputs(state, name, cachedEntry);
+      // A cached Executor listing without its app catalog connects at startup so the catalog pass can
+      // run; keep-alive and eager servers connect anyway.
+      if (lifecycleMode !== "keep-alive" && lifecycleMode !== "eager" && !cachedEntry.executorApps
+        && process.env.MCP_DIRECT_TOOLS !== "__none__" && isExecutorCatalogEntry(cachedEntry)) {
+        needsDiscovery.add(name);
+        catalogDiscovery.add(name);
+      }
     } else if (cachedEntry?.discoveryFailed && cachedEntry.configHash === tryComputeServerHash(definition)) {
       // Startup tries a config once; a server that failed is tried again on first use.
       failedDiscovery.add(name);
@@ -382,7 +392,18 @@ export async function initializeMcp(
       }
       // Capture before closing; the closed connection keeps its catalog for publication below.
       captureMetadata(state, name, connection, () => cache);
-      if (!resident) await manager.close(name);
+      // An Executor catalog pass keeps a non-resident connection open until the pass settles.
+      const pass = refreshExecutorCatalog(state, name);
+      if (!resident && pass) {
+        const usedAt = connection.lastUsedAt;
+        void pass.finally(() => {
+          // A connection used meanwhile is left to the idle timeout.
+          if (manager.getConnection(name) !== connection || connection.lastUsedAt !== usedAt || connection.inFlight > 0) return;
+          return manager.close(name).catch(() => {});
+        });
+      } else if (!resident) {
+        await manager.close(name);
+      }
       return { name, definition, resident, connection, error: null, transient: false };
     } catch (error) {
       if (isAbortError(error, runtimeSignal)) {
@@ -405,7 +426,7 @@ export async function initializeMcp(
       return entry ? [[name, entry]] : [];
     }
     // Mark a failed discovery so later sessions skip this config; transient outages stay unmarked.
-    if (!error || transient || !needsDiscovery.has(name)) return [];
+    if (!error || transient || !needsDiscovery.has(name) || catalogDiscovery.has(name)) return [];
     const configHash = tryComputeServerHash(definition);
     return configHash ? [[name, { configHash, tools: [], resources: [], discoveryFailed: true, cachedAt: Date.now() }]] : [];
   });
@@ -438,6 +459,11 @@ export async function initializeMcp(
     owner.throwIfInactive();
     if (error || !connection) {
       if (initialSignal?.aborted) continue;
+      // Its cached listing still serves; the server is tried again on first use, as before.
+      if (catalogDiscovery.has(name)) {
+        logger.debug(`MCP: startup connect for ${name}'s Executor app catalog failed: ${sanitizeTerminalText(error ?? "no connection")}`);
+        continue;
+      }
       if (error) recordFailure(state, name, error);
       if (transient) {
         const notice = `MCP: ${name} temporarily unavailable (HTTP 503); retry later`;
@@ -736,24 +762,34 @@ function unavailableAppNotes(serverName: string, unavailableApps: string[] | und
  * After a connect, pages a connected Executor server's app catalog into its cache entry in the
  * background, inside the runtime owner. Does nothing for any other server, or when this session's
  * entry already has a catalog. A private or zero-TTL listing's catalog stays in this session.
+ * Returns the pass it started, or undefined. MCP_DIRECT_TOOLS=__none__ turns it off.
  */
-export function refreshExecutorCatalog(state: McpExtensionState, serverName: string): void {
+export function refreshExecutorCatalog(state: McpExtensionState, serverName: string): Promise<void> | undefined {
+  if (process.env.MCP_DIRECT_TOOLS === "__none__") return undefined;
   const connection = state.manager.getConnection(serverName);
-  if (connection?.status !== "connected" || !isExecutorCatalogConnection(connection)) return;
+  const definition = state.config.mcpServers[serverName];
+  if (!definition || connection?.status !== "connected" || !isExecutorCatalogConnection(connection)) return undefined;
   const entry = state.sessionMetadata?.get(serverName);
-  if (!entry) return;
+  if (!entry) return undefined;
   if (entry.executorApps) {
     setExecutorCatalogNotes(state, serverName, unavailableAppNotes(serverName, entry.executorApps.unavailableApps));
-    return;
+    return undefined;
   }
   let running = executorCatalogPasses.get(state);
   if (!running) executorCatalogPasses.set(state, running = new Set());
-  if (running.has(serverName)) return;
+  if (running.has(serverName)) return undefined;
   running.add(serverName);
   const signal = state.owner.signal;
-  void (async () => {
+  const prefix = resolveToolPrefix(definition, state.config.settings?.toolPrefix ?? "server");
+  const timeout = definition.requestTimeoutMs;
+  return (async () => {
     try {
-      const catalog = await fetchExecutorCatalog({ client: connection.client, signal });
+      const catalog = await fetchExecutorCatalog({
+        client: connection.client,
+        signal,
+        ...(timeout !== undefined && Number.isFinite(timeout) && timeout > 0 ? { timeout } : {}),
+        isAppTool: tool => isExecutorAppToolAllowed(tool, serverName, prefix, definition),
+      });
       if (signal.aborted) return;
       const current = state.sessionMetadata?.get(serverName);
       if (!current || current.configHash !== entry.configHash) return;
@@ -767,7 +803,7 @@ export function refreshExecutorCatalog(state: McpExtensionState, serverName: str
       if (signal.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
       logger.debug(`MCP: Executor app catalog for ${serverName} is unavailable: ${sanitizeTerminalText(message)}`);
-      setExecutorCatalogNotes(state, serverName, [`${serverName}: Executor app catalog unavailable — ${message}`]);
+      setExecutorCatalogNotes(state, serverName, [`${serverName}: Executor app catalog unavailable — ${message}`.slice(0, MAX_FAILURE_MESSAGE_CHARS)]);
     } finally {
       running.delete(serverName);
     }

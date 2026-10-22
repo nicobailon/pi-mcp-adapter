@@ -1,7 +1,7 @@
 import type { Client } from "@modelcontextprotocol/client";
 import { throwIfAborted } from "./abort.ts";
 import { canonicalPath } from "./executor-accounts.ts";
-import { isExecutorConnection } from "./executor-pauses.ts";
+import { hasExecutorModelTools, isExecutorConnection } from "./executor-pauses.ts";
 import type { ServerConnection } from "./server-manager.ts";
 import type { CachedExecutorAppTool, ServerCacheEntry } from "./types.ts";
 
@@ -33,6 +33,12 @@ export function isExecutorCatalogConnection(conn: Pick<ServerConnection, "client
   return isExecutorConnection(conn) && conn.tools.some(tool => tool.name === "search");
 }
 
+/** A cached listing with the tools of a model-mode Executor that lists its app catalog with `search`. */
+export function isExecutorCatalogEntry(entry: Pick<ServerCacheEntry, "tools">): boolean {
+  const tools = entry.tools ?? [];
+  return hasExecutorModelTools(tools) && tools.some(tool => tool.name === "search");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -45,9 +51,11 @@ function parseItem(item: unknown): CachedExecutorAppTool {
   if (!isRecord(item) || typeof item.path !== "string" || item.path.trim() === "") malformed("an item has no path");
   if (typeof item.description !== "string" || typeof item.input !== "string") malformed(`item "${item.path}" has no description or input type`);
   if (item.inputTruncated !== undefined && item.inputTruncated !== true) malformed(`item "${item.path}" has an invalid inputTruncated`);
+  const canonical = canonicalPath(item.path);
+  if (canonical === "") malformed(`item "${item.path}" names no tool`);
   return {
     path: item.path,
-    canonicalPath: canonicalPath(item.path),
+    canonicalPath: canonical,
     description: item.description,
     inputType: item.input,
     ...(item.inputTruncated === true ? { inputTruncated: true as const } : {}),
@@ -71,10 +79,11 @@ function parseSearchPage(result: unknown, offset: number): SearchPage {
   let nextOffset: number | null = null;
   if (page.next !== null) {
     const next = page.next;
-    if (!isRecord(next) || !Number.isSafeInteger(next.offset) || (next.offset as number) <= offset) {
-      malformed("next is neither null nor a later page");
-    }
-    nextOffset = next.offset as number;
+    if (!isRecord(next) || !Number.isSafeInteger(next.offset)) malformed("next is neither null nor a later page");
+    // Executor repeats the offset with no items when it lost a listing mid-search; that ends the catalog.
+    if (next.offset === offset && page.items.length === 0) nextOffset = null;
+    else if ((next.offset as number) <= offset) malformed("next is neither null nor a later page");
+    else nextOffset = next.offset as number;
   }
   if (!Array.isArray(page.unavailableApps)) malformed("unavailableApps is not an array");
   const unavailableApps = page.unavailableApps.map(app => {
@@ -88,25 +97,36 @@ function parseSearchPage(result: unknown, offset: number): SearchPage {
 
 /**
  * Pages an Executor server's whole app catalog with `search` (empty query, which lists every tool
- * in app and name order) until the last page or `EXECUTOR_APP_TOOL_CAP`. Any malformed page
- * throws, so the caller never gets part of a catalog.
+ * in app and name order) until the last page or `EXECUTOR_APP_TOOL_CAP` app tools. Only tools
+ * `isAppTool` accepts are kept and take a cap slot. `total` counts the catalog's tools minus the
+ * ones skipped on the pages read. Any malformed page throws, so the caller never gets part of a
+ * catalog.
  */
-export async function fetchExecutorCatalog({ client, signal }: {
+export async function fetchExecutorCatalog({ client, signal, timeout, isAppTool }: {
   client: Pick<Client, "callTool">;
   signal?: AbortSignal;
+  /** The per-request timeout, in milliseconds. */
+  timeout?: number;
+  isAppTool: (tool: CachedExecutorAppTool) => boolean;
 }): Promise<ExecutorCatalog> {
   const tools: CachedExecutorAppTool[] = [];
   const paths = new Set<string>();
   const unavailableApps = new Set<string>();
-  for (let offset = 0; ;) {
+  let skipped = 0;
+  for (let offset = 0, pages = 0; ;) {
     throwIfAborted(signal);
+    if (++pages > EXECUTOR_APP_TOOL_CAP) malformed("more pages than the cap allows");
     const limit = Math.min(SEARCH_PAGE_LIMIT, EXECUTOR_APP_TOOL_CAP - tools.length);
-    const result = await client.callTool({ name: "search", arguments: { query: "", limit, offset } }, signal ? { signal } : undefined);
+    // Straight to the client, not through withSessionRecovery or a task session: `search` needs no server-to-client leg.
+    const result = await client.callTool({ name: "search", arguments: { query: "", limit, offset } }, { ...(signal ? { signal } : {}), ...(timeout ? { timeout } : {}) });
     const page = parseSearchPage(result, offset);
     for (const item of page.items) {
       if (tools.length === EXECUTOR_APP_TOOL_CAP) break;
       // A catalog that changes between pages can repeat a tool; the first listing wins.
-      if (paths.has(item.path)) continue;
+      if (paths.has(item.path) || !isAppTool(item)) {
+        skipped++;
+        continue;
+      }
       paths.add(item.path);
       tools.push(item);
     }
@@ -114,7 +134,7 @@ export async function fetchExecutorCatalog({ client, signal }: {
     if (page.nextOffset === null || tools.length === EXECUTOR_APP_TOOL_CAP) {
       return {
         tools,
-        total: offset + page.items.length + page.remaining,
+        total: offset + page.items.length + page.remaining - skipped,
         cap: EXECUTOR_APP_TOOL_CAP,
         fetchedAt: Date.now(),
         ...(unavailableApps.size > 0 ? { unavailableApps: [...unavailableApps] } : {}),

@@ -194,4 +194,45 @@ describe("Executor app tools as Pi deferred tools", () => {
       expect(session.getActiveToolNames().filter(name => /alpha|beta|gamma/.test(name))).toEqual([]);
     });
   }, 30_000);
+
+  describe("on a lazy Executor server", () => {
+    const lazy = { lifecycle: "lazy" };
+    const listings = async (root: string) => (await receipts(root)).filter(entry => entry.method === "tools/list").length;
+
+    it("gets the catalog in the first session, and in a later one registers it from cache with no request", async () => {
+      const root = await agentDir();
+      await withSession(root, lazy, async ({ session }) => {
+        await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+        const ctx = session.extensionRunner.createToolContext("codemode-call", undefined);
+        expect(ctx.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(appToolNames));
+      });
+      const [searched, listed] = [await searches(root), await listings(root)];
+
+      await withSession(root, lazy, async ({ session, call }) => {
+        expect(deferredAppTools(session)).toEqual(appToolNames);
+        // mcp({}) waits for startup, which neither connects nor pages.
+        await call("mcp", {});
+        expect([await searches(root), await listings(root)]).toEqual([searched, listed]);
+      });
+    }, 30_000);
+
+    it("gets the catalog when the cache has the server's listing but no catalog yet", async () => {
+      const root = await agentDir();
+      await withSession(root, lazy, async ({ session }) => {
+        await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+      });
+      // What a cache written before the catalog existed looks like.
+      const cachePath = join(root, "mcp-cache.json");
+      const cache = JSON.parse(await readFile(cachePath, "utf8"));
+      delete cache.servers.executor.executorApps;
+      await writeFile(cachePath, JSON.stringify(cache));
+      const searched = await searches(root);
+
+      await withSession(root, lazy, async ({ session }) => {
+        await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+        expect(await searches(root)).toBeGreaterThan(searched);
+      });
+      expect(JSON.parse(await readFile(cachePath, "utf8")).servers.executor.executorApps.tools).toHaveLength(6);
+    }, 30_000);
+  });
 });

@@ -26,15 +26,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The name check accepts an absent name: on a 2026-07-28 connect the SDK reads serverInfo only
  * from discover `_meta["io.modelcontextprotocol/serverInfo"]`, and Executor returns serverInfo
  * as a top-level discover field, so a real Executor may report no name at all.
- * The `resume` schema check keeps out Executor's browser mode, whose `resume` takes only a
- * requestId because the operator answers in the browser.
  */
 export function isExecutorConnection(conn: Pick<ServerConnection, "client" | "tools">): boolean {
-  const name = conn.client.getServerVersion?.()?.name;
+  const name = conn.client?.getServerVersion?.()?.name;
   if (name !== undefined && name !== "Executor") return false;
-  const resume = conn.tools.find(tool => tool.name === "resume")?.inputSchema?.properties;
-  return conn.tools.some(tool => tool.name === "execute")
-    && conn.tools.some(tool => tool.name === "call")
+  return hasExecutorModelTools(conn.tools);
+}
+
+/**
+ * Executor's model-mode tools: `execute`, `call` and a `resume` that takes the answer. The `resume`
+ * schema check keeps out Executor's browser mode, whose `resume` takes only a requestId because
+ * the operator answers in the browser.
+ */
+export function hasExecutorModelTools(tools: ReadonlyArray<{ name: string; inputSchema?: unknown }>): boolean {
+  const schema = tools.find(tool => tool.name === "resume")?.inputSchema;
+  const resume = isRecord(schema) ? schema.properties : undefined;
+  return tools.some(tool => tool.name === "execute")
+    && tools.some(tool => tool.name === "call")
     && isRecord(resume) && "requestId" in resume && "response" in resume;
 }
 
