@@ -2534,7 +2534,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (!deferSearchTools) {
       return result("Saving a script tool needs Pi 0.99.0 or later, which runs script tools. Nothing was written.", { error: "unsupported_pi" });
     }
-    const target = argsTarget ?? topLevelTarget ?? "global";
+    // An args.target that is present but not a string is refused, not replaced by the top-level one.
+    const target = argsTarget !== undefined ? argsTarget : topLevelTarget ?? "global";
     if (target !== "global" && target !== "project") {
       return result("Script tool save target must be 'global' or 'project'.", { error: "invalid_target" });
     }
@@ -2556,7 +2557,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const checked = checkScriptToolSave({
       args: saveArgs, target, cwd: ctx.cwd, ...(earlyConfigPath !== undefined ? { configOverridePath: earlyConfigPath } : {}),
       scriptTools: targetState.config.scriptTools,
-      projectScriptTools: loadMcpConfigWithSources(earlyConfigPath, ctx.cwd).projectScriptTools,
+      // Only a project config can shadow a global save, and nothing shadows a project save.
+      projectScriptTools: target === "global" ? loadMcpConfigWithSources(earlyConfigPath, ctx.cwd).projectScriptTools : undefined,
     });
     if (!checked.ok) {
       return result(checked.message, {

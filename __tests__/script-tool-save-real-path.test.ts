@@ -215,6 +215,8 @@ describe("mcp({ action: \"save-script\" }) in a real session", () => {
       const result = await save(session, "save-1", { name: "taken" });
       expect(textOf(result)).toBe('Cannot save script tool "taken": mcp__script__taken is already registered by another extension.');
       expect(result.details).toEqual({ mode: "save-script", name: "taken", error: "name_unavailable" });
+      const nullTarget = await callAs(session, "mcp", "save-2", { action: "save-script", target: "global", args: { ...SAVE, target: null } });
+      expect(nullTarget.details).toEqual({ mode: "save-script", name: "greet", error: "invalid_target" });
       expect(ui.select).not.toHaveBeenCalled();
     }, { foreignTool: "mcp__script__taken" });
     await withSession(async ({ session, ui, agentDir, registerForeignTool }) => {
