@@ -4674,8 +4674,10 @@ describe("directTools: \"search\" — registered inactive, activated by search o
     it("registers no deferred tools with MCP_DIRECT_TOOLS=__none__", async () => {
       vi.stubEnv("MCP_DIRECT_TOOLS", "__none__");
       try {
-        const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] });
+        const { api, handlers } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] });
         expect(registrations(api, "mcp__proxy__echo")).toEqual([]);
+        // No tool_call handler, so Pi skips its tool_call pipeline for every call.
+        expect(handlers.has("tool_call")).toBe(false);
       } finally {
         vi.unstubAllEnvs();
       }
@@ -4693,9 +4695,10 @@ describe("directTools: \"search\" — registered inactive, activated by search o
     });
 
     it("registers nothing new before Pi 0.99, and the proxy keeps its exact key list", async () => {
-      const { api } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] }, {}, false);
+      const { api, handlers } = await bootCached({ proxy: [{ command: "x" }, [echoTool]] }, {}, false);
 
       expect(api.registerTool.mock.calls.map((call: any[]) => call[0].name).filter((name: string) => name.startsWith("mcp__proxy__"))).toEqual([]);
+      expect(handlers.has("tool_call")).toBe(false);
       expect(Object.keys(registeredTool(api, "mcp"))).toEqual(
         ["name", "label", "description", "promptSnippet", "renderShell", "renderCall", "parameters", "renderResult", "execute"],
       );

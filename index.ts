@@ -1740,8 +1740,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   // A call that may reach other tools (Pi's codemode and tool_search, other extensions) first registers what it reaches.
-  pi.on("tool_call", async (event, ctx) => {
-    if (!deferredRegistryLive || directToolsFrozen) return;
+  // Registered only when deferred tools are, since Pi runs its tool_call pipeline for every call once a handler exists.
+  if (deferredRegistryLive) pi.on("tool_call", async (event, ctx) => {
+    if (directToolsFrozen) return;
     try {
       const reach = reachOf(event.toolName, event.input);
       if (reach !== undefined) await registerReachedServers(reach, ctx.signal);
