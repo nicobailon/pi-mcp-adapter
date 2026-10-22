@@ -98,6 +98,55 @@ async function waitForGate() {
   while (gate && !existsSync(gate)) await new Promise(resolve => setTimeout(resolve, 20));
 }
 
+// `call` with the object form of `calls`, answered with Executor's CallOutcome. An even-numbered
+// tool returns an object, an odd-numbered one a string; `input.fail` fails the tool with a curated
+// response, `input.big: n` returns n characters, `input.malformed` returns a result Executor never
+// sends, and `input.hold` never answers. EXECUTOR_CALL_APPROVAL=1 pauses every call for approval.
+function finished(path, value) {
+  return { status: "completed", execution: { ok: true, value, toolCalls: [{ name: path, outcome: value.ok ? "success" : "failure" }] }, unavailableApps: [] };
+}
+
+function callOutcome(calls) {
+  const { path, input = {} } = calls;
+  const item = catalog.find(candidate => candidate.path === path);
+  if (!item) {
+    return finished(path, { path, ok: false, error: { kind: "UnknownTool", message: `No tool at ${path}.` }, matches: catalog.slice(0, 2).map(tool => tool.path) });
+  }
+  if (input.malformed) return { status: "completed", execution: { ok: true, toolCalls: [] }, unavailableApps: [] };
+  if (input.fail) {
+    const response = { code: "NotFound", status: 404, message: "No such record.", recovery: { action: "Check the id." }, retryable: false };
+    return finished(path.slice("tools.".length), { path: path.slice("tools.".length), ok: false, error: { kind: "ToolFailure", message: "NotFound (HTTP 404): No such record.", response } });
+  }
+  const value = typeof input.big === "number" ? "x".repeat(input.big)
+    : Number(path.slice(-3)) % 2 === 1 ? `${path} record ${input.id ?? ""}` : { path, input };
+  return finished(path, { path, ok: true, value });
+}
+
+let pendingCall;
+function call(args) {
+  const calls = args?.calls;
+  if (typeof calls !== "object" || calls === null || Array.isArray(calls)) {
+    return { status: "completed", execution: { ok: false, error: { kind: "InvalidInput", message: "calls must be one call" }, toolCalls: [] }, unavailableApps: [] };
+  }
+  if (process.env.EXECUTOR_CALL_APPROVAL !== "1") return callOutcome(calls);
+  pendingCall = calls;
+  return {
+    status: "approval-required",
+    requestId: "apr_app_1",
+    elicitation: { mode: "form", message: `Approve ${calls.path}?`, requestedSchema: { type: "object", properties: {} } },
+    expiresAt: Date.now() + 60_000,
+  };
+}
+
+function resume({ requestId, response }) {
+  if (requestId !== "apr_app_1" || !pendingCall) return { status: "unavailable", requestId, reason: "not-found", message: "That request is no longer waiting." };
+  const calls = pendingCall;
+  pendingCall = undefined;
+  return response?.action === "accept"
+    ? callOutcome(calls)
+    : finished(calls.path, { path: calls.path, ok: false, error: { kind: "ApprovalDeclined", message: `${calls.path} was not approved.` } });
+}
+
 const tools = [
   { name: "search", inputSchema: { type: "object", properties: { query: { type: "string" }, namespace: { type: "string" }, limit: { type: "integer" }, offset: { type: "integer" } } }, annotations: { readOnlyHint: true, destructiveHint: false } },
   { name: "describe", inputSchema: { type: "object", properties: { paths: { type: "array", items: { type: "string" } } }, required: ["paths"] } },
@@ -132,6 +181,10 @@ lines.on("line", async line => {
       respond(request.id, toolResult(search(args)));
     } else if (name === "describe") {
       respond(request.id, toolResult(describe(args)));
+    } else if (name === "call") {
+      if (!args?.calls?.input?.hold) respond(request.id, toolResult(call(args)));
+    } else if (name === "resume") {
+      respond(request.id, toolResult(resume(args)));
     } else {
       respond(request.id, { content: [{ type: "text", text: `${name} is not part of this fixture` }], isError: true });
     }

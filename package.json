@@ -135,6 +135,7 @@
     "sampling-handler.ts",
     "elicitation-handler.ts",
     "executor-accounts.ts",
+    "executor-app-tools.ts",
     "executor-catalog.ts",
     "executor-pauses.ts",
     "tool-registrar.ts",

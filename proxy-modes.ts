@@ -20,6 +20,7 @@ import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses } from "./executor-pauses.ts";
+import { executorCallParams, unwrapExecutorCallResult } from "./executor-app-tools.ts";
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, scoreToolMatch, type RankedToolMatch } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
@@ -1768,7 +1769,10 @@ export async function executeCall(
 
     const requestMeta = withToolCallIdMeta(uiSession?.requestMeta, toolCallId);
     const recordOutput = observedOutputRecorder(state, serverName, toolMeta.originalName);
-    const result = await withSessionRecovery<ClientCallToolResult>(
+    const callParams = toolMeta.executorPath !== undefined
+      ? executorCallParams(toolMeta, normalizedArgs)
+      : { name: toolMeta.originalName, arguments: normalizedArgs };
+    const callResult = await withSessionRecovery<ClientCallToolResult>(
       {
         manager: state.manager,
         config: state.config,
@@ -1782,7 +1786,7 @@ export async function executeCall(
           conn,
           manager: state.manager,
           serverName,
-          params: { name: toolMeta.originalName, arguments: normalizedArgs, _meta: requestMeta },
+          params: { ...callParams, _meta: requestMeta },
           requestOptions,
           signal: ownedSignal,
           call: async (params, options) => {
@@ -1800,6 +1804,7 @@ export async function executeCall(
         });
       },
     );
+    const result = toolMeta.executorPath !== undefined ? unwrapExecutorCallResult(toolMeta.executorPath, callResult) : callResult;
     if (!result.isError) recordOutput(result as Record<string, unknown>);
 
     if (uiResourceUri) {

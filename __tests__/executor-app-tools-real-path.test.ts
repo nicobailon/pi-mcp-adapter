@@ -9,7 +9,9 @@ import {
   DefaultResourceLoader,
   SessionManager,
   SettingsManager,
+  type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
+import { MCP_TOOL_APPROVAL_REQUEST_EVENT, type McpToolApprovalRequest } from "../types.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
 type Receipt = { method?: string; name?: string; arguments?: Record<string, unknown> };
@@ -43,6 +45,7 @@ async function withSession(
   root: string,
   server: Record<string, unknown>,
   run: (pi: { session: Session; call: (name: string, input: Record<string, unknown>) => Promise<any> }) => Promise<void>,
+  options: { settings?: Record<string, unknown>; extend?: (pi: ExtensionAPI) => void } = {},
 ): Promise<void> {
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalArgv = [...process.argv];
@@ -63,13 +66,13 @@ async function withSession(
           ...rest,
         },
       },
-      settings: { sampling: false, elicitation: false },
+      settings: { sampling: false, elicitation: false, ...options.settings },
     }));
     process.argv.push("--mcp-config", configPath);
     const settingsManager = SettingsManager.inMemory();
     const loader = new DefaultResourceLoader({
       cwd, agentDir: root, settingsManager, additionalExtensionPaths: [resolve("index.ts")],
-      extensionFactories: [createCodemodeExtension(), createToolSearchExtension()],
+      extensionFactories: [createCodemodeExtension(), createToolSearchExtension(), ...(options.extend ? [options.extend] : [])],
     });
     await loader.reload();
     ({ session } = await createAgentSession({
@@ -165,13 +168,14 @@ describe("Executor app tools as Pi deferred tools", () => {
       // Registered from the cache when the extension loads, before the server connects.
       expect(deferredAppTools(session)).toEqual(appToolNames);
       const ctx = session.extensionRunner.createToolContext("codemode-call", undefined);
-      expect(ctx.tools.map(tool => tool.name)).toContain("mcp__executor__beta_tool_000");
+      expect(ctx.tools.map(tool => tool.name)).toContain("mcp__executor__beta_tool_001");
 
-      // Before S3 the call goes to Executor as a tool of its own name, which Executor does not have.
-      const outcome = await ctx.executeTool("mcp__executor__beta_tool_000", { id: "7" });
-      expect(outcome.isError).toBe(true);
-      const calls = (await receipts(root)).filter(entry => entry.method === "tools/call");
-      expect(calls.at(-1)).toMatchObject({ name: "beta.tool_000", arguments: { id: "7" } });
+      // One Executor `call`, in the object form, for the exact path search returned.
+      const outcome = await ctx.executeTool("mcp__executor__beta_tool_001", { id: "7" });
+      expect(outcome.isError).toBe(false);
+      expect(textOf(outcome.result)).toBe("tools.beta.tool_001 record 7");
+      const calls = (await receipts(root)).filter(entry => entry.method === "tools/call" && entry.name !== "search");
+      expect(calls).toEqual([{ method: "tools/call", name: "call", arguments: { calls: { path: "tools.beta.tool_001", input: { id: "7" } } } }]);
       expect(await searches(root)).toBe(searched);
     });
   }, 30_000);
@@ -233,6 +237,51 @@ describe("Executor app tools as Pi deferred tools", () => {
         expect(await searches(root)).toBeGreaterThan(searched);
       });
       expect(JSON.parse(await readFile(cachePath, "utf8")).servers.executor.executorApps.tools).toHaveLength(6);
+    }, 30_000);
+  });
+
+  describe("called with mcp({ tool }) in the proxy", () => {
+    // Allows each approval-broker request once, and records it.
+    const brokerInto = (approvals: McpToolApprovalRequest[]) => (pi: ExtensionAPI) => {
+      pi.events.on(MCP_TOOL_APPROVAL_REQUEST_EVENT, (request: McpToolApprovalRequest) => {
+        approvals.push(request);
+        request.claim(() => "allow_once");
+      });
+    };
+    const appCalls = async (root: string) => (await receipts(root)).filter(entry => entry.method === "tools/call" && entry.name !== "search");
+
+    async function callInProxy(root: string, approvals: McpToolApprovalRequest[], call: (name: string, input: Record<string, unknown>) => Promise<any>) {
+      const result = await call("mcp", { tool: "alpha.tool_001", args: { id: "7" } });
+      expect(textOf(result)).toBe("tools.alpha.tool_001 record 7");
+      expect(approvals.map(request => [request.originalToolName, request.origin])).toEqual([["alpha.tool_001", "proxy"]]);
+      expect(await appCalls(root)).toEqual([{ method: "tools/call", name: "call", arguments: { calls: { path: "tools.alpha.tool_001", input: { id: "7" } } } }]);
+    }
+
+    it("runs an app tool under MCP_DIRECT_TOOLS=__none__, approving once on its path", async () => {
+      const root = await agentDir();
+      await withSession(root, {}, async ({ session }) => {
+        await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+      });
+      vi.stubEnv("MCP_DIRECT_TOOLS", "__none__");
+      try {
+        const approvals: McpToolApprovalRequest[] = [];
+        await withSession(root, {}, async ({ session, call }) => {
+          expect(deferredAppTools(session)).toEqual([]);
+          await callInProxy(root, approvals, call);
+        }, { extend: brokerInto(approvals) });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    }, 30_000);
+
+    it("runs an app tool the frozen surface never registered, approving once on its path", async () => {
+      const root = await agentDir();
+      const approvals: McpToolApprovalRequest[] = [];
+      await withSession(root, {}, async ({ session, call }) => {
+        await vi.waitFor(async () => expect(JSON.parse(await readFile(join(root, "mcp-cache.json"), "utf8")).servers.executor.executorApps).toBeDefined(), { timeout: 10_000 });
+        expect(deferredAppTools(session)).toEqual([]);
+        await callInProxy(root, approvals, call);
+      }, { settings: { freezeDirectTools: true }, extend: brokerInto(approvals) });
     }, 30_000);
   });
 });

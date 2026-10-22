@@ -18,6 +18,7 @@ import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { callToolViaTaskSession } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses } from "./executor-pauses.ts";
+import { executorCallParams, unwrapExecutorCallResult } from "./executor-app-tools.ts";
 import { observedOutputRecorder } from "./output-shape.ts";
 import { ensureToolCallApproved, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
@@ -327,7 +328,10 @@ export function createDirectToolExecutor(
 
       const requestMeta = withToolCallIdMeta(uiSession?.requestMeta, toolCallId);
       const recordOutput = observedOutputRecorder(state, spec.serverName, spec.originalName);
-      const result = await withSessionRecovery<ClientCallToolResult>(
+      const callParams = spec.executorPath !== undefined
+        ? executorCallParams(spec, normalizedParams)
+        : { name: spec.originalName, arguments: normalizedParams };
+      const callResult = await withSessionRecovery<ClientCallToolResult>(
         {
           manager: state.manager,
           config: state.config,
@@ -341,7 +345,7 @@ export function createDirectToolExecutor(
             conn,
             manager: state.manager,
             serverName: spec.serverName,
-            params: { name: spec.originalName, arguments: normalizedParams, _meta: requestMeta },
+            params: { ...callParams, _meta: requestMeta },
             requestOptions,
             signal: ownedSignal,
             call: async (params, options) => {
@@ -359,6 +363,7 @@ export function createDirectToolExecutor(
           });
         },
       );
+      const result = spec.executorPath !== undefined ? unwrapExecutorCallResult(spec.executorPath, callResult) : callResult;
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
       if (!result.isError) recordOutput(result as Record<string, unknown>);
 
