@@ -240,6 +240,22 @@ describe("Executor app tools as Pi deferred tools", () => {
     }, 30_000);
   });
 
+  it("lists Executor's own tools and one line for its app tools, with mcp({ server }) and mcp({ connect })", async () => {
+    const root = await agentDir();
+    await withSession(root, { env: { EXECUTOR_CATALOG_TOOLS: "400" } }, async ({ call }) => {
+      await vi.waitFor(async () => expect(JSON.parse(await readFile(join(root, "mcp-cache.json"), "utf8")).servers.executor.executorApps?.tools).toHaveLength(1000), { timeout: 20_000 });
+      await vi.waitFor(async () => expect(textOf(await call("mcp", { server: "executor" }))).toContain("+1000"), { timeout: 20_000 });
+      const line = '+1000 Executor app tools (1200 in Executor\'s catalog, capped at 1000); find them with mcp({ search: "..." }).';
+      for (const input of [{ server: "executor" }, { connect: "executor" }, { tool: "nope", server: "executor" }]) {
+        const text = textOf(await call("mcp", input));
+        expect(text, JSON.stringify(input)).toContain(line);
+        expect(text.length, JSON.stringify(input)).toBeLessThan(2_000);
+        expect(text, JSON.stringify(input)).not.toContain("alpha_tool");
+      }
+      expect(textOf(await call("mcp", { server: "executor" }))).toContain("executor (5 tools):");
+    });
+  }, 60_000);
+
   describe("called with mcp({ tool }) in the proxy", () => {
     // Allows each approval-broker request once, and records it.
     const brokerInto = (approvals: McpToolApprovalRequest[]) => (pi: ExtensionAPI) => {

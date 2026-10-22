@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import open from "open";
+import { showTools } from "../commands.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { unwrapExecutorCallResult } from "../executor-app-tools.ts";
 import { computeServerHash, executorAppToolMetadata } from "../metadata-cache.ts";
@@ -231,5 +232,18 @@ describe("calling an Executor app tool", () => {
 
     expect(result.details).toMatchObject({ error: "aborted" });
     expect(state.manager.getConnection("executor")?.inFlight).toBe(0);
+  });
+});
+
+describe("listing Executor's tools in /mcp-adapter tools", () => {
+  it("counts the app tools in one line instead of naming them", async () => {
+    const { state } = await connectExecutor();
+    const ui = { notify: vi.fn() };
+
+    await showTools(state, { hasUI: true, ui } as never);
+
+    const text = ui.notify.mock.calls[0]![0] as string;
+    expect(text).toContain('  executor: +2 Executor app tools (2 in Executor\'s catalog); find them with mcp({ search: "..." }).');
+    expect(text).not.toContain("alpha_tool");
   });
 });

@@ -7,7 +7,7 @@ import { getServerPrefix, getToolNameCandidates, isServerDisabled, parseUiPrompt
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { buildToolMetadata, getToolNames, formatSchema, isPlainTypeSchema } from "./tool-metadata.ts";
+import { buildToolMetadata, executorAppToolsLine, getToolNames, formatSchema, isPlainTypeSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import { getObservedOutput, observedOutputRecorder, renderOutputShape } from "./output-shape.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
@@ -1135,20 +1135,28 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
       cachedNote = ` (lazy: tools from cache, not connected yet — mcp({ connect: "${server}" }) to connect)`;
     }
   }
-  let text = `${server} (${toolNames.length} tools${cachedNote}):${descriptionText}\n\n`;
+  // Executor's app tools are counted in one line, not listed: there can be a thousand.
+  const serverTools = (metadata ?? []).filter(toolMeta => toolMeta.executorPath === undefined);
+  const appToolsLine = executorAppToolsLine(state, server);
+  let text = `${server} (${serverTools.length} tools${cachedNote}):${descriptionText}\n\n`;
 
-  for (const toolMeta of metadata ?? []) {
+  for (const toolMeta of serverTools) {
     const truncated = truncateAtWord(toolMeta.description, 50);
     text += `- ${toolMeta.name}${formatParameterNames(toolMeta)}`;
     if (truncated) text += ` - ${truncated}`;
     text += "\n";
   }
+  if (appToolsLine) text += `${appToolsLine}\n`;
 
   text += instructionsText;
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "list", server, tools: toolNames, count: toolNames.length, hasInstructions: Boolean(instructions) },
+    details: {
+      mode: "list", server, tools: serverTools.map(toolMeta => toolMeta.name), count: serverTools.length,
+      ...(appToolsLine ? { executorAppTools: toolNames.length - serverTools.length } : {}),
+      hasInstructions: Boolean(instructions),
+    },
   };
 }
 
@@ -1501,6 +1509,8 @@ export async function executeCall(
     let msg = `Tool "${toolName}" not found.`;
     if (available.length > 0) {
       msg += ` Server "${hintServer}" has: ${available.join(", ")}`;
+      const appToolsLine = executorAppToolsLine(state, hintServer!);
+      if (appToolsLine) msg += `, ${appToolsLine}`;
     } else {
       msg += ` Use mcp({ search: "..." }) to search.`;
     }
@@ -1599,8 +1609,9 @@ export async function executeCall(
       toolMeta = match;
       if (!toolMeta) {
         const available = getToolNames(state, serverName);
+        const appToolsLine = executorAppToolsLine(state, serverName);
         const hint = available.length > 0
-          ? `Available tools on "${serverName}": ${available.join(", ")}`
+          ? `Available tools on "${serverName}": ${available.join(", ")}${appToolsLine ? `, ${appToolsLine}` : ""}`
           : `Server "${serverName}" has no tools.`;
         const suggestions = rankSuggestions(state, toolName, 5, serverName);
         const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";

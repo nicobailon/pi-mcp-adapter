@@ -5,6 +5,7 @@ import { createToolSelectorCandidateIndex, formatToolName, getToolNameCandidates
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolAnnotations, extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
+import { loadMetadataCache } from "./metadata-cache.ts";
 
 export function buildToolMetadata(
   tools: McpTool[],
@@ -135,7 +136,23 @@ export function buildToolMetadata(
 }
 
 export function getToolNames(state: McpExtensionState, serverName: string): string[] {
-  return state.toolMetadata.get(serverName)?.map(m => m.name) ?? [];
+  return state.toolMetadata.get(serverName)?.filter(m => m.executorPath === undefined).map(m => m.name) ?? [];
+}
+
+/**
+ * The one line that stands for an Executor server's app tools wherever its tools are listed by
+ * name, since there can be a thousand of them; undefined for any other server.
+ */
+export function executorAppToolsLine(state: McpExtensionState, serverName: string): string | undefined {
+  const count = state.toolMetadata.get(serverName)?.filter(m => m.executorPath !== undefined).length ?? 0;
+  if (count === 0) return undefined;
+  const catalog = (state.sessionMetadata?.get(serverName) ?? loadMetadataCache()?.servers[serverName])?.executorApps;
+  const scope = !catalog
+    ? "in Executor's catalog"
+    : catalog.tools.length >= catalog.cap && catalog.total > catalog.cap
+      ? `${catalog.total} in Executor's catalog, capped at ${catalog.cap}`
+      : `${catalog.total} in Executor's catalog`;
+  return `+${count} Executor app tools (${scope}); find them with mcp({ search: "..." }).`;
 }
 
 export function totalToolCount(state: McpExtensionState): number {
