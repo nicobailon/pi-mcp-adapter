@@ -47,8 +47,9 @@ function recordObservedOutput(state, serverName, tool, observedPrivately, result
         private: observedPrivately || (mergeable && previous.private),
     };
     byTool.set(toolName, next);
-    // Skip unchanged shapes to avoid repeated cache writes.
-    if (!next.private && JSON.stringify(next) !== JSON.stringify(previous)) {
+    // Skip unchanged shapes to avoid repeated cache writes. An Executor app tool's shape stays in
+    // memory: the cache keeps shapes only for tools in the server's listing, and app tools aren't.
+    if (!next.private && tool.executorPath === undefined && JSON.stringify(next) !== JSON.stringify(previous)) {
         try {
             saveObservedOutput(serverName, definition, toolName, toolKey, { source: next.source, shape: next.shape });
         }
