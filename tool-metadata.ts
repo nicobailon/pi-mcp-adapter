@@ -190,7 +190,7 @@ function executorAppToolCounts(state: McpExtensionState, serverName: string, rea
 export function totalToolCount(state: McpExtensionState): number {
   let count = 0;
   for (const metadata of state.toolMetadata.values()) {
-    count += metadata.length;
+    count += metadata.filter(m => m.executorPath === undefined).length;
   }
   return count;
 }

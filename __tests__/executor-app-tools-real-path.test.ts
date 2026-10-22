@@ -253,6 +253,19 @@ describe("Executor app tools as Pi deferred tools", () => {
     }, 30_000);
   });
 
+  it("counts the same own tools in mcp({}) as in mcp({ server }), leaving app tools to their own line", async () => {
+    const root = await agentDir();
+    await withSession(root, {}, async ({ session, call }) => {
+      await vi.waitFor(() => expect(deferredAppTools(session)).toEqual(appToolNames), { timeout: 10_000 });
+      const listing = textOf(await call("mcp", { server: "executor" }));
+      expect(listing).toContain("+6 Executor app tools");
+      const own = /executor \((\d+) tools\)/.exec(listing)![1];
+      const status = textOf(await call("mcp", {}));
+      expect(status).toContain(`MCP: 1/1 servers, ${own} tools`);
+      expect(status).toContain(`✓ executor (${own} tools,`);
+    });
+  }, 30_000);
+
   it("keeps the app tools in the proxy's metadata after mcp({ connect }) and /mcp-adapter reconnect", async () => {
     const root = await agentDir();
     await withSession(root, {}, async ({ session, call }) => {

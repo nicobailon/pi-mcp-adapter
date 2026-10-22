@@ -539,7 +539,8 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       status = "cached";
     }
 
-    const toolCount = status === "failed" ? 0 : metadata?.length ?? 0;
+    // Executor's app tools are counted on their own line, in mcp({ server }) and /mcp-adapter.
+    const toolCount = status === "failed" ? 0 : metadata?.filter(m => m.executorPath === undefined).length ?? 0;
 
     const listenState = connection?.status === "connected" ? connection.listenState : "disconnected";
     servers.push({

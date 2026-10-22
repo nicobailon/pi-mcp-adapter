@@ -24,7 +24,8 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
     const failedAgoSeconds = disabled ? null : getFailureAgeSeconds(state, name);
     const activeFailure = !disabled && isServerInActiveFailureBackoff(state, name);
     const metadata = disabled || activeFailure ? undefined : state.toolMetadata.get(name);
-    const toolCount = metadata?.length ?? (connection?.status === "connected" ? connection.tools.length : 0);
+    // Executor's app tools aren't counted here, as in every other per-server tool count.
+    const toolCount = metadata?.filter(m => m.executorPath === undefined).length ?? (connection?.status === "connected" ? connection.tools.length : 0);
     // This is the last active direct-tool sync result, rather than a fresh
     // resolution. A frozen direct surface may intentionally retain its
     // registrations while the server is in failure backoff.

@@ -175,7 +175,7 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     }
     const connection = state.manager.getConnection(name);
     const metadata = state.toolMetadata.get(name);
-    const toolCount = metadata?.length ?? 0;
+    const toolCount = metadata?.filter(m => m.executorPath === undefined).length ?? 0;
     const failedAgo = getFailureAgeSeconds(state, name);
     let status = "not listening (disconnected)";
     let statusIcon = "○";
