@@ -213,6 +213,7 @@ export async function connectAccount({ gap, serverName, manager, signal, call }:
 }): Promise<"connected" | "pending" | "unchanged"> {
   const promptUrl = manager.urlElicitationPrompt(serverName);
   if (!promptUrl) return "unchanged";
+  throwIfAborted(signal);
   const issued = await runProgram(call, connectProgram(gap.slug));
   throwIfAborted(signal);
   const link = issued && parseLink(issued.value);
