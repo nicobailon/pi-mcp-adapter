@@ -9,6 +9,7 @@ import {
   DefaultResourceLoader,
   SessionManager,
   SettingsManager,
+  type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { loadMcpConfigWithSources } from "../config.ts";
 import { toolErrorOverride } from "../error-signal.ts";
@@ -16,14 +17,15 @@ import { applyProjectServerTrust } from "../project-server-trust.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
 type Ui = { select: ReturnType<typeof vi.fn>; editor: ReturnType<typeof vi.fn>; notify: ReturnType<typeof vi.fn> };
-interface Fixture { session: Session; ui: Ui; agentDir: string; cwd: string; configPath: string; scriptPath: string }
+interface Fixture { session: Session; ui: Ui; agentDir: string; cwd: string; configPath: string; scriptPath: string; registerForeignTool: (name: string) => void }
 
 const CODE = 'return "hello " + input.who;';
 const SAVE = { name: "greet", description: "Greet someone", code: CODE, inputSchema: { type: "object", properties: { who: { type: "string" } }, required: ["who"] } };
 
 // A real Pi session with the adapter and Pi's codemode. The UI is a TUI whose select approves and
 // whose editor returns the script unchanged, unless a test scripts them; `mode: "print"` has no UI.
-// `foreignTool` is a tool another extension registers. Needs `env -u MCP_DIRECT_TOOLS`, as the suite runs.
+// `foreignTool` is a tool another extension registers while loading, and `registerForeignTool` one it
+// registers later. Needs `env -u MCP_DIRECT_TOOLS`, as the suite runs.
 async function withSession(
   run: (fixture: Fixture) => Promise<void>,
   options: { settings?: Record<string, unknown>; mode?: "tui" | "print"; directTools?: string; foreignTool?: string } = {},
@@ -40,12 +42,13 @@ async function withSession(
     const configPath = join(agentDir, "mcp-adapter.json");
     await writeFile(configPath, `${JSON.stringify({ mcpServers: {}, settings: options.settings ?? {} }, null, 2)}\n`);
     const settingsManager = SettingsManager.inMemory();
+    const foreignTool = (name: string) => ({ name, label: "x", description: "x", parameters: { type: "object", properties: {} } as never, execute: async () => ({ content: [], details: {} }) });
+    let foreignPi: ExtensionAPI | undefined;
     const loader = new DefaultResourceLoader({
       cwd, agentDir, settingsManager, additionalExtensionPaths: [resolve("index.ts")],
       extensionFactories: [createCodemodeExtension(), (pi) => {
-        if (options.foreignTool) {
-          pi.registerTool({ name: options.foreignTool, label: "x", description: "x", parameters: { type: "object", properties: {} } as never, execute: async () => ({ content: [], details: {} }) });
-        }
+        foreignPi = pi;
+        if (options.foreignTool) pi.registerTool(foreignTool(options.foreignTool));
       }],
     });
     await loader.reload();
@@ -66,7 +69,10 @@ async function withSession(
     };
     if (options.mode !== "print") session.extensionRunner.setUIContext(ui as never, "tui");
     await vi.waitFor(() => expect(session!.getAllTools().map(tool => tool.name)).toContain("mcp"), { timeout: 10_000 });
-    await run({ session, ui, agentDir, cwd, configPath, scriptPath: join(agentDir, "mcp-scripts", "greet.js") });
+    await run({
+      session, ui, agentDir, cwd, configPath, scriptPath: join(agentDir, "mcp-scripts", "greet.js"),
+      registerForeignTool: (name) => { foreignPi?.registerTool(foreignTool(name)); },
+    });
   } finally {
     try {
       await session?.extensionRunner.emit({ type: "session_shutdown", reason: "test" });
@@ -211,6 +217,15 @@ describe("mcp({ action: \"save-script\" }) in a real session", () => {
       expect(result.details).toEqual({ mode: "save-script", name: "taken", error: "name_unavailable" });
       expect(ui.select).not.toHaveBeenCalled();
     }, { foreignTool: "mcp__script__taken" });
+    await withSession(async ({ session, ui, agentDir, registerForeignTool }) => {
+      // After the adapter's last sync, so only a live check sees it.
+      registerForeignTool("mcp__script__late");
+      const result = await save(session, "save-1", { name: "late" });
+      expect(textOf(result)).toBe('Cannot save script tool "late": mcp__script__late is already registered by another extension.');
+      expect(result.details).toEqual({ mode: "save-script", name: "late", error: "name_unavailable" });
+      expect(ui.select).not.toHaveBeenCalled();
+      expect(existsSync(join(agentDir, "mcp-scripts"))).toBe(false);
+    });
     await withSession(async ({ session, ui, scriptPath }) => {
       const result = await save(session, "save-1");
       expect(result.details).toEqual({ mode: "save-script", name: "greet", error: "save_disabled" });

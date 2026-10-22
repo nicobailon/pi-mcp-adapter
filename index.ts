@@ -420,8 +420,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const registeredScriptTools = new Map<string, string>();
   // The registered script tools, by Pi name, for the gateway.
   const registeredScriptSpecs = new Map<string, ScriptToolSpec>();
-  // The names the last script-tool sync kept from script tools, so a save is checked against them.
-  let scriptToolReservations: ScriptToolReservation[] = [];
   // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
   const registeredToolNames = new Map<string, string>();
   // The deferredToolKey each deferred name was first given to. Never cleared, so within a session a
@@ -590,15 +588,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   // Registers the configured script tools and adds their names to `taken`, before the deferred MCP
   // tools take theirs. Like the deferred surface, an unchanged tool is not registered again.
-  function syncScriptTools(config: McpConfig, taken: Set<string>, reservedDirectNames: ReadonlySet<string>, foreignNames: readonly string[]): void {
+  // The names a script tool cannot take, and why, for a sync and for a save.
+  function scriptToolReservations(config: McpConfig, reservedDirectNames: ReadonlySet<string>, foreignNames: readonly string[]): ScriptToolReservation[] {
     const proxyNames = new Set([...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName)]);
-    scriptToolReservations = [
+    return [
       // No built-in reservation: every candidate is mcp__script__<name>, which no built-in tool is.
       { names: reservedDirectNames, reason: "is already the name of a direct MCP tool" },
       { names: proxyNames, reason: "is already the name of an MCP server's namespace tool" },
       { names: new Set(foreignNames), reason: "is already registered by another extension" },
     ];
-    const { specs, issues } = resolveScriptToolSpecs(config.scriptTools, scriptToolReservations, deferredNameOwners);
+  }
+
+  function syncScriptTools(config: McpConfig, taken: Set<string>, reservedDirectNames: ReadonlySet<string>, foreignNames: readonly string[]): void {
+    const { specs, issues } = resolveScriptToolSpecs(config.scriptTools, scriptToolReservations(config, reservedDirectNames, foreignNames), deferredNameOwners);
     scriptToolSurfaceIssues = issues;
     if (state) state.scriptToolIssues = scriptToolIssuesOf(state);
     const nextNames = new Set<string>();
@@ -2565,7 +2567,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     const { name, scriptPath, configPath } = checked;
     const toolName = `${SCRIPT_TOOL_NAMESPACE}__${name}`;
-    const unavailable = scriptToolNameConflict(name, scriptToolReservations, deferredNameOwners);
+    // Checked against the live surface: another extension can register a name after the last sync.
+    const reservations = scriptToolReservations(targetState.config, new Set(registeredDirectTools.keys()), foreignToolNames());
+    const unavailable = scriptToolNameConflict(name, reservations, deferredNameOwners);
     if (unavailable) return result(`Cannot save script tool "${name}": ${toolName} ${unavailable}.`, { error: "name_unavailable" });
 
     const failed = (error: unknown, text: (message: string) => string) => {
@@ -2607,15 +2611,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     targetState.config.scriptTools = { ...targetState.config.scriptTools, [name]: entry };
     if (!directToolsFrozen) syncToolSurface(ctx);
     const registered = deferredRegistryLive && !directToolsFrozen && registeredScriptSpecs.has(toolName);
-    const lines = [registered
-      ? `Saved script tool "${name}". Call it as ${toolName} or mcp({ tool: "${name}", args }).`
-      : !deferredRegistryLive
-        ? `Saved script tool "${name}". This session registers no script tools, so call it with mcp({ tool: "${name}", args }).`
-        : `Saved script tool "${name}". ${directToolsFrozen ? "The tool surface is frozen in this session" : `${toolName} was not registered in this session`}, so it is callable after /reload.`];
+    const lines = [savedScriptToolText(name, toolName, registered)];
     const edited = code !== checked.code;
     if (edited) lines.push("The operator edited the script before saving, so the saved code differs from the code you sent.");
     lines.push(`Script: ${scriptPath}`, `Config: ${configPath}`);
     return result(lines.join("\n"), { tool: toolName, path: configPath, scriptPath, target, registered, edited });
+  }
+
+  // How the model reaches a script tool it just saved.
+  function savedScriptToolText(name: string, toolName: string, registered: boolean): string {
+    if (registered) return `Saved script tool "${name}". Call it as ${toolName} or mcp({ tool: "${name}", args }).`;
+    if (!deferredRegistryLive) return `Saved script tool "${name}". This session registers no script tools, so call it with mcp({ tool: "${name}", args }).`;
+    if (directToolsFrozen) return `Saved script tool "${name}". The tool surface is frozen in this session, so it is callable after /reload.`;
+    const issue = scriptToolSurfaceIssues.find((text) => text.startsWith(`Script tool "${name}" was not loaded`));
+    return `Saved script tool "${name}", but it is not registered in this session. ${issue ?? `${toolName} was left out of the tool surface.`}`;
   }
 
   function registerProxyTool(description: string, allowScriptToolSave: boolean): void {
