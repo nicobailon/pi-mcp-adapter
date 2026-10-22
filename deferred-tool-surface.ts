@@ -18,6 +18,8 @@ export interface DeferredToolReservations {
   names: ReadonlySet<string>;
   /** Tools with a direct or search-mode registration, which get no second one. */
   directTools: ReadonlyArray<Pick<DirectToolSpec, "serverName" | "originalName" | "resourceUri">>;
+  /** The deferredToolKey each name was given to earlier in the session; no other tool gets it. */
+  owners?: ReadonlyMap<string, string>;
 }
 
 /** The key one MCP tool or resource tool of one server is registered under. */
@@ -78,9 +80,11 @@ export function resolveDeferredToolSpecs(
   }
   const specs: DeferredToolSpec[] = [];
   for (const spec of candidates) {
+    const key = deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri);
+    const unavailable = (candidate: string) => taken.has(candidate) || (reserved.owners?.get(candidate) ?? key) !== key;
     const name = formatDeferredToolName(spec.serverName, spec.originalName,
-      (candidate) => taken.has(candidate) || (plainNameCounts.get(candidate) ?? 0) > 1);
-    if (taken.has(name)) {
+      (candidate) => unavailable(candidate) || (plainNameCounts.get(candidate) ?? 0) > 1);
+    if (unavailable(name)) {
       console.warn(`MCP: skipping deferred tool "${name}" for "${spec.originalName}" on "${spec.serverName}" (name already taken)`);
       continue;
     }

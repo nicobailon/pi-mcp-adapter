@@ -406,6 +406,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const registeredDeferredTools = new Map<string, string>();
   // The Pi name each cached tool the adapter registered is callable under, by deferredToolKey.
   const registeredToolNames = new Map<string, string>();
+  // The deferredToolKey each deferred name was first given to. Never cleared, so within a session a
+  // name never moves to a different tool, as in Pi's built-in MCP.
+  const deferredNameOwners = new Map<string, string>();
   const syncedServers = new Set<string>();
   // Every name this adapter registered a direct, search-mode or deferred tool under; Pi keeps hidden ones.
   const adapterToolNames = new Set<string>();
@@ -736,7 +739,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ? new Set([...reservedDirectNames, ...registeredNamespaceProxyTools, ...Object.keys(config.mcpServers).map(namespaceProxyName), ...foreignToolNames()])
       : undefined;
     const specs: DeferredToolSpec[] = taken
-      ? resolveDeferredToolSpecs(config, cache, { names: taken, directTools: directToolsIgnoringBackoff(config, cache, directSpecs) })
+      ? resolveDeferredToolSpecs(config, cache, { names: taken, directTools: directToolsIgnoringBackoff(config, cache, directSpecs), owners: deferredNameOwners })
       : [];
     const nextNames = new Set<string>();
     // One map per server, so looking up each spec's cached tool is O(1).
@@ -752,6 +755,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     };
     for (const spec of specs) {
       nextNames.add(spec.name);
+      if (!deferredNameOwners.has(spec.name)) deferredNameOwners.set(spec.name, deferredToolKey(spec.serverName, spec.originalName, spec.resourceUri));
       const fields = piDeferredToolFields(spec, config, cache, cachedToolsOf(spec.serverName));
       const fingerprint = directToolFingerprint(spec) + JSON.stringify(fields);
       if (registeredDeferredTools.get(spec.name) === fingerprint) continue;

@@ -4894,6 +4894,19 @@ describe("directTools: \"search\" — registered inactive, activated by search o
       expect(registrations(api, "mcp__proxy__old").at(-1)).toMatchObject({ exposure: "hidden" });
     });
 
+    it("never gives a name to a different tool within the session when the tool list changes", async () => {
+      const { api, config, state } = await bootCached({ s: [{ command: "x", lifecycle: "eager" }, [{ name: "a_b" }]] });
+      await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+      expect(registeredTool(api, "mcp__s__a_b")).toMatchObject({ label: "MCP: a_b", exposure: "deferred" });
+      mocks.loadMetadataCache.mockReturnValue({ version: 1, servers: { s: cacheEntry(config.mcpServers.s!, { tools: [{ name: "a-b" }] }) } });
+
+      state.onToolMetadataUpdated("s", "tools-list-changed");
+
+      const replacement = api.registerTool.mock.calls.map((call: any[]) => call[0]).find((tool: { label: string }) => tool.label === "MCP: a-b");
+      expect(replacement).toMatchObject({ name: expect.stringMatching(/^mcp__s__a_b_[0-9a-f]{8}$/), exposure: "deferred" });
+      expect(registrations(api, "mcp__s__a_b").map((tool: { label: string }) => tool.label)).not.toContain("MCP: a-b");
+    });
+
     it("does nothing for a tool without reachesTools, as before Pi 1.2, and skips its own MCP tools without a lookup", async () => {
       const { api, toolCall } = await bootWithUnconnectedServer();
       api.getAllTools.mockReturnValue([{ name: "codemode" }, { name: "bash" }]);
