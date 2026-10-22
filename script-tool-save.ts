@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { buildUnifiedDiff, getPiGlobalConfigPath, getProjectPiConfigPath, previewScriptToolEntry, writeScriptToolEntry } from "./config.ts";
 import { MAX_SCRIPT_BYTES, SCRIPT_TOOL_NAMESPACE } from "./script-tool-surface.ts";
 import { resolveScriptToolPath, validateScriptToolEntry } from "./script-tools.ts";
@@ -54,6 +54,8 @@ export interface ScriptToolSavePlan extends ScriptToolSaveTarget {
   overwrite?: { entry?: ScriptToolDefinition; scriptExisted: boolean };
   /** What the operator is shown as replaced, checked again just before the write. */
   baseline: ScriptToolSaveBaseline;
+  /** Where the script is written, when a linked `mcp-scripts` directory sends it elsewhere. */
+  scriptRealPath?: string;
 }
 
 interface ScriptToolSaveBaseline {
@@ -145,8 +147,16 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
     };
   }
 
+  // A linked mcp-scripts directory is fine, but the summary says where the bytes go.
+  const scriptDir = dirname(target.scriptPath);
+  let scriptRealPath: string | undefined;
   let existing: ReturnType<typeof lstatSync>;
   try {
+    if (lstatSync(scriptDir, { throwIfNoEntry: false })) {
+      if (!statSync(scriptDir, { throwIfNoEntry: false })?.isDirectory()) return saveFailed(name, `${scriptDir} is not a directory`);
+      const realDir = realpathSync(scriptDir);
+      if (realDir !== scriptDir) scriptRealPath = join(realDir, basename(target.scriptPath));
+    }
     existing = lstatSync(target.scriptPath, { throwIfNoEntry: false });
   } catch (error) {
     return saveFailed(name, `${target.scriptPath} cannot be checked (${errorMessage(error)})`);
@@ -164,7 +174,7 @@ export function checkScriptToolSave(request: ScriptToolSaveRequest): ScriptToolS
   const existingEntry = request.scriptTools?.[name];
   const scriptExisted = existing !== undefined;
   return {
-    ok: true, name, target: request.target, ...target, entry, code, baseline,
+    ok: true, name, target: request.target, ...target, entry, code, baseline, ...(scriptRealPath ? { scriptRealPath } : {}),
     ...(existingEntry || scriptExisted ? { overwrite: { ...(existingEntry ? { entry: existingEntry } : {}), scriptExisted } } : {}),
   };
 }
@@ -209,7 +219,7 @@ export function buildScriptToolSavePrompt(plan: ScriptToolSavePlan): string {
   const lines = [
     `Save script tool "${plan.name}" as ${SCRIPT_TOOL_NAMESPACE}__${plan.name}?`,
     "",
-    `Script: ${plan.scriptPath} (${scriptExisted ? "replaced" : "new"}, ${lineCount} ${lineCount === 1 ? "line" : "lines"})`,
+    `Script: ${plan.scriptPath} (${scriptExisted ? "replaced" : "new"}, ${lineCount} ${lineCount === 1 ? "line" : "lines"}${plan.scriptRealPath ? `; writes to ${plan.scriptRealPath}` : ""})`,
     `Config: ${plan.configPath} (${configState})`,
   ];
   // The loaded entry can come from a file other than the target, which the config diff cannot show.
@@ -292,6 +302,10 @@ export function writeScriptToolSave(plan: Pick<ScriptToolSavePlan, "name" | "con
   let previous: { bytes: Buffer; mode: number } | undefined;
   let createdDir = false;
   try {
+    const scriptDir = dirname(scriptPath);
+    if (lstatSync(scriptDir, { throwIfNoEntry: false }) && !statSync(scriptDir, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new Error(`${scriptDir} is not a directory`);
+    }
     const existing = lstatSync(scriptPath, { throwIfNoEntry: false });
     // Renaming over a symlink would replace the link, so only a regular file is replaced.
     if (existing && !existing.isFile()) throw new Error("it is not a regular file");

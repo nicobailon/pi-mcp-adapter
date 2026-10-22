@@ -150,7 +150,7 @@ describe("checkScriptToolSave", () => {
   });
 
   it.each([
-    ["mcp-scripts is a file", (_configPath: string, scriptPath: string) => writeFileSync(dirname(scriptPath), ""), (scriptPath: string) => `${scriptPath} cannot be checked (ENOTDIR`],
+    ["mcp-scripts is a file", (_configPath: string, scriptPath: string) => writeFileSync(dirname(scriptPath), ""), (scriptPath: string) => `${dirname(scriptPath)} is not a directory`],
     ["the script path is a directory", (_configPath: string, scriptPath: string) => mkdirSync(scriptPath, { recursive: true }), (scriptPath: string) => `${scriptPath} is not a regular file`],
     ["the script path is a symlink", (configPath: string, scriptPath: string) => { mkdirSync(dirname(scriptPath)); symlinkSync(configPath, scriptPath); }, (scriptPath: string) => `${scriptPath} is not a regular file`],
     ["the config is malformed", (configPath: string) => writeFileSync(configPath, "{ malformed"), (_scriptPath: string, configPath: string) => `Failed to read MCP config at ${configPath}: `],
@@ -341,5 +341,22 @@ describe("writeScriptToolSave", () => {
     mkdirSync(scriptPath, { recursive: true });
     expect(() => writeScriptToolSave(saved)).toThrow(`Failed to write script tool file at ${scriptPath}: it is not a regular file`);
     expect(existsSync(join(agentDir, "mcp-adapter.json"))).toBe(false);
+  });
+
+  it("writes through a linked mcp-scripts directory, which the summary names, and refuses one that isn't a directory", () => {
+    const elsewhere = join(root, "dotfiles", "scripts");
+    mkdirSync(elsewhere, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+    symlinkSync(elsewhere, join(agentDir, "mcp-scripts"));
+    const saved = plan();
+    expect(buildScriptToolSavePrompt(saved)).toContain(`Script: ${saved.scriptPath} (new, 2 lines; writes to ${join(elsewhere, "stale_issues.js")})`);
+    writeScriptToolSave(saved);
+    expect(readFileSync(join(elsewhere, "stale_issues.js"), "utf8")).toBe(CODE);
+
+    // Replaced by a file after the check: the writer refuses too.
+    rmSync(join(agentDir, "mcp-scripts"), { recursive: true });
+    const next = plan({}, { name: "other" });
+    writeFileSync(join(agentDir, "mcp-scripts"), "");
+    expect(() => writeScriptToolSave(next)).toThrow(`Failed to write script tool file at ${next.scriptPath}: ${join(agentDir, "mcp-scripts")} is not a directory`);
   });
 });
