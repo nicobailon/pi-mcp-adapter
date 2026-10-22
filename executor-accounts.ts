@@ -118,7 +118,7 @@ export function findAccountGap(params: ToolCallParams, result: object): AccountG
 // Adapter-authored programs: fixed templates with only JSON.stringify-injected values. CodeMode
 // reports every `tools.x.y` reference as a function, so the Executor app's groups are read with
 // Object.keys: hosted has `context`, local has `accountConnections`.
-function connectProgram(slug: string): string {
+export function connectProgram(slug: string): string {
   return `const slug = ${JSON.stringify(slug)};
 const executor = tools.executor;
 const groups = Object.keys(executor);

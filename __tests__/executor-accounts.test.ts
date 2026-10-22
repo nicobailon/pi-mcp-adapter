@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import open from "open";
 import { createDirectToolExecutor } from "../direct-tools.ts";
-import { findAccountGap } from "../executor-accounts.ts";
+import { connectProgram, findAccountGap } from "../executor-accounts.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
@@ -110,6 +110,49 @@ describe("findAccountGap", () => {
   it("throws when the request path names no app", () => {
     expect(() => findAccountGap(request({ path: "tools", input: {} }), completed(failed("tools", "AppAccountRequired"))))
       .toThrow("which names no app");
+  });
+});
+
+// Executor runs a program as async code with a top-level `return`; this runs the adapter's
+// connect program the same way, against fake Executor-app tools that record each call.
+async function runConnectProgram(mode: "local" | "hosted", accounts: Record<string, { scope: string; cardinality: string }>, linked: string[]) {
+  const userConnect = vi.fn(async () => ({ connection: "conn_1", url: "http://127.0.0.1/connect" }));
+  const executor = {
+    ...(mode === "hosted"
+      ? { context: { get: async () => ({ organization: "org_1" }) }, accounts: { connection: vi.fn() } }
+      : { accountConnections: { get: vi.fn() } }),
+    appManagement: { list: async () => [{ id: "app_2", slug: "other", requirements: { accounts: {} } }, { id: "app_1", slug: "needs-account", requirements: { accounts } }] },
+    appAccounts: { userList: vi.fn(async () => linked.map(requirement => ({ requirement }))), userConnect },
+  };
+  const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (...args: string[]) => (tools: unknown) => Promise<unknown>;
+  const value = await new AsyncFunction("tools", connectProgram("needs-account"))({ executor });
+  return { value, userConnect, userList: executor.appAccounts.userList };
+}
+
+describe("the connect program", () => {
+  const one = { scope: "user", cardinality: "one" };
+
+  it.each(["local", "hosted"] as const)("connects the one missing user account of the named app on %s Executor", async (mode) => {
+    const accounts = { service: one, linkedAlready: one, shared: { scope: "app", cardinality: "one" }, many: { scope: "user", cardinality: "many" } };
+
+    const { value, userConnect, userList } = await runConnectProgram(mode, accounts, ["linkedAlready"]);
+
+    const path = mode === "hosted" ? { organization: "org_1", app: "app_1" } : { app: "app_1" };
+    expect(userList).toHaveBeenCalledExactlyOnceWith({ path });
+    expect(userConnect).toHaveBeenCalledExactlyOnceWith({ path: { ...path, requirement: "service" }, body: {} });
+    expect(value).toMatchObject({ hosted: mode === "hosted", requirement: "service" });
+  });
+
+  it.each([
+    ["local", "no user account is", { service: one }, ["service"]],
+    ["hosted", "no user account is", { service: one }, ["service"]],
+    ["local", "two user accounts are", { service: one, mail: one }, []],
+    ["hosted", "two user accounts are", { service: one, mail: one }, []],
+  ] as const)("on %s Executor connects nothing when %s missing", async (mode, _count, accounts, linked) => {
+    const { value, userConnect } = await runConnectProgram(mode, accounts, [...linked]);
+
+    expect(userConnect).not.toHaveBeenCalled();
+    expect(value).toBeNull();
   });
 });
 
