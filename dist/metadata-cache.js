@@ -322,17 +322,23 @@ export function reconstructToolMetadata(serverName, entry, prefix, definition, c
 /**
  * The tool metadata of an Executor server's cached app tools, named by canonical path, after
  * includeTools/excludeTools. Executor's own `tools.executor.*` tools are never app tools, and an
- * app tool never takes the name of one of the server's own tools. Executor gives no JSON Schema,
- * so the input is any object and the description carries the TypeScript input type.
+ * app tool never takes an adapter name in `takenNames` or one an earlier app tool took, so the
+ * first in Executor's order wins; without `takenNames` (the Pi registry, which hashes shared
+ * names) names are not checked. Executor gives no JSON Schema, so the input is any object and the
+ * description carries the TypeScript input type. A corrupt cached item is skipped.
  */
 export function executorAppToolMetadata(serverName, entry, effectivePrefix, definition, selectorCandidateIndex, takenNames) {
     const metadata = [];
+    const taken = takenNames ? new Set(takenNames) : undefined;
     for (const tool of entry.executorApps?.tools ?? []) {
-        if (!isExecutorAppToolAllowed(tool, serverName, effectivePrefix, definition, selectorCandidateIndex))
+        if (!isUsableCachedAppTool(tool) || !isExecutorAppToolAllowed(tool, serverName, effectivePrefix, definition, selectorCandidateIndex))
             continue;
         const name = formatToolName(tool.canonicalPath, serverName, effectivePrefix);
-        if (takenNames.has(name))
-            continue;
+        if (taken) {
+            if (taken.has(name))
+                continue;
+            taken.add(name);
+        }
         metadata.push({
             name,
             originalName: tool.canonicalPath,
@@ -342,6 +348,11 @@ export function executorAppToolMetadata(serverName, entry, effectivePrefix, defi
         });
     }
     return metadata;
+}
+/** A cached catalog item with the fields every reader needs; a corrupt cache file can hold anything. */
+export function isUsableCachedAppTool(tool) {
+    const candidate = tool;
+    return typeof candidate?.canonicalPath === "string" && candidate.canonicalPath !== "" && typeof candidate.path === "string";
 }
 /** Executor lists its own admin API as `tools.executor.*`; those are never app tools. */
 export function isExecutorOwnTool(tool) {
@@ -373,7 +384,7 @@ export function createCachedToolSelectorCandidateIndex(configuredServers, cache,
             }
         }
         for (const tool of entry.executorApps?.tools ?? []) {
-            if (isExecutorOwnTool(tool))
+            if (!isUsableCachedAppTool(tool) || isExecutorOwnTool(tool))
                 continue;
             for (const candidate of getToolNameCandidates(tool.canonicalPath, serverName, effectivePrefix, false))
                 candidates.add(candidate);

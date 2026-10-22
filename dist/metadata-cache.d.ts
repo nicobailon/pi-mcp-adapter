@@ -36,10 +36,14 @@ export declare function reconstructToolMetadata(serverName: string, entry: Serve
 /**
  * The tool metadata of an Executor server's cached app tools, named by canonical path, after
  * includeTools/excludeTools. Executor's own `tools.executor.*` tools are never app tools, and an
- * app tool never takes the name of one of the server's own tools. Executor gives no JSON Schema,
- * so the input is any object and the description carries the TypeScript input type.
+ * app tool never takes an adapter name in `takenNames` or one an earlier app tool took, so the
+ * first in Executor's order wins; without `takenNames` (the Pi registry, which hashes shared
+ * names) names are not checked. Executor gives no JSON Schema, so the input is any object and the
+ * description carries the TypeScript input type. A corrupt cached item is skipped.
  */
-export declare function executorAppToolMetadata(serverName: string, entry: ServerCacheEntry, effectivePrefix: ToolPrefix, definition: Pick<ServerEntry, "includeTools" | "excludeTools">, selectorCandidateIndex: ToolSelectorCandidateIndex | undefined, takenNames: ReadonlySet<string>): ToolMetadata[];
+export declare function executorAppToolMetadata(serverName: string, entry: ServerCacheEntry, effectivePrefix: ToolPrefix, definition: Pick<ServerEntry, "includeTools" | "excludeTools">, selectorCandidateIndex: ToolSelectorCandidateIndex | undefined, takenNames: ReadonlySet<string> | undefined): ToolMetadata[];
+/** A cached catalog item with the fields every reader needs; a corrupt cache file can hold anything. */
+export declare function isUsableCachedAppTool(tool: unknown): tool is CachedExecutorAppTool;
 /** Executor lists its own admin API as `tools.executor.*`; those are never app tools. */
 export declare function isExecutorOwnTool(tool: Pick<CachedExecutorAppTool, "canonicalPath">): boolean;
 /** Whether one of an Executor server's catalog tools is an app tool its includeTools/excludeTools allow. */
