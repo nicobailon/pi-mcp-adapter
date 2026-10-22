@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { CODEMODE_UNAVAILABLE, runCodemodeScript } from "./codemode-bridge.ts";
 import type { ContentBlock, McpSettings, ScriptToolDefinition } from "./types.ts";
@@ -72,10 +72,23 @@ async function readScript(tool: string, file: string): Promise<string | ScriptTo
     if (!info.isFile() && !info.isDirectory()) {
       return failure(tool, "script_file_unreadable", `Script tool "${tool}" cannot run: ${file} could not be read (not a regular file).`);
     }
-    if (info.isFile() && info.size > MAX_SCRIPT_BYTES) {
+    // One handle, read up to one byte past the limit, so a file that grows after stat is still bounded.
+    const handle = await open(file, "r");
+    const buffer = Buffer.alloc(MAX_SCRIPT_BYTES + 1);
+    let length = 0;
+    try {
+      while (length < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+        if (bytesRead === 0) break;
+        length += bytesRead;
+      }
+    } finally {
+      await handle.close();
+    }
+    if (length > MAX_SCRIPT_BYTES) {
       return failure(tool, "script_file_too_large", `Script tool "${tool}" cannot run: ${file} is larger than 1 MiB.`);
     }
-    const source = await readFile(file, "utf8");
+    const source = buffer.toString("utf8", 0, length);
     if (source.trim() === "") return failure(tool, "script_file_empty", `Script tool "${tool}" cannot run: ${file} is empty.`);
     return source;
   } catch (error) {
