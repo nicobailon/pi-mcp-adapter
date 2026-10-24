@@ -6,6 +6,7 @@ import { MCP_STATUS_EVENT } from "../types.ts";
 import { computeServerHash } from "../metadata-cache.ts";
 import { ConsentManager } from "../consent-manager.ts";
 import { MCP_APPROVAL_CUSTOM_TYPE, getToolApprovalIdentity, makeToolApprovalKey } from "../session-approvals.ts";
+import { BackgroundTaskRegistry } from "../task-jobs.ts";
 
 const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn(),
@@ -1079,6 +1080,40 @@ describe("mcpAdapter session lifecycle", () => {
 
     await rejection;
     expect(mocks.writeSharedServerEntry).not.toHaveBeenCalled();
+  });
+
+  it("hands running background tasks off to the stopping session before its owner stops", async () => {
+    const state = createState();
+    const persisted: Array<{ key: string; ownerStopped: boolean }> = [];
+    let ownerSignal!: AbortSignal;
+    mocks.initializeMcp.mockImplementation((_pi: unknown, _ctx: unknown, owner: { signal: AbortSignal }) => {
+      ownerSignal = owner.signal;
+      state.backgroundTasks = new BackgroundTaskRegistry(
+        { decrementInFlight: vi.fn(), touch: vi.fn() },
+        vi.fn(),
+        owner.signal,
+        undefined,
+        (task) => persisted.push({ key: task.key, ownerStopped: ownerSignal.aborted }),
+      );
+      return Promise.resolve(state);
+    });
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+    const execution = {
+      kind: "task",
+      cancel: vi.fn(async () => {}),
+      settle: () => new Promise(() => {}),
+      handoff: async (persist: (reference: unknown) => void) => persist({ generation: "v2", taskId: "t-1" }),
+      result: async () => ({ status: "failed" }),
+    };
+    void state.backgroundTasks.start({ server: "demo", tool: "build", taskId: "t-1", execution, render: vi.fn(), guard: vi.fn() });
+
+    await handlers.get("session_shutdown")?.();
+
+    expect(persisted).toEqual([{ key: "demo/t-1", ownerStopped: false }]);
+    expect(ownerSignal.aborted).toBe(true);
+    expect(execution.cancel).not.toHaveBeenCalled();
   });
 
   it("rethrows an owner-aborted cache update instead of syncing prompts or succeeding", async () => {

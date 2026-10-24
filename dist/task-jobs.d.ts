@@ -1,4 +1,4 @@
-import { type TaskEnabledSession, type TaskState } from "@modelcontextprotocol/ext-tasks/client";
+import { type SerializedTaskReference, type TaskEnabledSession, type TaskState } from "@modelcontextprotocol/ext-tasks/client";
 import type { BackgroundToolExecution } from "./mcp-tasks.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { SendMessageFn } from "./state.ts";
@@ -16,6 +16,18 @@ export interface BackgroundTaskStart {
     render: (result: Record<string, unknown>) => Promise<RenderedTaskResult>;
     /** Bounds a failure or cancel reason, which may come from the server, with the call site's output guard. */
     guard: (text: string) => Promise<RenderedTaskResult>;
+    /** Runs right before the task's outcome message is sent. */
+    beforeDelivery?: () => void;
+}
+/** A task a stopped session handed off, which the session can resume when it starts again. */
+export interface HandedOffTask {
+    key: string;
+    server: string;
+    tool: string;
+    reference: SerializedTaskReference;
+}
+export interface RestoredTask extends Omit<BackgroundTaskStart, "execution"> {
+    reference: SerializedTaskReference;
 }
 /** A running task as `/mcp tasks` shows it. */
 export interface BackgroundTaskInfo {
@@ -52,15 +64,20 @@ export declare function backgroundTaskHandle(server: string, tool: string, taskI
  * Tool calls whose server answered with a task. Each runs to settlement here,
  * holding its server's in-flight count, and its outcome reaches the model as
  * one follow-up message. Stopping the runtime or closing the connection
- * cancels the remote task; replacing the connection hands it over instead.
+ * cancels the remote task; replacing the connection hands it over instead,
+ * and so does stopping the session, which can resume it when it starts again.
  */
 export declare class BackgroundTaskRegistry {
     private readonly manager;
     private readonly sendMessage;
     private readonly ownerSignal;
     private readonly onChange;
+    /** Records a task handed off by a stopping session. Without it, stopping the session cancels its tasks. */
+    private readonly persistHandedOff?;
     private readonly running;
-    constructor(manager: Pick<McpServerManager, "decrementInFlight" | "touch">, sendMessage: SendMessageFn, ownerSignal: AbortSignal, onChange?: () => void);
+    constructor(manager: Pick<McpServerManager, "decrementInFlight" | "touch">, sendMessage: SendMessageFn, ownerSignal: AbortSignal, onChange?: () => void, 
+    /** Records a task handed off by a stopping session. Without it, stopping the session cancels its tasks. */
+    persistHandedOff?: ((task: HandedOffTask) => void) | undefined);
     get size(): number;
     list(): BackgroundTaskInfo[];
     /** Resolves false for an unknown key; rejects when the cancel request fails. */
@@ -71,12 +88,27 @@ export declare class BackgroundTaskRegistry {
      */
     start(task: BackgroundTaskStart): Promise<void>;
     /**
+     * Follows a task this session handed off when it last stopped, resuming it on
+     * `session`. The caller holds the server's in-flight count, as for `start()`.
+     */
+    restore(task: RestoredTask, session: ReplacementTaskSession): Promise<void>;
+    /**
      * Moves every task on `server` from its replaced connection to the fresh one
      * without cancelling it. Resolves once the old executions have settled, so
      * closing the old task session afterwards sends no `tasks/cancel`.
      */
     handOver(server: string, fresh: ReplacementTaskSession): Promise<void>;
+    /**
+     * For a stopping session: hands every task off without cancelling it and
+     * records each, so the session can resume it when it starts again. Must run
+     * before the owner stops, whose abort would cancel the tasks.
+     */
+    handOffForShutdown(): Promise<void>;
+    private entry;
+    /** Resumes a handed-off task on `session`, or tells the model once why it can't be followed. */
+    private resumeOn;
     private follow;
+    private deliver;
     private remove;
     private release;
 }

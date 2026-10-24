@@ -18,19 +18,24 @@ export function backgroundTaskHandle(server, tool, taskId, cancelHint) {
  * Tool calls whose server answered with a task. Each runs to settlement here,
  * holding its server's in-flight count, and its outcome reaches the model as
  * one follow-up message. Stopping the runtime or closing the connection
- * cancels the remote task; replacing the connection hands it over instead.
+ * cancels the remote task; replacing the connection hands it over instead,
+ * and so does stopping the session, which can resume it when it starts again.
  */
 export class BackgroundTaskRegistry {
     manager;
     sendMessage;
     ownerSignal;
     onChange;
+    persistHandedOff;
     running = new Map();
-    constructor(manager, sendMessage, ownerSignal, onChange = () => { }) {
+    constructor(manager, sendMessage, ownerSignal, onChange = () => { }, 
+    /** Records a task handed off by a stopping session. Without it, stopping the session cancels its tasks. */
+    persistHandedOff) {
         this.manager = manager;
         this.sendMessage = sendMessage;
         this.ownerSignal = ownerSignal;
         this.onChange = onChange;
+        this.persistHandedOff = persistHandedOff;
     }
     get size() {
         return this.running.size;
@@ -52,18 +57,19 @@ export class BackgroundTaskRegistry {
      * delivered and the count released.
      */
     start(task) {
-        const key = `${task.server}/${task.taskId}`;
         return new Promise((finish) => {
-            const entry = {
-                ...task,
-                info: { key, tool: task.tool, status: "working" },
-                generation: 0,
-                releaseCancel: () => { },
-                finish,
-            };
-            this.running.set(key, entry);
-            this.onChange();
-            this.follow(entry, task.execution);
+            const { execution, ...rest } = task;
+            this.follow(this.entry(rest, finish), execution);
+        });
+    }
+    /**
+     * Follows a task this session handed off when it last stopped, resuming it on
+     * `session`. The caller holds the server's in-flight count, as for `start()`.
+     */
+    restore(task, session) {
+        return new Promise((finish) => {
+            const { reference, ...rest } = task;
+            void this.resumeOn(this.entry(rest, finish), reference, session);
         });
     }
     /**
@@ -77,58 +83,100 @@ export class BackgroundTaskRegistry {
             const old = entry.execution;
             entry.generation += 1;
             entry.releaseCancel();
+            let reference;
+            await old.handoff((ref) => { reference = ref; });
+            // close() cancels an execution that has not settled yet; result() settles it.
+            await old.result();
+            await this.resumeOn(entry, reference, fresh, old);
+        }));
+    }
+    /**
+     * For a stopping session: hands every task off without cancelling it and
+     * records each, so the session can resume it when it starts again. Must run
+     * before the owner stops, whose abort would cancel the tasks.
+     */
+    async handOffForShutdown() {
+        const persist = this.persistHandedOff;
+        if (persist === undefined)
+            return;
+        await Promise.all([...this.running.values()].map(async (entry) => {
+            const old = entry.execution;
+            entry.generation += 1;
+            entry.releaseCancel();
             try {
-                let reference;
-                await old.handoff((ref) => { reference = ref; });
-                // close() cancels an execution that has not settled yet; result() settles it.
+                await old.handoff((reference) => persist({ key: entry.info.key, server: entry.server, tool: entry.tool, reference }));
                 await old.result();
-                if (fresh.taskSession === undefined)
-                    throw new Error("the new connection has no task session");
-                const resumed = await fresh.taskSession.resumeTask(reference, {
-                    ...(fresh.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: fresh.requestTimeoutMs }),
-                });
-                if (resumed.kind !== "task")
-                    throw new Error("resumeTask returned an immediate execution");
-                this.follow(entry, resumed);
             }
             catch (error) {
-                const identity = { id: entry.taskId, server: entry.server, tool: entry.tool };
-                try {
-                    // A close or session stop that cut the resume short cancels, as it would have without the hand-off.
-                    // The replaced connection stays open until this returns, and a detached execution can still cancel.
-                    if (this.ownerSignal.aborted || fresh.closed()) {
-                        await old.cancel().catch(() => { });
-                        const guarded = await entry.guard(`The connection to ${entry.server} closed.`);
-                        this.sendMessage({
-                            customType: "mcp-task-result",
-                            display: true,
-                            content: [{ type: "text", text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}) cancelled.` }, ...guarded.content],
-                            details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled", ...guarded.details },
-                        }, { triggerTurn: true, deliverAs: "followUp" });
-                    }
-                    else {
-                        logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
-                        this.sendMessage({
-                            customType: "mcp-task-result",
-                            display: true,
-                            content: [{
-                                    type: "text",
-                                    text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}): outcome unknown after the connection was replaced. Calling the tool again may repeat the work.`,
-                                }],
-                            details: { task: { ...identity, status: "unknown" }, error: "task_outcome_unknown" },
-                        }, { triggerTurn: true, deliverAs: "followUp" });
-                    }
-                }
-                finally {
-                    this.release(entry);
-                }
+                // Still owned by its task session, whose teardown cancels it as it did before.
+                logger.warn(`MCP task ${entry.info.key} could not be handed off: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            finally {
+                this.release(entry);
             }
         }));
+    }
+    entry(task, finish) {
+        return {
+            ...task,
+            info: { key: `${task.server}/${task.taskId}`, tool: task.tool, status: "working" },
+            generation: 0,
+            releaseCancel: () => { },
+            finish,
+        };
+    }
+    /** Resumes a handed-off task on `session`, or tells the model once why it can't be followed. */
+    async resumeOn(entry, reference, session, old) {
+        try {
+            if (session.taskSession === undefined)
+                throw new Error("the connection has no task session");
+            const resumed = await session.taskSession.resumeTask(reference, {
+                ...(session.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: session.requestTimeoutMs }),
+            });
+            if (resumed.kind !== "task")
+                throw new Error("resumeTask returned an immediate execution");
+            this.follow(entry, resumed);
+        }
+        catch (error) {
+            const identity = { id: entry.taskId, server: entry.server, tool: entry.tool };
+            try {
+                if (this.ownerSignal.aborted || session.closed()) {
+                    // A restore cut short by another stop delivers nothing, so the session's record still says pending.
+                    if (old === undefined)
+                        return;
+                    // A close or session stop that cut a hand-over short cancels, as it would have without it.
+                    // The replaced connection stays open until handOver returns, and a detached execution can still cancel.
+                    await old.cancel().catch(() => { });
+                    const guarded = await entry.guard(`The connection to ${entry.server} closed.`);
+                    this.deliver(entry, {
+                        content: [{ type: "text", text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}) cancelled.` }, ...guarded.content],
+                        details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled", ...guarded.details },
+                    });
+                }
+                else {
+                    logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
+                    this.deliver(entry, {
+                        content: [{
+                                type: "text",
+                                text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}): outcome unknown after the connection was replaced. Calling the tool again may repeat the work.`,
+                            }],
+                        details: { task: { ...identity, status: "unknown" }, error: "task_outcome_unknown" },
+                    });
+                }
+            }
+            finally {
+                this.release(entry);
+            }
+        }
     }
     follow(entry, execution) {
         const generation = entry.generation;
         const current = () => entry.generation === generation;
-        entry.execution = execution;
+        const running = Object.assign(entry, { execution });
+        if (this.running.get(entry.info.key) !== running) {
+            this.running.set(entry.info.key, running);
+            this.onChange();
+        }
         // The same cancel a blocking call sends when the runtime stops, ahead of the connection teardown.
         const cancel = () => void execution.cancel().catch(() => { });
         entry.releaseCancel = () => this.ownerSignal.removeEventListener("abort", cancel);
@@ -182,7 +230,7 @@ export class BackgroundTaskRegistry {
                     details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled", ...guarded.details },
                 };
             }
-            this.sendMessage({ customType: "mcp-task-result", display: true, ...message }, { triggerTurn: true, deliverAs: "followUp" });
+            this.deliver(entry, message);
         })
             .catch((error) => {
             logger.warn(`MCP task ${entry.info.key} could not be delivered: ${error instanceof Error ? error.message : String(error)}`);
@@ -191,6 +239,10 @@ export class BackgroundTaskRegistry {
             if (current())
                 this.release(entry);
         });
+    }
+    deliver(entry, message) {
+        entry.beforeDelivery?.();
+        this.sendMessage({ customType: "mcp-task-result", display: true, ...message }, { triggerTurn: true, deliverAs: "followUp" });
     }
     // A list must never show a settled task, so the entry goes before the outcome is delivered.
     remove(entry) {

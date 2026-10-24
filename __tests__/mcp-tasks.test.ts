@@ -20,7 +20,7 @@ import {
   serverAdvertisesTasks,
   startToolViaTaskSession,
 } from "../mcp-tasks.ts";
-import { BackgroundTaskRegistry } from "../task-jobs.ts";
+import { BackgroundTaskRegistry, type HandedOffTask } from "../task-jobs.ts";
 
 type SentFrame = { message: JSONRPCMessage; options: Parameters<Transport["send"]>[1] };
 
@@ -1021,5 +1021,135 @@ describe("background task delivery over a task session", () => {
     } finally {
       await replaced!.session.close();
     }
+  });
+});
+
+describe("background tasks across a session stop and start", () => {
+  const definition = { command: "fake-server", tasks: true };
+  const clientInfo = { name: "pi-mcp-test", version: "1.0.0" };
+  const render = async (result: Record<string, unknown>) => ({
+    content: result.content as Array<{ type: "text"; text: string }>,
+    details: {},
+  });
+  const guard = async (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+
+  function attach(stack: ReturnType<typeof fakeModernTaskStack>) {
+    return attachTaskSession({
+      client: stack.client, serverName: "task-server", definition, transport: stack.transport, clientInfo, clientCapabilities: {},
+    });
+  }
+
+  function registry(options: { owner?: AbortController; persist?: (task: HandedOffTask) => void; onChange?: () => void } = {}) {
+    const sendMessage = vi.fn();
+    const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
+    const owner = options.owner ?? new AbortController();
+    return { tasks: new BackgroundTaskRegistry(manager, sendMessage, owner.signal, options.onChange, options.persist), sendMessage, manager, owner };
+  }
+
+  /** Runs a task on its own connection, then stops that session and returns what it recorded. */
+  async function handedOffTask(script: { statuses: Array<Record<string, unknown>> }) {
+    const stack = fakeModernTaskStack(script);
+    const connection = await attach(stack);
+    const persisted: HandedOffTask[] = [];
+    const stopping = registry({ persist: (task) => persisted.push(task) });
+    const started = await startToolViaTaskSession(connection!.session, { name: "slow_tool", args: {} });
+    if (started.kind !== "task") throw new Error("expected a task");
+    const done = stopping.tasks.start({ server: "task-server", tool: "slow_tool", taskId: started.taskId, execution: started.execution, render, guard });
+
+    await stopping.tasks.handOffForShutdown();
+    stopping.owner.abort();
+    await connection!.session.close();
+    await done;
+    return { stack, persisted, stopping };
+  }
+
+  it("hands every running task off at session stop without cancelling or delivering it", async () => {
+    const { stack, persisted, stopping } = await handedOffTask({ statuses: [{ status: "working" }] });
+
+    expect(persisted).toEqual([{
+      key: "task-server/task-e2e-1",
+      server: "task-server",
+      tool: "slow_tool",
+      reference: expect.objectContaining({ generation: "v2", taskId: "task-e2e-1" }),
+    }]);
+    expect(stack.server.cancels).toEqual([]);
+    expect(stopping.sendMessage).not.toHaveBeenCalled();
+    expect(stopping.manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    expect(stopping.tasks.size).toBe(0);
+  });
+
+  it("resumes a handed-off task when the session starts again and records it settled before delivering", async () => {
+    const script = { statuses: [{ status: "working" }] as Array<Record<string, unknown>> };
+    const { stack, persisted } = await handedOffTask(script);
+    const connection = await attach(fakeModernTaskStack(script, stack.server, "second"));
+    const { tasks, sendMessage, manager } = registry();
+    const beforeDelivery = vi.fn();
+    try {
+      const restored = tasks.restore(
+        { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard, beforeDelivery },
+        { taskSession: connection!.session, closed: () => false },
+      );
+      script.statuses.push({ status: "completed", result: { resultType: "complete", content: [{ type: "text", text: "built" }], isError: false } });
+      await restored;
+
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0].content).toEqual([
+        { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) completed." },
+        { type: "text", text: "built" },
+      ]);
+      expect(beforeDelivery).toHaveBeenCalledTimes(1);
+      expect(beforeDelivery.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]!);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+      expect(stack.server.cancels).toEqual([]);
+    } finally {
+      await connection!.session.close();
+    }
+  });
+
+  it("hands a restored task off again when the session stops before it ends", async () => {
+    const script = { statuses: [{ status: "working" }] };
+    const { stack, persisted } = await handedOffTask(script);
+    const connection = await attach(fakeModernTaskStack(script, stack.server, "second"));
+    let followed!: () => void;
+    const following = new Promise<void>((resolve) => { followed = resolve; });
+    const again: HandedOffTask[] = [];
+    const restarted = registry({ persist: (task) => again.push(task), onChange: () => followed() });
+    const beforeDelivery = vi.fn();
+    try {
+      const restored = restarted.tasks.restore(
+        { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard, beforeDelivery },
+        { taskSession: connection!.session, closed: () => false },
+      );
+      await following;
+      await restarted.tasks.handOffForShutdown();
+      restarted.owner.abort();
+      await restored;
+
+      expect(again).toEqual([expect.objectContaining({ key: "task-server/task-e2e-1" })]);
+      expect(stack.server.cancels).toEqual([]);
+      expect(beforeDelivery).not.toHaveBeenCalled();
+      expect(restarted.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      await connection!.session.close();
+    }
+  });
+
+  it("delivers nothing for a restore cut short by another session stop", async () => {
+    const script = { statuses: [{ status: "working" }] };
+    const { stack, persisted } = await handedOffTask(script);
+    const connection = await attach(fakeModernTaskStack(script, stack.server, "second"));
+    const { tasks, sendMessage, owner } = registry();
+    const beforeDelivery = vi.fn();
+
+    const restored = tasks.restore(
+      { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard, beforeDelivery },
+      { taskSession: connection!.session, closed: () => true },
+    );
+    owner.abort();
+    await connection!.session.close();
+    await restored;
+
+    expect(beforeDelivery).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

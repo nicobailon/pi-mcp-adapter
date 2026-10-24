@@ -49,7 +49,10 @@ import {
   restoreSessionApprovalState,
 } from "./session-approvals.ts";
 import { seedObservedOutputs } from "./output-shape.ts";
-import { BackgroundTaskRegistry } from "./task-jobs.ts";
+import { BackgroundTaskRegistry, type HandedOffTask, type RenderedTaskResult } from "./task-jobs.ts";
+import { MCP_TASK_CUSTOM_TYPE, pendingTaskEntry, pendingTasksFromBranch, settledTaskEntry } from "./task-entries.ts";
+import { resolveMcpResultContent } from "./tool-registrar.ts";
+import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { EXECUTOR_CATALOG_TTL_MS, fetchExecutorCatalog, isExecutorCatalogConnection, isExecutorCatalogEntry, type ExecutorCatalog } from "./executor-catalog.ts";
 export { getFailureAgeSeconds, getFailureMessage } from "./failure-backoff.ts";
 
@@ -144,12 +147,14 @@ export async function initializeMcp(
     // Synthetic/load-time contexts may not expose a session manager.
   }
   let sessionBranch: readonly unknown[] = [];
+  let sessionId: string | undefined;
   if (sessionManager) {
     try {
       sessionBranch = sessionManager.getBranch();
+      sessionId = sessionManager.getSessionId();
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      logger.debug(`MCP: could not read the active session branch for approval restore: ${detail}`);
+      logger.debug(`MCP: could not read the active session branch for restore: ${detail}`);
     }
   }
   const ui = rawUi ? createOwnedUi(rawUi, owner) : undefined;
@@ -273,16 +278,25 @@ export async function initializeMcp(
   };
   if (sessionManager) restoreSessionApprovalState(state, sessionBranch);
   // Elsewhere (print, json, and rpc, which is how subagents run) nobody waits for a later turn.
+  let restorePendingTasks: (() => Promise<void>) | undefined;
   if (hasUI && mode === "tui") {
+    const taskSessionId = sessionId;
+    const appendTaskEntry = taskSessionId !== undefined ? appendEntry : undefined;
     const backgroundTasks = new BackgroundTaskRegistry(manager, state.sendMessage!, owner.signal, () => {
       if (owner.isActive()) updateStatusBar(state);
-    });
+    }, appendTaskEntry && ((task) => appendTaskEntry(MCP_TASK_CUSTOM_TYPE, pendingTaskEntry(taskSessionId!, task))));
     state.backgroundTasks = backgroundTasks;
     manager.setConnectionReplacedListener?.((serverName, _stale, fresh) => backgroundTasks.handOver(serverName, {
       taskSession: fresh.taskSession,
       requestTimeoutMs: manager.getRequestOptions(serverName)?.timeout,
       closed: () => fresh.status === "closed",
     }));
+    const pendingTasks = appendTaskEntry ? pendingTasksFromBranch(sessionBranch, taskSessionId!) : [];
+    if (pendingTasks.length > 0) {
+      restorePendingTasks = () => restoreBackgroundTasks(state, backgroundTasks, pendingTasks, (key) => {
+        if (owner.isActive()) appendTaskEntry!(MCP_TASK_CUSTOM_TYPE, settledTaskEntry(taskSessionId!, key));
+      });
+    }
   }
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
   manager.setMetadataListChangedListener?.((serverName, reason) => {
@@ -616,8 +630,58 @@ export async function initializeMcp(
     ui?.setStatus("mcp", undefined);
   }
   publishMcpStatusSnapshot(state);
+  // Each restored task connects its own server, which may be lazy, so restoring runs after startup.
+  if (restorePendingTasks) void restorePendingTasks();
 
   return state;
+}
+
+/**
+ * Follows again the tasks this session handed off when it last stopped, and
+ * delivers each outcome once. `settle` records a task as settled before its outcome is sent.
+ */
+export async function restoreBackgroundTasks(
+  state: McpExtensionState,
+  registry: BackgroundTaskRegistry,
+  tasks: readonly HandedOffTask[],
+  settle: (key: string) => void,
+): Promise<void> {
+  const guardOptions = resolveMcpOutputGuardOptions(state.config.settings);
+  const guard = async (text: string): Promise<RenderedTaskResult> => {
+    const guarded = await guardMcpOutput([{ type: "text", text }], guardOptions);
+    return { content: guarded.content, details: guardedMcpDetails(guarded) };
+  };
+  // The call site's render, minus the observed output only a live call records.
+  const renderFor = (server: string) => async (result: Record<string, unknown>): Promise<RenderedTaskResult> => {
+    const appendStructuredContent = state.config.mcpServers[server]?.appendStructuredContent !== false;
+    const content = resolveMcpResultContent(result, state.owner?.signal, appendStructuredContent);
+    const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text", text: "(empty result)" }], {
+      ...guardOptions,
+      ...(result.isError ? { prefix: "Error: ", emptyTextFallback: "Tool execution failed" } : {}),
+    });
+    return { content: guarded.content, details: { ...(result.isError ? { error: "tool_error" } : {}), ...guardedMcpDetails(guarded) } };
+  };
+  await Promise.all(tasks.map(async (task) => {
+    const connected = await lazyConnect(state, task.server).catch(() => false);
+    const connection = connected ? state.manager.getConnection(task.server) : undefined;
+    if (connection) state.manager.incrementInFlight(task.server);
+    await registry.restore(
+      {
+        server: task.server,
+        tool: task.tool,
+        taskId: task.reference.taskId,
+        reference: task.reference,
+        render: renderFor(task.server),
+        guard,
+        beforeDelivery: () => settle(task.key),
+      },
+      {
+        taskSession: connection?.taskSession,
+        requestTimeoutMs: state.manager.getRequestOptions(task.server)?.timeout,
+        closed: () => connection?.status === "closed",
+      },
+    );
+  }));
 }
 
 export function markKeepAliveAfterConnect(state: McpExtensionState, serverName: string): void {

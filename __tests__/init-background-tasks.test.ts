@@ -18,6 +18,7 @@ vi.mock("../server-manager.ts", () => ({
     this.setElicitationConfig = vi.fn();
     this.getConnection = vi.fn();
     this.getAllConnections = vi.fn(() => new Map());
+    this.getRequestOptions = vi.fn();
     this.decrementInFlight = vi.fn();
     this.touch = vi.fn();
   }),
@@ -33,6 +34,10 @@ function context(mode: ExtensionMode, setStatus = vi.fn()): ExtensionContext {
     model: undefined,
     signal: undefined,
   } as unknown as ExtensionContext;
+}
+
+function sessionContext(sessionId: string, branch: unknown[]): ExtensionContext {
+  return { ...context("tui"), sessionManager: { getBranch: () => branch, getSessionId: () => sessionId } } as unknown as ExtensionContext;
 }
 
 function runningTask() {
@@ -72,5 +77,61 @@ describe("background MCP tasks in initializeMcp", () => {
 
     expect((await initializeMcp(api, context("tui"))).backgroundTasks).toBeDefined();
     expect((await initializeMcp(api, context("rpc"))).backgroundTasks).toBeUndefined();
+  });
+
+  const reference = { endpointId: "endpoint-1", generation: "v2", taskId: "t-1", originalOperation: "tools/call" };
+  const pendingEntry = { version: 1, kind: "pending", sessionId: "s-1", key: "demo/t-1", server: "demo", tool: "build", reference };
+  const render = async () => ({ content: [], details: {} });
+  const guard = async (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+
+  it("records a running task as pending in the stopping session instead of cancelling it", async () => {
+    const { initializeMcp } = await import("../init.ts");
+    const appendEntry = vi.fn();
+    const state = await initializeMcp({ getFlag: vi.fn(), sendMessage: vi.fn(), appendEntry } as unknown as ExtensionAPI, sessionContext("s-1", []));
+    const execution = {
+      kind: "task",
+      cancel: vi.fn(),
+      settle: () => new Promise(() => {}),
+      handoff: async (persist: (ref: typeof reference) => void) => persist(reference),
+      result: async () => ({ status: "failed" }),
+    };
+    const done = state.backgroundTasks!.start({ server: "demo", tool: "build", taskId: "t-1", execution: execution as any, render, guard });
+
+    await state.backgroundTasks!.handOffForShutdown();
+    await done;
+
+    expect(appendEntry).toHaveBeenCalledWith("mcp-task-v1", pendingEntry);
+    expect(execution.cancel).not.toHaveBeenCalled();
+  });
+
+  it("settles a pending task of this session before telling the model its outcome when the session starts again", async () => {
+    const { initializeMcp } = await import("../init.ts");
+    let delivered!: () => void;
+    const delivery = new Promise<void>((resolve) => { delivered = resolve; });
+    const appendEntry = vi.fn();
+    const sendMessage = vi.fn(() => delivered());
+    const branch = [{ type: "custom", customType: "mcp-task-v1", data: pendingEntry }];
+
+    await initializeMcp({ getFlag: vi.fn(), sendMessage, appendEntry } as unknown as ExtensionAPI, sessionContext("s-1", branch));
+    await delivery;
+
+    // The configured server is disabled, so the task can't be followed again.
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]![0]).toMatchObject({ customType: "mcp-task-result", details: { task: { id: "t-1", status: "unknown" } } });
+    expect(appendEntry).toHaveBeenCalledWith("mcp-task-v1", { version: 1, kind: "settled", sessionId: "s-1", key: "demo/t-1" });
+    expect(appendEntry.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]!);
+  });
+
+  it("leaves another session's pending tasks alone, so a fork does not resume them", async () => {
+    const { initializeMcp } = await import("../init.ts");
+    const appendEntry = vi.fn();
+    const sendMessage = vi.fn();
+    const branch = [{ type: "custom", customType: "mcp-task-v1", data: pendingEntry }];
+
+    const state = await initializeMcp({ getFlag: vi.fn(), sendMessage, appendEntry } as unknown as ExtensionAPI, sessionContext("fork", branch));
+
+    expect(state.backgroundTasks!.size).toBe(0);
+    expect(appendEntry).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

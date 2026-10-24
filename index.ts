@@ -1827,6 +1827,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     initStartedPromise = null;
     clearRetainedInitFailure();
 
+    // Hand running background tasks off to the session record first: the owner's abort below would cancel them.
+    if (currentState?.backgroundTasks?.size) await currentState.backgroundTasks.handOffForShutdown();
+
     // Abort before awaiting cleanup so delayed initialization cannot touch stale
     // Pi context after session shutdown.
     const stopOwner = owner?.stop("MCP extension session shutdown") ?? Promise.resolve();
