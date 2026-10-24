@@ -13,7 +13,7 @@ The `mcp` proxy tool, search, direct tools, approval prompts, and output limits.
 | Instructions | `mcp({ instructions: "name" })` |
 | Call | `mcp({ tool: "...", args: { key: "value" } })` |
 | Connect | `mcp({ connect: "server-name" })` |
-| Stop a background task | `mcp({ cancelTask: "<server>/<taskId>" })` ([Task-augmented tool calls](servers.md#task-augmented-tool-calls)) |
+| Stop a background task | `mcp({ cancelTask: "<server>/<taskId>" })`, while the `mcp` tool is available ([Task-augmented tool calls](servers.md#task-augmented-tool-calls)) |
 | UI messages | `mcp({ action: "ui-messages" })` |
 | Auth start | `mcp({ action: "auth-start", server: "name" })` |
 | Auth complete | `mcp({ action: "auth-complete", server: "name", args: { redirectUrl: "..." } })` |

@@ -406,7 +406,7 @@ export function createDirectToolExecutor(
           },
         });
         backgrounded = true;
-        const handle = backgroundTaskHandle(spec.serverName, spec.originalName, taskId);
+        const handle = backgroundTaskHandle(spec.serverName, spec.originalName, taskId, state.proxyToolAvailable?.() === true);
         return { content: handle.content, details: { server: spec.serverName, tool: spec.originalName, task: handle.task } };
       }
       const result = spec.executorPath !== undefined ? unwrapExecutorCallResult(spec.executorPath, callResult) : callResult;

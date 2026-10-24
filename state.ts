@@ -64,6 +64,8 @@ export interface McpExtensionState {
    * Unset, or false for a call without an id, means code made it.
    */
   calledByModel?: (toolCallId: string | undefined) => boolean;
+  /** Whether the `mcp` proxy tool is registered and active, so the model can call mcp({ cancelTask }). Unset means no. */
+  proxyToolAvailable?: () => boolean;
   /** The script tools `mcp({ search })`, `mcp({ describe })` and `mcp({ tool })` reach: config name, Pi name, entry. */
   listScriptTools?: () => ReadonlyArray<{ name: string; toolName: string; definition: ScriptToolDefinition }>;
   /** Install validations must not publish durable cache entries before config persistence. */

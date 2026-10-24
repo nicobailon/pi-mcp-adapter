@@ -1481,6 +1481,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       for (const [name, block] of nextState.blockedScriptTools ?? []) deliveredScriptToolIssues.add(describeBlockedScriptTool(name, block));
       nextState.deliversToScript = deliversToScript;
       nextState.calledByModel = (toolCallId) => toolCallId !== undefined && !calledByAnotherTool(toolCallId);
+      nextState.proxyToolAvailable = () => proxyToolRegistered && (getActiveToolsIfReady()?.includes("mcp") ?? true);
       nextState.listScriptTools = gatewayScriptTools;
       finalizationGuard = guard;
       finalizationRegistrations = registeredDuringFinalization;

@@ -1976,7 +1976,7 @@ export async function executeCall(
         },
       });
       backgrounded = true;
-      const handle = backgroundTaskHandle(serverName, toolMeta.originalName, taskId);
+      const handle = backgroundTaskHandle(serverName, toolMeta.originalName, taskId, state.proxyToolAvailable?.() === true);
       return { content: handle.content, details: { mode: "call", ...callIdentity, task: handle.task } };
     }
     const result = toolMeta.executorPath !== undefined ? unwrapExecutorCallResult(toolMeta.executorPath, callResult) : callResult;

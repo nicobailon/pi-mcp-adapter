@@ -50,6 +50,7 @@ function taskState(execution: object, options: { background?: boolean } = {}) {
     sendMessage,
     // The model made every call unless a test says otherwise; index.ts installs the real rule.
     calledByModel: () => true,
+    proxyToolAvailable: () => true,
     ...(options.background === false ? {} : { backgroundTasks: registry }),
   } as any;
   // Resolves once the registry has delivered the outcome and released the server.
@@ -230,6 +231,18 @@ describe("background MCP tasks through direct tools", () => {
 
     expect(execution.cancel).not.toHaveBeenCalled();
     expect(callTool.mock.calls[0]![2].signal!.aborted).toBe(false);
+    finish({ status: "completed", result: { content: [] } });
+    await delivered();
+  });
+
+  it("leaves out the cancel hint when the mcp tool is not available", async () => {
+    const { execution, finish } = pendingTask();
+    const { state, delivered } = taskState(execution);
+    state.proxyToolAvailable = () => false;
+
+    const result = await run(state);
+
+    expect(result.content).toEqual([{ type: "text", text: "Task t-1 started on demo/build. Do not call the tool again; the result arrives later as an mcp-task-result message." }]);
     finish({ status: "completed", result: { content: [] } });
     await delivered();
   });

@@ -1,11 +1,15 @@
 import { TaskExecutionClosedError, taskViewFromExecutionEvent } from "@modelcontextprotocol/ext-tasks/client";
 import { logger } from "./logger.js";
-/** The tool result a call returns once its task runs in the background. */
-export function backgroundTaskHandle(server, tool, taskId) {
+/**
+ * The tool result a call returns once its task runs in the background. `cancelHint` names
+ * mcp({ cancelTask }) only while the `mcp` tool exists to take it.
+ */
+export function backgroundTaskHandle(server, tool, taskId, cancelHint) {
+    const hint = cancelHint ? ` To stop it, call mcp({ cancelTask: ${JSON.stringify(`${server}/${taskId}`)} }).` : "";
     return {
         content: [{
                 type: "text",
-                text: `Task ${taskId} started on ${server}/${tool}. Do not call the tool again; the result arrives later as an mcp-task-result message. To stop it, call mcp({ cancelTask: ${JSON.stringify(`${server}/${taskId}`)} }).`,
+                text: `Task ${taskId} started on ${server}/${tool}. Do not call the tool again; the result arrives later as an mcp-task-result message.${hint}`,
             }],
         task: { id: taskId, server, tool, status: "working" },
     };
