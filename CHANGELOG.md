@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pi-mcp-adapter doctor`, the shell command that checks each configured server, failed to start with "Unable to load doctor command modules" when the adapter was installed with `pi install`, the normal way to install it. It exited 1, the same as when a server fails. It now starts and checks your servers. Thanks to [@felipe-saavedra](https://github.com/felipe-saavedra) for [#880](https://github.com/nicobailon/pi-mcp-adapter/issues/880).
 - When a long-running MCP job asked Pi's model for a reply, pressing Esc on whatever turn was running at that moment could cut that reply off, even though the job had nothing to do with that turn. The reply now runs until it finishes, the job ends or is stopped with `/mcp-adapter tasks stop`, or the session ends. See [#886](https://github.com/nicobailon/pi-mcp-adapter/issues/886).
 
 ## [6.0.0] - 2026-10-22

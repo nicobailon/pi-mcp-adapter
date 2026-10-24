@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { execFile, spawnSync } from "node:child_process";
 import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -758,5 +758,19 @@ describe("cli doctor", { timeout: 30_000 }, () => {
     expect(result.stdout).toContain("off: disabled");
     const pid = Number(readFileSync(pidFile, "utf-8"));
     expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+  });
+
+  it("runs on a Pi install, where the typebox peer doesn't resolve", async () => {
+    const context = setup({
+      mcpServers: { tools: { command: process.execPath, args: [fileURLToPath(fixtureUrl)] } },
+      scriptTools: { echo: { description: "Echo", file: "echo.js", inputSchema: { type: "object" } } },
+    });
+    const hook = pathToFileURL(resolve("__tests__/fixtures/no-typebox-hook.mjs")).href;
+
+    const result = await doctor([], context, { NODE_OPTIONS: `--import=${hook}` });
+
+    expect(result.stderr).not.toContain("Unable to load");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("tools: ok, 1 tool");
   });
 });

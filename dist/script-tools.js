@@ -1,7 +1,13 @@
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { Check } from "typebox/value";
 import { normalizeDirectToolInputSchema } from "./utils.js";
+// typebox is a peer that only Pi's loader supplies: `pi install` leaves it out, so the doctor CLI,
+// which loads configs outside Pi, can't import it. There the inputSchema check below is skipped.
+const Check = await import("typebox/value").then((module) => module.Check, (error) => {
+    if (error.code === "ERR_MODULE_NOT_FOUND")
+        return undefined;
+    throw error;
+});
 // The name becomes the tail of `mcp__script__<name>`; 48 characters keep that within 64.
 const SCRIPT_TOOL_NAME = /^[a-z][a-z0-9_]{0,47}$/;
 const SCRIPT_TOOL_KEYS = new Set(["description", "file", "inputSchema", "declare"]);
@@ -47,7 +53,7 @@ export function validateScriptToolEntry(name, value, sourceDir) {
         }
         try {
             // The validator a call's arguments go through, on the schema Pi is given.
-            Check(normalizeDirectToolInputSchema(inputSchema), {});
+            Check?.(normalizeDirectToolInputSchema(inputSchema), {});
         }
         catch (error) {
             return `inputSchema is not a usable JSON Schema (${error instanceof Error ? error.message : String(error)})`;
