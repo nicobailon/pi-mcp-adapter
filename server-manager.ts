@@ -1366,8 +1366,9 @@ export class McpServerManager {
                     handleSamplingRequest({
                       ...this.samplingConfig!,
                       serverName: name,
-                      // Cancelling the task should also stop the local sampling run.
-                      getSignal: () => combineAbortSignals(this.samplingConfig!.getSignal(), signal),
+                      // The task's input signal ends when the task is cancelled, closed or settles, and a
+                      // blocking call closes its execution on abort, so the current turn's signal stays out.
+                      getSignal: () => combineAbortSignals(this.samplingConfig!.ownerSignal, signal),
                     }, request),
                 }
               : {}),

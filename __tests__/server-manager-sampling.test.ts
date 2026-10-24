@@ -218,6 +218,45 @@ describe("McpServerManager sampling", () => {
     expect(mocks.clients[0].setRequestHandler).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds a task's sampling by the task, not the current turn, while plain sampling follows the turn", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const turn = new AbortController();
+    const turnCancelled = new Error("turn cancelled");
+    const owner = new AbortController();
+    manager.setSamplingConfig({
+      autoApprove: true,
+      modelRegistry: {
+        getAvailable: () => [{ provider: "test", id: "model", name: "model" }],
+        // The run ends only when its signal aborts.
+        streamSimple: (_model: unknown, _context: unknown, options: { signal: AbortSignal }) => ({
+          result: () => new Promise((_resolve, reject) => {
+            options.signal.addEventListener("abort", () => reject(new Error("sampling aborted")), { once: true });
+          }),
+        }),
+      } as any,
+      getCurrentModel: () => undefined,
+      getThinkingLevel: () => "off",
+      getSignal: () => turn.signal,
+      ownerSignal: owner.signal,
+    });
+    await manager.connect("demo", { command: "node", args: ["server.js"] });
+    const request = { method: "sampling/createMessage", params: { messages: [{ role: "user", content: { type: "text", text: "hi" } }], maxTokens: 10 } };
+
+    const task = new AbortController();
+    const taskRun = mocks.attachTaskSession.mock.calls[0][0].onSampling(request, task.signal);
+    const settled = vi.fn();
+    taskRun.then(settled, settled);
+    turn.abort(turnCancelled);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).not.toHaveBeenCalled();
+    task.abort();
+    await expect(taskRun).rejects.toThrow("sampling aborted");
+
+    const [, plainHandler] = mocks.clients[0].setRequestHandler.mock.calls.find(([method]: [string]) => method === "sampling/createMessage");
+    await expect(plainHandler(request)).rejects.toBe(turnCancelled);
+  });
+
   it("does not advertise sampling when no sampling config is set", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();

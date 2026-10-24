@@ -187,6 +187,7 @@ export async function initializeMcp(
       getSignal: () => owner.isActive()
         ? combineAbortSignals(owner.signal, ctx.signal)
         : owner.signal,
+      ownerSignal: owner.signal,
     });
   }
   const elicitationEnabled = config.settings?.elicitation !== false && hasUI;

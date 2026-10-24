@@ -675,6 +675,40 @@ describe("attachTaskSession", () => {
     }
   });
 
+  it("ends a blocking call's task sampling when the call is aborted", async () => {
+    const { client, transport } = fakeModernTaskStack({
+      statuses: [{
+        status: "input_required",
+        inputRequests: {
+          reply: {
+            method: "sampling/createMessage",
+            params: { messages: [{ role: "user", content: { type: "text", text: "hi" } }], maxTokens: 10 },
+          },
+        },
+      }],
+    });
+    let samplingSignal: AbortSignal | undefined;
+    let samplingStarted!: () => void;
+    const started = new Promise<void>(resolve => { samplingStarted = resolve; });
+    const onSampling = vi.fn((_request: unknown, signal?: AbortSignal) => {
+      samplingSignal = signal;
+      samplingStarted();
+      return new Promise<never>(() => {});
+    });
+    const attachment = await attachTaskSession({ client, serverName: "task-server", definition, transport, clientInfo, clientCapabilities, onSampling });
+    const controller = new AbortController();
+    try {
+      const call = callToolViaTaskSession(attachment!.session, { name: "ask_model", args: {}, signal: controller.signal });
+      await started;
+      expect(samplingSignal?.aborted).toBe(false);
+      controller.abort();
+      await expect(call).rejects.toThrow();
+      expect(samplingSignal?.aborted).toBe(true);
+    } finally {
+      await attachment!.session.close();
+    }
+  });
+
   it("answers a task-time roots request with the session roots", async () => {
     const roots = [{ uri: "file:///work/project", name: "project" }];
     const { client, transport, server } = fakeModernTaskStack({
