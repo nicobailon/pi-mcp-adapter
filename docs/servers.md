@@ -112,8 +112,9 @@ These still cancel a running task with `tasks/cancel`, and the model is told onc
 
 - `/mcp-adapter tasks stop <server>/<taskId>` and `mcp({ cancelTask })`
 - `/mcp-adapter logout <server>`, which closes the connection to clear its credentials
-- `/mcp-adapter disable <server>`, which turns the server off, and removing the server from the config
 - a connection that closes with no new connection to replace it, such as when the server process exits
+
+Disabling a server with `/mcp-adapter disable <server>`, or removing it from the config, takes effect at `/reload`. The reload saves the server's running tasks like any other session stop, and when the session starts again without that server, the model is told the outcome is unknown. No cancel is sent, so the task may still finish on the server.
 
 When the adapter can't follow a task after a reconnect or a restart, the model gets one message: `MCP task <id> (<server>/<tool>) outcome unknown.`, the reason, and a note that calling the tool again may repeat the work. The reason is one of these:
 
