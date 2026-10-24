@@ -1345,6 +1345,44 @@ describe("background tasks across a session stop and start", () => {
       expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
     });
 
+    it("returns from a hand-over only once a restore's execution on the old connection settled, so closing it sends no cancel", async () => {
+      const log: string[] = [];
+      const { tasks, sendMessage } = registry();
+      // Modelled on ext-tasks: aborting the resume's signal or detaching settles the execution a few turns later,
+      // and closing the old task session cancels it while it is still unsettled.
+      let settled = false;
+      let settle!: () => void;
+      const outcome = new Promise((resolve) => {
+        settle = () => setImmediate(() => {
+          settled = true;
+          resolve({ status: "failed", error: new TaskFailedError("closed", {}, { cause: new TaskExecutionClosedError() }) });
+        });
+      });
+      const stale = { kind: "task", detach: async () => settle(), result: () => outcome };
+      const closeOld = () => { if (!settled) log.push("stale.cancel"); };
+      let answer!: (execution: unknown) => void;
+      let asked!: () => void;
+      const resumeAsked = new Promise<void>((resolve) => { asked = resolve; });
+      const taskSession = {
+        resumeTask: (_reference: unknown, options: { signal: AbortSignal }) => {
+          options.signal.addEventListener("abort", () => settle(), { once: true });
+          return new Promise((resolve) => { answer = resolve; asked(); });
+        },
+      } as unknown as TaskEnabledSession;
+      const restored = tasks.restore(restoredTask("t-1"), { taskSession, closed: () => false });
+      await resumeAsked;
+      const fresh = controlledExecution(log, "fresh");
+
+      answer(stale);
+      await tasks.handOver("task-server", { taskSession: { resumeTask: async () => fresh.execution } as unknown as TaskEnabledSession, closed: () => false });
+      closeOld();
+      fresh.finish(completed);
+      await restored;
+
+      expect(cancels(log)).toEqual([]);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
     it("leaves a restore still resuming pending, without resuming it again, when its connection is replaced while the session stops", async () => {
       const log: string[] = [];
       const persisted: HandedOffTask[] = [];

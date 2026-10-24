@@ -170,11 +170,13 @@ export class BackgroundTaskRegistry {
      * to `running`); one that lost ownership only detaches an execution it alone
      * holds, and releases the in-flight count only if nobody took the entry over.
      * Taking an entry out of `running` ends the contest for it, since every
-     * take-over starts from `running`. Once the session starts stopping, it owns
-     * every task, including one started after: it takes over those in `running`,
-     * persists one that starts, and every other continuation (a restore or resume
-     * in flight, a follow about to start) loses ownership, so a restored record
-     * stays pending. A stopping session persists its tasks and never cancels them.
+     * take-over starts from `running`, or from `resuming` for a restore still
+     * resuming, and an entry leaving `running` never re-enters either. Once the
+     * session starts stopping, it owns every task, including one started after:
+     * it takes over those in `running`, persists one that starts, and every other
+     * continuation (a restore or resume in flight, a follow about to start) loses
+     * ownership, so a restored record stays pending. A stopping session persists
+     * its tasks and never cancels them.
      */
     takeOver(entry) {
         entry.generation += 1;
