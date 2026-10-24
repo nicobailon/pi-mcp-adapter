@@ -1480,6 +1480,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       // initializeMcp already warned about each project script tool that trust blocked.
       for (const [name, block] of nextState.blockedScriptTools ?? []) deliveredScriptToolIssues.add(describeBlockedScriptTool(name, block));
       nextState.deliversToScript = deliversToScript;
+      nextState.calledByModel = (toolCallId) => toolCallId !== undefined && !calledByAnotherTool(toolCallId);
       nextState.listScriptTools = gatewayScriptTools;
       finalizationGuard = guard;
       finalizationRegistrations = registeredDuringFinalization;
@@ -1955,7 +1956,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   /**
-   * Whether a tool other than the model or the adapter's proxies called `toolCallId`, for script tools.
+   * Whether a tool other than the model or the adapter's proxies called `toolCallId`, for script tools
+   * and for keeping such calls out of the background.
    * Pi forms every nested call id as `<parent>/<n>`; under MCP_DIRECT_TOOLS=__none__ there is no caller
    * record, so the id shape is the only signal. That holds for a call whose record is already gone too.
    */

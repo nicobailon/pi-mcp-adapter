@@ -148,6 +148,19 @@ describe("runtime MCP tool-call event", () => {
     expect(mocks.executeCall).toHaveBeenCalledWith(state, "search", undefined, undefined, expect.any(Function), undefined, "script");
   });
 
+  it("counts only a top-level call id as the model's when no caller was recorded", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeCall.mockResolvedValue({ content: [], details: { mode: "call" } });
+    const { handlers, callTool } = await startAdapter();
+    await handlers.get("session_start")?.({}, {});
+    await callTool({ version: 1, tool: "search" });
+
+    expect(state.calledByModel("toolu_01abc")).toBe(true);
+    expect(state.calledByModel("codemode/1")).toBe(false);
+    expect(state.calledByModel(undefined)).toBe(false);
+  });
+
   it("refuses without a live session and never starts initialization", async () => {
     const { handlers, callTool } = await startAdapter();
 

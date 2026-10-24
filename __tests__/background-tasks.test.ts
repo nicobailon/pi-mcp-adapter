@@ -44,6 +44,8 @@ function taskState(execution: object, options: { background?: boolean } = {}) {
     failureTracker: new Map(),
     ui: undefined,
     sendMessage,
+    // The model made every call unless a test says otherwise; index.ts installs the real rule.
+    calledByModel: () => true,
     ...(options.background === false ? {} : { backgroundTasks: registry }),
   } as any;
   // Resolves once the registry has delivered the outcome and released the server.
@@ -74,7 +76,10 @@ describe("background MCP tasks through the proxy", () => {
         customType: "mcp-task-result",
         display: true,
         content: [{ type: "text", text: "MCP task t-1 (demo/build) completed." }, { type: "text", text: "build ok" }],
-        details: expect.objectContaining({ task: { id: "t-1", server: "demo", tool: "build", status: "completed" } }),
+        details: {
+          task: { id: "t-1", server: "demo", tool: "build", status: "completed" },
+          mcpResult: { content: [{ type: "text", text: "build ok" }] },
+        },
       },
       { triggerTurn: true, deliverAs: "followUp" },
     );
@@ -129,7 +134,7 @@ describe("background MCP tasks through the proxy", () => {
     });
   });
 
-  it("waits for the result inline outside the interactive terminal and for script calls", async () => {
+  it("waits for the result inline outside the interactive terminal", async () => {
     const outcome = { status: "completed" as const, result: { content: [{ type: "text", text: "build ok" }] } };
 
     const nonTui = pendingTask();
@@ -137,13 +142,26 @@ describe("background MCP tasks through the proxy", () => {
     nonTui.finish(outcome);
     const inline = await executeCall(plain.state, "demo_build", {});
     expect(inline.content).toEqual([{ type: "text", text: "build ok" }]);
+  });
 
-    const scripted = pendingTask();
-    const script = taskState(scripted.execution);
-    script.state.deliversToScript = (id: string | undefined) => id === "codemode/1";
-    scripted.finish(outcome);
-    const scriptResult = await executeCall(script.state, "demo_build", {}, undefined, undefined, undefined, undefined, undefined, "codemode/1");
+  it("returns the result inline when code made the call", async () => {
+    const outcome = { status: "completed" as const, result: { content: [{ type: "text", text: "build ok" }] } };
+
+    // The runtime tool-call event: origin "script" and no tool call id.
+    const event = pendingTask();
+    const fromExtension = taskState(event.execution);
+    event.finish(outcome);
+    const eventResult = await executeCall(fromExtension.state, "demo_build", {}, undefined, undefined, undefined, "script");
+    expect(eventResult.content).toEqual([{ type: "text", text: "build ok" }]);
+    expect(fromExtension.sendMessage).not.toHaveBeenCalled();
+
+    // A codemode call, which the adapter's calledByModel reports as not the model's.
+    const nested = pendingTask();
+    const fromScript = taskState(nested.execution);
+    fromScript.state.calledByModel = (id: string | undefined) => id !== "codemode/1";
+    nested.finish(outcome);
+    const scriptResult = await executeCall(fromScript.state, "demo_build", {}, undefined, undefined, undefined, undefined, undefined, "codemode/1");
     expect(scriptResult.content).toEqual([{ type: "text", text: "build ok" }]);
-    expect(script.sendMessage).not.toHaveBeenCalled();
+    expect(fromScript.sendMessage).not.toHaveBeenCalled();
   });
 });

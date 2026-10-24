@@ -1870,7 +1870,8 @@ export async function executeCall(
     const callParams = toolMeta.executorPath !== undefined
       ? executorCallParams(toolMeta.executorPath, normalizedArgs)
       : { name: toolMeta.originalName, arguments: normalizedArgs };
-    const renderResult = async (result: Record<string, unknown>) => {
+    // A delivered task result names its call in details.task instead of the call identity.
+    const renderResult = async (result: Record<string, unknown>, identity: Record<string, unknown> = { mode: "call", ...callIdentity }) => {
       const content = resolveMcpResultContent(result, state.owner?.signal, appendStructuredContent);
       const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
       const guarded = await guardMcpOutput(outputContent, {
@@ -1880,11 +1881,13 @@ export async function executeCall(
       });
       return {
         content: guarded.content,
-        details: { mode: "call", ...(result.isError ? { error: "tool_error" } : {}), ...callIdentity, ...guardedMcpDetails(guarded) },
+        details: { ...identity, ...(result.isError ? { error: "tool_error" } : {}), ...guardedMcpDetails(guarded) },
       };
     };
-    // Blocking callers need the value itself: scripts, internal consumers, and the MCP-UI and Executor flows.
-    const backgroundTasks = !toScript && !internalDelivery && !uiResourceUri && toolMeta.executorPath === undefined
+    // Only a call the model made goes to the background; code callers (scripts, other extensions,
+    // internal consumers) and the MCP-UI and Executor flows need the value itself.
+    const backgroundTasks = origin !== "script" && state.calledByModel?.(toolCallId) === true
+      && !internalDelivery && !uiResourceUri && toolMeta.executorPath === undefined
       ? state.backgroundTasks
       : undefined;
     let startedTask = undefined as Extract<StartedToolCall, { kind: "task" }> | undefined;
@@ -1938,7 +1941,7 @@ export async function executeCall(
         execution,
         render: async (result) => {
           if (!result.isError) recordOutput(result);
-          return renderResult(result);
+          return renderResult(result, {});
         },
       });
       backgrounded = true;
