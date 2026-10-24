@@ -116,9 +116,9 @@ export type StartedToolCall = {
 };
 /**
  * Like callToolViaTaskSession, but returns a task-backed execution as soon as
- * the server hands out its task instead of waiting for it. The caller owns the
- * returned execution. Aborting `signal` before the handle arrives cancels as
- * today; aborting it afterwards no longer touches the task.
+ * the server hands out its task. The caller owns the returned execution.
+ * Aborting `signal` before the handle arrives cancels the task; aborting it
+ * afterwards doesn't touch it.
  */
 export declare function startToolViaTaskSession(session: TaskEnabledSession, options: TaskToolCallOptions): Promise<StartedToolCall>;
 export {};

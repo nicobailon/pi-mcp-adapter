@@ -1,5 +1,15 @@
 import { TaskExecutionClosedError, taskViewFromExecutionEvent } from "@modelcontextprotocol/ext-tasks/client";
 import { logger } from "./logger.js";
+/** The tool result a call returns once its task runs in the background. */
+export function backgroundTaskHandle(server, tool, taskId) {
+    return {
+        content: [{
+                type: "text",
+                text: `Task ${taskId} started on ${server}/${tool}. Do not call the tool again; the result arrives later as an mcp-task-result message.`,
+            }],
+        task: { id: taskId, server, tool, status: "working" },
+    };
+}
 /**
  * Tool calls whose server answered with a task. Each runs to settlement here,
  * holding its server's in-flight count, and its outcome reaches the model as
@@ -12,9 +22,7 @@ export class BackgroundTaskRegistry {
     ownerSignal;
     onChange;
     running = new Map();
-    constructor(manager, sendMessage, ownerSignal, 
-    /** Called when a task starts or ends. */
-    onChange = () => { }) {
+    constructor(manager, sendMessage, ownerSignal, onChange = () => { }) {
         this.manager = manager;
         this.sendMessage = sendMessage;
         this.ownerSignal = ownerSignal;
@@ -26,7 +34,7 @@ export class BackgroundTaskRegistry {
     list() {
         return [...this.running.values()].map(({ info }) => ({ ...info }));
     }
-    /** Asks the server to cancel the task. Resolves false for an unknown key; rejects when the cancel request fails. */
+    /** Resolves false for an unknown key; rejects when the cancel request fails. */
     async stop(key) {
         const entry = this.running.get(key);
         if (entry === undefined)
@@ -42,7 +50,7 @@ export class BackgroundTaskRegistry {
     start(task) {
         const key = `${task.server}/${task.taskId}`;
         const entry = {
-            info: { key, server: task.server, tool: task.tool, taskId: task.taskId, status: "working" },
+            info: { key, tool: task.tool, status: "working" },
             execution: task.execution,
             stopRequested: false,
         };

@@ -18,6 +18,7 @@ import { formatAuthRequiredMessage, formatMcpStatus, normalizeToolArguments, res
 import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { callToolViaTaskSession, startToolViaTaskSession, type StartedToolCall } from "./mcp-tasks.ts";
+import { backgroundTaskHandle } from "./task-jobs.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses, isExecutorConnection } from "./executor-pauses.ts";
 import { executorCallParams, executorUnknownToolMatches, executorUnknownToolText, unwrapExecutorCallResult } from "./executor-app-tools.ts";
@@ -1871,11 +1872,16 @@ export async function executeCall(
       ? executorCallParams(toolMeta.executorPath, normalizedArgs)
       : { name: toolMeta.originalName, arguments: normalizedArgs };
     // A delivered task result names its call in details.task instead of the call identity.
-    const renderResult = async (result: Record<string, unknown>, identity: Record<string, unknown> = { mode: "call", ...callIdentity }) => {
+    const renderResult = async (
+      result: Record<string, unknown>,
+      identity: Record<string, unknown> = { mode: "call", ...callIdentity },
+      suffix?: string,
+    ) => {
       const content = resolveMcpResultContent(result, state.owner?.signal, appendStructuredContent);
       const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
       const guarded = await guardMcpOutput(outputContent, {
         ...outputGuardOptions,
+        ...(suffix === undefined ? {} : { suffix }),
         ...(result.isError ? { prefix: "Error: ", emptyTextFallback: "Tool execution failed" } : {}),
         rawMcpResult: toScript ? undefined : result,
       });
@@ -1933,10 +1939,9 @@ export async function executeCall(
     );
     if (startedTask !== undefined) {
       const { taskId, execution } = startedTask;
-      const tool = toolMeta.originalName;
       void backgroundTasks!.start({
         server: serverName,
-        tool,
+        tool: toolMeta.originalName,
         taskId,
         execution,
         render: async (result) => {
@@ -1945,13 +1950,8 @@ export async function executeCall(
         },
       });
       backgrounded = true;
-      return {
-        content: [{
-          type: "text" as const,
-          text: `Task ${taskId} started on ${serverName}/${tool}. Do not call the tool again; the result arrives later as an mcp-task-result message.`,
-        }],
-        details: { mode: "call", ...callIdentity, task: { id: taskId, server: serverName, tool, status: "working" } },
-      };
+      const handle = backgroundTaskHandle(serverName, toolMeta.originalName, taskId);
+      return { content: handle.content, details: { mode: "call", ...callIdentity, task: handle.task } };
     }
     const result = toolMeta.executorPath !== undefined ? unwrapExecutorCallResult(toolMeta.executorPath, callResult) : callResult;
     const executorMatches = toolMeta.executorPath !== undefined ? executorUnknownToolMatches(toolMeta.executorPath, callResult) : undefined;
@@ -1974,24 +1974,9 @@ export async function executeCall(
       return { content: [], details: { mode: "call", ...callIdentity } };
     }
 
-    if (uiResourceUri) {
-      if (result.isError) return await renderResult(result as Record<string, unknown>);
-
-      const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
-      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-      const uiSummary = summarizeUiSessionResult(uiSession);
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiSummary.message}`, rawMcpResult: toScript ? undefined : result });
-      return {
-        content: guarded.content,
-        details: {
-          mode: "call",
-          ...guardedMcpDetails(guarded),
-          ...callIdentity,
-          uiOpen: uiSummary.uiOpen,
-          uiViewer: uiSummary.uiViewer,
-          uiUrl: uiSummary.uiUrl,
-        },
-      };
+    if (uiResourceUri && !result.isError) {
+      const { message, uiOpen, uiViewer, uiUrl } = summarizeUiSessionResult(uiSession);
+      return await renderResult(result as Record<string, unknown>, { mode: "call", ...callIdentity, uiOpen, uiViewer, uiUrl }, `\n\n${message}`);
     }
 
     return await renderResult(result as Record<string, unknown>);

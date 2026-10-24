@@ -16,6 +16,7 @@ import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl, wi
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { callToolViaTaskSession, startToolViaTaskSession, type StartedToolCall } from "./mcp-tasks.ts";
+import { backgroundTaskHandle } from "./task-jobs.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses, isExecutorConnection } from "./executor-pauses.ts";
 import { executorCallParams, executorUnknownToolMatches, executorUnknownToolText, unwrapExecutorCallResult } from "./executor-app-tools.ts";
@@ -333,10 +334,11 @@ export function createDirectToolExecutor(
       const callParams = spec.executorPath !== undefined
         ? executorCallParams(spec.executorPath, normalizedParams)
         : { name: spec.originalName, arguments: normalizedParams };
-      const guardResult = (result: Record<string, unknown>) => {
+      const guardResult = (result: Record<string, unknown>, suffix?: string) => {
         const content = resolveMcpResultContent(result, state.owner?.signal, appendStructuredContent);
         return guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }], {
           ...outputGuardOptions,
+          ...(suffix === undefined ? {} : { suffix }),
           ...(result.isError ? { prefix: "Error: ", emptyTextFallback: "Tool execution failed" } : {}),
           ...(rawDetails ? { rawMcpResult: result } : {}),
         });
@@ -388,11 +390,9 @@ export function createDirectToolExecutor(
       );
       if (startedTask !== undefined) {
         const { taskId, execution } = startedTask;
-        const server = spec.serverName;
-        const tool = spec.originalName;
         void backgroundTasks!.start({
-          server,
-          tool,
+          server: spec.serverName,
+          tool: spec.originalName,
           taskId,
           execution,
           render: async (result) => {
@@ -402,13 +402,8 @@ export function createDirectToolExecutor(
           },
         });
         backgrounded = true;
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Task ${taskId} started on ${server}/${tool}. Do not call the tool again; the result arrives later as an mcp-task-result message.`,
-          }],
-          details: { server, tool, task: { id: taskId, server, tool, status: "working" } },
-        };
+        const handle = backgroundTaskHandle(spec.serverName, spec.originalName, taskId);
+        return { content: handle.content, details: { server: spec.serverName, tool: spec.originalName, task: handle.task } };
       }
       const result = spec.executorPath !== undefined ? unwrapExecutorCallResult(spec.executorPath, callResult) : callResult;
       const executorMatches = spec.executorPath !== undefined ? executorUnknownToolMatches(spec.executorPath, callResult) : undefined;
@@ -432,14 +427,8 @@ export function createDirectToolExecutor(
       }
 
       if (hasUi) {
-        const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
-        const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
         const uiSummary = summarizeUiSessionResult(uiSession);
-        const guarded = await guardMcpOutput(outputContent, {
-          ...outputGuardOptions,
-          suffix: `\n\n${uiSummary.message}`,
-          ...(rawDetails ? { rawMcpResult: result } : {}),
-        });
+        const guarded = await guardResult(result as Record<string, unknown>, `\n\n${uiSummary.message}`);
         return {
           content: guarded.content,
           details: {

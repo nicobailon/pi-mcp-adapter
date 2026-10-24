@@ -19,12 +19,23 @@ export interface BackgroundTaskStart {
 export interface BackgroundTaskInfo {
     /** `<server>/<taskId>`, the name `/mcp tasks stop` takes. */
     key: string;
-    server: string;
     tool: string;
-    taskId: string;
     status: TaskState;
     statusMessage?: string;
 }
+/** The tool result a call returns once its task runs in the background. */
+export declare function backgroundTaskHandle(server: string, tool: string, taskId: string): {
+    content: {
+        type: "text";
+        text: string;
+    }[];
+    task: {
+        id: string;
+        server: string;
+        tool: string;
+        status: "working";
+    };
+};
 /**
  * Tool calls whose server answered with a task. Each runs to settlement here,
  * holding its server's in-flight count, and its outcome reaches the model as
@@ -35,15 +46,12 @@ export declare class BackgroundTaskRegistry {
     private readonly manager;
     private readonly sendMessage;
     private readonly ownerSignal;
-    /** Called when a task starts or ends. */
     private readonly onChange;
     private readonly running;
-    constructor(manager: Pick<McpServerManager, "decrementInFlight" | "touch">, sendMessage: SendMessageFn, ownerSignal: AbortSignal, 
-    /** Called when a task starts or ends. */
-    onChange?: () => void);
+    constructor(manager: Pick<McpServerManager, "decrementInFlight" | "touch">, sendMessage: SendMessageFn, ownerSignal: AbortSignal, onChange?: () => void);
     get size(): number;
     list(): BackgroundTaskInfo[];
-    /** Asks the server to cancel the task. Resolves false for an unknown key; rejects when the cancel request fails. */
+    /** Resolves false for an unknown key; rejects when the cancel request fails. */
     stop(key: string): Promise<boolean>;
     /**
      * Takes over the call's in-flight count. Resolves once the outcome is

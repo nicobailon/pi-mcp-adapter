@@ -321,25 +321,26 @@ function toCallToolError(error, signal) {
  * underlying JSON-RPC error, and aborting cancels the remote task.
  */
 export async function callToolViaTaskSession(session, options) {
-    const { signal } = options;
-    let execution;
+    return settleAsCallToolResult(await openToolCall(session, options, options.signal), options.name, options.signal);
+}
+/** Sends the call with `lifetime` as the execution's signal; errors are mapped the way Client.callTool throws them. */
+async function openToolCall(session, options, lifetime) {
     try {
-        execution = await session.callTool(options.name, options.args, {
+        return await session.callTool(options.name, options.args, {
             ...(options.meta === undefined ? {} : { metadata: options.meta }),
-            ...(signal === undefined ? {} : { signal }),
+            ...(lifetime === undefined ? {} : { signal: lifetime }),
             ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
         });
     }
     catch (error) {
-        throw toCallToolError(error, signal);
+        throw toCallToolError(error, options.signal);
     }
-    return settleAsCallToolResult(execution, options.name, signal);
 }
 /**
  * Like callToolViaTaskSession, but returns a task-backed execution as soon as
- * the server hands out its task instead of waiting for it. The caller owns the
- * returned execution. Aborting `signal` before the handle arrives cancels as
- * today; aborting it afterwards no longer touches the task.
+ * the server hands out its task. The caller owns the returned execution.
+ * Aborting `signal` before the handle arrives cancels the task; aborting it
+ * afterwards doesn't touch it.
  */
 export async function startToolViaTaskSession(session, options) {
     const { signal } = options;
@@ -354,14 +355,7 @@ export async function startToolViaTaskSession(session, options) {
         signal?.addEventListener("abort", forwardAbort, { once: true });
     let execution;
     try {
-        execution = await session.callTool(options.name, options.args, {
-            ...(options.meta === undefined ? {} : { metadata: options.meta }),
-            signal: callController.signal,
-            ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
-        });
-    }
-    catch (error) {
-        throw toCallToolError(error, signal);
+        execution = await openToolCall(session, options, callController.signal);
     }
     finally {
         signal?.removeEventListener("abort", forwardAbort);

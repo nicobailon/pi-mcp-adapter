@@ -3746,7 +3746,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(commandDef.getArgumentCompletions("jev s")).toEqual([
       { value: "jev setup", label: "setup — Configure Jev semantic search" },
     ]);
-    state.backgroundTasks = { list: () => [{ key: "github/t-1", server: "github", tool: "build", taskId: "t-1", status: "working" }] };
+    state.backgroundTasks = { list: () => [{ key: "github/t-1", tool: "build", status: "working" }] };
     expect(commandDef.getArgumentCompletions("tasks ")).toEqual([
       { value: "tasks stop ", label: "stop — Stop a background MCP task" },
     ]);

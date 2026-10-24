@@ -23,9 +23,7 @@ export interface BackgroundTaskStart {
 export interface BackgroundTaskInfo {
   /** `<server>/<taskId>`, the name `/mcp tasks stop` takes. */
   key: string;
-  server: string;
   tool: string;
-  taskId: string;
   status: TaskState;
   statusMessage?: string;
 }
@@ -34,6 +32,17 @@ interface RunningTask {
   info: BackgroundTaskInfo;
   execution: BackgroundToolExecution;
   stopRequested: boolean;
+}
+
+/** The tool result a call returns once its task runs in the background. */
+export function backgroundTaskHandle(server: string, tool: string, taskId: string) {
+  return {
+    content: [{
+      type: "text" as const,
+      text: `Task ${taskId} started on ${server}/${tool}. Do not call the tool again; the result arrives later as an mcp-task-result message.`,
+    }],
+    task: { id: taskId, server, tool, status: "working" as const },
+  };
 }
 
 /**
@@ -49,7 +58,6 @@ export class BackgroundTaskRegistry {
     private readonly manager: Pick<McpServerManager, "decrementInFlight" | "touch">,
     private readonly sendMessage: SendMessageFn,
     private readonly ownerSignal: AbortSignal,
-    /** Called when a task starts or ends. */
     private readonly onChange: () => void = () => {},
   ) {}
 
@@ -61,7 +69,7 @@ export class BackgroundTaskRegistry {
     return [...this.running.values()].map(({ info }) => ({ ...info }));
   }
 
-  /** Asks the server to cancel the task. Resolves false for an unknown key; rejects when the cancel request fails. */
+  /** Resolves false for an unknown key; rejects when the cancel request fails. */
   async stop(key: string): Promise<boolean> {
     const entry = this.running.get(key);
     if (entry === undefined) return false;
@@ -77,7 +85,7 @@ export class BackgroundTaskRegistry {
   start(task: BackgroundTaskStart): Promise<void> {
     const key = `${task.server}/${task.taskId}`;
     const entry: RunningTask = {
-      info: { key, server: task.server, tool: task.tool, taskId: task.taskId, status: "working" },
+      info: { key, tool: task.tool, status: "working" },
       execution: task.execution,
       stopRequested: false,
     };
@@ -106,7 +114,7 @@ export class BackgroundTaskRegistry {
         remove();
         const label = `MCP task ${task.taskId} (${task.server}/${task.tool})`;
         const identity = { id: task.taskId, server: task.server, tool: task.tool };
-        let message: { content: ContentBlock[]; details: Record<string, unknown> };
+        let message: RenderedTaskResult;
         if (outcome.status === "completed") {
           const { resultType: _resultType, ...result } = outcome.result as Record<string, unknown>;
           const rendered = await task.render(result);

@@ -429,18 +429,7 @@ export async function callToolViaTaskSession(
   session: TaskEnabledSession,
   options: TaskToolCallOptions,
 ): Promise<Record<string, unknown>> {
-  const { signal } = options;
-  let execution;
-  try {
-    execution = await session.callTool(options.name, options.args as never, {
-      ...(options.meta === undefined ? {} : { metadata: options.meta as never }),
-      ...(signal === undefined ? {} : { signal }),
-      ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
-    });
-  } catch (error) {
-    throw toCallToolError(error, signal);
-  }
-  return settleAsCallToolResult(execution, options.name, signal);
+  return settleAsCallToolResult(await openToolCall(session, options, options.signal), options.name, options.signal);
 }
 
 type ToolCallExecution = Awaited<ReturnType<TaskEnabledSession["callTool"]>>;
@@ -450,11 +439,28 @@ export type StartedToolCall =
   | { kind: "result"; result: Record<string, unknown> }
   | { kind: "task"; execution: BackgroundToolExecution; taskId: string };
 
+/** Sends the call with `lifetime` as the execution's signal; errors are mapped the way Client.callTool throws them. */
+async function openToolCall(
+  session: TaskEnabledSession,
+  options: TaskToolCallOptions,
+  lifetime: AbortSignal | undefined,
+): Promise<ToolCallExecution> {
+  try {
+    return await session.callTool(options.name, options.args as never, {
+      ...(options.meta === undefined ? {} : { metadata: options.meta as never }),
+      ...(lifetime === undefined ? {} : { signal: lifetime }),
+      ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
+    });
+  } catch (error) {
+    throw toCallToolError(error, options.signal);
+  }
+}
+
 /**
  * Like callToolViaTaskSession, but returns a task-backed execution as soon as
- * the server hands out its task instead of waiting for it. The caller owns the
- * returned execution. Aborting `signal` before the handle arrives cancels as
- * today; aborting it afterwards no longer touches the task.
+ * the server hands out its task. The caller owns the returned execution.
+ * Aborting `signal` before the handle arrives cancels the task; aborting it
+ * afterwards doesn't touch it.
  */
 export async function startToolViaTaskSession(
   session: TaskEnabledSession,
@@ -470,13 +476,7 @@ export async function startToolViaTaskSession(
   else signal?.addEventListener("abort", forwardAbort, { once: true });
   let execution;
   try {
-    execution = await session.callTool(options.name, options.args as never, {
-      ...(options.meta === undefined ? {} : { metadata: options.meta as never }),
-      signal: callController.signal,
-      ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
-    });
-  } catch (error) {
-    throw toCallToolError(error, signal);
+    execution = await openToolCall(session, options, callController.signal);
   } finally {
     signal?.removeEventListener("abort", forwardAbort);
   }

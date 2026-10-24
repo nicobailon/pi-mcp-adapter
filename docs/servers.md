@@ -103,7 +103,7 @@ Some calls still wait for the result, the way they did before, because their cal
 
 For those calls, cancelling the Pi tool call sends `tasks/cancel`, and a failed task surfaces as the same error a synchronous call would have produced.
 
-A running task is cancelled, and the model told once, when its server's connection closes or reconnects, or when the session is switched, forked, reloaded or ended.
+When a server's connection closes or reconnects, its running tasks are cancelled and the model is told once for each. Switching, forking, reloading or ending the session also cancels running tasks on the server, but nothing is delivered, because the session they belonged to is gone.
 
 Task traffic is dispatched on a dedicated raw channel below the SDK client (the published MCP SDK does not yet decode task result shapes itself), built on the official `@modelcontextprotocol/ext-tasks` requester package. The channel chains onto the connected transport's handlers without replacing the transport, and raw task frames appear in `/mcp-trace` in both directions. Task status notifications (`notifications/tasks`) are not consumed; polling is used exclusively. `requestTimeoutMs` applies per task request (the initiating call and each poll), not to the overall task duration, so a task can run for hours. While a task runs, its server's connection stays open instead of closing when idle.
 
