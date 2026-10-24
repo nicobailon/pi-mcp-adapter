@@ -104,6 +104,8 @@ export declare class BackgroundTaskRegistry {
      * before the owner stops, whose abort would cancel the tasks.
      */
     handOffForShutdown(): Promise<void>;
+    private takeOver;
+    private owns;
     private entry;
     /** Resumes a handed-off task on `session`, or tells the model once why it can't be followed. */
     private resumeOn;

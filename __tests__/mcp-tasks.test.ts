@@ -9,6 +9,7 @@ import {
   DispatchError,
   JsonRpcResponseError,
   TaskCancelledError,
+  TaskExecutionClosedError,
   TaskFailedError,
   type TaskEnabledSession,
   type ToolExecution,
@@ -1151,5 +1152,81 @@ describe("background tasks across a session stop and start", () => {
 
     expect(beforeDelivery).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  describe("when another transition takes a task over mid-await", () => {
+    const reference = { endpointId: "e1", generation: "v2", taskId: "t-1", originalOperation: "tools/call" } as const;
+
+    /** An execution that logs what reaches it; handing off or detaching it settles it as closed. */
+    function loggedExecution(log: string[], name: string) {
+      let settle!: (outcome: unknown) => void;
+      const outcome = new Promise((resolve) => { settle = resolve; });
+      const closed = () => settle({ status: "failed", error: new TaskFailedError("closed", {}, { cause: new TaskExecutionClosedError() }) });
+      return {
+        kind: "task",
+        handoff: async (persist: (ref: typeof reference) => void) => { persist(reference); closed(); },
+        detach: async () => { log.push(`${name}.detach`); closed(); },
+        cancel: async () => { log.push(`${name}.cancel`); settle({ status: "cancelled" }); },
+        result: () => outcome,
+        settle: async () => ({ outcome: await outcome }),
+      } as never;
+    }
+
+    /** A task session whose resumeTask waits until the test answers it. */
+    function pendingResume() {
+      let answer!: { resolve: (execution: unknown) => void; reject: (error: unknown) => void };
+      let requested!: () => void;
+      const asked = new Promise<void>((resolve) => { requested = resolve; });
+      const taskSession = {
+        resumeTask: () => new Promise((resolve, reject) => { answer = { resolve, reject }; requested(); }),
+      } as unknown as TaskEnabledSession;
+      return { taskSession, asked, answer: () => answer };
+    }
+
+    it.each(["fails", "succeeds"])("persists, and never cancels, a task the session stops for while a reconnect's resume %s", async (outcome) => {
+      const log: string[] = [];
+      const persisted: HandedOffTask[] = [];
+      const { tasks, sendMessage, manager, owner } = registry({ persist: (task) => persisted.push(task) });
+      void tasks.start({ server: "task-server", tool: "slow_tool", taskId: "t-1", execution: loggedExecution(log, "old"), render, guard });
+      const resume = pendingResume();
+      let replacementClosed = false;
+      const handingOver = tasks.handOver("task-server", { taskSession: resume.taskSession, closed: () => replacementClosed });
+      await resume.asked;
+
+      await tasks.handOffForShutdown();
+      owner.abort();
+      replacementClosed = true;
+      if (outcome === "fails") resume.answer().reject(new Error("MCP connection closed"));
+      else resume.answer().resolve(loggedExecution(log, "resumed"));
+      await handingOver;
+
+      expect(persisted).toEqual([expect.objectContaining({ key: "task-server/t-1" })]);
+      expect(log.filter((line) => line.endsWith(".cancel"))).toEqual([]);
+      expect(log).toEqual(outcome === "fails" ? [] : ["resumed.detach"]);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+      expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("lets a restored task run on, still pending, when its resume answers after the session stopped", async () => {
+      const log: string[] = [];
+      const { tasks, sendMessage, manager, owner } = registry({ persist: () => {} });
+      const beforeDelivery = vi.fn();
+      const resume = pendingResume();
+      const restored = tasks.restore(
+        { server: "task-server", tool: "slow_tool", taskId: "t-1", reference, render, guard, beforeDelivery },
+        { taskSession: resume.taskSession, closed: () => false },
+      );
+      await resume.asked;
+
+      await tasks.handOffForShutdown();
+      owner.abort();
+      resume.answer().resolve(loggedExecution(log, "resumed"));
+      await restored;
+
+      expect(log).toEqual(["resumed.detach"]);
+      expect(beforeDelivery).not.toHaveBeenCalled();
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    });
   });
 });

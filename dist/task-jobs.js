@@ -59,7 +59,8 @@ export class BackgroundTaskRegistry {
     start(task) {
         return new Promise((finish) => {
             const { execution, ...rest } = task;
-            this.follow(this.entry(rest, finish), execution);
+            const entry = this.entry(rest, finish);
+            this.follow(entry, entry.generation, execution);
         });
     }
     /**
@@ -69,7 +70,8 @@ export class BackgroundTaskRegistry {
     restore(task, session) {
         return new Promise((finish) => {
             const { reference, ...rest } = task;
-            void this.resumeOn(this.entry(rest, finish), reference, session);
+            const entry = this.entry(rest, finish);
+            void this.resumeOn(entry, entry.generation, reference, session);
         });
     }
     /**
@@ -81,13 +83,14 @@ export class BackgroundTaskRegistry {
         const entries = [...this.running.values()].filter((entry) => entry.server === server);
         await Promise.all(entries.map(async (entry) => {
             const old = entry.execution;
-            entry.generation += 1;
-            entry.releaseCancel();
+            const generation = this.takeOver(entry);
             let reference;
             await old.handoff((ref) => { reference = ref; });
             // close() cancels an execution that has not settled yet; result() settles it.
             await old.result();
-            await this.resumeOn(entry, reference, fresh, old);
+            if (!this.owns(entry, generation))
+                return;
+            await this.resumeOn(entry, generation, reference, fresh, old);
         }));
     }
     /**
@@ -101,8 +104,9 @@ export class BackgroundTaskRegistry {
             return;
         await Promise.all([...this.running.values()].map(async (entry) => {
             const old = entry.execution;
-            entry.generation += 1;
-            entry.releaseCancel();
+            this.takeOver(entry);
+            // Final for this runtime: no later hand-over or stop may pick the task up again.
+            this.remove(entry);
             try {
                 await old.handoff((reference) => persist({ key: entry.info.key, server: entry.server, tool: entry.tool, reference }));
                 await old.result();
@@ -116,6 +120,25 @@ export class BackgroundTaskRegistry {
             }
         }));
     }
+    /*
+     * Ownership: at most one continuation owns an entry at a time, the one whose
+     * generation matches `entry.generation`: its follow chain, an in-flight
+     * hand-over or restore, or a shutdown hand-off. Taking over bumps the
+     * generation. After every await a continuation checks it still owns the
+     * entry before any side effect (cancel, release, persist, delivery, adding
+     * to `running`); one that lost ownership only detaches an execution it alone
+     * holds. Taking an entry out of `running` ends the contest for it, since every
+     * take-over starts from `running`. A stopping session persists its tasks and
+     * never cancels them.
+     */
+    takeOver(entry) {
+        entry.generation += 1;
+        entry.releaseCancel();
+        return entry.generation;
+    }
+    owns(entry, generation) {
+        return entry.generation === generation;
+    }
     entry(task, finish) {
         return {
             ...task,
@@ -126,25 +149,27 @@ export class BackgroundTaskRegistry {
         };
     }
     /** Resumes a handed-off task on `session`, or tells the model once why it can't be followed. */
-    async resumeOn(entry, reference, session, old) {
+    async resumeOn(entry, generation, reference, session, old) {
+        let resumed;
         try {
             if (session.taskSession === undefined)
                 throw new Error("the connection has no task session");
-            const resumed = await session.taskSession.resumeTask(reference, {
+            resumed = await session.taskSession.resumeTask(reference, {
                 ...(session.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: session.requestTimeoutMs }),
             });
-            if (resumed.kind !== "task")
-                throw new Error("resumeTask returned an immediate execution");
-            this.follow(entry, resumed);
         }
         catch (error) {
+            if (!this.owns(entry, generation))
+                return;
             const identity = { id: entry.taskId, server: entry.server, tool: entry.tool };
+            this.remove(entry);
             try {
                 if (this.ownerSignal.aborted || session.closed()) {
                     // A restore cut short by another stop delivers nothing, so the session's record still says pending.
                     if (old === undefined)
                         return;
-                    // A close or session stop that cut a hand-over short cancels, as it would have without it.
+                    // A close that cut a hand-over short cancels, as it would have without it. A stopping session that
+                    // persists its tasks has taken the entry over by now, so this cancel is only for one that doesn't.
                     // The replaced connection stays open until handOver returns, and a detached execution can still cancel.
                     await old.cancel().catch(() => { });
                     const guarded = await entry.guard(`The connection to ${entry.server} closed.`);
@@ -167,11 +192,24 @@ export class BackgroundTaskRegistry {
             finally {
                 this.release(entry);
             }
+            return;
         }
+        if (resumed.kind !== "task")
+            throw new Error("resumeTask returned an immediate execution");
+        // A restore the session stopped during: its record still says pending, so let the task run on.
+        if (old === undefined && this.ownerSignal.aborted && this.owns(entry, generation)) {
+            void resumed.detach();
+            this.release(entry);
+            return;
+        }
+        this.follow(entry, generation, resumed);
     }
-    follow(entry, execution) {
-        const generation = entry.generation;
-        const current = () => entry.generation === generation;
+    follow(entry, generation, execution) {
+        if (!this.owns(entry, generation)) {
+            void execution.detach();
+            return;
+        }
+        const current = () => this.owns(entry, generation);
         const running = Object.assign(entry, { execution });
         if (this.running.get(entry.info.key) !== running) {
             this.running.set(entry.info.key, running);
