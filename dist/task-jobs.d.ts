@@ -75,6 +75,8 @@ export declare class BackgroundTaskRegistry {
     /** Records a task handed off by a stopping session. Without it, stopping the session cancels its tasks. */
     private readonly persistHandedOff?;
     private readonly running;
+    /** Restores still waiting on `resumeTask`, which aren't in `running` yet but a replacement hands over too. */
+    private readonly resuming;
     /** Set once a session that persists its tasks starts stopping; see the ownership note below. */
     private stopping;
     constructor(manager: Pick<McpServerManager, "decrementInFlight" | "touch">, sendMessage: SendMessageFn, ownerSignal: AbortSignal, onChange?: () => void, 

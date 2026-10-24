@@ -128,7 +128,6 @@ Limits:
 
 - A stdio server's process usually exits when Pi does, and the task with it, so a task resumed on a stdio server usually ends as "outcome unknown".
 - A change to a server's `env` or headers isn't detected, so the adapter follows the task as if the server were the same.
-- A restored task isn't moved to a new connection if that connection is replaced while the task is still being resumed at startup ([#889](https://github.com/nicobailon/pi-mcp-adapter/issues/889)).
 - If a result hasn't reached the model when the session stops, a task restored from the session file is resumed and delivered on the next start. For a task started in the current session, that result can be lost, as before.
 
 Task traffic is dispatched on a dedicated raw channel below the SDK client (the published MCP SDK does not yet decode task result shapes itself), built on the official `@modelcontextprotocol/ext-tasks` requester package. The channel chains onto the connected transport's handlers without replacing the transport, and raw task frames appear in `/mcp-trace` in both directions. Task status notifications (`notifications/tasks`) are not consumed; polling is used exclusively. `requestTimeoutMs` applies per task request (the initiating call and each poll), not to the overall task duration, so a task can run for hours. While a task runs, its server's connection stays open instead of closing when idle.

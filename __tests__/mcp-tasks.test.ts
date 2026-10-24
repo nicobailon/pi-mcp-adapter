@@ -499,10 +499,11 @@ interface FakeTaskServer {
  * tools/call answers with a CreateTaskResult and tasks/get walks the given
  * status sequence. Stacks given the same `server` act as two connections to one server;
  * each cancel it records names the `connection` that sent it. `forgetsTasks` answers
- * tasks/get with -32602, as a server does for a task id it doesn't know.
+ * tasks/get with -32602, as a server does for a task id it doesn't know. `beforePoll`
+ * holds each tasks/get answer until the promise it returns resolves.
  */
 function fakeModernTaskStack(
-  script: { statuses: Array<Record<string, unknown>>; forgetsTasks?: boolean },
+  script: { statuses: Array<Record<string, unknown>>; forgetsTasks?: boolean; beforePoll?: () => Promise<void> },
   server: FakeTaskServer = { polls: [], updates: [], cancels: [], headersByMethod: new Map() },
   connection = "first",
 ): {
@@ -533,15 +534,19 @@ function fakeModernTaskStack(
     if (frame.method === "tools/call") {
       respond({ resultType: "task", status: "working", ...task });
     } else if (frame.method === "tasks/get") {
-      if (script.forgetsTasks) {
-        queueMicrotask(() => {
-          transport.onmessage?.({ jsonrpc: "2.0", id: frame.id, error: { code: -32602, message: "Unknown task" } } as JSONRPCMessage);
-        });
-        return;
-      }
-      const status = script.statuses[Math.min(server.polls.length, script.statuses.length - 1)]!;
-      server.polls.push(frame.params ?? {});
-      respond({ resultType: "complete", ...task, ...status });
+      const answer = () => {
+        if (script.forgetsTasks) {
+          queueMicrotask(() => {
+            transport.onmessage?.({ jsonrpc: "2.0", id: frame.id, error: { code: -32602, message: "Unknown task" } } as JSONRPCMessage);
+          });
+          return;
+        }
+        const status = script.statuses[Math.min(server.polls.length, script.statuses.length - 1)]!;
+        server.polls.push(frame.params ?? {});
+        respond({ resultType: "complete", ...task, ...status });
+      };
+      if (script.beforePoll) void script.beforePoll().then(answer);
+      else answer();
     } else if (frame.method === "tasks/update") {
       server.updates.push(frame.params ?? {});
       respond({ resultType: "complete" });
@@ -1158,6 +1163,50 @@ describe("background tasks across a session stop and start", () => {
     expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["never answers", "answers after the reconnect"])(
+    "moves a restored task to a replacement connection when the old one's first poll %s",
+    async (stale) => {
+      const script = { statuses: [{ status: "working" }] as Array<Record<string, unknown>> };
+      const { stack, persisted } = await handedOffTask(script);
+      let polled!: () => void;
+      const asked = new Promise<void>((resolve) => { polled = resolve; });
+      let answerPoll!: () => void;
+      const held = new Promise<void>((resolve) => { answerPoll = resolve; });
+      const replaced = await attach(fakeModernTaskStack({ ...script, beforePoll: () => { polled(); return held; } }, stack.server, "second"));
+      const replacement = await attach(fakeModernTaskStack(script, stack.server, "third"));
+      const { tasks, sendMessage, manager } = registry();
+      let replacedClosed = false;
+      try {
+        const restored = tasks.restore(
+          { server: "task-server", tool: "slow_tool", reference: persisted[0]!.reference, render, guard },
+          { taskSession: replaced!.session, closed: () => replacedClosed },
+        );
+        await asked;
+
+        // As the server manager does: mark the old connection closed, hand over, then dispose it.
+        replacedClosed = true;
+        await tasks.handOver("task-server", { taskSession: replacement!.session, closed: () => false });
+        if (stale === "answers after the reconnect") {
+          answerPoll();
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        await replaced!.session.close();
+        script.statuses.push({ status: "completed", result: { resultType: "complete", content: [{ type: "text", text: "built" }], isError: false } });
+        await restored;
+
+        expect(stack.server.cancels).toEqual([]);
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendMessage.mock.calls[0]![0].content).toEqual([
+          { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) completed." },
+          { type: "text", text: "built" },
+        ]);
+        expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+      } finally {
+        await replacement!.session.close();
+      }
+    },
+  );
+
   describe("when another transition takes a task over mid-await", () => {
     const reference = { endpointId: "e1", generation: "v2", taskId: "t-1", originalOperation: "tools/call" } as const;
 
@@ -1270,6 +1319,55 @@ describe("background tasks across a session stop and start", () => {
 
     const restoredTask = (taskId: string) =>
       ({ server: "task-server", tool: "slow_tool", reference: { ...reference, taskId }, render, guard });
+    it("hands over a restored task whose resume answered on the old connection just as it was replaced", async () => {
+      const log: string[] = [];
+      const { tasks, sendMessage, manager } = registry();
+      const resume = pendingResume();
+      const restored = tasks.restore(restoredTask("t-1"), { taskSession: resume.taskSession, closed: () => false });
+      await resume.asked;
+      const fresh = controlledExecution(log, "fresh");
+      const resumeTask = vi.fn(async () => fresh.execution);
+
+      // The answer is in, but the restore hasn't followed it yet when the replacement lands.
+      resume.answer().resolve(loggedExecution(log, "stale"));
+      await tasks.handOver("task-server", { taskSession: { resumeTask } as unknown as TaskEnabledSession, closed: () => false });
+      expect(resumeTask).toHaveBeenCalledTimes(1);
+      fresh.finish(completed);
+      await restored;
+
+      expect(cancels(log)).toEqual([]);
+      expect(log).toContain("stale.detach");
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0].content).toEqual([
+        { type: "text", text: "MCP task t-1 (task-server/slow_tool) completed." },
+        { type: "text", text: "built" },
+      ]);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves a restore still resuming pending, without resuming it again, when its connection is replaced while the session stops", async () => {
+      const log: string[] = [];
+      const persisted: HandedOffTask[] = [];
+      const { tasks, sendMessage, manager, owner } = registry({ persist: (task) => persisted.push(task) });
+      const resume = pendingResume();
+      const restored = tasks.restore(restoredTask("t-1"), { taskSession: resume.taskSession, closed: () => false });
+      await resume.asked;
+      const resumeTask = vi.fn();
+
+      await tasks.handOffForShutdown();
+      const handingOver = tasks.handOver("task-server", { taskSession: { resumeTask } as unknown as TaskEnabledSession, closed: () => false });
+      resume.answer().reject(new Error("This operation was aborted"));
+      await handingOver;
+      owner.abort();
+      await restored;
+
+      expect(resumeTask).not.toHaveBeenCalled();
+      expect(cancels(log)).toEqual([]);
+      expect(persisted).toEqual([]);
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    });
+
 
     it.each(["while it hands off a running task", "with nothing running"])(
       "lets a restore that resumes once the session starts stopping %s run on, still pending",

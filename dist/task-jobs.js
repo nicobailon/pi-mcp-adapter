@@ -45,6 +45,8 @@ export class BackgroundTaskRegistry {
     onChange;
     persistHandedOff;
     running = new Map();
+    /** Restores still waiting on `resumeTask`, which aren't in `running` yet but a replacement hands over too. */
+    resuming = new Map();
     /** Set once a session that persists its tasks starts stopping; see the ownership note below. */
     stopping = false;
     constructor(manager, sendMessage, ownerSignal, onChange = () => { }, 
@@ -103,17 +105,30 @@ export class BackgroundTaskRegistry {
      */
     async handOver(server, fresh) {
         const entries = [...this.running.values()].filter((entry) => entry.server === server);
-        await Promise.all(entries.map(async (entry) => {
-            const old = entry.execution;
-            const generation = this.takeOver(entry);
-            let reference;
-            await old.handoff((ref) => { reference = ref; });
-            // close() cancels an execution that has not settled yet; result() settles it.
-            await old.result();
-            if (!this.owns(entry, generation))
-                return this.relinquish(entry, generation);
-            await this.resumeOn(entry, generation, reference, fresh, old);
-        }));
+        const restores = [...this.resuming].filter(([entry]) => entry.server === server);
+        await Promise.all([
+            ...entries.map(async (entry) => {
+                const old = entry.execution;
+                const generation = this.takeOver(entry);
+                let reference;
+                await old.handoff((ref) => { reference = ref; });
+                // close() cancels an execution that has not settled yet; result() settles it.
+                await old.result();
+                if (!this.owns(entry, generation))
+                    return this.relinquish(entry, generation);
+                await this.resumeOn(entry, generation, reference, fresh, old);
+            }),
+            ...restores.map(async ([entry, restore]) => {
+                const generation = this.takeOver(entry);
+                // Ends only the local wait on the old connection: an execution it already resumed stops following
+                // the task without cancelling it, and settling it means closing the old task session sends no cancel.
+                restore.abort.abort();
+                await (await restore.resumed)?.result();
+                if (!this.owns(entry, generation))
+                    return this.relinquish(entry, generation);
+                await this.resumeOn(entry, generation, restore.reference, fresh);
+            }),
+        ]);
     }
     /**
      * For a stopping session: hands every task off without cancelling it and
@@ -192,9 +207,23 @@ export class BackgroundTaskRegistry {
         try {
             if (session.taskSession === undefined)
                 throw new Error("the connection has no task session");
-            resumed = await session.taskSession.resumeTask(reference, {
+            const abort = new AbortController();
+            const resuming = session.taskSession.resumeTask(reference, {
                 ...(session.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: session.requestTimeoutMs }),
+                signal: abort.signal,
             });
+            const restore = old === undefined
+                ? { reference, abort, resumed: resuming.then((execution) => execution.kind === "task" ? execution : undefined, () => undefined) }
+                : undefined;
+            if (restore !== undefined)
+                this.resuming.set(entry, restore);
+            try {
+                resumed = await resuming;
+            }
+            finally {
+                if (restore !== undefined && this.resuming.get(entry) === restore)
+                    this.resuming.delete(entry);
+            }
             if (resumed.kind !== "task")
                 throw new Error("resumeTask returned an immediate execution");
         }
