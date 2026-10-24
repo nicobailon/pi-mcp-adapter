@@ -17,9 +17,9 @@ import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } 
 import { formatAuthRequiredMessage, formatMcpStatus, normalizeToolArguments, resolveServerUrl, truncateAtWord, withToolCallIdMeta } from "./utils.ts";
 import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
-import { callToolViaTaskSession } from "./mcp-tasks.ts";
+import { callToolViaTaskSession, startToolViaTaskSession, type StartedToolCall } from "./mcp-tasks.ts";
 import { callToolPausingForElicitation } from "./elicitation-handler.ts";
-import { callToolAnsweringExecutorPauses } from "./executor-pauses.ts";
+import { callToolAnsweringExecutorPauses, isExecutorConnection } from "./executor-pauses.ts";
 import { executorCallParams, executorUnknownToolMatches, executorUnknownToolText, unwrapExecutorCallResult } from "./executor-app-tools.ts";
 import { canonicalPath } from "./executor-accounts.ts";
 import { describeExecutorAppTool, isExecutorCatalogConnection, isExecutorCatalogEntry } from "./executor-catalog.ts";
@@ -242,7 +242,7 @@ function emitAuthStatus(state: McpExtensionState, serverName: string, status: "a
     {
       customType: "mcp-oauth-status",
       content: [{ type: "text", text: message }],
-      display: message,
+      display: true,
       details: {
         server: serverName,
         status,
@@ -1791,6 +1791,8 @@ export async function executeCall(
   };
 
   let approval: ToolCallApprovalResult | undefined;
+  // A call handed to the background task registry leaves its in-flight count there.
+  let backgrounded = false;
   try {
     // In flight from here so an idle check cannot close the server while the approval dialog is open.
     state.manager.touch(serverName);
@@ -1868,6 +1870,24 @@ export async function executeCall(
     const callParams = toolMeta.executorPath !== undefined
       ? executorCallParams(toolMeta.executorPath, normalizedArgs)
       : { name: toolMeta.originalName, arguments: normalizedArgs };
+    const renderResult = async (result: Record<string, unknown>) => {
+      const content = resolveMcpResultContent(result, state.owner?.signal, appendStructuredContent);
+      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
+      const guarded = await guardMcpOutput(outputContent, {
+        ...outputGuardOptions,
+        ...(result.isError ? { prefix: "Error: ", emptyTextFallback: "Tool execution failed" } : {}),
+        rawMcpResult: toScript ? undefined : result,
+      });
+      return {
+        content: guarded.content,
+        details: { mode: "call", ...(result.isError ? { error: "tool_error" } : {}), ...callIdentity, ...guardedMcpDetails(guarded) },
+      };
+    };
+    // Blocking callers need the value itself: scripts, internal consumers, and the MCP-UI and Executor flows.
+    const backgroundTasks = !toScript && !internalDelivery && !uiResourceUri && toolMeta.executorPath === undefined
+      ? state.backgroundTasks
+      : undefined;
+    let startedTask = undefined as Extract<StartedToolCall, { kind: "task" }> | undefined;
     const callResult = await withSessionRecovery<ClientCallToolResult>(
       {
         manager: state.manager,
@@ -1888,19 +1908,48 @@ export async function executeCall(
           signal: ownedSignal,
           call: async (params, options) => {
             if (conn.taskSession) {
-              return await callToolViaTaskSession(conn.taskSession, {
+              const taskCall = {
                 name: params.name,
                 args: params.arguments ?? {},
                 meta: params._meta,
                 signal: ownedSignal,
                 requestTimeoutMs: options?.timeout,
-              }) as unknown as ClientCallToolResult;
+              };
+              if (backgroundTasks === undefined || isExecutorConnection(conn)) {
+                return await callToolViaTaskSession(conn.taskSession, taskCall) as unknown as ClientCallToolResult;
+              }
+              const started = await startToolViaTaskSession(conn.taskSession, taskCall);
+              if (started.kind === "result") return started.result as unknown as ClientCallToolResult;
+              startedTask = started;
+              return { content: [] } as ClientCallToolResult;
             }
             return abortable(callToolPausingForElicitation(conn.client, params, options), ownedSignal);
           },
         });
       },
     );
+    if (startedTask !== undefined) {
+      const { taskId, execution } = startedTask;
+      const tool = toolMeta.originalName;
+      void backgroundTasks!.start({
+        server: serverName,
+        tool,
+        taskId,
+        execution,
+        render: async (result) => {
+          if (!result.isError) recordOutput(result);
+          return renderResult(result);
+        },
+      });
+      backgrounded = true;
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Task ${taskId} started on ${serverName}/${tool}. Do not call the tool again; the result arrives later as an mcp-task-result message.`,
+        }],
+        details: { mode: "call", ...callIdentity, task: { id: taskId, server: serverName, tool, status: "working" } },
+      };
+    }
     const result = toolMeta.executorPath !== undefined ? unwrapExecutorCallResult(toolMeta.executorPath, callResult) : callResult;
     const executorMatches = toolMeta.executorPath !== undefined ? executorUnknownToolMatches(toolMeta.executorPath, callResult) : undefined;
     if (executorMatches) {
@@ -1923,15 +1972,7 @@ export async function executeCall(
     }
 
     if (uiResourceUri) {
-      if (result.isError) {
-        const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
-        const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed", rawMcpResult: toScript ? undefined : result });
-        return {
-          content: guarded.content,
-          details: { mode: "call", error: "tool_error", ...callIdentity, ...guardedMcpDetails(guarded) },
-        };
-      }
+      if (result.isError) return await renderResult(result as Record<string, unknown>);
 
       const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
       const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
@@ -1950,23 +1991,7 @@ export async function executeCall(
       };
     }
 
-    if (result.isError) {
-      const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
-      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed", rawMcpResult: toScript ? undefined : result });
-      return {
-        content: guarded.content,
-        details: { mode: "call", error: "tool_error", ...callIdentity, ...guardedMcpDetails(guarded) },
-      };
-    }
-
-    const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal, appendStructuredContent);
-    const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-    const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: toScript ? undefined : result });
-    return {
-      content: guarded.content,
-      details: { mode: "call", ...guardedMcpDetails(guarded), ...callIdentity },
-    };
+    return await renderResult(result as Record<string, unknown>);
   } catch (error) {
     // Approval errors, such as an abort while the dialog is open, propagate unchanged.
     if (!approval) throw error;
@@ -2011,7 +2036,7 @@ export async function executeCall(
     if (uiSession?.reused) {
       uiSession.close();
     }
-    state.manager.decrementInFlight(serverName);
+    if (!backgrounded) state.manager.decrementInFlight(serverName);
     state.manager.touch(serverName);
   }
 }

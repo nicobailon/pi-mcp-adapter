@@ -49,6 +49,7 @@ import {
   restoreSessionApprovalState,
 } from "./session-approvals.ts";
 import { seedObservedOutputs } from "./output-shape.ts";
+import { BackgroundTaskRegistry } from "./task-jobs.ts";
 import { EXECUTOR_CATALOG_TTL_MS, fetchExecutorCatalog, isExecutorCatalogConnection, isExecutorCatalogEntry, type ExecutorCatalog } from "./executor-catalog.ts";
 export { getFailureAgeSeconds, getFailureMessage } from "./failure-backoff.ts";
 
@@ -270,6 +271,8 @@ export async function initializeMcp(
     ...(options.statusEvents !== undefined ? { statusEvents: options.statusEvents } : {}),
   };
   if (sessionManager) restoreSessionApprovalState(state, sessionBranch);
+  // Elsewhere (print, json, and rpc, which is how subagents run) nobody waits for a later turn.
+  if (hasUI && mode === "tui") state.backgroundTasks = new BackgroundTaskRegistry(manager, state.sendMessage!, owner.signal);
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
   manager.setMetadataListChangedListener?.((serverName, reason) => {
     if (!owner.isActive()) return;

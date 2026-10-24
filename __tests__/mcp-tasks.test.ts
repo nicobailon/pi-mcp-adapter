@@ -18,7 +18,9 @@ import {
   callToolViaTaskSession,
   RawRequestChannel,
   serverAdvertisesTasks,
+  startToolViaTaskSession,
 } from "../mcp-tasks.ts";
+import { BackgroundTaskRegistry } from "../task-jobs.ts";
 
 type SentFrame = { message: JSONRPCMessage; options: Parameters<Transport["send"]>[1] };
 
@@ -725,5 +727,103 @@ describe("attachTaskSession", () => {
     } finally {
       await attachment!.session.close();
     }
+  });
+});
+
+describe("startToolViaTaskSession", () => {
+  it("cancels like a blocking call when the tool call aborts before the task handle arrives", async () => {
+    const { execution, cancel } = fakeExecution(new TaskCancelledError());
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => { answer = resolve; });
+    const callTool = vi.fn(async (_name: string, _args: unknown, _options: { signal?: AbortSignal }) => {
+      await answered;
+      return execution;
+    });
+    const controller = new AbortController();
+
+    const pending = startToolViaTaskSession({ callTool } as unknown as TaskEnabledSession, { name: "t", args: {}, signal: controller.signal });
+    controller.abort();
+    expect(callTool.mock.calls[0]![2].signal!.aborted).toBe(true);
+    answer();
+
+    await expect(pending).rejects.toThrow();
+    expect(cancel).toHaveBeenCalled();
+  });
+});
+
+describe("background task delivery over a task session", () => {
+  const definition = { command: "fake-server", tasks: true };
+  const clientInfo = { name: "pi-mcp-test", version: "1.0.0" };
+
+  function registry() {
+    const sendMessage = vi.fn();
+    const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
+    return { tasks: new BackgroundTaskRegistry(manager, sendMessage, new AbortController().signal), sendMessage };
+  }
+
+  const render = async (result: Record<string, unknown>) => ({
+    content: result.content as Array<{ type: "text"; text: string }>,
+    details: {},
+  });
+
+  it("answers a task's question after its call returned and delivers the result", async () => {
+    const { client, transport, server } = fakeModernTaskStack({
+      statuses: [
+        {
+          status: "input_required",
+          inputRequests: {
+            name: {
+              method: "elicitation/create",
+              params: { mode: "form", message: "Your name?", requestedSchema: { type: "object", properties: { name: { type: "string" } } } },
+            },
+          },
+        },
+        { status: "completed", result: { resultType: "complete", content: [{ type: "text", text: "hello Luca" }], isError: false } },
+      ],
+    });
+    const onElicitation = vi.fn(async () => ({ action: "accept" as const, content: { name: "Luca" } }));
+    const attachment = await attachTaskSession({
+      client, serverName: "task-server", definition, transport, clientInfo, clientCapabilities: { elicitation: { form: {} } }, onElicitation,
+    });
+    const { tasks, sendMessage } = registry();
+    try {
+      const started = await startToolViaTaskSession(attachment!.session, { name: "hello_world", args: {} });
+      expect(started.kind).toBe("task");
+      if (started.kind !== "task") return;
+      await tasks.start({ server: "task-server", tool: "hello_world", taskId: started.taskId, execution: started.execution, render });
+
+      expect(onElicitation).toHaveBeenCalledTimes(1);
+      expect(server.updates[0]).toMatchObject({ taskId: "task-e2e-1", inputResponses: { name: { action: "accept", content: { name: "Luca" } } } });
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0].content).toEqual([
+        { type: "text", text: "MCP task task-e2e-1 (task-server/hello_world) completed." },
+        { type: "text", text: "hello Luca" },
+      ]);
+    } finally {
+      await attachment!.session.close();
+    }
+  });
+
+  it("delivers one cancelled result when the connection closes under a running task", async () => {
+    const { client, transport } = fakeModernTaskStack({ statuses: [{ status: "working" }] });
+    const attachment = await attachTaskSession({
+      client, serverName: "task-server", definition, transport, clientInfo, clientCapabilities: {},
+    });
+    const { tasks, sendMessage } = registry();
+    const started = await startToolViaTaskSession(attachment!.session, { name: "slow_tool", args: {} });
+    if (started.kind !== "task") throw new Error("expected a task");
+    const done = tasks.start({ server: "task-server", tool: "slow_tool", taskId: started.taskId, execution: started.execution, render });
+
+    await attachment!.session.close();
+    await done;
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]![0]).toMatchObject({
+      content: [
+        { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) cancelled." },
+        { type: "text", text: "The connection to task-server closed." },
+      ],
+      details: { task: { status: "cancelled" }, error: "task_cancelled" },
+    });
   });
 });

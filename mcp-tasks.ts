@@ -440,6 +440,57 @@ export async function callToolViaTaskSession(
   } catch (error) {
     throw toCallToolError(error, signal);
   }
+  return settleAsCallToolResult(execution, options.name, signal);
+}
+
+type ToolCallExecution = Awaited<ReturnType<TaskEnabledSession["callTool"]>>;
+export type BackgroundToolExecution = Extract<ToolCallExecution, { kind: "task" }>;
+
+export type StartedToolCall =
+  | { kind: "result"; result: Record<string, unknown> }
+  | { kind: "task"; execution: BackgroundToolExecution; taskId: string };
+
+/**
+ * Like callToolViaTaskSession, but returns a task-backed execution as soon as
+ * the server hands out its task instead of waiting for it. The caller owns the
+ * returned execution. Aborting `signal` before the handle arrives cancels as
+ * today; aborting it afterwards no longer touches the task.
+ */
+export async function startToolViaTaskSession(
+  session: TaskEnabledSession,
+  options: TaskToolCallOptions,
+): Promise<StartedToolCall> {
+  const { signal } = options;
+  // ext-tasks binds options.signal to a task execution for its whole local
+  // lifetime, so it gets a call-local signal that follows the tool call only
+  // until the server answers.
+  const callController = new AbortController();
+  const forwardAbort = () => callController.abort(signal?.reason);
+  if (signal?.aborted) forwardAbort();
+  else signal?.addEventListener("abort", forwardAbort, { once: true });
+  let execution;
+  try {
+    execution = await session.callTool(options.name, options.args as never, {
+      ...(options.meta === undefined ? {} : { metadata: options.meta as never }),
+      signal: callController.signal,
+      ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
+    });
+  } catch (error) {
+    throw toCallToolError(error, signal);
+  } finally {
+    signal?.removeEventListener("abort", forwardAbort);
+  }
+  if (execution.kind === "task" && signal?.aborted !== true) {
+    return { kind: "task", execution, taskId: execution.handle.taskId };
+  }
+  return { kind: "result", result: await settleAsCallToolResult(execution, options.name, signal) };
+}
+
+async function settleAsCallToolResult(
+  execution: ToolCallExecution,
+  name: string,
+  signal: AbortSignal | undefined,
+): Promise<Record<string, unknown>> {
   let onAbort: (() => void) | undefined;
   if (signal !== undefined && execution.kind === "task") {
     // settle({ signal }) only stops waiting locally; propagate the abort as a
@@ -456,7 +507,7 @@ export async function callToolViaTaskSession(
     const settlement = await execution.settle(signal === undefined ? {} : { signal });
     const result = resultFromTaskOutcome(settlement.outcome);
     if (!isJsonRecord(result)) {
-      throw new Error(`Task-backed tool ${options.name} settled with a non-object result`);
+      throw new Error(`Task-backed tool ${name} settled with a non-object result`);
     }
     // Match Client.callTool's lifted shape, which strips the wire-only discriminator.
     const { resultType: _resultType, ...lifted } = result;

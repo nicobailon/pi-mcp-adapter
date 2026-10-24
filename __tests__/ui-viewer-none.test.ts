@@ -150,7 +150,7 @@ describe("MCP UI context submissions", () => {
       expect.objectContaining({
         customType: "mcp-ui-context",
         content: [{ type: "text", text: expect.stringContaining("Use this selection") }],
-        display: "UI Context submitted",
+        display: true,
       }),
       { triggerTurn: true },
     );

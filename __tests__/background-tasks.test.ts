@@ -1,0 +1,149 @@
+import { describe, expect, it, vi } from "vitest";
+import { TaskFailedError } from "@modelcontextprotocol/ext-tasks/client";
+import { executeCall } from "../proxy-modes.ts";
+import { BackgroundTaskRegistry } from "../task-jobs.ts";
+
+type Outcome =
+  | { status: "completed"; result: Record<string, unknown> }
+  | { status: "failed"; error: TaskFailedError };
+
+/** A task-backed execution that settles only when the test says so. */
+function pendingTask() {
+  let finish!: (outcome: Outcome) => void;
+  const settled = new Promise<{ outcome: Outcome; lastTask: undefined }>((resolve) => {
+    finish = (outcome) => resolve({ outcome, lastTask: undefined });
+  });
+  const execution = {
+    kind: "task" as const,
+    handle: { taskId: "t-1", operation: "tools/call" },
+    cancel: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    settle: vi.fn(() => settled),
+  };
+  return { execution, finish };
+}
+
+function taskState(execution: object, options: { background?: boolean } = {}) {
+  const callTool = vi.fn(async (_name: string, _args: unknown, _options: { signal?: AbortSignal }) => execution);
+  const sendMessage = vi.fn();
+  const manager = {
+    getConnection: vi.fn(() => ({ status: "connected", client: {}, taskSession: { callTool }, tools: [], resources: [] })),
+    touch: vi.fn(),
+    incrementInFlight: vi.fn(),
+    decrementInFlight: vi.fn(),
+    getRequestOptions: vi.fn(() => undefined),
+  };
+  const owner = new AbortController();
+  const registry = new BackgroundTaskRegistry(manager as any, sendMessage, owner.signal);
+  const start = vi.spyOn(registry, "start");
+  const state = {
+    config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "node", args: ["server.js"] } } },
+    manager,
+    toolMetadata: new Map([["demo", [{ name: "demo_build", originalName: "build", description: "Build" }]]]),
+    serverInstructions: new Map(),
+    failureTracker: new Map(),
+    ui: undefined,
+    sendMessage,
+    ...(options.background === false ? {} : { backgroundTasks: registry }),
+  } as any;
+  // Resolves once the registry has delivered the outcome and released the server.
+  const delivered = () => start.mock.results[0]!.value as Promise<void>;
+  return { state, callTool, sendMessage, manager, delivered, owner };
+}
+
+const HANDLE_TEXT = "Task t-1 started on demo/build. Do not call the tool again; the result arrives later as an mcp-task-result message.";
+
+describe("background MCP tasks through the proxy", () => {
+  it("returns the task handle before the task finishes, then delivers the result once as a follow-up", async () => {
+    const { execution, finish } = pendingTask();
+    const { state, sendMessage, manager, delivered } = taskState(execution);
+
+    const result = await executeCall(state, "demo_build", {});
+
+    expect(result.content).toEqual([{ type: "text", text: HANDLE_TEXT }]);
+    expect(result.details).toMatchObject({ mode: "call", server: "demo", tool: "build", task: { id: "t-1", server: "demo", tool: "build", status: "working" } });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(manager.decrementInFlight).not.toHaveBeenCalled();
+
+    finish({ status: "completed", result: { resultType: "complete", content: [{ type: "text", text: "build ok" }] } });
+    await delivered();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      {
+        customType: "mcp-task-result",
+        display: true,
+        content: [{ type: "text", text: "MCP task t-1 (demo/build) completed." }, { type: "text", text: "build ok" }],
+        details: expect.objectContaining({ task: { id: "t-1", server: "demo", tool: "build", status: "completed" } }),
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+    expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the task running when the tool call is aborted after the handle came back", async () => {
+    const { execution, finish } = pendingTask();
+    const { state, callTool, delivered } = taskState(execution);
+    const controller = new AbortController();
+
+    await executeCall(state, "demo_build", {}, undefined, undefined, controller.signal);
+    controller.abort();
+
+    expect(execution.cancel).not.toHaveBeenCalled();
+    expect(callTool.mock.calls[0]![2].signal!.aborted).toBe(false);
+    finish({ status: "completed", result: { content: [] } });
+    await delivered();
+  });
+
+  it("cancels the remote task when the session stops", async () => {
+    const { execution, finish } = pendingTask();
+    const { state, owner, delivered } = taskState(execution);
+
+    await executeCall(state, "demo_build", {});
+    owner.abort();
+
+    expect(execution.cancel).toHaveBeenCalledTimes(1);
+    finish({ status: "completed", result: { content: [] } });
+    await delivered();
+  });
+
+  it("delivers a failed task's error and a tool error result", async () => {
+    const failed = pendingTask();
+    const failing = taskState(failed.execution);
+    await executeCall(failing.state, "demo_build", {});
+    failed.finish({ status: "failed", error: new TaskFailedError("boom") });
+    await failing.delivered();
+    expect(failing.sendMessage.mock.calls[0]![0]).toMatchObject({
+      content: [{ type: "text", text: "MCP task t-1 (demo/build) failed." }, { type: "text", text: "boom" }],
+      details: { error: "task_failed" },
+    });
+
+    const toolError = pendingTask();
+    const erroring = taskState(toolError.execution);
+    await executeCall(erroring.state, "demo_build", {});
+    toolError.finish({ status: "completed", result: { content: [{ type: "text", text: "compile failed" }], isError: true } });
+    await erroring.delivered();
+    expect(erroring.sendMessage.mock.calls[0]![0]).toMatchObject({
+      content: [{ type: "text", text: "MCP task t-1 (demo/build) completed." }, { type: "text", text: "Error: compile failed" }],
+      details: { error: "tool_error" },
+    });
+  });
+
+  it("waits for the result inline outside the interactive terminal and for script calls", async () => {
+    const outcome = { status: "completed" as const, result: { content: [{ type: "text", text: "build ok" }] } };
+
+    const nonTui = pendingTask();
+    const plain = taskState(nonTui.execution, { background: false });
+    nonTui.finish(outcome);
+    const inline = await executeCall(plain.state, "demo_build", {});
+    expect(inline.content).toEqual([{ type: "text", text: "build ok" }]);
+
+    const scripted = pendingTask();
+    const script = taskState(scripted.execution);
+    script.state.deliversToScript = (id: string | undefined) => id === "codemode/1";
+    scripted.finish(outcome);
+    const scriptResult = await executeCall(script.state, "demo_build", {}, undefined, undefined, undefined, undefined, undefined, "codemode/1");
+    expect(scriptResult.content).toEqual([{ type: "text", text: "build ok" }]);
+    expect(script.sendMessage).not.toHaveBeenCalled();
+  });
+});
