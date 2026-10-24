@@ -196,6 +196,58 @@ describe("McpServerManager StreamableHTTP transport", () => {
     expect(methods).toEqual(["initialize"]);
   });
 
+  it("reports a failure after a successful initialize without an endpoint probe", async () => {
+    const server = http.createServer(async (req, res) => {
+      if (req.method !== "POST") {
+        res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
+        return;
+      }
+
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const message = JSON.parse(body) as { id?: string | number; method?: string };
+      if (message.method === "notifications/initialized") {
+        res.writeHead(202).end();
+        return;
+      }
+      const result = message.method === "initialize"
+        ? {
+            protocolVersion: "2025-03-26",
+            capabilities: { tools: {} },
+            serverInfo: { name: "initialized", version: "1.0.0" },
+          }
+        : message.method === "tools/list"
+          // An output schema without a top-level object type fails SDK result validation.
+          ? { tools: [{ name: "progress", inputSchema: { type: "object" }, outputSchema: { properties: {} } }] }
+          : undefined;
+      if (!result) {
+        res.writeHead(451).end("Unavailable For Legal Reasons");
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+        jsonrpc: "2.0",
+        id: message.id,
+        result,
+      }));
+    });
+    servers.push(server);
+
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+
+    const manager = new McpServerManager();
+    const error = await manager.connect("initialized", {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+    }).then(
+      () => new Error("expected connection failure"),
+      reason => reason instanceof Error ? reason : new Error(String(reason)),
+    );
+
+    expect(error.message).toContain("Invalid result for tools/list");
+    expect(error.message).not.toContain("probe:");
+  });
+
   it("fails closed for explicit OAuth when secure storage is unavailable", async () => {
     await withAuthStore("unavailable", async () => {
       const server = http.createServer((_req, res) => {

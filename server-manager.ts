@@ -612,7 +612,7 @@ export class McpServerManager {
     const generation = this.closeGenerations.get(name) ?? 0;
     const attemptController = new AbortController();
     const attemptSignal = combineAbortSignals(ownedSignal, attemptController.signal);
-    const connectionAttempt = this.createConnection(
+    const promise = this.createConnection(
       name,
       definition,
       attemptSignal,
@@ -621,9 +621,6 @@ export class McpServerManager {
       oauthAuthority,
       attemptController,
     );
-    const promise = definition.url
-      ? connectionAttempt.catch(async error => { throw await this.enrichHttpConnectionError(definition, error); })
-      : connectionAttempt;
     this.connectPromises.set(name, promise);
     if (oauthAuthority) this.connectOAuthAuthorities.set(name, oauthAuthority);
     this.connectAttempts.set(name, attemptController);
@@ -1106,7 +1103,7 @@ export class McpServerManager {
     const generation = this.closeGenerations.get(name) ?? 0;
     const credentialsInvalidated = staleConnection.status === "needs-auth"
       && staleConnection.credentialsInvalidated === true;
-    const candidateAttempt = this.createConnection(
+    const fresh = await this.createConnection(
       name,
       definition,
       signal,
@@ -1115,9 +1112,6 @@ export class McpServerManager {
       oauthAuthority,
       attemptOwner,
     );
-    const fresh = definition.url
-      ? await candidateAttempt.catch(async error => { throw await this.enrichHttpConnectionError(definition, error); })
-      : await candidateAttempt;
 
     // An explicit close or a concurrent replacement supersedes this candidate.
     // Dispose only the candidate we own; never close whichever route is now
@@ -1250,6 +1244,7 @@ export class McpServerManager {
       }
       transport = stdioTransport;
     } else if (definition.url) {
+      // Only a failure before initialize completes says anything about the endpoint, so only it is probed.
       const httpConnection = await this.connectHttpClient(
         definition,
         name,
@@ -1259,7 +1254,7 @@ export class McpServerManager {
         invalidated,
         oauthAuthority,
         attemptOwner,
-      );
+      ).catch(async error => { throw await this.enrichHttpConnectionError(definition, error); });
       client = httpConnection.client;
       transport = httpConnection.transport;
       invalidated = httpConnection.credentialsInvalidated;

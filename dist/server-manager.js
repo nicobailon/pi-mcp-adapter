@@ -414,10 +414,7 @@ export class McpServerManager {
         const generation = this.closeGenerations.get(name) ?? 0;
         const attemptController = new AbortController();
         const attemptSignal = combineAbortSignals(ownedSignal, attemptController.signal);
-        const connectionAttempt = this.createConnection(name, definition, attemptSignal, ownedSignal, credentialsInvalidated, oauthAuthority, attemptController);
-        const promise = definition.url
-            ? connectionAttempt.catch(async (error) => { throw await this.enrichHttpConnectionError(definition, error); })
-            : connectionAttempt;
+        const promise = this.createConnection(name, definition, attemptSignal, ownedSignal, credentialsInvalidated, oauthAuthority, attemptController);
         this.connectPromises.set(name, promise);
         if (oauthAuthority)
             this.connectOAuthAuthorities.set(name, oauthAuthority);
@@ -844,10 +841,7 @@ export class McpServerManager {
         const generation = this.closeGenerations.get(name) ?? 0;
         const credentialsInvalidated = staleConnection.status === "needs-auth"
             && staleConnection.credentialsInvalidated === true;
-        const candidateAttempt = this.createConnection(name, definition, signal, signal, credentialsInvalidated, oauthAuthority, attemptOwner);
-        const fresh = definition.url
-            ? await candidateAttempt.catch(async (error) => { throw await this.enrichHttpConnectionError(definition, error); })
-            : await candidateAttempt;
+        const fresh = await this.createConnection(name, definition, signal, signal, credentialsInvalidated, oauthAuthority, attemptOwner);
         // An explicit close or a concurrent replacement supersedes this candidate.
         // Dispose only the candidate we own; never close whichever route is now
         // registered under the shared server name.
@@ -962,7 +956,8 @@ export class McpServerManager {
             transport = stdioTransport;
         }
         else if (definition.url) {
-            const httpConnection = await this.connectHttpClient(definition, name, requestOptions, signal, traceObserver, invalidated, oauthAuthority, attemptOwner);
+            // Only a failure before initialize completes says anything about the endpoint, so only it is probed.
+            const httpConnection = await this.connectHttpClient(definition, name, requestOptions, signal, traceObserver, invalidated, oauthAuthority, attemptOwner).catch(async (error) => { throw await this.enrichHttpConnectionError(definition, error); });
             client = httpConnection.client;
             transport = httpConnection.transport;
             invalidated = httpConnection.credentialsInvalidated;

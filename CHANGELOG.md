@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - When a long-running MCP job asked Pi's model for a reply, pressing Esc on whatever turn was running at that moment could cut that reply off, even though the job had nothing to do with that turn. The reply now runs until it finishes, the job ends or is stopped with `/mcp-adapter tasks stop`, or the session ends. See [#886](https://github.com/nicobailon/pi-mcp-adapter/issues/886).
+- When an HTTP server accepted the connection but then sent something the MCP SDK rejects, such as an invalid tool list, the error ended with "this URL does not appear to speak MCP", which sent you looking at the wrong problem. Errors after a successful connection now show only the server's actual failure. The endpoint check still runs when the connection itself fails. Thanks to [@blalor](https://github.com/blalor) for reporting [#881](https://github.com/nicobailon/pi-mcp-adapter/issues/881).
 
 ## [6.0.0] - 2026-10-22
 
