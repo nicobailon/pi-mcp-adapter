@@ -1,4 +1,4 @@
-import { type TaskState } from "@modelcontextprotocol/ext-tasks/client";
+import { type TaskEnabledSession, type TaskState } from "@modelcontextprotocol/ext-tasks/client";
 import type { BackgroundToolExecution } from "./mcp-tasks.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { SendMessageFn } from "./state.ts";
@@ -25,6 +25,11 @@ export interface BackgroundTaskInfo {
     status: TaskState;
     statusMessage?: string;
 }
+/** What a replacement connection offers for resuming its server's tasks. */
+export interface ReplacementTaskSession {
+    taskSession?: TaskEnabledSession | undefined;
+    requestTimeoutMs?: number | undefined;
+}
 /**
  * The tool result a call returns once its task runs in the background. `cancelHint` names
  * mcp({ cancelTask }) only while the `mcp` tool exists to take it.
@@ -45,7 +50,7 @@ export declare function backgroundTaskHandle(server: string, tool: string, taskI
  * Tool calls whose server answered with a task. Each runs to settlement here,
  * holding its server's in-flight count, and its outcome reaches the model as
  * one follow-up message. Stopping the runtime or closing the connection
- * cancels the remote task.
+ * cancels the remote task; replacing the connection hands it over instead.
  */
 export declare class BackgroundTaskRegistry {
     private readonly manager;
@@ -63,4 +68,13 @@ export declare class BackgroundTaskRegistry {
      * delivered and the count released.
      */
     start(task: BackgroundTaskStart): Promise<void>;
+    /**
+     * Moves every task on `server` from its replaced connection to the fresh one
+     * without cancelling it. Resolves once the old executions have settled, so
+     * closing the old task session afterwards sends no `tasks/cancel`.
+     */
+    handOver(server: string, fresh: ReplacementTaskSession): Promise<void>;
+    private follow;
+    private remove;
+    private release;
 }

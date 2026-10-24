@@ -477,6 +477,34 @@ describe("McpServerManager.reconnect", () => {
     expect(manager.getConnection("remote")).toBe(fresh);
   });
 
+  it("hands work over before disposing a replaced connection, and never on an explicit close", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    const stale = await manager.connect("remote", def);
+    const staleClose = vi.spyOn(stale.client, "close");
+    const called = deferred();
+    const handedOver = deferred();
+    const listener = vi.fn(async () => {
+      called.resolve();
+      await handedOver.promise;
+    });
+    manager.setConnectionReplacedListener(listener);
+
+    const reconnecting = manager.reconnect("remote", def, stale);
+    await called.promise;
+    const fresh = manager.getConnection("remote");
+    expect(fresh).not.toBe(stale);
+    expect(listener).toHaveBeenCalledWith("remote", stale, fresh);
+    expect(staleClose).not.toHaveBeenCalled();
+
+    handedOver.resolve();
+    expect(await reconnecting).toBe(fresh);
+    expect(staleClose).toHaveBeenCalledTimes(1);
+
+    await manager.close("remote");
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it("identity guard: a stale connection's late onclose does not clobber the fresh connection's status", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();

@@ -1,4 +1,4 @@
-import { TaskExecutionClosedError, taskViewFromExecutionEvent } from "@modelcontextprotocol/ext-tasks/client";
+import { TaskExecutionClosedError, taskViewFromExecutionEvent, } from "@modelcontextprotocol/ext-tasks/client";
 import { logger } from "./logger.js";
 /**
  * The tool result a call returns once its task runs in the background. `cancelHint` names
@@ -18,7 +18,7 @@ export function backgroundTaskHandle(server, tool, taskId, cancelHint) {
  * Tool calls whose server answered with a task. Each runs to settlement here,
  * holding its server's in-flight count, and its outcome reaches the model as
  * one follow-up message. Stopping the runtime or closing the connection
- * cancels the remote task.
+ * cancels the remote task; replacing the connection hands it over instead.
  */
 export class BackgroundTaskRegistry {
     manager;
@@ -53,29 +53,76 @@ export class BackgroundTaskRegistry {
      */
     start(task) {
         const key = `${task.server}/${task.taskId}`;
-        const entry = {
-            info: { key, tool: task.tool, status: "working" },
-            execution: task.execution,
-        };
-        this.running.set(key, entry);
-        this.onChange();
-        // A list must never show a settled task, so the entry goes before the outcome is delivered.
-        const remove = () => {
-            if (this.running.get(key) !== entry)
-                return;
-            this.running.delete(key);
+        return new Promise((finish) => {
+            const entry = {
+                ...task,
+                info: { key, tool: task.tool, status: "working" },
+                generation: 0,
+                releaseCancel: () => { },
+                finish,
+            };
+            this.running.set(key, entry);
             this.onChange();
-        };
+            this.follow(entry, task.execution);
+        });
+    }
+    /**
+     * Moves every task on `server` from its replaced connection to the fresh one
+     * without cancelling it. Resolves once the old executions have settled, so
+     * closing the old task session afterwards sends no `tasks/cancel`.
+     */
+    async handOver(server, fresh) {
+        const entries = [...this.running.values()].filter((entry) => entry.server === server);
+        await Promise.all(entries.map(async (entry) => {
+            const old = entry.execution;
+            entry.generation += 1;
+            entry.releaseCancel();
+            try {
+                let reference;
+                await old.handoff((ref) => { reference = ref; });
+                // close() cancels an execution that has not settled yet; result() settles it.
+                await old.result();
+                if (fresh.taskSession === undefined)
+                    throw new Error("the new connection has no task session");
+                const resumed = await fresh.taskSession.resumeTask(reference, {
+                    ...(fresh.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: fresh.requestTimeoutMs }),
+                });
+                if (resumed.kind !== "task")
+                    throw new Error("resumeTask returned an immediate execution");
+                this.follow(entry, resumed);
+            }
+            catch (error) {
+                logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
+                this.sendMessage({
+                    customType: "mcp-task-result",
+                    display: true,
+                    content: [{
+                            type: "text",
+                            text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}): outcome unknown after the connection was replaced. Calling the tool again may repeat the work.`,
+                        }],
+                    details: { task: { id: entry.taskId, server: entry.server, tool: entry.tool, status: "unknown" }, error: "task_outcome_unknown" },
+                }, { triggerTurn: true, deliverAs: "followUp" });
+                this.release(entry);
+            }
+        }));
+    }
+    follow(entry, execution) {
+        const generation = entry.generation;
+        const current = () => entry.generation === generation;
+        entry.execution = execution;
         // The same cancel a blocking call sends when the runtime stops, ahead of the connection teardown.
-        const cancel = () => void task.execution.cancel().catch(() => { });
+        const cancel = () => void execution.cancel().catch(() => { });
+        entry.releaseCancel = () => this.ownerSignal.removeEventListener("abort", cancel);
         if (this.ownerSignal.aborted)
             cancel();
         else
             this.ownerSignal.addEventListener("abort", cancel, { once: true });
-        return task.execution.settle({
+        const label = `MCP task ${entry.taskId} (${entry.server}/${entry.tool})`;
+        const identity = { id: entry.taskId, server: entry.server, tool: entry.tool };
+        void execution.settle({
             onEvent: (event) => {
                 const view = taskViewFromExecutionEvent(event);
-                if (view === undefined)
+                if (view === undefined || !current())
                     return;
                 entry.info.status = view.status;
                 if (view.statusMessage === undefined)
@@ -85,20 +132,20 @@ export class BackgroundTaskRegistry {
             },
         })
             .then(async ({ outcome }) => {
-            remove();
-            const label = `MCP task ${task.taskId} (${task.server}/${task.tool})`;
-            const identity = { id: task.taskId, server: task.server, tool: task.tool };
+            if (!current())
+                return;
+            this.remove(entry);
             let message;
             if (outcome.status === "completed") {
                 const { resultType: _resultType, ...result } = outcome.result;
-                const rendered = await task.render(result);
+                const rendered = await entry.render(result);
                 message = {
                     content: [{ type: "text", text: `${label} completed.` }, ...rendered.content],
                     details: { task: { ...identity, status: "completed" }, ...rendered.details },
                 };
             }
             else if (outcome.status === "failed" && !(outcome.error.cause instanceof TaskExecutionClosedError)) {
-                const guarded = await task.guard(outcome.error.message);
+                const guarded = await entry.guard(outcome.error.message);
                 message = {
                     content: [{ type: "text", text: `${label} failed.` }, ...guarded.content],
                     details: { task: { ...identity, status: "failed" }, error: "task_failed", ...guarded.details },
@@ -106,11 +153,11 @@ export class BackgroundTaskRegistry {
             }
             else {
                 const reason = outcome.status === "failed"
-                    ? `The connection to ${task.server} closed.`
+                    ? `The connection to ${entry.server} closed.`
                     : entry.stoppedBy !== undefined
                         ? `Stopped by ${entry.stoppedBy}.`
                         : outcome.task?.statusMessage ?? "Task was cancelled by the server";
-                const guarded = await task.guard(reason);
+                const guarded = await entry.guard(reason);
                 message = {
                     content: [{ type: "text", text: `${label} cancelled.` }, ...guarded.content],
                     details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled", ...guarded.details },
@@ -119,14 +166,26 @@ export class BackgroundTaskRegistry {
             this.sendMessage({ customType: "mcp-task-result", display: true, ...message }, { triggerTurn: true, deliverAs: "followUp" });
         })
             .catch((error) => {
-            logger.warn(`MCP task ${task.server}/${task.taskId} could not be delivered: ${error instanceof Error ? error.message : String(error)}`);
+            logger.warn(`MCP task ${entry.info.key} could not be delivered: ${error instanceof Error ? error.message : String(error)}`);
         })
             .finally(() => {
-            remove();
-            this.ownerSignal.removeEventListener("abort", cancel);
-            this.manager.decrementInFlight(task.server);
-            this.manager.touch(task.server);
+            if (current())
+                this.release(entry);
         });
+    }
+    // A list must never show a settled task, so the entry goes before the outcome is delivered.
+    remove(entry) {
+        if (this.running.get(entry.info.key) !== entry)
+            return;
+        this.running.delete(entry.info.key);
+        this.onChange();
+    }
+    release(entry) {
+        this.remove(entry);
+        entry.releaseCancel();
+        this.manager.decrementInFlight(entry.server);
+        this.manager.touch(entry.server);
+        entry.finish();
     }
 }
 //# sourceMappingURL=task-jobs.js.map

@@ -256,6 +256,8 @@ type UiStreamListener = (serverName: string, notification: ServerStreamResultPat
 type MetadataListChangedListener = (serverName: string, reason: string) => void;
 type ListenStateChangedListener = (serverName: string, state: McpListenState) => void;
 type ResourceUpdatedListener = (serverName: string, uri: string) => void;
+/** Awaited before the replaced connection is disposed, so work on it can move to the fresh one first. */
+type ConnectionReplacedListener = (serverName: string, stale: ServerConnection, fresh: ServerConnection) => Promise<void>;
 
 export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refresh-timeout";
 
@@ -371,6 +373,7 @@ export class McpServerManager {
   private samplingConfig: ServerSamplingConfig | undefined;
   private metadataListChangedListener: MetadataListChangedListener | undefined;
   private listenStateChangedListener: ListenStateChangedListener | undefined;
+  private connectionReplacedListener: ConnectionReplacedListener | undefined;
   private resourceUpdatedListeners = new Map<string, {
     serverName: string;
     uri: string;
@@ -407,6 +410,10 @@ export class McpServerManager {
 
   setListenStateChangedListener(listener: ListenStateChangedListener | undefined): void {
     this.listenStateChangedListener = listener;
+  }
+
+  setConnectionReplacedListener(listener: ConnectionReplacedListener | undefined): void {
+    this.connectionReplacedListener = listener;
   }
 
   publishMetadataChanged(
@@ -1138,6 +1145,11 @@ export class McpServerManager {
     // Publish first so calls route to the fresh image while the exact displaced
     // child is terminated and reaped. Late close callbacks are identity-guarded.
     staleConnection.status = "closed";
+    try {
+      await this.connectionReplacedListener?.(name, staleConnection, fresh);
+    } catch (error) {
+      logger.warn(`MCP: handing work over to the new ${name} connection failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     try {
       await this.disposeConnection(staleConnection);
     } catch (error) {

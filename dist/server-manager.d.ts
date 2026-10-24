@@ -53,6 +53,8 @@ type UiStreamListener = (serverName: string, notification: ServerStreamResultPat
 type MetadataListChangedListener = (serverName: string, reason: string) => void;
 type ListenStateChangedListener = (serverName: string, state: McpListenState) => void;
 type ResourceUpdatedListener = (serverName: string, uri: string) => void;
+/** Awaited before the replaced connection is disposed, so work on it can move to the fresh one first. */
+type ConnectionReplacedListener = (serverName: string, stale: ServerConnection, fresh: ServerConnection) => Promise<void>;
 export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refresh-timeout";
 export declare function isTransientHttpConnectError(error: unknown): boolean;
 export declare class McpServerManager {
@@ -67,6 +69,7 @@ export declare class McpServerManager {
     private samplingConfig;
     private metadataListChangedListener;
     private listenStateChangedListener;
+    private connectionReplacedListener;
     private resourceUpdatedListeners;
     private pendingMetadataPublications;
     private elicitationConfig;
@@ -87,6 +90,7 @@ export declare class McpServerManager {
     setSamplingConfig(config: ServerSamplingConfig | undefined): void;
     setMetadataListChangedListener(listener: MetadataListChangedListener | undefined): void;
     setListenStateChangedListener(listener: ListenStateChangedListener | undefined): void;
+    setConnectionReplacedListener(listener: ConnectionReplacedListener | undefined): void;
     publishMetadataChanged(name: string, expectedConnection: ServerConnection, reason: string): boolean;
     setElicitationConfig(config: ServerElicitationConfig | undefined): void;
     /** Shows a server-supplied MCP form with Pi's dialogs. Undefined when this session cannot prompt. */

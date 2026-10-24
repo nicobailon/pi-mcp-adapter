@@ -226,6 +226,7 @@ export class McpServerManager {
     samplingConfig;
     metadataListChangedListener;
     listenStateChangedListener;
+    connectionReplacedListener;
     resourceUpdatedListeners = new Map();
     pendingMetadataPublications = new Map();
     elicitationConfig;
@@ -253,6 +254,9 @@ export class McpServerManager {
     }
     setListenStateChangedListener(listener) {
         this.listenStateChangedListener = listener;
+    }
+    setConnectionReplacedListener(listener) {
+        this.connectionReplacedListener = listener;
     }
     publishMetadataChanged(name, expectedConnection, reason) {
         const current = this.connections.get(name);
@@ -868,6 +872,12 @@ export class McpServerManager {
         // Publish first so calls route to the fresh image while the exact displaced
         // child is terminated and reaped. Late close callbacks are identity-guarded.
         staleConnection.status = "closed";
+        try {
+            await this.connectionReplacedListener?.(name, staleConnection, fresh);
+        }
+        catch (error) {
+            logger.warn(`MCP: handing work over to the new ${name} connection failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
         try {
             await this.disposeConnection(staleConnection);
         }

@@ -488,6 +488,7 @@ describe("callToolViaTaskSession", () => {
 interface FakeTaskServer {
   polls: Record<string, unknown>[];
   updates: Record<string, unknown>[];
+  cancels: Record<string, unknown>[];
   headersByMethod: Map<string, Record<string, string> | undefined>;
 }
 
@@ -495,14 +496,16 @@ interface FakeTaskServer {
  * Fake modern-era client + scripted server speaking the ext-tasks V2 wire
  * shapes through a real RawRequestChannel attached to a connected transport.
  * tools/call answers with a CreateTaskResult and tasks/get walks the given
- * status sequence.
+ * status sequence. Stacks given the same `server` act as two connections to one server.
  */
-function fakeModernTaskStack(script: { statuses: Array<Record<string, unknown>> }): {
+function fakeModernTaskStack(
+  script: { statuses: Array<Record<string, unknown>> },
+  server: FakeTaskServer = { polls: [], updates: [], cancels: [], headersByMethod: new Map() },
+): {
   client: Client;
   transport: Transport;
   server: FakeTaskServer;
 } {
-  const server: FakeTaskServer = { polls: [], updates: [], headersByMethod: new Map() };
   const task = {
     taskId: "task-e2e-1",
     createdAt: "2026-09-17T00:00:00Z",
@@ -510,7 +513,6 @@ function fakeModernTaskStack(script: { statuses: Array<Record<string, unknown>> 
     ttlMs: 60_000,
     pollIntervalMs: 1,
   };
-  let pollIndex = 0;
   const transport = fakeTransport();
   transport.onmessage = () => {}; // the "SDK handler" installed at connect
   const originalSend = transport.send.bind(transport);
@@ -527,14 +529,14 @@ function fakeModernTaskStack(script: { statuses: Array<Record<string, unknown>> 
     if (frame.method === "tools/call") {
       respond({ resultType: "task", status: "working", ...task });
     } else if (frame.method === "tasks/get") {
+      const status = script.statuses[Math.min(server.polls.length, script.statuses.length - 1)]!;
       server.polls.push(frame.params ?? {});
-      const status = script.statuses[Math.min(pollIndex, script.statuses.length - 1)]!;
-      pollIndex += 1;
       respond({ resultType: "complete", ...task, ...status });
     } else if (frame.method === "tasks/update") {
       server.updates.push(frame.params ?? {});
       respond({ resultType: "complete" });
     } else if (frame.method === "tasks/cancel") {
+      server.cancels.push(frame.params ?? {});
       respond({ resultType: "complete" });
     }
   };
@@ -792,7 +794,7 @@ describe("background task delivery over a task session", () => {
   function registry() {
     const sendMessage = vi.fn();
     const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
-    return { tasks: new BackgroundTaskRegistry(manager, sendMessage, new AbortController().signal), sendMessage };
+    return { tasks: new BackgroundTaskRegistry(manager, sendMessage, new AbortController().signal), sendMessage, manager };
   }
 
   const render = async (result: Record<string, unknown>) => ({
@@ -860,5 +862,106 @@ describe("background task delivery over a task session", () => {
       ],
       details: { task: { status: "cancelled" }, error: "task_cancelled" },
     });
+  });
+
+  function attach(stack: ReturnType<typeof fakeModernTaskStack>, serverDefinition: typeof definition = definition) {
+    return attachTaskSession({
+      client: stack.client, serverName: "task-server", definition: serverDefinition, transport: stack.transport, clientInfo, clientCapabilities: {},
+    });
+  }
+
+  async function startOn(tasks: BackgroundTaskRegistry, session: TaskEnabledSession) {
+    const started = await startToolViaTaskSession(session, { name: "slow_tool", args: {} });
+    if (started.kind !== "task") throw new Error("expected a task");
+    return { done: tasks.start({ server: "task-server", tool: "slow_tool", taskId: started.taskId, execution: started.execution, render, guard }) };
+  }
+
+  it("hands a running task over to a replacement connection without cancelling it", async () => {
+    const script = { statuses: [{ status: "working" }] as Array<Record<string, unknown>> };
+    const first = fakeModernTaskStack(script);
+    const second = fakeModernTaskStack(script, first.server);
+    const replaced = await attach(first);
+    const replacement = await attach(second);
+    const { tasks, sendMessage, manager } = registry();
+    try {
+      const { done } = await startOn(tasks, replaced!.session);
+
+      await tasks.handOver("task-server", { taskSession: replacement!.session });
+      await replaced!.session.close();
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(manager.decrementInFlight).not.toHaveBeenCalled();
+
+      script.statuses.push({ status: "completed", result: { resultType: "complete", content: [{ type: "text", text: "built" }], isError: false } });
+      await done;
+
+      expect(first.server.cancels).toEqual([]);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0].content).toEqual([
+        { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) completed." },
+        { type: "text", text: "built" },
+      ]);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    } finally {
+      await replacement!.session.close();
+    }
+  });
+
+  it.each([
+    ["has no task session", undefined],
+    ["is a different endpoint", { command: "other-server", tasks: true }],
+  ])("delivers one outcome-unknown message when the replacement connection %s", async (_case, replacementDefinition) => {
+    const script = { statuses: [{ status: "working" }] };
+    const first = fakeModernTaskStack(script);
+    const replaced = await attach(first);
+    const replacement = replacementDefinition === undefined
+      ? undefined
+      : await attach(fakeModernTaskStack(script, first.server), replacementDefinition);
+    const { tasks, sendMessage, manager } = registry();
+    try {
+      const { done } = await startOn(tasks, replaced!.session);
+
+      await tasks.handOver("task-server", { taskSession: replacement?.session });
+      await replaced!.session.close();
+      await done;
+
+      expect(first.server.cancels).toEqual([]);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0]).toMatchObject({
+        content: [{
+          type: "text",
+          text: "MCP task task-e2e-1 (task-server/slow_tool): outcome unknown after the connection was replaced. Calling the tool again may repeat the work.",
+        }],
+        details: { task: { status: "unknown" }, error: "task_outcome_unknown" },
+      });
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    } finally {
+      await replacement?.session.close();
+    }
+  });
+
+  it("stops a handed-over task through its resumed execution", async () => {
+    const script = { statuses: [{ status: "working" }] };
+    const first = fakeModernTaskStack(script);
+    const second = fakeModernTaskStack(script, first.server);
+    const replaced = await attach(first);
+    const replacement = await attach(second);
+    const { tasks, sendMessage } = registry();
+    try {
+      const { done } = await startOn(tasks, replaced!.session);
+      await tasks.handOver("task-server", { taskSession: replacement!.session });
+      await replaced!.session.close();
+
+      expect(await tasks.stop("task-server/task-e2e-1", "you")).toBe(true);
+      await done;
+
+      expect(first.server.cancels).toHaveLength(1);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0].content).toEqual([
+        { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) cancelled." },
+        { type: "text", text: "Stopped by you." },
+      ]);
+    } finally {
+      await replacement!.session.close();
+    }
   });
 });

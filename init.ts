@@ -274,9 +274,14 @@ export async function initializeMcp(
   if (sessionManager) restoreSessionApprovalState(state, sessionBranch);
   // Elsewhere (print, json, and rpc, which is how subagents run) nobody waits for a later turn.
   if (hasUI && mode === "tui") {
-    state.backgroundTasks = new BackgroundTaskRegistry(manager, state.sendMessage!, owner.signal, () => {
+    const backgroundTasks = new BackgroundTaskRegistry(manager, state.sendMessage!, owner.signal, () => {
       if (owner.isActive()) updateStatusBar(state);
     });
+    state.backgroundTasks = backgroundTasks;
+    manager.setConnectionReplacedListener?.((serverName, _stale, fresh) => backgroundTasks.handOver(serverName, {
+      taskSession: fresh.taskSession,
+      requestTimeoutMs: manager.getRequestOptions(serverName)?.timeout,
+    }));
   }
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
   manager.setMetadataListChangedListener?.((serverName, reason) => {
