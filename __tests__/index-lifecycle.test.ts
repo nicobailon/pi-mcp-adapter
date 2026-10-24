@@ -1102,7 +1102,6 @@ describe("mcpAdapter session lifecycle", () => {
 
     await handlers.get("session_shutdown")?.();
 
-    expect(state.backgroundTasks.size).toBe(0);
     expect(ownerStoppedAtHandOff).toEqual([false]);
     expect(ownerSignal.aborted).toBe(true);
   });

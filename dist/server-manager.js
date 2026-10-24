@@ -873,7 +873,7 @@ export class McpServerManager {
         // child is terminated and reaped. Late close callbacks are identity-guarded.
         staleConnection.status = "closed";
         try {
-            await this.connectionReplacedListener?.(name, staleConnection, fresh);
+            await this.connectionReplacedListener?.(name, fresh);
         }
         catch (error) {
             logger.warn(`MCP: handing work over to the new ${name} connection failed: ${error instanceof Error ? error.message : String(error)}`);

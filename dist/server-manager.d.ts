@@ -54,7 +54,7 @@ type MetadataListChangedListener = (serverName: string, reason: string) => void;
 type ListenStateChangedListener = (serverName: string, state: McpListenState) => void;
 type ResourceUpdatedListener = (serverName: string, uri: string) => void;
 /** Awaited before the replaced connection is disposed, so work on it can move to the fresh one first. */
-type ConnectionReplacedListener = (serverName: string, stale: ServerConnection, fresh: ServerConnection) => Promise<void>;
+type ConnectionReplacedListener = (serverName: string, fresh: ServerConnection) => Promise<void>;
 export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refresh-timeout";
 export declare function isTransientHttpConnectError(error: unknown): boolean;
 export declare class McpServerManager {

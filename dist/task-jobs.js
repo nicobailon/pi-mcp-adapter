@@ -2,7 +2,8 @@ import { JsonRpcResponseError, TaskExecutionClosedError, taskViewFromExecutionEv
 import { logger } from "./logger.js";
 /** The custom message a task's outcome reaches the model as. */
 export const MCP_TASK_RESULT_TYPE = "mcp-task-result";
-/** Why a handed-off task can't be followed, for its one outcome-unknown message. */
+/** Each outcome's `details.error`; a completed task's result carries its own. */
+const OUTCOME_ERRORS = { completed: undefined, failed: "task_failed", cancelled: "task_cancelled", unknown: "task_outcome_unknown" };
 function unfollowableReason(server, session, error) {
     if (session.unavailable === "not-configured")
         return `Server '${server}' is not configured in this session; the task may still be running on it`;
@@ -92,7 +93,7 @@ export class BackgroundTaskRegistry {
     restore(task, session) {
         return new Promise((finish) => {
             const { reference, ...rest } = task;
-            const entry = this.entry(rest, finish);
+            const entry = this.entry({ ...rest, taskId: reference.taskId }, finish);
             void this.resumeOn(entry, entry.generation, reference, session);
         });
     }
@@ -132,7 +133,6 @@ export class BackgroundTaskRegistry {
             await this.persistOnStop(entry, entry.execution);
         }));
     }
-    /** Hands a task off without cancelling it and records it for the stopping session, then releases it. */
     async persistOnStop(entry, execution) {
         const persist = this.persistHandedOff;
         try {
@@ -202,7 +202,6 @@ export class BackgroundTaskRegistry {
         catch (error) {
             if (!this.owns(entry, generation))
                 return this.relinquish(entry, generation);
-            const identity = { id: entry.taskId, server: entry.server, tool: entry.tool };
             this.remove(entry);
             try {
                 if (this.ownerSignal.aborted || session.closed()) {
@@ -213,19 +212,12 @@ export class BackgroundTaskRegistry {
                     // persists its tasks has taken the entry over by now, so this cancel is only for one that doesn't.
                     // The replaced connection stays open until handOver returns, and a detached execution can still cancel.
                     await old.cancel().catch(() => { });
-                    const guarded = await entry.guard(`The connection to ${entry.server} closed.`);
-                    this.deliver(entry, {
-                        content: [{ type: "text", text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}) cancelled.` }, ...guarded.content],
-                        details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled", ...guarded.details },
-                    });
+                    this.deliver(entry, "cancelled", await entry.guard(`The connection to ${entry.server} closed.`));
                 }
                 else {
                     logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
-                    const guarded = await entry.guard(`${unfollowableReason(entry.server, session, error)}. Calling the tool again may repeat the work.`);
-                    this.deliver(entry, {
-                        content: [{ type: "text", text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}) outcome unknown.` }, ...guarded.content],
-                        details: { task: { ...identity, status: "unknown" }, error: "task_outcome_unknown", ...guarded.details },
-                    });
+                    const reason = unfollowableReason(entry.server, session, error);
+                    this.deliver(entry, "unknown", await entry.guard(`${reason}. Calling the tool again may repeat the work.`));
                 }
             }
             finally {
@@ -233,7 +225,7 @@ export class BackgroundTaskRegistry {
             }
             return;
         }
-        // A restore the session stopped during: its record still says pending, so let the task run on.
+        // The owner stopped during a restore: its record still says pending, so let the task run on.
         if (old === undefined && this.ownerSignal.aborted)
             return this.relinquish(entry, generation, resumed);
         this.follow(entry, generation, resumed);
@@ -241,7 +233,6 @@ export class BackgroundTaskRegistry {
     follow(entry, generation, execution) {
         if (!this.owns(entry, generation))
             return this.relinquish(entry, generation, execution);
-        const current = () => this.owns(entry, generation);
         const running = Object.assign(entry, { execution });
         if (this.running.get(entry.info.key) !== running) {
             this.running.set(entry.info.key, running);
@@ -254,12 +245,10 @@ export class BackgroundTaskRegistry {
             cancel();
         else
             this.ownerSignal.addEventListener("abort", cancel, { once: true });
-        const label = `MCP task ${entry.taskId} (${entry.server}/${entry.tool})`;
-        const identity = { id: entry.taskId, server: entry.server, tool: entry.tool };
         void execution.settle({
             onEvent: (event) => {
                 const view = taskViewFromExecutionEvent(event);
-                if (view === undefined || !current())
+                if (view === undefined || !this.owns(entry, generation))
                     return;
                 entry.info.status = view.status;
                 if (view.statusMessage === undefined)
@@ -269,24 +258,15 @@ export class BackgroundTaskRegistry {
             },
         })
             .then(async ({ outcome }) => {
-            if (!current())
+            if (!this.owns(entry, generation))
                 return;
             this.remove(entry);
-            let message;
             if (outcome.status === "completed") {
                 const { resultType: _resultType, ...result } = outcome.result;
-                const rendered = await entry.render(result);
-                message = {
-                    content: [{ type: "text", text: `${label} completed.` }, ...rendered.content],
-                    details: { task: { ...identity, status: "completed" }, ...rendered.details },
-                };
+                this.deliver(entry, "completed", await entry.render(result));
             }
             else if (outcome.status === "failed" && !(outcome.error.cause instanceof TaskExecutionClosedError)) {
-                const guarded = await entry.guard(outcome.error.message);
-                message = {
-                    content: [{ type: "text", text: `${label} failed.` }, ...guarded.content],
-                    details: { task: { ...identity, status: "failed" }, error: "task_failed", ...guarded.details },
-                };
+                this.deliver(entry, "failed", await entry.guard(outcome.error.message));
             }
             else {
                 const reason = outcome.status === "failed"
@@ -294,13 +274,8 @@ export class BackgroundTaskRegistry {
                     : entry.stoppedBy !== undefined
                         ? `Stopped by ${entry.stoppedBy}.`
                         : outcome.task?.statusMessage ?? "Task was cancelled by the server";
-                const guarded = await entry.guard(reason);
-                message = {
-                    content: [{ type: "text", text: `${label} cancelled.` }, ...guarded.content],
-                    details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled", ...guarded.details },
-                };
+                this.deliver(entry, "cancelled", await entry.guard(reason));
             }
-            this.deliver(entry, message);
         })
             .catch((error) => {
             logger.warn(`MCP task ${entry.info.key} could not be delivered: ${error instanceof Error ? error.message : String(error)}`);
@@ -311,8 +286,14 @@ export class BackgroundTaskRegistry {
                 this.release(entry);
         });
     }
-    deliver(entry, message) {
-        this.sendMessage({ customType: MCP_TASK_RESULT_TYPE, display: true, ...message }, { triggerTurn: true, deliverAs: "followUp" });
+    deliver(entry, status, body) {
+        const error = OUTCOME_ERRORS[status];
+        this.sendMessage({
+            customType: MCP_TASK_RESULT_TYPE,
+            display: true,
+            content: [{ type: "text", text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}) ${status === "unknown" ? "outcome unknown" : status}.` }, ...body.content],
+            details: { task: { id: entry.taskId, server: entry.server, tool: entry.tool, status }, ...(error ? { error } : {}), ...body.details },
+        }, { triggerTurn: true, deliverAs: "followUp" });
     }
     // A list must never show a settled task, so the entry goes before the outcome is delivered.
     remove(entry) {

@@ -106,7 +106,7 @@ For those calls, cancelling the Pi tool call sends `tasks/cancel`, and a failed 
 
 Running tasks keep going when the adapter replaces a server's connection: after a failed health check, when the server's HTTP session expires, or after `/mcp-adapter reconnect`, which reconnects servers. The adapter follows each task on the new connection and sends no cancel.
 
-Switching to another session, forking, reloading or quitting Pi saves the running tasks in the session file instead of cancelling them. When that same session starts again, with `/resume` (which reopens a saved session) or by opening it after a restart, the adapter reconnects to each task's server, follows the task and delivers its result once. A forked session or a new session doesn't pick up these tasks.
+Switching to another session, forking, reloading or quitting Pi saves the running tasks in the session file instead of cancelling them. When that same session starts again, with `/resume` (which reopens a saved session) or by opening it after a restart, the adapter reconnects to each task's server, follows the task and delivers its result once. A fork or a new session doesn't pick them up.
 
 These still cancel a running task with `tasks/cancel`, and the model is told once for each:
 

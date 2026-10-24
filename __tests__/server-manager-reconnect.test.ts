@@ -494,7 +494,7 @@ describe("McpServerManager.reconnect", () => {
     await called.promise;
     const fresh = manager.getConnection("remote");
     expect(fresh).not.toBe(stale);
-    expect(listener).toHaveBeenCalledWith("remote", stale, fresh);
+    expect(listener).toHaveBeenCalledWith("remote", fresh);
     expect(staleClose).not.toHaveBeenCalled();
 
     handedOver.resolve();

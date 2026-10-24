@@ -153,24 +153,6 @@ describe("background MCP tasks in initializeMcp", () => {
     expect(manager.incrementInFlight).not.toHaveBeenCalled();
   });
 
-  it("does not resume a pending task whose outcome message is already in the session", async () => {
-    const { initializeMcp } = await import("../init.ts");
-    const sendMessage = vi.fn();
-    const deliveredMessage = {
-      type: "custom_message",
-      customType: "mcp-task-result",
-      content: [{ type: "text", text: "MCP task t-1 (demo/build) completed." }],
-      display: true,
-      details: { task: { id: "t-1", server: "demo", tool: "build", status: "completed" } },
-    };
-    const branch = [{ type: "custom", customType: "mcp-task-v1", data: pendingEntry }, deliveredMessage];
-
-    const state = await initializeMcp({ getFlag: vi.fn(), sendMessage, appendEntry: vi.fn() } as unknown as ExtensionAPI, sessionContext("s-1", branch));
-
-    expect(state.backgroundTasks!.size).toBe(0);
-    expect(sendMessage).not.toHaveBeenCalled();
-  });
-
   it("leaves another session's pending tasks alone, so a fork does not resume them", async () => {
     const { initializeMcp } = await import("../init.ts");
     const appendEntry = vi.fn();

@@ -257,7 +257,7 @@ type MetadataListChangedListener = (serverName: string, reason: string) => void;
 type ListenStateChangedListener = (serverName: string, state: McpListenState) => void;
 type ResourceUpdatedListener = (serverName: string, uri: string) => void;
 /** Awaited before the replaced connection is disposed, so work on it can move to the fresh one first. */
-type ConnectionReplacedListener = (serverName: string, stale: ServerConnection, fresh: ServerConnection) => Promise<void>;
+type ConnectionReplacedListener = (serverName: string, fresh: ServerConnection) => Promise<void>;
 
 export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refresh-timeout";
 
@@ -1146,7 +1146,7 @@ export class McpServerManager {
     // child is terminated and reaped. Late close callbacks are identity-guarded.
     staleConnection.status = "closed";
     try {
-      await this.connectionReplacedListener?.(name, staleConnection, fresh);
+      await this.connectionReplacedListener?.(name, fresh);
     } catch (error) {
       logger.warn(`MCP: handing work over to the new ${name} connection failed: ${error instanceof Error ? error.message : String(error)}`);
     }

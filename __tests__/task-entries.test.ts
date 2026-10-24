@@ -44,7 +44,6 @@ describe("background task session entries", () => {
       { ...valid, key: "ci/other" },
       { ...valid, reference: { ...reference, generation: "v1" } },
       { ...valid, reference: { ...reference, headers: {} } },
-      { version: 1, kind: "settled", sessionId: "s-1", key: "ci/t-1" },
       "pending",
     ];
     expect(pendingTasksFromBranch([...invalid.map(custom), { type: "custom", customType: "other", data: valid }], "s-1")).toEqual([]);

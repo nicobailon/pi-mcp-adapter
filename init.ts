@@ -286,7 +286,7 @@ export async function initializeMcp(
       if (owner.isActive()) updateStatusBar(state);
     }, appendTaskEntry && ((task) => appendTaskEntry(MCP_TASK_CUSTOM_TYPE, pendingTaskEntry(taskSessionId!, task))));
     state.backgroundTasks = backgroundTasks;
-    manager.setConnectionReplacedListener?.((serverName, _stale, fresh) => backgroundTasks.handOver(serverName, {
+    manager.setConnectionReplacedListener?.((serverName, fresh) => backgroundTasks.handOver(serverName, {
       taskSession: fresh.taskSession,
       requestTimeoutMs: manager.getRequestOptions(serverName)?.timeout,
       closed: () => fresh.status === "closed",
@@ -666,7 +666,6 @@ export async function restoreBackgroundTasks(
       {
         server: task.server,
         tool: task.tool,
-        taskId: task.reference.taskId,
         reference: task.reference,
         render: renderFor(task.server),
         guard,

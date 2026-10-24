@@ -1094,7 +1094,7 @@ describe("background tasks across a session stop and start", () => {
     const { tasks, sendMessage, manager } = registry();
     try {
       const restored = tasks.restore(
-        { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard },
+        { server: "task-server", tool: "slow_tool", reference: persisted[0]!.reference, render, guard },
         { taskSession: connection!.session, closed: () => false },
       );
       script.statuses.push({ status: "completed", result: { resultType: "complete", content: [{ type: "text", text: "built" }], isError: false } });
@@ -1122,7 +1122,7 @@ describe("background tasks across a session stop and start", () => {
     const restarted = registry({ persist: (task) => again.push(task), onChange: () => followed() });
     try {
       const restored = restarted.tasks.restore(
-        { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard },
+        { server: "task-server", tool: "slow_tool", reference: persisted[0]!.reference, render, guard },
         { taskSession: connection!.session, closed: () => false },
       );
       await following;
@@ -1146,7 +1146,7 @@ describe("background tasks across a session stop and start", () => {
     const { tasks, sendMessage, manager, owner } = registry();
 
     const restored = tasks.restore(
-      { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard },
+      { server: "task-server", tool: "slow_tool", reference: persisted[0]!.reference, render, guard },
       { taskSession: connection!.session, closed: () => true },
     );
     owner.abort();
@@ -1231,7 +1231,7 @@ describe("background tasks across a session stop and start", () => {
       const { tasks, sendMessage, manager, owner } = registry({ persist: () => {} });
       const resume = pendingResume();
       const restored = tasks.restore(
-        { server: "task-server", tool: "slow_tool", taskId: "t-1", reference, render, guard },
+        { server: "task-server", tool: "slow_tool", reference, render, guard },
         { taskSession: resume.taskSession, closed: () => false },
       );
       await resume.asked;
@@ -1246,8 +1246,30 @@ describe("background tasks across a session stop and start", () => {
       expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
     });
 
+    it("lets a restored task run on, still pending, when its resume answers after the owner stopped without a hand-off", async () => {
+      const log: string[] = [];
+      const persisted: HandedOffTask[] = [];
+      const { tasks, sendMessage, manager, owner } = registry({ persist: (task) => persisted.push(task) });
+      const resume = pendingResume();
+      const restored = tasks.restore(
+        { server: "task-server", tool: "slow_tool", reference, render, guard },
+        { taskSession: resume.taskSession, closed: () => false },
+      );
+      await resume.asked;
+
+      // A session restart or failed start stops the owner without handOffForShutdown.
+      owner.abort();
+      resume.answer().resolve(loggedExecution(log, "resumed"));
+      await restored;
+
+      expect(log).toEqual(["resumed.detach"]);
+      expect(persisted).toEqual([]);
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    });
+
     const restoredTask = (taskId: string) =>
-      ({ server: "task-server", tool: "slow_tool", taskId, reference: { ...reference, taskId }, render, guard });
+      ({ server: "task-server", tool: "slow_tool", reference: { ...reference, taskId }, render, guard });
 
     it.each(["while it hands off a running task", "with nothing running"])(
       "lets a restore that resumes once the session starts stopping %s run on, still pending",

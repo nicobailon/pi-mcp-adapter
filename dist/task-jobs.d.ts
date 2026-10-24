@@ -26,7 +26,7 @@ export interface HandedOffTask {
     tool: string;
     reference: SerializedTaskReference;
 }
-export interface RestoredTask extends Omit<BackgroundTaskStart, "execution"> {
+export interface RestoredTask extends Omit<BackgroundTaskStart, "execution" | "taskId"> {
     reference: SerializedTaskReference;
 }
 /** A running task as `/mcp tasks` shows it. */
@@ -109,7 +109,6 @@ export declare class BackgroundTaskRegistry {
      * session stop, since it also claims tasks still being restored or resumed.
      */
     handOffForShutdown(): Promise<void>;
-    /** Hands a task off without cancelling it and records it for the stopping session, then releases it. */
     private persistOnStop;
     private takeOver;
     private owns;
