@@ -11,6 +11,7 @@ import type { McpServerManager } from "./server-manager.ts";
 import type { SendMessageFn } from "./state.ts";
 import type { ContentBlock } from "./types.ts";
 import { logger } from "./logger.ts";
+import { MCP_TASK_RESULT_TYPE } from "./task-entries.ts";
 
 export interface RenderedTaskResult {
   content: ContentBlock[];
@@ -27,9 +28,6 @@ export interface BackgroundTaskStart {
   /** Bounds a failure or cancel reason, which may come from the server, with the call site's output guard. */
   guard: (text: string) => Promise<RenderedTaskResult>;
 }
-
-/** The custom message a task's outcome reaches the model as. */
-export const MCP_TASK_RESULT_TYPE = "mcp-task-result";
 
 /** Each outcome's `details.error`; a completed task's result carries its own. */
 const OUTCOME_ERRORS = { completed: undefined, failed: "task_failed", cancelled: "task_cancelled", unknown: "task_outcome_unknown" } as const;

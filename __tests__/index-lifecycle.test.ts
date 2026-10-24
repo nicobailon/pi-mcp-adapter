@@ -7,6 +7,7 @@ import { computeServerHash } from "../metadata-cache.ts";
 import { ConsentManager } from "../consent-manager.ts";
 import { MCP_APPROVAL_CUSTOM_TYPE, getToolApprovalIdentity, makeToolApprovalKey } from "../session-approvals.ts";
 import { BackgroundTaskRegistry } from "../task-jobs.ts";
+import { MCP_TASK_CUSTOM_TYPE, pendingTaskEntry } from "../task-entries.ts";
 
 const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn(),
@@ -3287,6 +3288,25 @@ describe("mcpAdapter session lifecycle", () => {
     await handlers.get("session_start")?.({}, { hasUI: true, ui: { setStatus } });
 
     expect(setStatus).toHaveBeenCalledWith("mcp", undefined);
+  });
+
+  it.each([
+    ["starts the runtime for a session with a task to resume", "s-1", true],
+    ["still defers for a session whose saved task belongs to another session", "fork", false],
+  ])("%s, though its cache would let startup defer", async (_case, sessionId, initializes) => {
+    cacheLazyServer({ command: "demo" });
+    mocks.initializeMcp.mockResolvedValue(createState());
+    const reference = { endpointId: "e1", generation: "v2", taskId: "t-1", originalOperation: "tools/call" } as const;
+    const entry = pendingTaskEntry("s-1", { key: "demo/t-1", server: "demo", tool: "build", reference });
+    const sessionManager = {
+      getBranch: vi.fn(() => [{ type: "custom", customType: MCP_TASK_CUSTOM_TYPE, data: entry }]),
+      getSessionId: vi.fn(() => sessionId),
+    };
+
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: true, mode: "tui", ui: { setStatus: vi.fn(), notify: vi.fn() }, sessionManager });
+
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(initializes ? 1 : 0);
   });
 
   it("lets live runtime status overwrite the provisional deferred footer on first use", async () => {

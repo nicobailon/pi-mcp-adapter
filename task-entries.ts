@@ -1,7 +1,11 @@
 import type { SerializedTaskReference } from "@modelcontextprotocol/ext-tasks/client";
-import { MCP_TASK_RESULT_TYPE, type HandedOffTask } from "./task-jobs.ts";
+// Type-only, so index.ts can scan a session at startup without loading the task runtime.
+import type { HandedOffTask } from "./task-jobs.ts";
 
 export const MCP_TASK_CUSTOM_TYPE = "mcp-task-v1";
+
+/** The custom message a task's outcome reaches the model as. */
+export const MCP_TASK_RESULT_TYPE = "mcp-task-result";
 
 /** The session entry that lets a stopped session resume a background task when it starts again. */
 export type McpTaskEntryV1 = {

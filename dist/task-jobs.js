@@ -1,7 +1,6 @@
 import { JsonRpcResponseError, TaskExecutionClosedError, taskViewFromExecutionEvent, } from "@modelcontextprotocol/ext-tasks/client";
 import { logger } from "./logger.js";
-/** The custom message a task's outcome reaches the model as. */
-export const MCP_TASK_RESULT_TYPE = "mcp-task-result";
+import { MCP_TASK_RESULT_TYPE } from "./task-entries.js";
 /** Each outcome's `details.error`; a completed task's result carries its own. */
 const OUTCOME_ERRORS = { completed: undefined, failed: "task_failed", cancelled: "task_cancelled", unknown: "task_outcome_unknown" };
 function unfollowableReason(server, session, error) {

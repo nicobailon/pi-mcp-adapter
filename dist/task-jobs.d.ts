@@ -17,8 +17,6 @@ export interface BackgroundTaskStart {
     /** Bounds a failure or cancel reason, which may come from the server, with the call site's output guard. */
     guard: (text: string) => Promise<RenderedTaskResult>;
 }
-/** The custom message a task's outcome reaches the model as. */
-export declare const MCP_TASK_RESULT_TYPE = "mcp-task-result";
 /** A task a stopped session handed off, which the session can resume when it starts again. */
 export interface HandedOffTask {
     key: string;

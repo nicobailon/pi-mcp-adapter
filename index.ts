@@ -30,6 +30,7 @@ import { cleanupMaterializedBinaryResources } from "./tool-registrar.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { syncNamespaceProxyTools } from "./namespace-tools.ts";
 import { restoreSessionApprovalState } from "./session-approvals.ts";
+import { pendingTasksFromBranch } from "./task-entries.ts";
 import { createRetryableLoader } from "./lazy-loader.ts";
 import { toToolParameters } from "./tool-parameters.ts";
 import { readPanelOpenKeys } from "./panel-keys.ts";
@@ -106,6 +107,17 @@ function hasExecutorWithoutCatalog(config: McpConfig, cache: MetadataCache | nul
     return entry !== undefined && !entry.executorApps && !isServerDisabled(definition)
       && isExecutorCatalogEntry(entry) && isServerCacheValid(entry, definition);
   });
+}
+
+/** A terminal session that handed off background tasks when it last stopped: its startup resumes them. */
+function hasTasksToResume(ctx: ExtensionContext): boolean {
+  if (!ctx.hasUI || ctx.mode !== "tui") return false;
+  try {
+    return pendingTasksFromBranch(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionId()).length > 0;
+  } catch {
+    // Initialization reads the session again and logs why it can't.
+    return false;
+  }
 }
 
 export interface McpServerRegistration {
@@ -1723,7 +1735,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (state) return;
 
     if (!initPromise) {
-      const deferredSnapshot = getDeferredSessionSnapshot(ctx.cwd);
+      const deferredSnapshot = hasTasksToResume(ctx) ? undefined : getDeferredSessionSnapshot(ctx.cwd);
       if (deferredSnapshot) {
         const { config, cache, enabledServerCount } = deferredSnapshot;
         sessionScriptToolIssues = deferredSnapshot.scriptToolIssues;
