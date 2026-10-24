@@ -3,12 +3,13 @@ import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { TaskFailedError } from "@modelcontextprotocol/ext-tasks/client";
 import { createDirectToolExecutor } from "../direct-tools.ts";
-import { executeCall } from "../proxy-modes.ts";
+import { executeCall, executeCancelTask } from "../proxy-modes.ts";
 import { BackgroundTaskRegistry } from "../task-jobs.ts";
 
 type Outcome =
   | { status: "completed"; result: Record<string, unknown> }
-  | { status: "failed"; error: TaskFailedError };
+  | { status: "failed"; error: TaskFailedError }
+  | { status: "cancelled" };
 
 /** A task-backed execution that settles only when the test says so. */
 function pendingTask() {
@@ -56,7 +57,7 @@ function taskState(execution: object, options: { background?: boolean } = {}) {
   return { state, callTool, sendMessage, manager, delivered, owner };
 }
 
-const HANDLE_TEXT = "Task t-1 started on demo/build. Do not call the tool again; the result arrives later as an mcp-task-result message.";
+const HANDLE_TEXT = 'Task t-1 started on demo/build. Do not call the tool again; the result arrives later as an mcp-task-result message. To stop it, call mcp({ cancelTask: "demo/t-1" }).';
 
 describe("background MCP tasks through the proxy", () => {
   it("returns the task handle before the task finishes, then delivers the result once as a follow-up", async () => {
@@ -252,5 +253,43 @@ describe("background MCP tasks through direct tools", () => {
     const scriptResult = await run(fromScript.state, spec, "codemode/1");
     expect(scriptResult.content).toEqual([{ type: "text", text: "build ok" }]);
     expect(fromScript.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("mcp({ cancelTask })", () => {
+  it("cancels a background task and delivers it once as stopped by the agent", async () => {
+    const { execution, finish } = pendingTask();
+    // The server acknowledges the cancel by settling the task as cancelled.
+    execution.cancel.mockImplementation(async () => finish({ status: "cancelled" }));
+    const { state, sendMessage, delivered } = taskState(execution);
+    await executeCall(state, "demo_build", {});
+
+    const result = await executeCancelTask(state, "demo/t-1");
+    await delivered();
+
+    expect(result.content).toEqual([{ type: "text", text: 'Cancel requested for MCP task "demo/t-1". An mcp-task-result message confirms it.' }]);
+    expect(result.details).toEqual({ mode: "cancelTask", task: "demo/t-1" });
+    expect(execution.cancel).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]![0].content).toEqual([
+      { type: "text", text: "MCP task t-1 (demo/build) cancelled." },
+      { type: "text", text: "Stopped by the agent." },
+    ]);
+  });
+
+  it("returns an error and cancels nothing for an unknown task or outside the interactive terminal", async () => {
+    const { execution, finish } = pendingTask();
+    const { state, delivered } = taskState(execution);
+    await executeCall(state, "demo_build", {});
+
+    const unknown = await executeCancelTask(state, "demo/nope");
+    expect(unknown.details).toMatchObject({ mode: "cancelTask", error: "not_found" });
+
+    const nonTui = await executeCancelTask(taskState(pendingTask().execution, { background: false }).state, "demo/t-1");
+    expect(nonTui.details).toMatchObject({ mode: "cancelTask", error: "no_background_tasks" });
+
+    expect(execution.cancel).not.toHaveBeenCalled();
+    finish({ status: "completed", result: { content: [] } });
+    await delivered();
   });
 });

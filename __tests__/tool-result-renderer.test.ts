@@ -55,6 +55,7 @@ describe("MCP tool call renderer", () => {
       "mcp describe list_worker_tail_events @ cf-portal",
     ]);
     expect(formatMcpProxyToolCallLines({ connect: "cf-portal" })).toEqual(["mcp connect cf-portal"]);
+    expect(formatMcpProxyToolCallLines({ cancelTask: "ci/t-1" })).toEqual(["mcp cancel task ci/t-1"]);
     expect(formatMcpProxyToolCallLines({ server: "cf-portal" })).toEqual(["mcp list cf-portal"]);
     expect(formatMcpProxyToolCallLines({})).toEqual(["mcp status"]);
   });

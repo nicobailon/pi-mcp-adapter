@@ -21,6 +21,7 @@ export interface McpProxyToolCallInput {
   includeSchemas?: boolean;
   server?: string;
   action?: string;
+  cancelTask?: string;
 }
 
 interface McpToolRenderState {
@@ -216,6 +217,7 @@ export function formatMcpProxyToolCallLines(
   maxInputChars = DEFAULT_MAX_CALL_INPUT_CHARS,
 ): string[] {
   if (args.action === "ui-messages") return [`mcp ${args.action}`];
+  if (args.cancelTask) return [`mcp cancel task ${args.cancelTask}`];
 
   if (args.tool) {
     const target = args.server ? `${args.tool} @ ${args.server}` : args.tool;

@@ -2719,6 +2719,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           : "Action: 'install', 'ui-messages', 'auth-start', or 'auth-complete'" })),
         url: Type.Optional(Type.String({ description: "MCP endpoint URL for action: 'install'" })),
         target: Type.Optional(Type.String({ description: "Install target: 'global' (default) or 'project'" })),
+        cancelTask: Type.Optional(Type.String({ description: "Stop a background MCP task by the <server>/<taskId> its handle names" })),
       }),
       renderResult: renderMcpToolResult,
       ...reachesAllTools,
@@ -2738,6 +2739,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         action?: string;
         url?: string;
         target?: string;
+        cancelTask?: string;
       }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, _ctx: ExtensionContext) {
         let executeOwner = currentOwner;
         const parseArgs = (value: string | Record<string, unknown> | undefined): Record<string, unknown> | undefined => {
@@ -2772,7 +2774,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           || value.server !== undefined
           || value.action !== undefined
           || value.url !== undefined
-          || value.target !== undefined;
+          || value.target !== undefined
+          || value.cancelTask !== undefined;
         if (!hasGatewayMode(params) && params.args !== undefined) {
           throw new Error("Gateway params were nested inside `args`; pass them top-level (for example, mcp({ search: \"...\" }) or mcp({ tool: \"...\", args: {} })).");
         }
@@ -2853,6 +2856,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return signal
             ? proxyModes.executeAuthComplete(proxyState, params.server, input, signal)
             : proxyModes.executeAuthComplete(proxyState, params.server, input);
+        }
+        if (params.cancelTask !== undefined) {
+          return proxyModes.executeCancelTask(proxyState, params.cancelTask);
         }
         if (params.tool) {
           // A script tool wins over an MCP tool of the same name; mcp({ tool, server }) reaches the MCP one.
