@@ -272,7 +272,11 @@ export async function initializeMcp(
   };
   if (sessionManager) restoreSessionApprovalState(state, sessionBranch);
   // Elsewhere (print, json, and rpc, which is how subagents run) nobody waits for a later turn.
-  if (hasUI && mode === "tui") state.backgroundTasks = new BackgroundTaskRegistry(manager, state.sendMessage!, owner.signal);
+  if (hasUI && mode === "tui") {
+    state.backgroundTasks = new BackgroundTaskRegistry(manager, state.sendMessage!, owner.signal, () => {
+      if (owner.isActive()) updateStatusBar(state);
+    });
+  }
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
   manager.setMetadataListChangedListener?.((serverName, reason) => {
     if (!owner.isActive()) return;
@@ -898,10 +902,12 @@ export function updateStatusBar(state: McpExtensionState): void {
     ui.setStatus("mcp", undefined);
     return;
   }
+  const taskCount = state.backgroundTasks?.size ?? 0;
+  const footer = taskCount > 0 ? `${formattedStatus} · ${taskCount} MCP ${taskCount === 1 ? "task" : "tasks"}` : formattedStatus;
   const theme = ui.theme;
   const styledStatus = typeof theme?.fg === "function"
-    ? theme.fg("accent", formattedStatus)
-    : formattedStatus;
+    ? theme.fg("accent", footer)
+    : footer;
   ui.setStatus("mcp", styledStatus);
 }
 

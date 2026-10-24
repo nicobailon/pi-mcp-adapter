@@ -3714,6 +3714,7 @@ describe("mcpAdapter session lifecycle", () => {
       "reconnect",
       "tools",
       "prompts",
+      "tasks",
       "setup",
       "jev",
       "edit",
@@ -3744,6 +3745,13 @@ describe("mcpAdapter session lifecycle", () => {
     ]);
     expect(commandDef.getArgumentCompletions("jev s")).toEqual([
       { value: "jev setup", label: "setup — Configure Jev semantic search" },
+    ]);
+    state.backgroundTasks = { list: () => [{ key: "github/t-1", server: "github", tool: "build", taskId: "t-1", status: "working" }] };
+    expect(commandDef.getArgumentCompletions("tasks ")).toEqual([
+      { value: "tasks stop ", label: "stop — Stop a background MCP task" },
+    ]);
+    expect(commandDef.getArgumentCompletions("tasks stop git")).toEqual([
+      { value: "tasks stop github/t-1", label: "github/t-1 (build)" },
     ]);
     expect(commandDef.getArgumentCompletions("tools anything")).toBeNull();
     expect(api.registerCommand.mock.calls.some((call: any[]) => call[0] === "mcp-reconnect")).toBe(false);

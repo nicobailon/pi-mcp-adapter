@@ -1991,6 +1991,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           { value: "reconnect", label: "reconnect — Reconnect servers" },
           { value: "tools", label: "tools — List all tools" },
           { value: "prompts", label: "prompts — List all MCP prompts" },
+          { value: "tasks", label: "tasks — List and stop background MCP tasks" },
           { value: "setup", label: "setup — Configure MCP servers" },
           { value: "jev", label: "jev setup — Configure Jev semantic search" },
           { value: "edit", label: "edit — Edit .mcp.json or the global config" },
@@ -2008,6 +2009,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         return "setup".startsWith((argumentPrefix ?? "").trimStart())
           ? [{ value: "jev setup", label: "setup — Configure Jev semantic search" }]
           : null;
+      }
+      if (subcommand === "tasks") {
+        const taskArguments = (argumentPrefix ?? "").trimStart();
+        const stopMatch = taskArguments.match(/^stop\s+(.*)$/);
+        if (!stopMatch) {
+          return "stop".startsWith(taskArguments) ? [{ value: "tasks stop ", label: "stop — Stop a background MCP task" }] : null;
+        }
+        const keyPrefix = stopMatch[1] ?? "";
+        const tasks = (state?.backgroundTasks?.list() ?? [])
+          .filter(task => task.key.startsWith(keyPrefix))
+          .map(task => ({ value: `tasks stop ${task.key}`, label: `${task.key} (${task.tool})` }));
+        return tasks.length > 0 ? tasks : null;
       }
       if (
         (subcommand !== "reconnect" && subcommand !== "logout" && subcommand !== "disable" && subcommand !== "enable" && subcommand !== "token")
@@ -2082,6 +2095,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           break;
         case "prompts":
           await commands.showPrompts(state, commandCtx);
+          break;
+        case "tasks":
+          if (parts.length === 1) {
+            commands.showBackgroundTasks(state, commandCtx);
+          } else if (parts[1] === "stop" && parts.length === 3) {
+            commandOwner?.throwIfInactive();
+            await commands.stopBackgroundTask(state, commandCtx, parts[2]!);
+          } else if (commandCtx.hasUI) {
+            commandCtx.ui?.notify("Usage: /mcp-adapter tasks [stop <server>/<taskId>]", "error");
+          }
           break;
         case "setup": {
           commandOwner?.throwIfInactive();

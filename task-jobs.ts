@@ -1,4 +1,4 @@
-import { TaskExecutionClosedError } from "@modelcontextprotocol/ext-tasks/client";
+import { TaskExecutionClosedError, taskViewFromExecutionEvent, type TaskState } from "@modelcontextprotocol/ext-tasks/client";
 import type { BackgroundToolExecution } from "./mcp-tasks.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { SendMessageFn } from "./state.ts";
@@ -19,6 +19,23 @@ export interface BackgroundTaskStart {
   render: (result: Record<string, unknown>) => Promise<RenderedTaskResult>;
 }
 
+/** A running task as `/mcp tasks` shows it. */
+export interface BackgroundTaskInfo {
+  /** `<server>/<taskId>`, the name `/mcp tasks stop` takes. */
+  key: string;
+  server: string;
+  tool: string;
+  taskId: string;
+  status: TaskState;
+  statusMessage?: string;
+}
+
+interface RunningTask {
+  info: BackgroundTaskInfo;
+  execution: BackgroundToolExecution;
+  stopRequested: boolean;
+}
+
 /**
  * Tool calls whose server answered with a task. Each runs to settlement here,
  * holding its server's in-flight count, and its outcome reaches the model as
@@ -26,23 +43,67 @@ export interface BackgroundTaskStart {
  * cancels the remote task.
  */
 export class BackgroundTaskRegistry {
+  private readonly running = new Map<string, RunningTask>();
+
   constructor(
     private readonly manager: Pick<McpServerManager, "decrementInFlight" | "touch">,
     private readonly sendMessage: SendMessageFn,
     private readonly ownerSignal: AbortSignal,
+    /** Called when a task starts or ends. */
+    private readonly onChange: () => void = () => {},
   ) {}
+
+  get size(): number {
+    return this.running.size;
+  }
+
+  list(): BackgroundTaskInfo[] {
+    return [...this.running.values()].map(({ info }) => ({ ...info }));
+  }
+
+  /** Asks the server to cancel the task. Resolves false for an unknown key; rejects when the cancel request fails. */
+  async stop(key: string): Promise<boolean> {
+    const entry = this.running.get(key);
+    if (entry === undefined) return false;
+    entry.stopRequested = true;
+    await entry.execution.cancel();
+    return true;
+  }
 
   /**
    * Takes over the call's in-flight count. Resolves once the outcome is
    * delivered and the count released.
    */
   start(task: BackgroundTaskStart): Promise<void> {
+    const key = `${task.server}/${task.taskId}`;
+    const entry: RunningTask = {
+      info: { key, server: task.server, tool: task.tool, taskId: task.taskId, status: "working" },
+      execution: task.execution,
+      stopRequested: false,
+    };
+    this.running.set(key, entry);
+    this.onChange();
+    // A list must never show a settled task, so the entry goes before the outcome is delivered.
+    const remove = () => {
+      if (this.running.get(key) !== entry) return;
+      this.running.delete(key);
+      this.onChange();
+    };
     // The same cancel a blocking call sends when the runtime stops, ahead of the connection teardown.
     const cancel = () => void task.execution.cancel().catch(() => {});
     if (this.ownerSignal.aborted) cancel();
     else this.ownerSignal.addEventListener("abort", cancel, { once: true });
-    return task.execution.settle()
+    return task.execution.settle({
+      onEvent: (event) => {
+        const view = taskViewFromExecutionEvent(event);
+        if (view === undefined) return;
+        entry.info.status = view.status;
+        if (view.statusMessage === undefined) delete entry.info.statusMessage;
+        else entry.info.statusMessage = view.statusMessage;
+      },
+    })
       .then(async ({ outcome }) => {
+        remove();
         const label = `MCP task ${task.taskId} (${task.server}/${task.tool})`;
         const identity = { id: task.taskId, server: task.server, tool: task.tool };
         let message: { content: ContentBlock[]; details: Record<string, unknown> };
@@ -61,7 +122,9 @@ export class BackgroundTaskRegistry {
         } else {
           const reason = outcome.status === "failed"
             ? `The connection to ${task.server} closed.`
-            : outcome.task?.statusMessage ?? "Task was cancelled by the server";
+            : entry.stopRequested
+              ? "Stopped by you."
+              : outcome.task?.statusMessage ?? "Task was cancelled by the server";
           message = {
             content: [{ type: "text", text: `${label} cancelled.` }, { type: "text", text: reason }],
             details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled" },
@@ -76,6 +139,7 @@ export class BackgroundTaskRegistry {
         logger.warn(`MCP task ${task.server}/${task.taskId} could not be delivered: ${error instanceof Error ? error.message : String(error)}`);
       })
       .finally(() => {
+        remove();
         this.ownerSignal.removeEventListener("abort", cancel);
         this.manager.decrementInFlight(task.server);
         this.manager.touch(task.server);

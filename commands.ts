@@ -292,6 +292,45 @@ export async function showTools(state: McpExtensionState, ctx: ExtensionContext)
   ctx.ui.notify(lines.join("\n"), "info");
 }
 
+export function showBackgroundTasks(state: McpExtensionState, ctx: ExtensionContext): void {
+  if (!ctx.hasUI) return;
+  if (state.backgroundTasks === undefined) {
+    ctx.ui.notify("Background MCP tasks run only in the interactive terminal.", "info");
+    return;
+  }
+  const tasks = state.backgroundTasks.list();
+  if (tasks.length === 0) {
+    ctx.ui.notify("No background MCP tasks are running.", "info");
+    return;
+  }
+  const lines = [
+    "Background MCP tasks:",
+    "",
+    ...tasks.map(task => `  ${task.key} (${task.tool}): ${task.status}${task.statusMessage ? ` — ${task.statusMessage}` : ""}`),
+    "",
+    "Stop one with /mcp-adapter tasks stop <server>/<taskId>",
+  ];
+  ctx.ui.notify(lines.join("\n"), "info");
+}
+
+export async function stopBackgroundTask(state: McpExtensionState, ctx: ExtensionContext, key: string): Promise<void> {
+  if (!ctx.hasUI) return;
+  if (state.backgroundTasks === undefined) {
+    ctx.ui.notify("Background MCP tasks run only in the interactive terminal.", "info");
+    return;
+  }
+  try {
+    if (!await state.backgroundTasks.stop(key)) {
+      ctx.ui.notify(`No running MCP task "${key}". Run /mcp-adapter tasks to list them.`, "error");
+      return;
+    }
+  } catch (error) {
+    ctx.ui.notify(`Could not stop MCP task "${key}": ${error instanceof Error ? error.message : String(error)}`, "error");
+    return;
+  }
+  ctx.ui.notify(`Stopped MCP task "${key}".`, "info");
+}
+
 export async function reconnectServer(
   state: McpExtensionState,
   ctx: ExtensionContext,
