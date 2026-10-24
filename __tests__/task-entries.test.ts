@@ -1,20 +1,35 @@
 import { describe, expect, it } from "vitest";
 import type { SerializedTaskReference } from "@modelcontextprotocol/ext-tasks/client";
-import { MCP_TASK_CUSTOM_TYPE, pendingTaskEntry, pendingTasksFromBranch, settledTaskEntry } from "../task-entries.ts";
+import { MCP_TASK_CUSTOM_TYPE, pendingTaskEntry, pendingTasksFromBranch } from "../task-entries.ts";
 
 const reference = { endpointId: "endpoint-1", generation: "v2", taskId: "t-1", originalOperation: "tools/call" } as SerializedTaskReference;
 const task = { key: "ci/t-1", server: "ci", tool: "build", reference };
 const custom = (data: unknown) => ({ type: "custom", customType: MCP_TASK_CUSTOM_TYPE, data });
+/** The outcome message as Pi persists it once the model received it. */
+const delivered = (server: string, id: string) => ({
+  type: "custom_message",
+  customType: "mcp-task-result",
+  content: [{ type: "text", text: `MCP task ${id} (${server}/build) completed.` }],
+  display: true,
+  details: { task: { id, server, tool: "build", status: "completed" } },
+});
 
 describe("background task session entries", () => {
   it("resumes a task whose last entry in this session is pending", () => {
     expect(pendingTasksFromBranch([custom(pendingTaskEntry("s-1", task))], "s-1")).toEqual([task]);
   });
 
-  it("skips a task whose last entry is settled, and resumes one stopped again after a restore", () => {
-    const settled = [custom(pendingTaskEntry("s-1", task)), custom(settledTaskEntry("s-1", "ci/t-1"))];
-    expect(pendingTasksFromBranch(settled, "s-1")).toEqual([]);
-    expect(pendingTasksFromBranch([...settled.slice(0, 1), custom(pendingTaskEntry("s-1", task))], "s-1")).toEqual([task]);
+  it("does not resume a task whose outcome message the model already received", () => {
+    expect(pendingTasksFromBranch([custom(pendingTaskEntry("s-1", task)), delivered("ci", "t-1")], "s-1")).toEqual([]);
+    expect(pendingTasksFromBranch([custom(pendingTaskEntry("s-1", task)), delivered("ci", "t-2")], "s-1")).toEqual([task]);
+    // Only the delivered message settles a task; no entry written by the adapter does.
+    const writtenSettled = custom({ version: 1, kind: "settled", sessionId: "s-1", key: "ci/t-1" });
+    expect(pendingTasksFromBranch([custom(pendingTaskEntry("s-1", task)), writtenSettled], "s-1")).toEqual([task]);
+  });
+
+  it("resumes a task stopped again after its outcome was delivered once", () => {
+    const branch = [custom(pendingTaskEntry("s-1", task)), delivered("ci", "t-1"), custom(pendingTaskEntry("s-1", task))];
+    expect(pendingTasksFromBranch(branch, "s-1")).toEqual([task]);
   });
 
   it("ignores another session's entries, so a fork does not pick up its parent's tasks", () => {
@@ -29,7 +44,7 @@ describe("background task session entries", () => {
       { ...valid, key: "ci/other" },
       { ...valid, reference: { ...reference, generation: "v1" } },
       { ...valid, reference: { ...reference, headers: {} } },
-      { version: 1, kind: "settled", sessionId: "s-1" },
+      { version: 1, kind: "settled", sessionId: "s-1", key: "ci/t-1" },
       "pending",
     ];
     expect(pendingTasksFromBranch([...invalid.map(custom), { type: "custom", customType: "other", data: valid }], "s-1")).toEqual([]);

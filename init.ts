@@ -50,7 +50,7 @@ import {
 } from "./session-approvals.ts";
 import { seedObservedOutputs } from "./output-shape.ts";
 import { BackgroundTaskRegistry, type HandedOffTask, type RenderedTaskResult } from "./task-jobs.ts";
-import { MCP_TASK_CUSTOM_TYPE, pendingTaskEntry, pendingTasksFromBranch, settledTaskEntry } from "./task-entries.ts";
+import { MCP_TASK_CUSTOM_TYPE, pendingTaskEntry, pendingTasksFromBranch } from "./task-entries.ts";
 import { resolveMcpResultContent } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { EXECUTOR_CATALOG_TTL_MS, fetchExecutorCatalog, isExecutorCatalogConnection, isExecutorCatalogEntry, type ExecutorCatalog } from "./executor-catalog.ts";
@@ -292,11 +292,7 @@ export async function initializeMcp(
       closed: () => fresh.status === "closed",
     }));
     const pendingTasks = appendTaskEntry ? pendingTasksFromBranch(sessionBranch, taskSessionId!) : [];
-    if (pendingTasks.length > 0) {
-      restorePendingTasks = () => restoreBackgroundTasks(state, backgroundTasks, pendingTasks, (key) => {
-        if (owner.isActive()) appendTaskEntry!(MCP_TASK_CUSTOM_TYPE, settledTaskEntry(taskSessionId!, key));
-      });
-    }
+    if (pendingTasks.length > 0) restorePendingTasks = () => restoreBackgroundTasks(state, backgroundTasks, pendingTasks);
   }
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
   manager.setMetadataListChangedListener?.((serverName, reason) => {
@@ -638,13 +634,12 @@ export async function initializeMcp(
 
 /**
  * Follows again the tasks this session handed off when it last stopped, and
- * delivers each outcome once. `settle` records a task as settled before its outcome is sent.
+ * delivers each outcome once. Pi persisting the delivered message settles the task.
  */
 export async function restoreBackgroundTasks(
   state: McpExtensionState,
   registry: BackgroundTaskRegistry,
   tasks: readonly HandedOffTask[],
-  settle: (key: string) => void,
 ): Promise<void> {
   const guardOptions = resolveMcpOutputGuardOptions(state.config.settings);
   const guard = async (text: string): Promise<RenderedTaskResult> => {
@@ -673,7 +668,6 @@ export async function restoreBackgroundTasks(
         reference: task.reference,
         render: renderFor(task.server),
         guard,
-        beforeDelivery: () => settle(task.key),
       },
       {
         taskSession: connection?.taskSession,

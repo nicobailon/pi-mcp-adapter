@@ -25,9 +25,10 @@ export interface BackgroundTaskStart {
   render: (result: Record<string, unknown>) => Promise<RenderedTaskResult>;
   /** Bounds a failure or cancel reason, which may come from the server, with the call site's output guard. */
   guard: (text: string) => Promise<RenderedTaskResult>;
-  /** Runs right before the task's outcome message is sent. */
-  beforeDelivery?: () => void;
 }
+
+/** The custom message a task's outcome reaches the model as. */
+export const MCP_TASK_RESULT_TYPE = "mcp-task-result";
 
 /** A task a stopped session handed off, which the session can resume when it starts again. */
 export interface HandedOffTask {
@@ -362,9 +363,8 @@ export class BackgroundTaskRegistry {
   }
 
   private deliver(entry: TaskEntry, message: RenderedTaskResult): void {
-    entry.beforeDelivery?.();
     this.sendMessage(
-      { customType: "mcp-task-result", display: true, ...message },
+      { customType: MCP_TASK_RESULT_TYPE, display: true, ...message },
       { triggerTurn: true, deliverAs: "followUp" },
     );
   }

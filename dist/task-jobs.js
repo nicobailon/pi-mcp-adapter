@@ -1,5 +1,7 @@
 import { TaskExecutionClosedError, taskViewFromExecutionEvent, } from "@modelcontextprotocol/ext-tasks/client";
 import { logger } from "./logger.js";
+/** The custom message a task's outcome reaches the model as. */
+export const MCP_TASK_RESULT_TYPE = "mcp-task-result";
 /**
  * The tool result a call returns once its task runs in the background. `cancelHint` names
  * mcp({ cancelTask }) only while the `mcp` tool exists to take it.
@@ -297,8 +299,7 @@ export class BackgroundTaskRegistry {
         });
     }
     deliver(entry, message) {
-        entry.beforeDelivery?.();
-        this.sendMessage({ customType: "mcp-task-result", display: true, ...message }, { triggerTurn: true, deliverAs: "followUp" });
+        this.sendMessage({ customType: MCP_TASK_RESULT_TYPE, display: true, ...message }, { triggerTurn: true, deliverAs: "followUp" });
     }
     // A list must never show a settled task, so the entry goes before the outcome is delivered.
     remove(entry) {

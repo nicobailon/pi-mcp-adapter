@@ -1079,15 +1079,14 @@ describe("background tasks across a session stop and start", () => {
     expect(stopping.tasks.size).toBe(0);
   });
 
-  it("resumes a handed-off task when the session starts again and records it settled before delivering", async () => {
+  it("resumes a handed-off task when the session starts again and delivers its outcome once", async () => {
     const script = { statuses: [{ status: "working" }] as Array<Record<string, unknown>> };
     const { stack, persisted } = await handedOffTask(script);
     const connection = await attach(fakeModernTaskStack(script, stack.server, "second"));
     const { tasks, sendMessage, manager } = registry();
-    const beforeDelivery = vi.fn();
     try {
       const restored = tasks.restore(
-        { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard, beforeDelivery },
+        { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard },
         { taskSession: connection!.session, closed: () => false },
       );
       script.statuses.push({ status: "completed", result: { resultType: "complete", content: [{ type: "text", text: "built" }], isError: false } });
@@ -1098,8 +1097,6 @@ describe("background tasks across a session stop and start", () => {
         { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) completed." },
         { type: "text", text: "built" },
       ]);
-      expect(beforeDelivery).toHaveBeenCalledTimes(1);
-      expect(beforeDelivery.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]!);
       expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
       expect(stack.server.cancels).toEqual([]);
     } finally {
@@ -1115,10 +1112,9 @@ describe("background tasks across a session stop and start", () => {
     const following = new Promise<void>((resolve) => { followed = resolve; });
     const again: HandedOffTask[] = [];
     const restarted = registry({ persist: (task) => again.push(task), onChange: () => followed() });
-    const beforeDelivery = vi.fn();
     try {
       const restored = restarted.tasks.restore(
-        { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard, beforeDelivery },
+        { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard },
         { taskSession: connection!.session, closed: () => false },
       );
       await following;
@@ -1128,7 +1124,6 @@ describe("background tasks across a session stop and start", () => {
 
       expect(again).toEqual([expect.objectContaining({ key: "task-server/task-e2e-1" })]);
       expect(stack.server.cancels).toEqual([]);
-      expect(beforeDelivery).not.toHaveBeenCalled();
       expect(restarted.sendMessage).not.toHaveBeenCalled();
       expect(restarted.manager.decrementInFlight).toHaveBeenCalledTimes(1);
     } finally {
@@ -1141,17 +1136,15 @@ describe("background tasks across a session stop and start", () => {
     const { stack, persisted } = await handedOffTask(script);
     const connection = await attach(fakeModernTaskStack(script, stack.server, "second"));
     const { tasks, sendMessage, manager, owner } = registry();
-    const beforeDelivery = vi.fn();
 
     const restored = tasks.restore(
-      { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard, beforeDelivery },
+      { server: "task-server", tool: "slow_tool", taskId: "task-e2e-1", reference: persisted[0]!.reference, render, guard },
       { taskSession: connection!.session, closed: () => true },
     );
     owner.abort();
     await connection!.session.close();
     await restored;
 
-    expect(beforeDelivery).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
     expect(stack.server.cancels).toEqual([]);
     expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
@@ -1228,10 +1221,9 @@ describe("background tasks across a session stop and start", () => {
     it("lets a restored task run on, still pending, when its resume answers after the session stopped", async () => {
       const log: string[] = [];
       const { tasks, sendMessage, manager, owner } = registry({ persist: () => {} });
-      const beforeDelivery = vi.fn();
       const resume = pendingResume();
       const restored = tasks.restore(
-        { server: "task-server", tool: "slow_tool", taskId: "t-1", reference, render, guard, beforeDelivery },
+        { server: "task-server", tool: "slow_tool", taskId: "t-1", reference, render, guard },
         { taskSession: resume.taskSession, closed: () => false },
       );
       await resume.asked;
@@ -1242,13 +1234,12 @@ describe("background tasks across a session stop and start", () => {
       await restored;
 
       expect(log).toEqual(["resumed.detach"]);
-      expect(beforeDelivery).not.toHaveBeenCalled();
       expect(sendMessage).not.toHaveBeenCalled();
       expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
     });
 
-    const restoredTask = (taskId: string, beforeDelivery: () => void) =>
-      ({ server: "task-server", tool: "slow_tool", taskId, reference: { ...reference, taskId }, render, guard, beforeDelivery });
+    const restoredTask = (taskId: string) =>
+      ({ server: "task-server", tool: "slow_tool", taskId, reference: { ...reference, taskId }, render, guard });
 
     it.each(["while it hands off a running task", "with nothing running"])(
       "lets a restore that resumes once the session starts stopping %s run on, still pending",
@@ -1259,9 +1250,8 @@ describe("background tasks across a session stop and start", () => {
         if (when !== "with nothing running") {
           void tasks.start({ server: "task-server", tool: "slow_tool", taskId: "t-0", execution: loggedExecution(log, "running"), render, guard });
         }
-        const beforeDelivery = vi.fn();
         const resume = pendingResume();
-        const restored = tasks.restore(restoredTask("t-1", beforeDelivery), { taskSession: resume.taskSession, closed: () => false });
+        const restored = tasks.restore(restoredTask("t-1"), { taskSession: resume.taskSession, closed: () => false });
         await resume.asked;
 
         const handingOff = tasks.handOffForShutdown();
@@ -1275,7 +1265,6 @@ describe("background tasks across a session stop and start", () => {
         expect(cancels(log)).toEqual([]);
         expect(log).toContain("restored.detach");
         expect(persisted.map((task) => task.key)).toEqual(when === "with nothing running" ? [] : ["task-server/t-0"]);
-        expect(beforeDelivery).not.toHaveBeenCalled();
         expect(sendMessage).not.toHaveBeenCalled();
         expect(manager.decrementInFlight).toHaveBeenCalledTimes(when === "with nothing running" ? 1 : 2);
       },
@@ -1286,9 +1275,8 @@ describe("background tasks across a session stop and start", () => {
       let followed!: () => void;
       const following = new Promise<void>((resolve) => { followed = resolve; });
       const { tasks, sendMessage, manager } = registry({ onChange: () => followed() });
-      const beforeDelivery = vi.fn();
       const taskSession = { resumeTask: async () => loggedExecution(log, "restored") } as unknown as TaskEnabledSession;
-      const restored = tasks.restore(restoredTask("t-1", beforeDelivery), { taskSession, closed: () => false });
+      const restored = tasks.restore(restoredTask("t-1"), { taskSession, closed: () => false });
       await following;
 
       expect(await tasks.stop("task-server/t-1", "the agent")).toBe(true);
@@ -1300,7 +1288,6 @@ describe("background tasks across a session stop and start", () => {
         { type: "text", text: "MCP task t-1 (task-server/slow_tool) cancelled." },
         { type: "text", text: "Stopped by the agent." },
       ]);
-      expect(beforeDelivery.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]!);
       expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
     });
 

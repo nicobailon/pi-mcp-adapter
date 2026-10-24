@@ -104,7 +104,7 @@ describe("background MCP tasks in initializeMcp", () => {
     expect(execution.cancel).not.toHaveBeenCalled();
   });
 
-  it("settles a pending task of this session before telling the model its outcome when the session starts again", async () => {
+  it("resumes a pending task of this session whose outcome was never persisted, and tells the model once", async () => {
     const { initializeMcp } = await import("../init.ts");
     let delivered!: () => void;
     const delivery = new Promise<void>((resolve) => { delivered = resolve; });
@@ -118,8 +118,25 @@ describe("background MCP tasks in initializeMcp", () => {
     // The configured server is disabled, so the task can't be followed again.
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]![0]).toMatchObject({ customType: "mcp-task-result", details: { task: { id: "t-1", status: "unknown" } } });
-    expect(appendEntry).toHaveBeenCalledWith("mcp-task-v1", { version: 1, kind: "settled", sessionId: "s-1", key: "demo/t-1" });
-    expect(appendEntry.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]!);
+    expect(appendEntry).not.toHaveBeenCalled();
+  });
+
+  it("does not resume a pending task whose outcome message is already in the session", async () => {
+    const { initializeMcp } = await import("../init.ts");
+    const sendMessage = vi.fn();
+    const deliveredMessage = {
+      type: "custom_message",
+      customType: "mcp-task-result",
+      content: [{ type: "text", text: "MCP task t-1 (demo/build) completed." }],
+      display: true,
+      details: { task: { id: "t-1", server: "demo", tool: "build", status: "completed" } },
+    };
+    const branch = [{ type: "custom", customType: "mcp-task-v1", data: pendingEntry }, deliveredMessage];
+
+    const state = await initializeMcp({ getFlag: vi.fn(), sendMessage, appendEntry: vi.fn() } as unknown as ExtensionAPI, sessionContext("s-1", branch));
+
+    expect(state.backgroundTasks!.size).toBe(0);
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("leaves another session's pending tasks alone, so a fork does not resume them", async () => {
