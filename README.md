@@ -38,7 +38,7 @@ The built-in turns `codemode` on by itself; with the adapter, add `"+codemode"` 
 | Saved workflows as tools | No | A workflow you repeat becomes one tool with fixed inputs: a saved script that calls MCP and Pi tools, found by search and called like any other tool (`scriptTools`, [Script tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md#script-tools)) |
 | Executor app tools | Only Executor's own six tools; the model reaches app tools through Executor's `search` and `call` | Each tool of your [Executor](https://executor.sh) apps is a Pi tool, found by search and called by name with Pi's approvals ([Executor app tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/prompts-and-ui.md#executor-app-tools)) |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
-| MCP prompts, elicitation, sampling, Tasks | No | Yes; Tasks need `"protocolVersion": "auto"` |
+| MCP prompts, elicitation, sampling, Tasks | No | Yes. Long jobs run as Tasks in the background while the agent keeps working, and their results come back on their own; Tasks need `"protocolVersion": "auto"` |
 | MCP UI apps | Left out | Native window or browser |
 | Add a server | `pi mcp add` in a shell, then `/reload` | Give the agent the URL: `mcp({ action: "install", url })` connects it and checks its tools in the current session; for an OAuth server it opens sign-in first and checks the tools once you approve |
 | Configs from Cursor, Claude Code, Codex, VS Code | Convert by hand | Imported |
@@ -144,6 +144,7 @@ Two calls instead of 26 tools cluttering the context.
 | `/mcp-adapter edit [project\|global]` | Open `.mcp.json` (default) or `~/.config/mcp/mcp.json` in an editor; Ctrl+G opens `$EDITOR`; saves a valid JSONC object and reloads |
 | `/mcp-adapter tools` | List all tools |
 | `/mcp-adapter prompts` | List all MCP prompts registered as slash commands |
+| `/mcp-adapter tasks [stop <server>/<taskId>]` | List long-running MCP tasks still working in the background, or stop one |
 | `/mcp-adapter reconnect` | Reconnect all servers |
 | `/mcp-adapter reconnect <server>` | Connect or reconnect a single server |
 | `/mcp-adapter disable <server>` | Disable a server in the project-local `.pi/mcp-adapter.json` (requires `/reload` to apply) |

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A long-running MCP tool, such as a CI run or a report export, used to hold Pi until it finished, sometimes for many minutes. When the server runs the job as an MCP task, the call now returns right away and the agent keeps working. The result arrives by itself once the job ends: it starts a new turn if the agent is idle and waits for the current turn otherwise. If the job asks a question, the usual form or browser prompt still opens. The footer shows how many jobs are running, and `/mcp-adapter tasks` lists them and stops one with `/mcp-adapter tasks stop <server>/<taskId>`; Esc no longer cancels a job once it has started. Calls from codemode scripts and other code, MCP UI and Executor tools, and print, JSON and RPC sessions (including subagents) still wait for the result. A job is cancelled when its server disconnects or the session ends. This needs a server that supports MCP Tasks on a 2026-07-28 connection (`"protocolVersion": "auto"`). See [#882](https://github.com/nicobailon/pi-mcp-adapter/issues/882) and [Task-augmented tool calls](docs/servers.md#task-augmented-tool-calls).
+
 ## [6.0.0] - 2026-10-22
 
 ### Highlights

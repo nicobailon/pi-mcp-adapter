@@ -87,14 +87,25 @@ Use `"2026-07-28"` to pin that revision. Pinning has no legacy or SSE fallback a
 
 The adapter supports the [MCP Tasks extension](https://modelcontextprotocol.io/extensions/tasks/overview) (`io.modelcontextprotocol/tasks`, SEP-2663), which lets long-running tools return a durable task handle instead of blocking the connection. Support is negotiated per connection and needs no configuration: the task session only activates when a 2026-07-28 connection's server advertises the extension, so nothing changes for servers without task support. Set `tasks: false` on a server to opt out and keep the plain synchronous call path. Legacy (2025-11-25) experimental tasks are not supported.
 
-When active, tool calls keep their normal contract from the model's point of view:
+When the server answers a call with a task, Pi doesn't wait for it:
 
-- A tool that returns a task handle is transparently polled to completion, honoring the server's suggested poll interval; the final result is returned as if the call had been synchronous.
-- If the task pauses for input (`input_required`), elicitation requests are routed through the same interactive elicitation UI as direct `elicitation/create` requests, and answers are delivered back via `tasks/update`.
-- Cancelling the Pi tool call sends a cooperative `tasks/cancel` to the server.
-- A task that fails with a JSON-RPC error surfaces as the same error a synchronous call would have produced; a tool result with `isError: true` is returned as a normal tool error.
+- The tool call returns right away with the task id, and the agent keeps working. The adapter polls the task in the background, honoring the server's suggested poll interval.
+- When the task ends, its result reaches the model once, as an `mcp-task-result` message. If the agent is idle, the message starts a turn; if it is busy, the message waits until the current turn ends. Results go through the same output guard as a normal call. A failed task delivers its error, and a tool result with `isError: true` arrives as a tool error.
+- If the task asks a question (`input_required`), the same form or browser prompt opens as for a direct `elicitation/create` request, even though the call already returned. Your answer goes back via `tasks/update`.
+- Esc while the call is still waiting for the server cancels the task with a cooperative `tasks/cancel`. Once the task id is back, Esc no longer touches the task. To stop it, run `/mcp-adapter tasks`, which lists running tasks with their latest status, then `/mcp-adapter tasks stop <server>/<taskId>`. The footer shows how many tasks are running.
 
-Task traffic is dispatched on a dedicated raw channel below the SDK client (the published MCP SDK does not yet decode task result shapes itself), built on the official `@modelcontextprotocol/ext-tasks` requester package. The channel chains onto the connected transport's handlers without replacing the transport, and raw task frames appear in `/mcp-trace` in both directions. Task status notifications (`notifications/tasks`) are not consumed; polling is used exclusively. `requestTimeoutMs` applies per task request (the initiating call and each poll), not to the overall task duration — a task that runs for hours holds the Pi tool call for as long as the model waits for it.
+Some calls still wait for the result, the way they did before, because their caller needs the value or nobody would see a later message:
+
+- calls from code: Pi's codemode scripts, other tools, and other extensions through the runtime tool-call event
+- MCP UI tools and the UI window's own tool calls
+- [Executor](https://executor.sh) tools
+- sessions outside the interactive terminal: print, JSON and RPC modes, which includes Pi subagents
+
+For those calls, cancelling the Pi tool call sends `tasks/cancel`, and a failed task surfaces as the same error a synchronous call would have produced.
+
+A running task is cancelled, and the model told once, when its server's connection closes or reconnects, or when the session is switched, forked, reloaded or ended.
+
+Task traffic is dispatched on a dedicated raw channel below the SDK client (the published MCP SDK does not yet decode task result shapes itself), built on the official `@modelcontextprotocol/ext-tasks` requester package. The channel chains onto the connected transport's handlers without replacing the transport, and raw task frames appear in `/mcp-trace` in both directions. Task status notifications (`notifications/tasks`) are not consumed; polling is used exclusively. `requestTimeoutMs` applies per task request (the initiating call and each poll), not to the overall task duration, so a task can run for hours. While a task runs, its server's connection stays open instead of closing when idle.
 
 One trade-off while tasks are active: every `tools/call` on that connection is dispatched through the task-aware path instead of `Client.callTool`, so the SDK's client-side output-schema validation of `structuredContent` and SEP-2243 `Mcp-Param-*` header mirroring do not run for those calls. Servers still validate their own results; only the client-side double-check is skipped.
 

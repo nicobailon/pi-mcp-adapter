@@ -102,3 +102,23 @@ export interface TaskToolCallOptions {
  * underlying JSON-RPC error, and aborting cancels the remote task.
  */
 export declare function callToolViaTaskSession(session: TaskEnabledSession, options: TaskToolCallOptions): Promise<Record<string, unknown>>;
+type ToolCallExecution = Awaited<ReturnType<TaskEnabledSession["callTool"]>>;
+export type BackgroundToolExecution = Extract<ToolCallExecution, {
+    kind: "task";
+}>;
+export type StartedToolCall = {
+    kind: "result";
+    result: Record<string, unknown>;
+} | {
+    kind: "task";
+    execution: BackgroundToolExecution;
+    taskId: string;
+};
+/**
+ * Like callToolViaTaskSession, but returns a task-backed execution as soon as
+ * the server hands out its task instead of waiting for it. The caller owns the
+ * returned execution. Aborting `signal` before the handle arrives cancels as
+ * today; aborting it afterwards no longer touches the task.
+ */
+export declare function startToolViaTaskSession(session: TaskEnabledSession, options: TaskToolCallOptions): Promise<StartedToolCall>;
+export {};
