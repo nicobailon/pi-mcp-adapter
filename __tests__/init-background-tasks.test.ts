@@ -121,7 +121,7 @@ describe("background MCP tasks in initializeMcp", () => {
       customType: "mcp-task-result",
       content: [
         { type: "text", text: "MCP task t-1 (demo/build) outcome unknown." },
-        { type: "text", text: "Server 'demo' is not configured in this session; the task may still be running on it. Calling the tool again may repeat the work." },
+        { type: "text", text: 'Server "demo" is not configured in this session; the task may still be running on it. Calling the tool again may repeat the work.' },
       ],
       details: { task: { id: "t-1", status: "unknown" }, error: "task_outcome_unknown" },
     });
@@ -148,7 +148,7 @@ describe("background MCP tasks in initializeMcp", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]![0].content).toEqual([
       { type: "text", text: "MCP task t-1 (demo/build) outcome unknown." },
-      { type: "text", text: "Could not reach 'demo'. Calling the tool again may repeat the work." },
+      { type: "text", text: 'Could not reach "demo". Calling the tool again may repeat the work.' },
     ]);
     expect(manager.incrementInFlight).not.toHaveBeenCalled();
   });

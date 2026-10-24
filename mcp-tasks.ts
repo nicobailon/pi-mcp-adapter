@@ -29,6 +29,7 @@ import type {
   ElicitResult,
   JSONRPCMessage,
   JSONRPCRequest,
+  RequestOptions,
   Transport,
 } from "@modelcontextprotocol/client";
 import { ProtocolError } from "@modelcontextprotocol/client";
@@ -48,6 +49,8 @@ import {
 } from "@modelcontextprotocol/ext-tasks/client";
 import type { ServerDefinition } from "./types.ts";
 import { logger } from "./logger.ts";
+import { abortable } from "./abort.ts";
+import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 
 export const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks";
 
@@ -435,9 +438,8 @@ export async function callToolViaTaskSession(
 type ToolCallExecution = Awaited<ReturnType<TaskEnabledSession["callTool"]>>;
 export type BackgroundToolExecution = Extract<ToolCallExecution, { kind: "task" }>;
 
-export type StartedToolCall =
-  | { kind: "result"; result: Record<string, unknown> }
-  | { kind: "task"; execution: BackgroundToolExecution; taskId: string };
+export type StartedTask = { kind: "task"; execution: BackgroundToolExecution; taskId: string };
+export type StartedToolCall = { kind: "result"; result: Record<string, unknown> } | StartedTask;
 
 /** Sends the call with `lifetime` as the execution's signal; errors are mapped the way Client.callTool throws them. */
 async function openToolCall(
@@ -484,6 +486,28 @@ export async function startToolViaTaskSession(
     return { kind: "task", execution, taskId: execution.handle.taskId };
   }
   return { kind: "result", result: await settleAsCallToolResult(execution, options.name, signal) };
+}
+
+type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
+
+/**
+ * The `call` a tool call makes on `conn`. With `onTask`, a call its server answers with a
+ * task hands the task to `onTask` as soon as it starts and resolves with an empty result.
+ */
+export function callToolOn(
+  conn: { client: Client; taskSession?: TaskEnabledSession | undefined },
+  signal: AbortSignal | undefined,
+  onTask: ((task: StartedTask) => void) | undefined,
+) {
+  return async (params: Parameters<Client["callTool"]>[0], options: RequestOptions | undefined): Promise<ClientCallToolResult> => {
+    if (!conn.taskSession) return abortable(callToolPausingForElicitation(conn.client, params, options), signal);
+    const taskCall = { name: params.name, args: params.arguments ?? {}, meta: params._meta, signal, requestTimeoutMs: options?.timeout };
+    if (onTask === undefined) return await callToolViaTaskSession(conn.taskSession, taskCall) as ClientCallToolResult;
+    const started = await startToolViaTaskSession(conn.taskSession, taskCall);
+    if (started.kind === "result") return started.result as ClientCallToolResult;
+    onTask(started);
+    return { content: [] };
+  };
 }
 
 async function settleAsCallToolResult(

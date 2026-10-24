@@ -1,15 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { TaskFailedError } from "@modelcontextprotocol/ext-tasks/client";
+import { TaskFailedError, type TaskOutcome } from "@modelcontextprotocol/ext-tasks/client";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeCancelTask } from "../proxy-modes.ts";
 import { BackgroundTaskRegistry } from "../task-jobs.ts";
 
-type Outcome =
-  | { status: "completed"; result: Record<string, unknown> }
-  | { status: "failed"; error: TaskFailedError }
-  | { status: "cancelled" };
+type Outcome = TaskOutcome<Record<string, unknown>>;
 
 /** A task-backed execution that settles only when the test says so. */
 function pendingTask() {
@@ -58,7 +55,7 @@ function taskState(execution: object, options: { background?: boolean } = {}) {
   return { state, callTool, sendMessage, manager, delivered, owner };
 }
 
-const HANDLE_TEXT = 'Task t-1 started on demo/build. Do not call the tool again; the result arrives later as an mcp-task-result message. To stop it, call mcp({ cancelTask: "demo/t-1" }).';
+const HANDLE_TEXT = 'Task t-1 started on demo/build. Do not call the tool again; the result arrives later in a message that starts "MCP task t-1". To stop it, call mcp({ cancelTask: "demo/t-1" }).';
 
 describe("background MCP tasks through the proxy", () => {
   it("returns the task handle before the task finishes, then delivers the result once as a follow-up", async () => {
@@ -242,7 +239,7 @@ describe("background MCP tasks through direct tools", () => {
 
     const result = await run(state);
 
-    expect(result.content).toEqual([{ type: "text", text: "Task t-1 started on demo/build. Do not call the tool again; the result arrives later as an mcp-task-result message." }]);
+    expect(result.content).toEqual([{ type: "text", text: 'Task t-1 started on demo/build. Do not call the tool again; the result arrives later in a message that starts "MCP task t-1".' }]);
     finish({ status: "completed", result: { content: [] } });
     await delivered();
   });
@@ -280,7 +277,7 @@ describe("mcp({ cancelTask })", () => {
     const result = await executeCancelTask(state, "demo/t-1");
     await delivered();
 
-    expect(result.content).toEqual([{ type: "text", text: 'Cancel requested for MCP task "demo/t-1". An mcp-task-result message confirms it.' }]);
+    expect(result.content).toEqual([{ type: "text", text: 'Cancel requested for MCP task "demo/t-1". A message that starts "MCP task" confirms it.' }]);
     expect(result.details).toEqual({ mode: "cancelTask", task: "demo/t-1" });
     expect(execution.cancel).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledTimes(1);

@@ -97,7 +97,7 @@ When the server answers a call with a task, Pi doesn't wait for it:
 - Esc while the call is still waiting for the server cancels the task with a cooperative `tasks/cancel`. Once the task id is back, Esc no longer touches the task. To stop it, run `/mcp-adapter tasks`, which lists running tasks with their latest status, then `/mcp-adapter tasks stop <server>/<taskId>`. The footer shows how many tasks are running.
 - The agent can stop a task too, for example when you ask it to. The call's result tells it the key, and `mcp({ cancelTask: "<server>/<taskId>" })` sends the same `tasks/cancel`; the task's message then says the agent stopped it. It only stops work the agent started, so like the command it needs no tool approval. This works only while the `mcp` tool is available; with `disableProxyTool` the call's result leaves the hint out, and only `/mcp-adapter tasks stop` can stop the task.
 
-Some calls still wait for the result, the way they did before, because their caller needs the value or nobody would see a later message:
+Some calls still wait for the result, because their caller needs the value or nobody would see a later message:
 
 - calls from code: Pi's codemode scripts, other tools, and other extensions through the runtime tool-call event
 - MCP UI tools and the UI window's own tool calls
@@ -106,7 +106,7 @@ Some calls still wait for the result, the way they did before, because their cal
 
 For those calls, cancelling the Pi tool call sends `tasks/cancel`, and a failed task surfaces as the same error a synchronous call would have produced.
 
-Running tasks keep going when the adapter replaces a server's connection: after a failed health check, when the server's HTTP session expires, or after `/mcp-adapter reconnect`, which reconnects servers. The adapter follows each task on the new connection and sends no cancel.
+Running tasks keep going when the adapter replaces a server's connection: after a failed health check, when the server's HTTP session expires, or after `/mcp-adapter reconnect`. The adapter follows each task on the new connection and sends no cancel.
 
 Switching to another session, forking, reloading or quitting Pi saves the running tasks in the session file instead of cancelling them. When that same session starts again, with `/resume` (which reopens a saved session) or by opening it after a restart, the adapter reconnects to each task's server, follows the task and delivers its result once. A fork or a new session doesn't pick them up.
 
@@ -120,17 +120,17 @@ Disabling a server with `/mcp-adapter disable <server>`, or removing it from the
 
 When the adapter can't follow a task after a reconnect or a restart, the model gets one message: `MCP task <id> (<server>/<tool>) outcome unknown.`, the reason, and a note that calling the tool again may repeat the work. The reason is one of these:
 
-- "Server '<server>' is not configured in this session; the task may still be running on it", when the server was removed or disabled
-- "Server '<server>' was reconfigured since this task started", when the server's url or command changed
-- "Expired on the server: outcome unknown", when the server no longer knows the task id (it answers `tasks/get` with error `-32602`)
-- "Could not reach '<server>'", when the connection fails or the server needs sign-in
+- 'Server "<server>" is not configured in this session; the task may still be running on it', when the server was removed or disabled
+- 'Server "<server>" was reconfigured since this task started', when the server's url or command changed
+- "Expired on the server", when the server no longer knows the task id (it answers `tasks/get` with error `-32602`)
+- 'Could not reach "<server>"', when the connection fails or the server needs sign-in
 - "It could not be followed after its connection changed", for any other cause
 
 Limits:
 
 - A stdio server's process usually exits when Pi does, and the task with it, so a task resumed on a stdio server usually ends as "outcome unknown".
 - A change to a server's `env` or headers isn't detected, so the adapter follows the task as if the server were the same.
-- If a result hasn't reached the model when the session stops, a task restored from the session file is resumed and delivered on the next start. For a task started in the current session, that result can be lost, as before.
+- If a result hasn't reached the model when the session stops, a task restored from the session file is resumed and delivered on the next start. For a task started in the current session, that result can be lost.
 
 Task traffic is dispatched on a dedicated raw channel below the SDK client (the published MCP SDK does not yet decode task result shapes itself), built on the official `@modelcontextprotocol/ext-tasks` requester package. The channel chains onto the connected transport's handlers without replacing the transport, and raw task frames appear in `/mcp-trace` in both directions. Task status notifications (`notifications/tasks`) are not consumed; polling is used exclusively. `requestTimeoutMs` applies per task request (the initiating call and each poll), not to the overall task duration, so a task can run for hours. While a task runs, its server's connection stays open instead of closing when idle.
 

@@ -101,6 +101,11 @@ export function guardedMcpDetails(guarded: GuardedMcpOutput): Record<string, unk
   };
 }
 
+export async function guardMcpText(text: string, options: McpOutputGuardOptions): Promise<{ content: ContentBlock[]; details: Record<string, unknown> }> {
+  const guarded = await guardMcpOutput([{ type: "text", text }], options);
+  return { content: guarded.content, details: guardedMcpDetails(guarded) };
+}
+
 /**
  * Bound model-facing MCP output. Text output is capped at maxBytes/maxLines and
  * spilled to a temp file when oversized. Image blocks pass through untouched —

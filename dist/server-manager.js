@@ -1073,8 +1073,9 @@ export class McpServerManager {
                                     ...this.samplingConfig,
                                     serverName: name,
                                     // The task's input signal ends when the task is cancelled, closed or settles, and a
-                                    // blocking call closes its execution on abort, so the current turn's signal stays out.
-                                    getSignal: () => combineAbortSignals(this.samplingConfig.ownerSignal, signal),
+                                    // blocking call closes its execution on abort. The current turn's signal stays out,
+                                    // so an Esc on a later turn can't abort a background task's sampling.
+                                    getSignal: () => combineAbortSignals(this.runtimeSignal, signal),
                                 }, request),
                             }
                             : {}),

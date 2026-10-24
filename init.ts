@@ -52,8 +52,8 @@ import { seedObservedOutputs } from "./output-shape.ts";
 import { BackgroundTaskRegistry, type HandedOffTask, type RenderedTaskResult } from "./task-jobs.ts";
 import { MCP_TASK_CUSTOM_TYPE, pendingTaskEntry, pendingTasksFromBranch } from "./task-entries.ts";
 import { resolveMcpResultContent } from "./tool-registrar.ts";
-import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
-import { EXECUTOR_CATALOG_TTL_MS, fetchExecutorCatalog, isExecutorCatalogConnection, isExecutorCatalogEntry, type ExecutorCatalog } from "./executor-catalog.ts";
+import { guardMcpOutput, guardMcpText, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
+import { EXECUTOR_CATALOG_TTL_MS, fetchExecutorCatalog, isExecutorCatalogConnection, isExecutorCatalogEntry } from "./executor-catalog.ts";
 export { getFailureAgeSeconds, getFailureMessage } from "./failure-backoff.ts";
 
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
@@ -192,7 +192,6 @@ export async function initializeMcp(
       getSignal: () => owner.isActive()
         ? combineAbortSignals(owner.signal, ctx.signal)
         : owner.signal,
-      ownerSignal: owner.signal,
     });
   }
   const elicitationEnabled = config.settings?.elicitation !== false && hasUI;
@@ -261,7 +260,7 @@ export async function initializeMcp(
     sendMessage: (message, options) => {
       const deliver = () => {
         if (!owner.isActive()) return;
-        pi.sendMessage(message as unknown as Parameters<typeof pi.sendMessage>[0], options);
+        pi.sendMessage(message, options);
       };
       if (!options?.triggerTurn) {
         deliver();
@@ -280,18 +279,19 @@ export async function initializeMcp(
   // Elsewhere (print, json, and rpc, which is how subagents run) nobody waits for a later turn.
   let restorePendingTasks: (() => Promise<void>) | undefined;
   if (hasUI && mode === "tui") {
-    const taskSessionId = sessionId;
-    const appendTaskEntry = taskSessionId !== undefined ? appendEntry : undefined;
+    const persistHandedOff = sessionId !== undefined && appendEntry
+      ? (task: HandedOffTask) => appendEntry(MCP_TASK_CUSTOM_TYPE, pendingTaskEntry(sessionId, task))
+      : undefined;
     const backgroundTasks = new BackgroundTaskRegistry(manager, state.sendMessage!, owner.signal, () => {
       if (owner.isActive()) updateStatusBar(state);
-    }, appendTaskEntry && ((task) => appendTaskEntry(MCP_TASK_CUSTOM_TYPE, pendingTaskEntry(taskSessionId!, task))));
+    }, persistHandedOff);
     state.backgroundTasks = backgroundTasks;
     manager.setConnectionReplacedListener?.((serverName, fresh) => backgroundTasks.handOver(serverName, {
       taskSession: fresh.taskSession,
       requestTimeoutMs: manager.getRequestOptions(serverName)?.timeout,
       closed: () => fresh.status === "closed",
     }));
-    const pendingTasks = appendTaskEntry ? pendingTasksFromBranch(sessionBranch, taskSessionId!) : [];
+    const pendingTasks = persistHandedOff && sessionId !== undefined ? pendingTasksFromBranch(sessionBranch, sessionId) : [];
     if (pendingTasks.length > 0) restorePendingTasks = () => restoreBackgroundTasks(state, backgroundTasks, pendingTasks);
   }
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
@@ -642,10 +642,7 @@ export async function restoreBackgroundTasks(
   tasks: readonly HandedOffTask[],
 ): Promise<void> {
   const guardOptions = resolveMcpOutputGuardOptions(state.config.settings);
-  const guard = async (text: string): Promise<RenderedTaskResult> => {
-    const guarded = await guardMcpOutput([{ type: "text", text }], guardOptions);
-    return { content: guarded.content, details: guardedMcpDetails(guarded) };
-  };
+  const guard = (text: string) => guardMcpText(text, guardOptions);
   // The call site's render, minus the observed output only a live call records.
   const renderFor = (server: string) => async (result: Record<string, unknown>): Promise<RenderedTaskResult> => {
     const appendStructuredContent = state.config.mcpServers[server]?.appendStructuredContent !== false;

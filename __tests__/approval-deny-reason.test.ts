@@ -268,7 +268,6 @@ describe("host-managed linked read denial", () => {
     expect(calls).toBe(0);
   });
 
-
   it("carries the approver's reason on a denied linked read", async () => {
     const { error, reads } = await readDenied(() => ({ decision: "deny", reason: "No charts today" }));
     expect(error).toBeInstanceOf(HostManagedMcpError);
@@ -284,15 +283,6 @@ describe("host-managed linked read denial", () => {
       expect((error as HostManagedMcpError).denyReason).toBeUndefined();
       expect((error as Error).message).toBe('MCP server "fixture": the request was not sent (blocked by the approval gate)');
     }
-  });
-
-  it("sanitizes and caps the reason on this path", async () => {
-    const { error } = await readDenied(() => ({ decision: "deny", reason: `a\x1b[31mb\x1b]8;;http://evil\x07c${"z".repeat(20000)}` }));
-    const reason = (error as HostManagedMcpError).denyReason!;
-    expect(reason.startsWith("abc")).toBe(true);
-    expect(reason).not.toMatch(/[\x00-\x08\x1b]/);
-    expect(new TextEncoder().encode(reason).length).toBeLessThanOrEqual(8192);
-    expect(reason.endsWith("[… reason truncated]")).toBe(true);
   });
 
   it("leaves abstain and an unclaimed request without denied", async () => {

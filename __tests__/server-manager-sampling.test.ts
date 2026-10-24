@@ -223,7 +223,6 @@ describe("McpServerManager sampling", () => {
     const manager = new McpServerManager();
     const turn = new AbortController();
     const turnCancelled = new Error("turn cancelled");
-    const owner = new AbortController();
     manager.setSamplingConfig({
       autoApprove: true,
       modelRegistry: {
@@ -238,7 +237,6 @@ describe("McpServerManager sampling", () => {
       getCurrentModel: () => undefined,
       getThinkingLevel: () => "off",
       getSignal: () => turn.signal,
-      ownerSignal: owner.signal,
     });
     await manager.connect("demo", { command: "node", args: ["server.js"] });
     const request = { method: "sampling/createMessage", params: { messages: [{ role: "user", content: { type: "text", text: "hi" } }], maxTokens: 10 } };

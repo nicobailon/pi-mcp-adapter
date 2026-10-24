@@ -22,10 +22,10 @@ import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { abortable } from "./abort.ts";
-import { approvalBlockedResult, requestBrokerApproval, sanitizeDenyReason, type BrokerDecision } from "./tool-approval.ts";
+import { approvalBlockedResult, requestBrokerApproval, sanitizeDenyReason } from "./tool-approval.ts";
 import { toToolParameters } from "./tool-parameters.ts";
 import { cleanupMaterializedBinaryResources, resolveMcpResultContent } from "./tool-registrar.ts";
-import { formatToolName } from "./types.ts";
+import { formatToolName, type McpToolApprovalHandlerResult } from "./types.ts";
 import { normalizeDirectToolInputSchema, normalizeToolArguments, stableStringify, truncateAtWord, withToolCallIdMeta } from "./utils.ts";
 
 const CLOSE_TIMEOUT_MS = 5_000;
@@ -198,7 +198,7 @@ function textResult(text: string, details: Record<string, unknown>): ToolResult 
   return { content: [{ type: "text", text }], details };
 }
 
-function isAllowed(decision: BrokerDecision): boolean {
+function isAllowed(decision: McpToolApprovalHandlerResult): boolean {
   return decision === "allow_once" || decision === "allow_for_session";
 }
 
@@ -385,18 +385,15 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
     }
 
     const signal = combineAbortSignals(lifetime.signal, piSignal) ?? lifetime.signal;
-    let decision: BrokerDecision;
+    let decision: McpToolApprovalHandlerResult;
     try {
       decision = await requestBrokerApproval(pi.events, tool.server, { name: tool.toolName, originalName: name }, args, "direct", signal);
     } catch {
       return dispatchFailureResult(tool, new HostManagedMcpError("not_sent", tool.server));
     }
     if (decision === "deny" || typeof decision === "object") {
-      const blocked = approvalBlockedResult(
-        typeof decision === "object" ? { ok: false, reason: "denied", denyReason: decision.reason } : { ok: false, reason: "denied" },
-        tool.server,
-        name,
-      );
+      const denyReason = typeof decision === "object" ? { denyReason: decision.reason } : {};
+      const blocked = approvalBlockedResult({ ok: false, reason: "denied", ...denyReason }, tool.server, name);
       return textResult(blocked.text, blocked.details);
     }
     if (!isAllowed(decision)) {
@@ -438,15 +435,13 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
     };
     const readLinkedResource = async (uri: string): Promise<HostManagedMcpResourceRead> => {
       if (unavailable()) throw new HostManagedMcpError("not_sent", tool.server);
-      let decision: BrokerDecision;
+      let decision: McpToolApprovalHandlerResult;
       try {
         decision = await requestBrokerApproval(pi.events, tool.server, { name: tool.toolName, originalName: name }, Object.freeze({ uri }), "resource", signal);
       } catch {
         decision = "abstain";
       }
-      if (typeof decision === "object" && decision.decision === "deny") {
-        throw new HostManagedMcpError("not_sent", tool.server, { denied: true, denyReason: decision.reason });
-      }
+      if (typeof decision === "object") throw new HostManagedMcpError("not_sent", tool.server, { denied: true, denyReason: decision.reason });
       if (decision === "deny") throw new HostManagedMcpError("not_sent", tool.server, { denied: true });
       if (!isAllowed(decision) || unavailable()) throw new HostManagedMcpError("not_sent", tool.server);
       let readDispatched = false;

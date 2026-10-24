@@ -30,9 +30,9 @@ const DENY_REASON_TRUNCATED = "\n[… reason truncated]";
 
 /**
  * Make an approver's reason safe to hand back to the model: escape sequences
- * and control characters go, newlines, tabs and every printable character
- * (Polish letters included) stay. Over the byte limit it is cut on a
- * character boundary and marked, so a shortened reason never reads as whole.
+ * and control characters go, newlines, tabs and every printable character stay.
+ * Over the byte limit it is cut on a character boundary and marked, so a
+ * shortened reason never reads as whole.
  */
 export function sanitizeDenyReason(reason: string): string | undefined {
   const cleaned = stripOscSequences(reason)
@@ -43,16 +43,9 @@ export function sanitizeDenyReason(reason: string): string | undefined {
   if (!cleaned) return undefined;
   const encoder = new TextEncoder();
   if (encoder.encode(cleaned).length <= MAX_DENY_REASON_BYTES) return cleaned;
-  const budget = MAX_DENY_REASON_BYTES - encoder.encode(DENY_REASON_TRUNCATED).length;
-  let bytes = 0;
-  let cut = "";
-  for (const char of cleaned) {
-    const size = encoder.encode(char).length;
-    if (bytes + size > budget) break;
-    bytes += size;
-    cut += char;
-  }
-  return `${cut}${DENY_REASON_TRUNCATED}`;
+  // encodeInto writes only whole characters, so `read` ends on a character boundary.
+  const { read } = encoder.encodeInto(cleaned, new Uint8Array(MAX_DENY_REASON_BYTES - encoder.encode(DENY_REASON_TRUNCATED).length));
+  return `${cleaned.slice(0, read)}${DENY_REASON_TRUNCATED}`;
 }
 
 /** The text and details a denied or gated call returns, shared by every call path. */
@@ -154,14 +147,12 @@ function isMcpToolApprovalDecision(value: unknown): value is McpToolApprovalDeci
     || value === "abstain";
 }
 
-export type BrokerDecision = McpToolApprovalDecision | { decision: "deny"; reason: string };
-
 /** Anything but a known string or a well-formed denial object is a deny. */
-function normalizeHandlerResult(value: McpToolApprovalHandlerResult | unknown): BrokerDecision {
+function normalizeHandlerResult(value: unknown): McpToolApprovalHandlerResult {
   if (isMcpToolApprovalDecision(value)) return value;
-  if (value && typeof value === "object" && (value as { decision?: unknown }).decision === "deny"
-    && typeof (value as { reason?: unknown }).reason === "string") {
-    const reason = sanitizeDenyReason((value as { reason: string }).reason);
+  if (typeof value === "object" && value !== null && "decision" in value && value.decision === "deny"
+    && "reason" in value && typeof value.reason === "string") {
+    const reason = sanitizeDenyReason(value.reason);
     return reason ? { decision: "deny", reason } : "deny";
   }
   return "deny";
@@ -178,7 +169,7 @@ export async function requestBrokerApproval(
   args: Record<string, unknown> | undefined,
   origin: McpToolApprovalOrigin,
   signal?: AbortSignal,
-): Promise<BrokerDecision> {
+): Promise<McpToolApprovalHandlerResult> {
   if (!events) return "abstain";
 
   let acceptingClaim = true;

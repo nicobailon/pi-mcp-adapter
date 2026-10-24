@@ -1975,8 +1975,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   /**
-   * Whether a tool other than the model or the adapter's proxies called `toolCallId`, for script tools
-   * and for keeping such calls out of the background.
+   * Whether a tool other than the model or the adapter's proxies called `toolCallId`.
    * Pi forms every nested call id as `<parent>/<n>`; under MCP_DIRECT_TOOLS=__none__ there is no caller
    * record, so the id shape is the only signal. That holds for a call whose record is already gone too.
    */
@@ -2738,7 +2737,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           : "Action: 'install', 'ui-messages', 'auth-start', or 'auth-complete'" })),
         url: Type.Optional(Type.String({ description: "MCP endpoint URL for action: 'install'" })),
         target: Type.Optional(Type.String({ description: "Install target: 'global' (default) or 'project'" })),
-        cancelTask: Type.Optional(Type.String({ description: "Stop a background MCP task by the <server>/<taskId> its handle names" })),
+        cancelTask: Type.Optional(Type.String({ description: "Stop a background MCP task by its <server>/<taskId> key" })),
       }),
       renderResult: renderMcpToolResult,
       ...reachesAllTools,

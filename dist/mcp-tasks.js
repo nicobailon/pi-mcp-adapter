@@ -1,6 +1,8 @@
 import { ProtocolError } from "@modelcontextprotocol/client";
 import { createApplicationInputHandler, createTaskSessionEndpointId, createTaskSessionFromClient, DispatchError, JsonRpcResponseError, resultFromTaskOutcome, TaskCancelledError, TaskFailedError, } from "@modelcontextprotocol/ext-tasks/client";
 import { logger } from "./logger.js";
+import { abortable } from "./abort.js";
+import { callToolPausingForElicitation } from "./elicitation-handler.js";
 export const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks";
 const RAW_REQUEST_ID_PREFIX = "pi-mcp-tasks-";
 const DEFAULT_RAW_REQUEST_TIMEOUT_MS = 60_000;
@@ -364,6 +366,24 @@ export async function startToolViaTaskSession(session, options) {
         return { kind: "task", execution, taskId: execution.handle.taskId };
     }
     return { kind: "result", result: await settleAsCallToolResult(execution, options.name, signal) };
+}
+/**
+ * The `call` a tool call makes on `conn`. With `onTask`, a call its server answers with a
+ * task hands the task to `onTask` as soon as it starts and resolves with an empty result.
+ */
+export function callToolOn(conn, signal, onTask) {
+    return async (params, options) => {
+        if (!conn.taskSession)
+            return abortable(callToolPausingForElicitation(conn.client, params, options), signal);
+        const taskCall = { name: params.name, args: params.arguments ?? {}, meta: params._meta, signal, requestTimeoutMs: options?.timeout };
+        if (onTask === undefined)
+            return await callToolViaTaskSession(conn.taskSession, taskCall);
+        const started = await startToolViaTaskSession(conn.taskSession, taskCall);
+        if (started.kind === "result")
+            return started.result;
+        onTask(started);
+        return { content: [] };
+    };
 }
 async function settleAsCallToolResult(execution, name, signal) {
     let onAbort;

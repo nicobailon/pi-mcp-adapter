@@ -2,24 +2,23 @@ import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent"
 import { UrlElicitationRequiredError, type Client, type JsonSchemaType, type JsonSchemaValidator, type Progress, type RequestOptions } from "@modelcontextprotocol/client";
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
-import type { ToolMetadata, McpContent } from "./types.ts";
+import type { ToolMetadata } from "./types.ts";
 import { getServerPrefix, getToolNameCandidates, isServerDisabled, parseUiPromptHandoff, resolveToolPrefix, type ServerEntry } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure, repageExecutorCatalog, cacheExecutorSignature } from "./init.ts";
-import { abortable, throwIfAborted } from "./abort.ts";
+import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { buildToolMetadata, cacheReader, executorAppToolsLine, executorCatalogOf, getToolNames, formatSchema, isPlainTypeSchema, ownTools } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import { getObservedOutput, observedOutputRecorder, renderOutputShape } from "./output-shape.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
-import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
+import { guardMcpOutput, guardMcpText, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, formatMcpStatus, normalizeToolArguments, resolveServerUrl, truncateAtWord, withToolCallIdMeta } from "./utils.ts";
 import { authenticate, completeAuthFromInput, getAuthStatus, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
-import { callToolViaTaskSession, startToolViaTaskSession, type StartedToolCall } from "./mcp-tasks.ts";
+import { callToolOn, type StartedTask } from "./mcp-tasks.ts";
 import { backgroundTaskHandle } from "./task-jobs.ts";
-import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses, isExecutorConnection } from "./executor-pauses.ts";
 import { executorCallParams, executorUnknownToolMatches, executorUnknownToolText, unwrapExecutorCallResult } from "./executor-app-tools.ts";
 import { canonicalPath } from "./executor-accounts.ts";
@@ -1262,24 +1261,21 @@ function formatParameterNames(toolMeta: ToolMetadata): string {
 
 /** `mcp({ cancelTask })`: stops a background task the model started; no tool approval, like `/mcp-adapter tasks stop`. */
 export async function executeCancelTask(state: McpExtensionState, key: string): Promise<ProxyToolResult> {
-  const failed = (text: string, error: string) => ({
+  const reply = (text: string, error?: string) => ({
     content: [{ type: "text" as const, text }],
-    details: { mode: "cancelTask", task: key, error },
+    details: { mode: "cancelTask", task: key, ...(error === undefined ? {} : { error }) },
   });
   if (state.backgroundTasks === undefined) {
-    return failed("Background MCP tasks run only in the interactive terminal, so there is no task to cancel.", "no_background_tasks");
+    return reply("Background MCP tasks run only in the interactive terminal, so there is no task to cancel.", "no_background_tasks");
   }
   try {
     if (!await state.backgroundTasks.stop(key, "the agent")) {
-      return failed(`No running MCP task "${key}". It may have finished already; its result arrives as an mcp-task-result message.`, "not_found");
+      return reply(`No running MCP task "${key}". It may have finished already, and its result arrives as a message.`, "not_found");
     }
   } catch (error) {
-    return failed(`Could not cancel MCP task "${key}": ${error instanceof Error ? error.message : String(error)}`, "cancel_failed");
+    return reply(`Could not cancel MCP task "${key}": ${error instanceof Error ? error.message : String(error)}`, "cancel_failed");
   }
-  return {
-    content: [{ type: "text" as const, text: `Cancel requested for MCP task "${key}". An mcp-task-result message confirms it.` }],
-    details: { mode: "cancelTask", task: key },
-  };
+  return reply(`Cancel requested for MCP task "${key}". A message that starts "MCP task" confirms it.`);
 }
 
 export function executeInstructions(state: McpExtensionState, server: string): ProxyToolResult {
@@ -1910,7 +1906,7 @@ export async function executeCall(
       && !internalDelivery && !uiResourceUri && toolMeta.executorPath === undefined
       ? state.backgroundTasks
       : undefined;
-    let startedTask = undefined as Extract<StartedToolCall, { kind: "task" }> | undefined;
+    let startedTask: StartedTask | undefined;
     const callResult = await withSessionRecovery<ClientCallToolResult>(
       {
         manager: state.manager,
@@ -1929,25 +1925,7 @@ export async function executeCall(
           toolName: toolMeta.originalName,
           requestOptions,
           signal: ownedSignal,
-          call: async (params, options) => {
-            if (conn.taskSession) {
-              const taskCall = {
-                name: params.name,
-                args: params.arguments ?? {},
-                meta: params._meta,
-                signal: ownedSignal,
-                requestTimeoutMs: options?.timeout,
-              };
-              if (backgroundTasks === undefined || isExecutorConnection(conn)) {
-                return await callToolViaTaskSession(conn.taskSession, taskCall) as unknown as ClientCallToolResult;
-              }
-              const started = await startToolViaTaskSession(conn.taskSession, taskCall);
-              if (started.kind === "result") return started.result as unknown as ClientCallToolResult;
-              startedTask = started;
-              return { content: [] } as ClientCallToolResult;
-            }
-            return abortable(callToolPausingForElicitation(conn.client, params, options), ownedSignal);
-          },
+          call: callToolOn(conn, ownedSignal, backgroundTasks && !isExecutorConnection(conn) ? (task) => { startedTask = task; } : undefined),
         });
       },
     );
@@ -1962,10 +1940,7 @@ export async function executeCall(
           if (!result.isError) recordOutput(result);
           return renderResult(result, {});
         },
-        guard: async (text) => {
-          const guarded = await guardMcpOutput([{ type: "text", text }], outputGuardOptions);
-          return { content: guarded.content, details: guardedMcpDetails(guarded) };
-        },
+        guard: (text) => guardMcpText(text, outputGuardOptions),
       });
       backgrounded = true;
       const handle = backgroundTaskHandle(serverName, toolMeta.originalName, taskId, state.proxyToolAvailable?.() === true);
@@ -1980,7 +1955,7 @@ export async function executeCall(
         details: { mode: "call", error: "tool_not_found", ...callIdentity, requestedTool: toolName, suggestions: executorMatches },
       };
     }
-    if (!result.isError) recordOutput(result as Record<string, unknown>);
+    if (!result.isError) recordOutput(result);
 
     if (uiResourceUri) {
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
@@ -1994,10 +1969,10 @@ export async function executeCall(
 
     if (uiResourceUri && !result.isError) {
       const { message, uiOpen, uiViewer, uiUrl } = summarizeUiSessionResult(uiSession);
-      return await renderResult(result as Record<string, unknown>, { mode: "call", ...callIdentity, uiOpen, uiViewer, uiUrl }, `\n\n${message}`);
+      return await renderResult(result, { mode: "call", ...callIdentity, uiOpen, uiViewer, uiUrl }, `\n\n${message}`);
     }
 
-    return await renderResult(result as Record<string, unknown>);
+    return await renderResult(result);
   } catch (error) {
     // Approval errors, such as an abort while the dialog is open, propagate unchanged.
     if (!approval) throw error;

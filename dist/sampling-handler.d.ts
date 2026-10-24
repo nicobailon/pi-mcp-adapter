@@ -13,12 +13,6 @@ export interface SamplingHandlerOptions {
     getThinkingLevel: () => ModelThinkingLevel;
     getSignal: () => AbortSignal | undefined;
 }
-export interface ServerSamplingConfig extends Omit<SamplingHandlerOptions, "serverName"> {
-    /**
-     * Bounds sampling a task asks for. A background task runs outside any turn, so `getSignal`'s
-     * current-turn signal would let an Esc on an unrelated later turn abort it.
-     */
-    ownerSignal: AbortSignal;
-}
+export type ServerSamplingConfig = Omit<SamplingHandlerOptions, "serverName">;
 export declare function registerSamplingHandler(client: Client, options: SamplingHandlerOptions): void;
 export declare function handleSamplingRequest(options: SamplingHandlerOptions, request: CreateMessageRequest): Promise<CreateMessageResult>;

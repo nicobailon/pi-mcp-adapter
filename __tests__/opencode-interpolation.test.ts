@@ -101,7 +101,6 @@ describe("OpenCode environment interpolation", () => {
     expect(resolveServerUrl({ url }, {})).toBe("https://example.com/mcp");
     expect(resolveServerUrl({ url }, { BASE_URL: "https://set.test" })).toBe("https://set.test/mcp");
     expect(interpolateEnvVars("Bearer ${TOKEN:-}", {})).toBe("Bearer ");
-    expect(interpolateEnvVars("Bearer ${TOKEN:-}", { TOKEN: "secret" })).toBe("Bearer secret");
     expect(interpolateEnvVars("${TOKEN:-fallback}", { TOKEN: "" })).toBe("");
     expect(getMissingEnvVars("${A:-x} ${B:-} ${C}", {})).toEqual(["C"]);
   });

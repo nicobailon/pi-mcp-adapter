@@ -81,14 +81,14 @@ export interface ReplacementTaskSession {
 }
 
 function unfollowableReason(server: string, session: ReplacementTaskSession, error: unknown): string {
-  if (session.unavailable === "not-configured") return `Server '${server}' is not configured in this session; the task may still be running on it`;
-  if (session.unavailable === "unreachable") return `Could not reach '${server}'`;
+  if (session.unavailable === "not-configured") return `Server "${server}" is not configured in this session; the task may still be running on it`;
+  if (session.unavailable === "unreachable") return `Could not reach "${server}"`;
   // ext-tasks rejects resumeTask with this plain Error when the server's name now maps to another url or command.
   if (error instanceof Error && error.message === "Task reference belongs to a different endpoint") {
-    return `Server '${server}' was reconfigured since this task started`;
+    return `Server "${server}" was reconfigured since this task started`;
   }
   // tasks/get answering -32602 (invalid params) is how a server says it doesn't know the task id.
-  if (error instanceof JsonRpcResponseError && error.code === -32602) return "Expired on the server: outcome unknown";
+  if (error instanceof JsonRpcResponseError && error.code === -32602) return "Expired on the server";
   return "It could not be followed after its connection changed";
 }
 
@@ -101,7 +101,7 @@ export function backgroundTaskHandle(server: string, tool: string, taskId: strin
   return {
     content: [{
       type: "text" as const,
-      text: `Task ${taskId} started on ${server}/${tool}. Do not call the tool again; the result arrives later as an mcp-task-result message.${hint}`,
+      text: `Task ${taskId} started on ${server}/${tool}. Do not call the tool again; the result arrives later in a message that starts "MCP task ${taskId}".${hint}`,
     }],
     task: { id: taskId, server, tool, status: "working" as const },
   };
@@ -225,12 +225,11 @@ export class BackgroundTaskRegistry {
   }
 
   private async persistOnStop(entry: TaskEntry, execution: BackgroundToolExecution): Promise<void> {
-    const persist = this.persistHandedOff!;
     try {
-      await execution.handoff((reference) => persist({ key: entry.info.key, server: entry.server, tool: entry.tool, reference }));
+      await execution.handoff((reference) => this.persistHandedOff!({ key: entry.info.key, server: entry.server, tool: entry.tool, reference }));
       await execution.result();
     } catch (error) {
-      // Still owned by its task session, whose teardown cancels it as it did before.
+      // Still owned by its task session, whose teardown cancels it.
       logger.warn(`MCP task ${entry.info.key} could not be handed off: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.release(entry);
@@ -321,8 +320,7 @@ export class BackgroundTaskRegistry {
           this.deliver(entry, "cancelled", await entry.guard(`The connection to ${entry.server} closed.`));
         } else {
           logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
-          const reason = unfollowableReason(entry.server, session, error);
-          this.deliver(entry, "unknown", await entry.guard(`${reason}. Calling the tool again may repeat the work.`));
+          this.deliver(entry, "unknown", await entry.guard(`${unfollowableReason(entry.server, session, error)}. Calling the tool again may repeat the work.`));
         }
       } finally {
         this.release(entry);
@@ -368,7 +366,7 @@ export class BackgroundTaskRegistry {
             ? `The connection to ${entry.server} closed.`
             : entry.stoppedBy !== undefined
               ? `Stopped by ${entry.stoppedBy}.`
-              : outcome.task?.statusMessage ?? "Task was cancelled by the server";
+              : outcome.task?.statusMessage ?? "Cancelled by the server.";
           this.deliver(entry, "cancelled", await entry.guard(reason));
         }
       })

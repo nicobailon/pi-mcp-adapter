@@ -802,22 +802,34 @@ describe("startToolViaTaskSession", () => {
   });
 });
 
-describe("background task delivery over a task session", () => {
-  const definition = { command: "fake-server", tasks: true };
-  const clientInfo = { name: "pi-mcp-test", version: "1.0.0" };
+const definition = { command: "fake-server", tasks: true };
+const clientInfo = { name: "pi-mcp-test", version: "1.0.0" };
+const render = async (result: Record<string, unknown>) => ({
+  content: result.content as Array<{ type: "text"; text: string }>,
+  details: {},
+});
+const guard = async (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
-  function registry(ownerSignal = new AbortController().signal) {
-    const sendMessage = vi.fn();
-    const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
-    return { tasks: new BackgroundTaskRegistry(manager, sendMessage, ownerSignal), sendMessage, manager };
-  }
+function registry(options: { owner?: AbortController; persist?: (task: HandedOffTask) => void; onChange?: () => void } = {}) {
+  const sendMessage = vi.fn();
+  const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
+  const owner = options.owner ?? new AbortController();
+  return { tasks: new BackgroundTaskRegistry(manager, sendMessage, owner.signal, options.onChange, options.persist), sendMessage, manager, owner };
+}
 
-  const render = async (result: Record<string, unknown>) => ({
-    content: result.content as Array<{ type: "text"; text: string }>,
-    details: {},
+function attach(stack: ReturnType<typeof fakeModernTaskStack>, serverDefinition: typeof definition = definition) {
+  return attachTaskSession({
+    client: stack.client, serverName: "task-server", definition: serverDefinition, transport: stack.transport, clientInfo, clientCapabilities: {},
   });
-  const guard = async (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+}
 
+async function startOn(tasks: BackgroundTaskRegistry, session: TaskEnabledSession) {
+  const started = await startToolViaTaskSession(session, { name: "slow_tool", args: {} });
+  if (started.kind !== "task") throw new Error("expected a task");
+  return { done: tasks.start({ server: "task-server", tool: "slow_tool", taskId: started.taskId, execution: started.execution, render, guard }) };
+}
+
+describe("background task delivery over a task session", () => {
   it("answers a task's question after its call returned and delivers the result", async () => {
     const { client, transport, server } = fakeModernTaskStack({
       statuses: [
@@ -857,14 +869,9 @@ describe("background task delivery over a task session", () => {
   });
 
   it("delivers one cancelled result when the connection closes under a running task", async () => {
-    const { client, transport } = fakeModernTaskStack({ statuses: [{ status: "working" }] });
-    const attachment = await attachTaskSession({
-      client, serverName: "task-server", definition, transport, clientInfo, clientCapabilities: {},
-    });
+    const attachment = await attach(fakeModernTaskStack({ statuses: [{ status: "working" }] }));
     const { tasks, sendMessage } = registry();
-    const started = await startToolViaTaskSession(attachment!.session, { name: "slow_tool", args: {} });
-    if (started.kind !== "task") throw new Error("expected a task");
-    const done = tasks.start({ server: "task-server", tool: "slow_tool", taskId: started.taskId, execution: started.execution, render, guard });
+    const { done } = await startOn(tasks, attachment!.session);
 
     await attachment!.session.close();
     await done;
@@ -878,18 +885,6 @@ describe("background task delivery over a task session", () => {
       details: { task: { status: "cancelled" }, error: "task_cancelled" },
     });
   });
-
-  function attach(stack: ReturnType<typeof fakeModernTaskStack>, serverDefinition: typeof definition = definition) {
-    return attachTaskSession({
-      client: stack.client, serverName: "task-server", definition: serverDefinition, transport: stack.transport, clientInfo, clientCapabilities: {},
-    });
-  }
-
-  async function startOn(tasks: BackgroundTaskRegistry, session: TaskEnabledSession) {
-    const started = await startToolViaTaskSession(session, { name: "slow_tool", args: {} });
-    if (started.kind !== "task") throw new Error("expected a task");
-    return { done: tasks.start({ server: "task-server", tool: "slow_tool", taskId: started.taskId, execution: started.execution, render, guard }) };
-  }
 
   it("hands a running task over to a replacement connection without cancelling it", async () => {
     const script = { statuses: [{ status: "working" }] as Array<Record<string, unknown>> };
@@ -923,8 +918,8 @@ describe("background task delivery over a task session", () => {
 
   it.each([
     ["has no task session", undefined, false, "It could not be followed after its connection changed"],
-    ["is a different endpoint", { command: "other-server", tasks: true }, false, "Server 'task-server' was reconfigured since this task started"],
-    ["no longer knows the task", definition, true, "Expired on the server: outcome unknown"],
+    ["is a different endpoint", { command: "other-server", tasks: true }, false, 'Server "task-server" was reconfigured since this task started'],
+    ["no longer knows the task", definition, true, "Expired on the server"],
   ])("delivers one outcome-unknown message, with why, when the replacement connection %s", async (_case, replacementDefinition, forgetsTasks, reason) => {
     const script = { statuses: [{ status: "working" }] };
     const first = fakeModernTaskStack(script);
@@ -988,7 +983,7 @@ describe("background task delivery over a task session", () => {
     const replaced = await attach(first);
     const replacement = await attach(second);
     const owner = new AbortController();
-    const { tasks, sendMessage, manager } = registry(owner.signal);
+    const { tasks, sendMessage, manager } = registry({ owner });
     try {
       const { done } = await startOn(tasks, replaced!.session);
       await tasks.handOver("task-server", { taskSession: replacement!.session, closed: () => false });
@@ -1039,36 +1034,13 @@ describe("background task delivery over a task session", () => {
 });
 
 describe("background tasks across a session stop and start", () => {
-  const definition = { command: "fake-server", tasks: true };
-  const clientInfo = { name: "pi-mcp-test", version: "1.0.0" };
-  const render = async (result: Record<string, unknown>) => ({
-    content: result.content as Array<{ type: "text"; text: string }>,
-    details: {},
-  });
-  const guard = async (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
-
-  function attach(stack: ReturnType<typeof fakeModernTaskStack>) {
-    return attachTaskSession({
-      client: stack.client, serverName: "task-server", definition, transport: stack.transport, clientInfo, clientCapabilities: {},
-    });
-  }
-
-  function registry(options: { owner?: AbortController; persist?: (task: HandedOffTask) => void; onChange?: () => void } = {}) {
-    const sendMessage = vi.fn();
-    const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
-    const owner = options.owner ?? new AbortController();
-    return { tasks: new BackgroundTaskRegistry(manager, sendMessage, owner.signal, options.onChange, options.persist), sendMessage, manager, owner };
-  }
-
   /** Runs a task on its own connection, then stops that session and returns what it recorded. */
   async function handedOffTask(script: { statuses: Array<Record<string, unknown>> }) {
     const stack = fakeModernTaskStack(script);
     const connection = await attach(stack);
     const persisted: HandedOffTask[] = [];
     const stopping = registry({ persist: (task) => persisted.push(task) });
-    const started = await startToolViaTaskSession(connection!.session, { name: "slow_tool", args: {} });
-    if (started.kind !== "task") throw new Error("expected a task");
-    const done = stopping.tasks.start({ server: "task-server", tool: "slow_tool", taskId: started.taskId, execution: started.execution, render, guard });
+    const { done } = await startOn(stopping.tasks, connection!.session);
 
     await stopping.tasks.handOffForShutdown();
     stopping.owner.abort();

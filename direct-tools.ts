@@ -2,22 +2,21 @@ import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from 
 import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import { disabledServerReason } from "./project-server-trust.ts";
-import type { DirectToolSpec, McpContent } from "./types.ts";
+import type { DirectToolSpec } from "./types.ts";
 import { lazyConnect, clearFailure, repageExecutorCatalog } from "./init.ts";
 import { describeFailure } from "./failure-backoff.ts";
-import { abortable, throwIfAborted } from "./abort.ts";
+import { throwIfAborted } from "./abort.ts";
 import { formatSchema } from "./tool-metadata.ts";
 import { resolveMcpResultContent, transformMcpResourceContents } from "./tool-registrar.ts";
-import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
+import { guardMcpOutput, guardMcpText, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { isServerDisabled } from "./types.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
 import { formatAuthRequiredMessage, normalizeToolArguments, resolveServerUrl, withToolCallIdMeta } from "./utils.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { callToolViaTaskSession, startToolViaTaskSession, type StartedToolCall } from "./mcp-tasks.ts";
+import { callToolOn, type StartedTask } from "./mcp-tasks.ts";
 import { backgroundTaskHandle } from "./task-jobs.ts";
-import { callToolPausingForElicitation } from "./elicitation-handler.ts";
 import { callToolAnsweringExecutorPauses, isExecutorConnection } from "./executor-pauses.ts";
 import { executorCallParams, executorUnknownToolMatches, executorUnknownToolText, unwrapExecutorCallResult } from "./executor-app-tools.ts";
 import { observedOutputRecorder } from "./output-shape.ts";
@@ -340,7 +339,7 @@ export function createDirectToolExecutor(
       const backgroundTasks = state.calledByModel?.(toolCallId) === true && !hasUi && spec.executorPath === undefined
         ? state.backgroundTasks
         : undefined;
-      let startedTask = undefined as Extract<StartedToolCall, { kind: "task" }> | undefined;
+      let startedTask: StartedTask | undefined;
       const callResult = await withSessionRecovery<ClientCallToolResult>(
         {
           manager: state.manager,
@@ -359,25 +358,7 @@ export function createDirectToolExecutor(
             toolName: spec.originalName,
             requestOptions,
             signal: ownedSignal,
-            call: async (params, options) => {
-              if (conn.taskSession) {
-                const taskCall = {
-                  name: params.name,
-                  args: params.arguments ?? {},
-                  meta: params._meta,
-                  signal: ownedSignal,
-                  requestTimeoutMs: options?.timeout,
-                };
-                if (backgroundTasks === undefined || isExecutorConnection(conn)) {
-                  return await callToolViaTaskSession(conn.taskSession, taskCall) as unknown as ClientCallToolResult;
-                }
-                const started = await startToolViaTaskSession(conn.taskSession, taskCall);
-                if (started.kind === "result") return started.result as unknown as ClientCallToolResult;
-                startedTask = started;
-                return { content: [] } as ClientCallToolResult;
-              }
-              return abortable(callToolPausingForElicitation(conn.client, params, options), ownedSignal);
-            },
+            call: callToolOn(conn, ownedSignal, backgroundTasks && !isExecutorConnection(conn) ? (task) => { startedTask = task; } : undefined),
           });
         },
       );
@@ -393,10 +374,7 @@ export function createDirectToolExecutor(
             const guarded = await guardResult(result);
             return { content: guarded.content, details: { ...(result.isError ? { error: "tool_error" } : {}), ...guardedMcpDetails(guarded) } };
           },
-          guard: async (text) => {
-            const guarded = await guardMcpOutput([{ type: "text", text }], outputGuardOptions);
-            return { content: guarded.content, details: guardedMcpDetails(guarded) };
-          },
+          guard: (text) => guardMcpText(text, outputGuardOptions),
         });
         backgrounded = true;
         const handle = backgroundTaskHandle(spec.serverName, spec.originalName, taskId, state.proxyToolAvailable?.() === true);
@@ -412,10 +390,10 @@ export function createDirectToolExecutor(
         };
       }
       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
-      if (!result.isError) recordOutput(result as Record<string, unknown>);
+      if (!result.isError) recordOutput(result);
 
       if (result.isError) {
-        const guarded = await guardResult(result as Record<string, unknown>);
+        const guarded = await guardResult(result);
         return {
           content: guarded.content,
           details: { error: "tool_error", server: spec.serverName, ...guardedMcpDetails(guarded) },
@@ -425,7 +403,7 @@ export function createDirectToolExecutor(
 
       if (hasUi) {
         const uiSummary = summarizeUiSessionResult(uiSession);
-        const guarded = await guardResult(result as Record<string, unknown>, `\n\n${uiSummary.message}`);
+        const guarded = await guardResult(result, `\n\n${uiSummary.message}`);
         return {
           content: guarded.content,
           details: {
@@ -440,7 +418,7 @@ export function createDirectToolExecutor(
         };
       }
 
-      const guarded = await guardResult(result as Record<string, unknown>);
+      const guarded = await guardResult(result);
       return {
         content: guarded.content,
         details: { server: spec.serverName, tool: spec.originalName, ...guardedMcpDetails(guarded) },
