@@ -216,11 +216,15 @@ describe("Pi mcp.json config sources", () => {
         plain: { url: "http://api.example/mcp", auth: { provider: "github" } },
         unnamed: { url: "https://api.example/mcp", auth: { provider: "" } },
         kept: { url: "https://api.example/mcp", auth: { provider: "github" } },
+        defaulted: { url: "${MCP_TEST_UNSET:-https://api.example}/mcp", auth: { provider: "github" } },
       },
     });
     const { loadMcpConfig } = await loadConfigModule();
 
-    expect(loadMcpConfig(undefined, cwd).mcpServers).toEqual({ kept: { url: "https://api.example/mcp", auth: { provider: "github" } } });
+    expect(loadMcpConfig(undefined, cwd).mcpServers).toEqual({
+      kept: { url: "https://api.example/mcp", auth: { provider: "github" } },
+      defaulted: { url: "${MCP_TEST_UNSET:-https://api.example}/mcp", auth: { provider: "github" } },
+    });
     expect(warn).toHaveBeenCalledWith('Ignoring MCP server "plain": auth.provider requires an https URL, or http on localhost, 127.0.0.1, or [::1]');
     expect(warn).toHaveBeenCalledWith('Ignoring MCP server "unnamed": auth.provider must be a provider name');
   });

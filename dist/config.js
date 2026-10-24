@@ -12,7 +12,7 @@ import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
 import { REMOVED_JEV_KEYS, validateJevSettings } from "./jev-client.js";
 import { parseScriptTools } from "./script-tools.js";
 import { formatServerNamespace, isServerDisabled } from "./types.js";
-import { getMissingEnvVars, parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.js";
+import { interpolateEnvVars, parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.js";
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [
     join(homedir(), ".agents", "mcp.json"),
@@ -1382,7 +1382,7 @@ function toServerEntries(servers) {
             const error = typeof provider !== "string" || !provider ? "auth.provider must be a provider name"
                 : typeof entry.url !== "string" ? "auth.provider requires a url"
                     // A URL with env references is checked once resolved, when it connects.
-                    : getMissingEnvVars(entry.url, {}).length > 0 ? undefined
+                    : interpolateEnvVars(entry.url, {}) !== entry.url ? undefined
                         : providerAuthUrlError(entry.url);
             if (error) {
                 console.warn(`Ignoring MCP server "${name}": ${error}`);

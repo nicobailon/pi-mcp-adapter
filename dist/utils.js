@@ -121,15 +121,16 @@ export function getConfigPathFromArgv() {
 }
 export function interpolateEnvVars(value, environment = process.env) {
     return value
-        .replace(/\$\{(\w+)\}/g, (_, name) => environment[name] ?? "")
+        // `${NAME:-default}` uses the default only when NAME is unset, as Claude Code does.
+        .replace(/\$\{(\w+)(?::-([^}]*))?\}/g, (_, name, fallback) => environment[name] ?? fallback ?? "")
         .replace(/\$env:(\w+)/g, (_, name) => environment[name] ?? "")
         .replace(/\{env:(\w+)\}/g, (_, name) => environment[name] ?? "");
 }
 export function getMissingEnvVars(value, environment = process.env) {
     const missing = new Set();
-    for (const match of value.matchAll(/\$\{(\w+)\}|\$env:(\w+)|\{env:(\w+)\}/g)) {
-        const name = match[1] ?? match[2] ?? match[3];
-        if (name && environment[name] === undefined) {
+    for (const match of value.matchAll(/\$\{(\w+)(:-[^}]*)?\}|\$env:(\w+)|\{env:(\w+)\}/g)) {
+        const name = match[1] ?? match[3] ?? match[4];
+        if (name && match[2] === undefined && environment[name] === undefined) {
             missing.add(name);
         }
     }

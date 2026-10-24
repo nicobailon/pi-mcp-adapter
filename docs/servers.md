@@ -65,6 +65,8 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `trace` | Enable metadata-only JSONL protocol tracing for this server; payloads, prompts, tool arguments/results, authorization data, and URLs are never persisted |
 | `disabled` | Keep the server visible in config and status, but prevent connections, authentication, tools, and resource calls (only literal `true` disables it) |
 
+Wherever a field supports `${VAR}`, `${VAR:-default}` uses `default` when `VAR` is unset, as in Claude Code's `.mcp.json`. A variable that is set but empty stays empty, and a variable with a default is never reported as missing.
+
 ### Custom HTTPS trust
 
 `caFile` works with Streamable HTTP, SSE, and per-request header commands. Requests using this trust reject all redirects; configure the final HTTPS endpoint directly. Other origins and servers retain default trust. Layered configuration drops inherited trust when replacing the URL or switching away from HTTP. This option covers the MCP origin, including connection-owned OAuth requests to that exact origin, but not the separate interactive OAuth flow or private-CA authorization servers on other origins. Thanks to [@desmonna](https://github.com/desmonna) for #527.

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { extractOAuthConfig } from "../mcp-auth-flow.ts";
 import {
+  getMissingEnvVars,
   interpolateEnvRecord,
   interpolateEnvVars,
   resolveBearerToken,
@@ -93,5 +94,15 @@ describe("OpenCode environment interpolation", () => {
     expect(() => resolveServerUrl({ url: "https://{env:MCP_TEST_URL}/mcp" })).toThrow(
       "Missing environment variable in MCP server URL: MCP_TEST_URL",
     );
+  });
+
+  it("uses a ${VAR:-default} default only when the variable is unset, as Claude Code does", () => {
+    const url = "${BASE_URL:-https://example.com}/mcp";
+    expect(resolveServerUrl({ url }, {})).toBe("https://example.com/mcp");
+    expect(resolveServerUrl({ url }, { BASE_URL: "https://set.test" })).toBe("https://set.test/mcp");
+    expect(interpolateEnvVars("Bearer ${TOKEN:-}", {})).toBe("Bearer ");
+    expect(interpolateEnvVars("Bearer ${TOKEN:-}", { TOKEN: "secret" })).toBe("Bearer secret");
+    expect(interpolateEnvVars("${TOKEN:-fallback}", { TOKEN: "" })).toBe("");
+    expect(getMissingEnvVars("${A:-x} ${B:-} ${C}", {})).toEqual(["C"]);
   });
 });
