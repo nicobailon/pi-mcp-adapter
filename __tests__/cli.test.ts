@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { execFile, spawnSync } from "node:child_process";
+import * as nodeModule from "node:module";
 import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -760,7 +761,8 @@ describe("cli doctor", { timeout: 30_000 }, () => {
     expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
   });
 
-  it("runs on a Pi install, where the typebox peer doesn't resolve", async () => {
+  // module.registerHooks needs Node 22.15+/23.5+; the package supports Node 20.
+  it.skipIf(!("registerHooks" in nodeModule))("runs on a Pi install, where the typebox peer doesn't resolve", async () => {
     const context = setup({
       mcpServers: { tools: { command: process.execPath, args: [fileURLToPath(fixtureUrl)] } },
       scriptTools: { echo: { description: "Echo", file: "echo.js", inputSchema: { type: "object" } } },
