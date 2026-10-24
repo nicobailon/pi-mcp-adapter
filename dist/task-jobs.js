@@ -28,6 +28,8 @@ export class BackgroundTaskRegistry {
     onChange;
     persistHandedOff;
     running = new Map();
+    /** Set once a session that persists its tasks starts stopping; see the ownership note below. */
+    stopping = false;
     constructor(manager, sendMessage, ownerSignal, onChange = () => { }, 
     /** Records a task handed off by a stopping session. Without it, stopping the session cancels its tasks. */
     persistHandedOff) {
@@ -89,19 +91,21 @@ export class BackgroundTaskRegistry {
             // close() cancels an execution that has not settled yet; result() settles it.
             await old.result();
             if (!this.owns(entry, generation))
-                return;
+                return this.relinquish(entry, generation);
             await this.resumeOn(entry, generation, reference, fresh, old);
         }));
     }
     /**
      * For a stopping session: hands every task off without cancelling it and
      * records each, so the session can resume it when it starts again. Must run
-     * before the owner stops, whose abort would cancel the tasks.
+     * before the owner stops, whose abort would cancel the tasks, and on every
+     * session stop, since it also claims tasks still being restored or resumed.
      */
     async handOffForShutdown() {
         const persist = this.persistHandedOff;
         if (persist === undefined)
             return;
+        this.stopping = true;
         await Promise.all([...this.running.values()].map(async (entry) => {
             const old = entry.execution;
             this.takeOver(entry);
@@ -127,9 +131,13 @@ export class BackgroundTaskRegistry {
      * generation. After every await a continuation checks it still owns the
      * entry before any side effect (cancel, release, persist, delivery, adding
      * to `running`); one that lost ownership only detaches an execution it alone
-     * holds. Taking an entry out of `running` ends the contest for it, since every
-     * take-over starts from `running`. A stopping session persists its tasks and
-     * never cancels them.
+     * holds, and releases the in-flight count only if nobody took the entry over.
+     * Taking an entry out of `running` ends the contest for it, since every
+     * take-over starts from `running`. Once the session starts stopping, it owns
+     * every task: it takes over those in `running`, and every other continuation
+     * (a restore or resume in flight, a follow about to start) loses ownership,
+     * so a restored record stays pending. A stopping session persists its tasks
+     * and never cancels them.
      */
     takeOver(entry) {
         entry.generation += 1;
@@ -137,7 +145,15 @@ export class BackgroundTaskRegistry {
         return entry.generation;
     }
     owns(entry, generation) {
-        return entry.generation === generation;
+        return entry.generation === generation && !this.stopping;
+    }
+    relinquish(entry, generation, held) {
+        if (held !== undefined)
+            void held.detach();
+        if (entry.generation !== generation)
+            return;
+        this.takeOver(entry);
+        this.release(entry);
     }
     entry(task, finish) {
         return {
@@ -157,10 +173,12 @@ export class BackgroundTaskRegistry {
             resumed = await session.taskSession.resumeTask(reference, {
                 ...(session.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: session.requestTimeoutMs }),
             });
+            if (resumed.kind !== "task")
+                throw new Error("resumeTask returned an immediate execution");
         }
         catch (error) {
             if (!this.owns(entry, generation))
-                return;
+                return this.relinquish(entry, generation);
             const identity = { id: entry.taskId, server: entry.server, tool: entry.tool };
             this.remove(entry);
             try {
@@ -194,21 +212,14 @@ export class BackgroundTaskRegistry {
             }
             return;
         }
-        if (resumed.kind !== "task")
-            throw new Error("resumeTask returned an immediate execution");
         // A restore the session stopped during: its record still says pending, so let the task run on.
-        if (old === undefined && this.ownerSignal.aborted && this.owns(entry, generation)) {
-            void resumed.detach();
-            this.release(entry);
-            return;
-        }
+        if (old === undefined && this.ownerSignal.aborted)
+            return this.relinquish(entry, generation, resumed);
         this.follow(entry, generation, resumed);
     }
     follow(entry, generation, execution) {
-        if (!this.owns(entry, generation)) {
-            void execution.detach();
-            return;
-        }
+        if (!this.owns(entry, generation))
+            return this.relinquish(entry, generation, execution);
         const current = () => this.owns(entry, generation);
         const running = Object.assign(entry, { execution });
         if (this.running.get(entry.info.key) !== running) {
@@ -274,7 +285,8 @@ export class BackgroundTaskRegistry {
             logger.warn(`MCP task ${entry.info.key} could not be delivered: ${error instanceof Error ? error.message : String(error)}`);
         })
             .finally(() => {
-            if (current())
+            // Nobody took over: this chain still holds the in-flight count, even if the session started stopping.
+            if (entry.generation === generation)
                 this.release(entry);
         });
     }

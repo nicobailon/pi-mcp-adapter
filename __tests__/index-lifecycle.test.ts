@@ -1082,6 +1082,31 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.writeSharedServerEntry).not.toHaveBeenCalled();
   });
 
+  it("lets the stopping session claim background tasks before its owner stops, even with none running", async () => {
+    const state = createState();
+    let ownerSignal!: AbortSignal;
+    const ownerStoppedAtHandOff: boolean[] = [];
+    mocks.initializeMcp.mockImplementation((_pi: unknown, _ctx: unknown, owner: { signal: AbortSignal }) => {
+      ownerSignal = owner.signal;
+      state.backgroundTasks = new BackgroundTaskRegistry({ decrementInFlight: vi.fn(), touch: vi.fn() }, vi.fn(), owner.signal, undefined, vi.fn());
+      const handOff = state.backgroundTasks.handOffForShutdown.bind(state.backgroundTasks);
+      state.backgroundTasks.handOffForShutdown = () => {
+        ownerStoppedAtHandOff.push(ownerSignal.aborted);
+        return handOff();
+      };
+      return Promise.resolve(state);
+    });
+    const { handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, { hasUI: false });
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+
+    await handlers.get("session_shutdown")?.();
+
+    expect(state.backgroundTasks.size).toBe(0);
+    expect(ownerStoppedAtHandOff).toEqual([false]);
+    expect(ownerSignal.aborted).toBe(true);
+  });
+
   it("hands running background tasks off to the stopping session before its owner stops", async () => {
     const state = createState();
     const persisted: Array<{ key: string; ownerStopped: boolean }> = [];

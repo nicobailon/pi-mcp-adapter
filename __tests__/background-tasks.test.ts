@@ -89,6 +89,7 @@ describe("background MCP tasks through the proxy", () => {
       { triggerTurn: true, deliverAs: "followUp" },
     );
     expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    expect(execution.cancel).not.toHaveBeenCalled();
   });
 
   it("keeps the task running when the tool call is aborted after the handle came back", async () => {

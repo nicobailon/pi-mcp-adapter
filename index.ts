@@ -1827,8 +1827,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     initStartedPromise = null;
     clearRetainedInitFailure();
 
-    // Hand running background tasks off to the session record first: the owner's abort below would cancel them.
-    if (currentState?.backgroundTasks?.size) await currentState.backgroundTasks.handOffForShutdown();
+    // Hand background tasks off to the session record first: the owner's abort below would cancel them.
+    // Always, even with none running, since a restore may still be resuming one.
+    await currentState?.backgroundTasks?.handOffForShutdown();
 
     // Abort before awaiting cleanup so delayed initialization cannot touch stale
     // Pi context after session shutdown.

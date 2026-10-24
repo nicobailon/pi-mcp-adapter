@@ -75,6 +75,8 @@ export declare class BackgroundTaskRegistry {
     /** Records a task handed off by a stopping session. Without it, stopping the session cancels its tasks. */
     private readonly persistHandedOff?;
     private readonly running;
+    /** Set once a session that persists its tasks starts stopping; see the ownership note below. */
+    private stopping;
     constructor(manager: Pick<McpServerManager, "decrementInFlight" | "touch">, sendMessage: SendMessageFn, ownerSignal: AbortSignal, onChange?: () => void, 
     /** Records a task handed off by a stopping session. Without it, stopping the session cancels its tasks. */
     persistHandedOff?: ((task: HandedOffTask) => void) | undefined);
@@ -101,11 +103,13 @@ export declare class BackgroundTaskRegistry {
     /**
      * For a stopping session: hands every task off without cancelling it and
      * records each, so the session can resume it when it starts again. Must run
-     * before the owner stops, whose abort would cancel the tasks.
+     * before the owner stops, whose abort would cancel the tasks, and on every
+     * session stop, since it also claims tasks still being restored or resumed.
      */
     handOffForShutdown(): Promise<void>;
     private takeOver;
     private owns;
+    private relinquish;
     private entry;
     /** Resumes a handed-off task on `session`, or tells the model once why it can't be followed. */
     private resumeOn;

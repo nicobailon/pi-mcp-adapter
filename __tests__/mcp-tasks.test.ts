@@ -1130,6 +1130,7 @@ describe("background tasks across a session stop and start", () => {
       expect(stack.server.cancels).toEqual([]);
       expect(beforeDelivery).not.toHaveBeenCalled();
       expect(restarted.sendMessage).not.toHaveBeenCalled();
+      expect(restarted.manager.decrementInFlight).toHaveBeenCalledTimes(1);
     } finally {
       await connection!.session.close();
     }
@@ -1139,7 +1140,7 @@ describe("background tasks across a session stop and start", () => {
     const script = { statuses: [{ status: "working" }] };
     const { stack, persisted } = await handedOffTask(script);
     const connection = await attach(fakeModernTaskStack(script, stack.server, "second"));
-    const { tasks, sendMessage, owner } = registry();
+    const { tasks, sendMessage, manager, owner } = registry();
     const beforeDelivery = vi.fn();
 
     const restored = tasks.restore(
@@ -1152,25 +1153,42 @@ describe("background tasks across a session stop and start", () => {
 
     expect(beforeDelivery).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
+    expect(stack.server.cancels).toEqual([]);
+    expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
   });
 
   describe("when another transition takes a task over mid-await", () => {
     const reference = { endpointId: "e1", generation: "v2", taskId: "t-1", originalOperation: "tools/call" } as const;
 
-    /** An execution that logs what reaches it; handing off or detaching it settles it as closed. */
-    function loggedExecution(log: string[], name: string) {
-      let settle!: (outcome: unknown) => void;
-      const outcome = new Promise((resolve) => { settle = resolve; });
-      const closed = () => settle({ status: "failed", error: new TaskFailedError("closed", {}, { cause: new TaskExecutionClosedError() }) });
-      return {
+    /**
+     * An execution that logs what reaches it, modelled on ext-tasks: handing off or detaching settles it
+     * as closed, the first outcome wins, and cancel is cached so it sends one frame.
+     */
+    function controlledExecution(log: string[], name: string) {
+      let resolveOutcome!: (outcome: unknown) => void;
+      const outcome = new Promise((resolve) => { resolveOutcome = resolve; });
+      let settled = false;
+      const finish = (value: unknown) => {
+        if (settled) return;
+        settled = true;
+        resolveOutcome(value);
+      };
+      const closed = () => finish({ status: "failed", error: new TaskFailedError("closed", {}, { cause: new TaskExecutionClosedError() }) });
+      let cancelling: Promise<void> | undefined;
+      const execution = {
         kind: "task",
         handoff: async (persist: (ref: typeof reference) => void) => { persist(reference); closed(); },
         detach: async () => { log.push(`${name}.detach`); closed(); },
-        cancel: async () => { log.push(`${name}.cancel`); settle({ status: "cancelled" }); },
+        cancel: () => (cancelling ??= (async () => { log.push(`${name}.cancel`); finish({ status: "cancelled" }); })()),
         result: () => outcome,
         settle: async () => ({ outcome: await outcome }),
       } as never;
+      return { execution, finish };
     }
+
+    const loggedExecution = (log: string[], name: string) => controlledExecution(log, name).execution;
+    const completed = { status: "completed", result: { content: [{ type: "text", text: "built" }] } };
+    const cancels = (log: string[]) => log.filter((line) => line.endsWith(".cancel"));
 
     /** A task session whose resumeTask waits until the test answers it. */
     function pendingResume() {
@@ -1225,6 +1243,133 @@ describe("background tasks across a session stop and start", () => {
 
       expect(log).toEqual(["resumed.detach"]);
       expect(beforeDelivery).not.toHaveBeenCalled();
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    });
+
+    const restoredTask = (taskId: string, beforeDelivery: () => void) =>
+      ({ server: "task-server", tool: "slow_tool", taskId, reference: { ...reference, taskId }, render, guard, beforeDelivery });
+
+    it.each(["while it hands off a running task", "with nothing running"])(
+      "lets a restore that resumes once the session starts stopping %s run on, still pending",
+      async (when) => {
+        const log: string[] = [];
+        const persisted: HandedOffTask[] = [];
+        const { tasks, sendMessage, manager, owner } = registry({ persist: (task) => persisted.push(task) });
+        if (when !== "with nothing running") {
+          void tasks.start({ server: "task-server", tool: "slow_tool", taskId: "t-0", execution: loggedExecution(log, "running"), render, guard });
+        }
+        const beforeDelivery = vi.fn();
+        const resume = pendingResume();
+        const restored = tasks.restore(restoredTask("t-1", beforeDelivery), { taskSession: resume.taskSession, closed: () => false });
+        await resume.asked;
+
+        const handingOff = tasks.handOffForShutdown();
+        resume.answer().resolve(loggedExecution(log, "restored"));
+        await handingOff;
+        // Let the restore's continuation run before the owner stops, as it can between the hand-off and owner.stop.
+        await new Promise((resolve) => setImmediate(resolve));
+        owner.abort();
+        await restored;
+
+        expect(cancels(log)).toEqual([]);
+        expect(log).toContain("restored.detach");
+        expect(persisted.map((task) => task.key)).toEqual(when === "with nothing running" ? [] : ["task-server/t-0"]);
+        expect(beforeDelivery).not.toHaveBeenCalled();
+        expect(sendMessage).not.toHaveBeenCalled();
+        expect(manager.decrementInFlight).toHaveBeenCalledTimes(when === "with nothing running" ? 1 : 2);
+      },
+    );
+
+    it("stops a restored task over its resumed execution and names who stopped it", async () => {
+      const log: string[] = [];
+      let followed!: () => void;
+      const following = new Promise<void>((resolve) => { followed = resolve; });
+      const { tasks, sendMessage, manager } = registry({ onChange: () => followed() });
+      const beforeDelivery = vi.fn();
+      const taskSession = { resumeTask: async () => loggedExecution(log, "restored") } as unknown as TaskEnabledSession;
+      const restored = tasks.restore(restoredTask("t-1", beforeDelivery), { taskSession, closed: () => false });
+      await following;
+
+      expect(await tasks.stop("task-server/t-1", "the agent")).toBe(true);
+      await restored;
+
+      expect(cancels(log)).toEqual(["restored.cancel"]);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0].content).toEqual([
+        { type: "text", text: "MCP task t-1 (task-server/slow_tool) cancelled." },
+        { type: "text", text: "Stopped by the agent." },
+      ]);
+      expect(beforeDelivery.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]!);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    });
+
+    it("delivers once when a task ends on the server while a reconnect hands it over", async () => {
+      const log: string[] = [];
+      const { tasks, sendMessage, manager } = registry();
+      const old = controlledExecution(log, "old");
+      const resumed = controlledExecution(log, "resumed");
+      const done = tasks.start({ server: "task-server", tool: "slow_tool", taskId: "t-1", execution: old.execution, render, guard });
+      const taskSession = {
+        resumeTask: async () => { resumed.finish(completed); return resumed.execution; },
+      } as unknown as TaskEnabledSession;
+
+      const handingOver = tasks.handOver("task-server", { taskSession, closed: () => false });
+      old.finish(completed);
+      await handingOver;
+      await done;
+
+      expect(cancels(log)).toEqual([]);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0].content).toEqual([
+        { type: "text", text: "MCP task t-1 (task-server/slow_tool) completed." },
+        { type: "text", text: "built" },
+      ]);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends at most one cancel and one message when a stop lands in a reconnect's resume window", async () => {
+      const log: string[] = [];
+      const { tasks, sendMessage, manager } = registry();
+      const done = tasks.start({ server: "task-server", tool: "slow_tool", taskId: "t-1", execution: loggedExecution(log, "old"), render, guard });
+      const resume = pendingResume();
+      const handingOver = tasks.handOver("task-server", { taskSession: resume.taskSession, closed: () => false });
+      await resume.asked;
+
+      expect(await tasks.stop("task-server/t-1", "the agent")).toBe(true);
+      // The server honoured the cancel, so the resumed task is already cancelled.
+      const resumed = controlledExecution(log, "resumed");
+      resumed.finish({ status: "cancelled" });
+      resume.answer().resolve(resumed.execution);
+      await handingOver;
+      await done;
+
+      expect(cancels(log)).toEqual(["old.cancel"]);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0].content).toEqual([
+        { type: "text", text: "MCP task t-1 (task-server/slow_tool) cancelled." },
+        { type: "text", text: "Stopped by the agent." },
+      ]);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    });
+
+    it("finds nothing to stop once the session stopping took over a task in a reconnect's resume window", async () => {
+      const log: string[] = [];
+      const persisted: HandedOffTask[] = [];
+      const { tasks, sendMessage, manager, owner } = registry({ persist: (task) => persisted.push(task) });
+      void tasks.start({ server: "task-server", tool: "slow_tool", taskId: "t-1", execution: loggedExecution(log, "old"), render, guard });
+      const resume = pendingResume();
+      const handingOver = tasks.handOver("task-server", { taskSession: resume.taskSession, closed: () => false });
+      await resume.asked;
+
+      await tasks.handOffForShutdown();
+      expect(await tasks.stop("task-server/t-1", "the agent")).toBe(false);
+      owner.abort();
+      resume.answer().resolve(loggedExecution(log, "resumed"));
+      await handingOver;
+
+      expect(cancels(log)).toEqual([]);
+      expect(persisted).toHaveLength(1);
       expect(sendMessage).not.toHaveBeenCalled();
       expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
     });
