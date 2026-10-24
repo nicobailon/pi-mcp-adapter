@@ -765,6 +765,7 @@ describe("background task delivery over a task session", () => {
     content: result.content as Array<{ type: "text"; text: string }>,
     details: {},
   });
+  const guard = async (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
   it("answers a task's question after its call returned and delivers the result", async () => {
     const { client, transport, server } = fakeModernTaskStack({
@@ -790,7 +791,7 @@ describe("background task delivery over a task session", () => {
       const started = await startToolViaTaskSession(attachment!.session, { name: "hello_world", args: {} });
       expect(started.kind).toBe("task");
       if (started.kind !== "task") return;
-      await tasks.start({ server: "task-server", tool: "hello_world", taskId: started.taskId, execution: started.execution, render });
+      await tasks.start({ server: "task-server", tool: "hello_world", taskId: started.taskId, execution: started.execution, render, guard });
 
       expect(onElicitation).toHaveBeenCalledTimes(1);
       expect(server.updates[0]).toMatchObject({ taskId: "task-e2e-1", inputResponses: { name: { action: "accept", content: { name: "Luca" } } } });
@@ -812,7 +813,7 @@ describe("background task delivery over a task session", () => {
     const { tasks, sendMessage } = registry();
     const started = await startToolViaTaskSession(attachment!.session, { name: "slow_tool", args: {} });
     if (started.kind !== "task") throw new Error("expected a task");
-    const done = tasks.start({ server: "task-server", tool: "slow_tool", taskId: started.taskId, execution: started.execution, render });
+    const done = tasks.start({ server: "task-server", tool: "slow_tool", taskId: started.taskId, execution: started.execution, render, guard });
 
     await attachment!.session.close();
     await done;

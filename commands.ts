@@ -306,7 +306,10 @@ export function showBackgroundTasks(state: McpExtensionState, ctx: ExtensionCont
   const lines = [
     "Background MCP tasks:",
     "",
-    ...tasks.map(task => `  ${task.key} (${task.tool}): ${task.status}${task.statusMessage ? ` — ${task.statusMessage}` : ""}`),
+    ...tasks.map(task => {
+      const statusMessage = task.statusMessage ? sanitizeTerminalText(task.statusMessage) : "";
+      return `  ${sanitizeTerminalText(task.key)} (${sanitizeTerminalText(task.tool)}): ${task.status}${statusMessage ? ` — ${statusMessage}` : ""}`;
+    }),
     "",
     "Stop one with /mcp-adapter tasks stop <server>/<taskId>",
   ];

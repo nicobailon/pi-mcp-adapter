@@ -400,6 +400,10 @@ export function createDirectToolExecutor(
             const guarded = await guardResult(result);
             return { content: guarded.content, details: { ...(result.isError ? { error: "tool_error" } : {}), ...guardedMcpDetails(guarded) } };
           },
+          guard: async (text) => {
+            const guarded = await guardMcpOutput([{ type: "text", text }], outputGuardOptions);
+            return { content: guarded.content, details: guardedMcpDetails(guarded) };
+          },
         });
         backgrounded = true;
         const handle = backgroundTaskHandle(spec.serverName, spec.originalName, taskId);

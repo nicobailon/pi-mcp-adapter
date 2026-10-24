@@ -17,6 +17,8 @@ export interface BackgroundTaskStart {
   execution: BackgroundToolExecution;
   /** Renders a completed tool result the way the call site renders an inline one. */
   render: (result: Record<string, unknown>) => Promise<RenderedTaskResult>;
+  /** Bounds a failure or cancel reason, which may come from the server, with the call site's output guard. */
+  guard: (text: string) => Promise<RenderedTaskResult>;
 }
 
 /** A running task as `/mcp tasks` shows it. */
@@ -123,9 +125,10 @@ export class BackgroundTaskRegistry {
             details: { task: { ...identity, status: "completed" }, ...rendered.details },
           };
         } else if (outcome.status === "failed" && !(outcome.error.cause instanceof TaskExecutionClosedError)) {
+          const guarded = await task.guard(outcome.error.message);
           message = {
-            content: [{ type: "text", text: `${label} failed.` }, { type: "text", text: outcome.error.message }],
-            details: { task: { ...identity, status: "failed" }, error: "task_failed" },
+            content: [{ type: "text", text: `${label} failed.` }, ...guarded.content],
+            details: { task: { ...identity, status: "failed" }, error: "task_failed", ...guarded.details },
           };
         } else {
           const reason = outcome.status === "failed"
@@ -133,9 +136,10 @@ export class BackgroundTaskRegistry {
             : entry.stopRequested
               ? "Stopped by you."
               : outcome.task?.statusMessage ?? "Task was cancelled by the server";
+          const guarded = await task.guard(reason);
           message = {
-            content: [{ type: "text", text: `${label} cancelled.` }, { type: "text", text: reason }],
-            details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled" },
+            content: [{ type: "text", text: `${label} cancelled.` }, ...guarded.content],
+            details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled", ...guarded.details },
           };
         }
         this.sendMessage(

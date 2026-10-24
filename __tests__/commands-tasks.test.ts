@@ -28,12 +28,17 @@ function setup() {
   return { state: { backgroundTasks: tasks } as any, tasks, sendMessage, notify, ctx };
 }
 
+const callSite = {
+  render: async () => ({ content: [], details: {} }),
+  guard: async (text: string) => ({ content: [{ type: "text" as const, text }], details: {} }),
+};
+
 describe("/mcp tasks", () => {
   it("lists running tasks with their latest status", () => {
     const { state, tasks, notify, ctx } = setup();
     const { execution, report } = runningTask();
-    void tasks.start({ server: "ci", tool: "build", taskId: "t-1", execution, render: async () => ({ content: [], details: {} }) });
-    report({ taskId: "t-1", status: "working", statusMessage: "Compiling, 40 of 212 files done" });
+    void tasks.start({ server: "ci", tool: "build", taskId: "t-1", execution, ...callSite });
+    report({ taskId: "t-1", status: "working", statusMessage: "Compiling, \u001b[31m40 of 212\u001b[0m files done" });
 
     showBackgroundTasks(state, ctx);
 
@@ -43,7 +48,7 @@ describe("/mcp tasks", () => {
   it("stops a task and delivers it as stopped by the user", async () => {
     const { state, tasks, sendMessage, notify, ctx } = setup();
     const { execution } = runningTask();
-    const done = tasks.start({ server: "ci", tool: "build", taskId: "t-1", execution, render: async () => ({ content: [], details: {} }) });
+    const done = tasks.start({ server: "ci", tool: "build", taskId: "t-1", execution, ...callSite });
 
     await stopBackgroundTask(state, ctx, "ci/t-1");
     await done;

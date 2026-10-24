@@ -95,9 +95,10 @@ export class BackgroundTaskRegistry {
                 };
             }
             else if (outcome.status === "failed" && !(outcome.error.cause instanceof TaskExecutionClosedError)) {
+                const guarded = await task.guard(outcome.error.message);
                 message = {
-                    content: [{ type: "text", text: `${label} failed.` }, { type: "text", text: outcome.error.message }],
-                    details: { task: { ...identity, status: "failed" }, error: "task_failed" },
+                    content: [{ type: "text", text: `${label} failed.` }, ...guarded.content],
+                    details: { task: { ...identity, status: "failed" }, error: "task_failed", ...guarded.details },
                 };
             }
             else {
@@ -106,9 +107,10 @@ export class BackgroundTaskRegistry {
                     : entry.stopRequested
                         ? "Stopped by you."
                         : outcome.task?.statusMessage ?? "Task was cancelled by the server";
+                const guarded = await task.guard(reason);
                 message = {
-                    content: [{ type: "text", text: `${label} cancelled.` }, { type: "text", text: reason }],
-                    details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled" },
+                    content: [{ type: "text", text: `${label} cancelled.` }, ...guarded.content],
+                    details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled", ...guarded.details },
                 };
             }
             this.sendMessage({ customType: "mcp-task-result", display: true, ...message }, { triggerTurn: true, deliverAs: "followUp" });

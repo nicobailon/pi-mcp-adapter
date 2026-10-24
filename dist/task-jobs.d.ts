@@ -14,6 +14,8 @@ export interface BackgroundTaskStart {
     execution: BackgroundToolExecution;
     /** Renders a completed tool result the way the call site renders an inline one. */
     render: (result: Record<string, unknown>) => Promise<RenderedTaskResult>;
+    /** Bounds a failure or cancel reason, which may come from the server, with the call site's output guard. */
+    guard: (text: string) => Promise<RenderedTaskResult>;
 }
 /** A running task as `/mcp tasks` shows it. */
 export interface BackgroundTaskInfo {

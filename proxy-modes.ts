@@ -1948,6 +1948,10 @@ export async function executeCall(
           if (!result.isError) recordOutput(result);
           return renderResult(result, {});
         },
+        guard: async (text) => {
+          const guarded = await guardMcpOutput([{ type: "text", text }], outputGuardOptions);
+          return { content: guarded.content, details: guardedMcpDetails(guarded) };
+        },
       });
       backgrounded = true;
       const handle = backgroundTaskHandle(serverName, toolMeta.originalName, taskId);

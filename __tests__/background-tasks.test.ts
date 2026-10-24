@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { rm } from "node:fs/promises";
+import { dirname } from "node:path";
 import { TaskFailedError } from "@modelcontextprotocol/ext-tasks/client";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall } from "../proxy-modes.ts";
@@ -111,6 +113,24 @@ describe("background MCP tasks through the proxy", () => {
     expect(execution.cancel).toHaveBeenCalledTimes(1);
     finish({ status: "completed", result: { content: [] } });
     await delivered();
+  });
+
+  it("bounds a failed task's error with the output guard", async () => {
+    const { execution, finish } = pendingTask();
+    const { state, sendMessage, delivered } = taskState(execution);
+    state.config.settings.outputGuard = { maxBytes: 200, maxLines: 5 };
+    const error = Array.from({ length: 50 }, (_, line) => `server error line ${line}`).join("\n");
+
+    await executeCall(state, "demo_build", {});
+    finish({ status: "failed", error: new TaskFailedError(error) });
+    await delivered();
+
+    const { content, details } = sendMessage.mock.calls[0]![0];
+    const guard = details.outputGuard;
+    await rm(dirname(guard.fullOutputPath), { recursive: true, force: true });
+    expect(content[0]).toEqual({ type: "text", text: "MCP task t-1 (demo/build) failed." });
+    expect(guard.truncated).toBe(true);
+    expect(content[1].text).not.toContain("server error line 49");
   });
 
   it("delivers a failed task's error and a tool error result", async () => {
