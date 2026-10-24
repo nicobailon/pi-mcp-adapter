@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { TaskFailedError } from "@modelcontextprotocol/ext-tasks/client";
+import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { BackgroundTaskRegistry } from "../task-jobs.ts";
 
@@ -161,6 +162,74 @@ describe("background MCP tasks through the proxy", () => {
     fromScript.state.calledByModel = (id: string | undefined) => id !== "codemode/1";
     nested.finish(outcome);
     const scriptResult = await executeCall(fromScript.state, "demo_build", {}, undefined, undefined, undefined, undefined, undefined, "codemode/1");
+    expect(scriptResult.content).toEqual([{ type: "text", text: "build ok" }]);
+    expect(fromScript.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("background MCP tasks through direct tools", () => {
+  const spec = { serverName: "demo", originalName: "build", prefixedName: "demo_build", description: "Build" };
+  const run = (state: unknown, toolSpec: Record<string, unknown> = spec, toolCallId = "toolu_1", signal?: AbortSignal) =>
+    createDirectToolExecutor(() => state as any, () => null, toolSpec as any)(toolCallId, {}, signal, undefined, {} as any);
+
+  it("returns the task handle before the task finishes, then delivers the result once as a follow-up", async () => {
+    const { execution, finish } = pendingTask();
+    const { state, sendMessage, manager, delivered } = taskState(execution);
+
+    const result = await run(state);
+
+    expect(result.content).toEqual([{ type: "text", text: HANDLE_TEXT }]);
+    expect(result.details).toEqual({ server: "demo", tool: "build", task: { id: "t-1", server: "demo", tool: "build", status: "working" } });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(manager.decrementInFlight).not.toHaveBeenCalled();
+
+    finish({ status: "completed", result: { content: [{ type: "text", text: "build ok" }] } });
+    await delivered();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      {
+        customType: "mcp-task-result",
+        display: true,
+        content: [{ type: "text", text: "MCP task t-1 (demo/build) completed." }, { type: "text", text: "build ok" }],
+        details: { task: { id: "t-1", server: "demo", tool: "build", status: "completed" } },
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+    expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the task running when the tool call is aborted after the handle came back", async () => {
+    const { execution, finish } = pendingTask();
+    const { state, callTool, delivered } = taskState(execution);
+    const controller = new AbortController();
+
+    await run(state, spec, "toolu_1", controller.signal);
+    controller.abort();
+
+    expect(execution.cancel).not.toHaveBeenCalled();
+    expect(callTool.mock.calls[0]![2].signal!.aborted).toBe(false);
+    finish({ status: "completed", result: { content: [] } });
+    await delivered();
+  });
+
+  it("returns the result inline for MCP-UI tools and calls made by code", async () => {
+    const outcome = { status: "completed" as const, result: { content: [{ type: "text", text: "build ok" }] } };
+
+    const ui = pendingTask();
+    const withUi = taskState(ui.execution);
+    ui.finish(outcome);
+    // An open view for this tool, which the call reuses.
+    withUi.state.uiServer = { serverName: "demo", toolName: "build", url: "http://localhost/ui", sendToolInput: vi.fn(), sendToolResult: vi.fn(), sendResultPatch: vi.fn() };
+    const uiResult = await run(withUi.state, { ...spec, uiResourceUri: "ui://demo/build" });
+    expect(uiResult.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("build ok") });
+    expect(withUi.sendMessage).not.toHaveBeenCalled();
+
+    const nested = pendingTask();
+    const fromScript = taskState(nested.execution);
+    fromScript.state.calledByModel = (id: string | undefined) => id !== "codemode/1";
+    nested.finish(outcome);
+    const scriptResult = await run(fromScript.state, spec, "codemode/1");
     expect(scriptResult.content).toEqual([{ type: "text", text: "build ok" }]);
     expect(fromScript.sendMessage).not.toHaveBeenCalled();
   });
