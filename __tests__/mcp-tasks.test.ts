@@ -496,11 +496,13 @@ interface FakeTaskServer {
  * Fake modern-era client + scripted server speaking the ext-tasks V2 wire
  * shapes through a real RawRequestChannel attached to a connected transport.
  * tools/call answers with a CreateTaskResult and tasks/get walks the given
- * status sequence. Stacks given the same `server` act as two connections to one server.
+ * status sequence. Stacks given the same `server` act as two connections to one server;
+ * each cancel it records names the `connection` that sent it.
  */
 function fakeModernTaskStack(
   script: { statuses: Array<Record<string, unknown>> },
   server: FakeTaskServer = { polls: [], updates: [], cancels: [], headersByMethod: new Map() },
+  connection = "first",
 ): {
   client: Client;
   transport: Transport;
@@ -536,7 +538,7 @@ function fakeModernTaskStack(
       server.updates.push(frame.params ?? {});
       respond({ resultType: "complete" });
     } else if (frame.method === "tasks/cancel") {
-      server.cancels.push(frame.params ?? {});
+      server.cancels.push({ connection, taskId: frame.params?.taskId });
       respond({ resultType: "complete" });
     }
   };
@@ -791,10 +793,10 @@ describe("background task delivery over a task session", () => {
   const definition = { command: "fake-server", tasks: true };
   const clientInfo = { name: "pi-mcp-test", version: "1.0.0" };
 
-  function registry() {
+  function registry(ownerSignal = new AbortController().signal) {
     const sendMessage = vi.fn();
     const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
-    return { tasks: new BackgroundTaskRegistry(manager, sendMessage, new AbortController().signal), sendMessage, manager };
+    return { tasks: new BackgroundTaskRegistry(manager, sendMessage, ownerSignal), sendMessage, manager };
   }
 
   const render = async (result: Record<string, unknown>) => ({
@@ -879,14 +881,14 @@ describe("background task delivery over a task session", () => {
   it("hands a running task over to a replacement connection without cancelling it", async () => {
     const script = { statuses: [{ status: "working" }] as Array<Record<string, unknown>> };
     const first = fakeModernTaskStack(script);
-    const second = fakeModernTaskStack(script, first.server);
+    const second = fakeModernTaskStack(script, first.server, "second");
     const replaced = await attach(first);
     const replacement = await attach(second);
     const { tasks, sendMessage, manager } = registry();
     try {
       const { done } = await startOn(tasks, replaced!.session);
 
-      await tasks.handOver("task-server", { taskSession: replacement!.session });
+      await tasks.handOver("task-server", { taskSession: replacement!.session, closed: () => false });
       await replaced!.session.close();
       expect(sendMessage).not.toHaveBeenCalled();
       expect(manager.decrementInFlight).not.toHaveBeenCalled();
@@ -915,12 +917,12 @@ describe("background task delivery over a task session", () => {
     const replaced = await attach(first);
     const replacement = replacementDefinition === undefined
       ? undefined
-      : await attach(fakeModernTaskStack(script, first.server), replacementDefinition);
+      : await attach(fakeModernTaskStack(script, first.server, "second"), replacementDefinition);
     const { tasks, sendMessage, manager } = registry();
     try {
       const { done } = await startOn(tasks, replaced!.session);
 
-      await tasks.handOver("task-server", { taskSession: replacement?.session });
+      await tasks.handOver("task-server", { taskSession: replacement?.session, closed: () => false });
       await replaced!.session.close();
       await done;
 
@@ -942,19 +944,19 @@ describe("background task delivery over a task session", () => {
   it("stops a handed-over task through its resumed execution", async () => {
     const script = { statuses: [{ status: "working" }] };
     const first = fakeModernTaskStack(script);
-    const second = fakeModernTaskStack(script, first.server);
+    const second = fakeModernTaskStack(script, first.server, "second");
     const replaced = await attach(first);
     const replacement = await attach(second);
     const { tasks, sendMessage } = registry();
     try {
       const { done } = await startOn(tasks, replaced!.session);
-      await tasks.handOver("task-server", { taskSession: replacement!.session });
+      await tasks.handOver("task-server", { taskSession: replacement!.session, closed: () => false });
       await replaced!.session.close();
 
       expect(await tasks.stop("task-server/task-e2e-1", "you")).toBe(true);
       await done;
 
-      expect(first.server.cancels).toHaveLength(1);
+      expect(first.server.cancels).toEqual([{ connection: "second", taskId: "task-e2e-1" }]);
       expect(sendMessage).toHaveBeenCalledTimes(1);
       expect(sendMessage.mock.calls[0]![0].content).toEqual([
         { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) cancelled." },
@@ -962,6 +964,62 @@ describe("background task delivery over a task session", () => {
       ]);
     } finally {
       await replacement!.session.close();
+    }
+  });
+
+  it("cancels a handed-over task over its resumed connection when the runtime stops", async () => {
+    const script = { statuses: [{ status: "working" }] };
+    const first = fakeModernTaskStack(script);
+    const second = fakeModernTaskStack(script, first.server, "second");
+    const replaced = await attach(first);
+    const replacement = await attach(second);
+    const owner = new AbortController();
+    const { tasks, sendMessage, manager } = registry(owner.signal);
+    try {
+      const { done } = await startOn(tasks, replaced!.session);
+      await tasks.handOver("task-server", { taskSession: replacement!.session, closed: () => false });
+      await replaced!.session.close();
+
+      owner.abort();
+      await done;
+
+      expect(first.server.cancels).toEqual([{ connection: "second", taskId: "task-e2e-1" }]);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0].details).toMatchObject({ task: { status: "cancelled" } });
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    } finally {
+      await replacement!.session.close();
+    }
+  });
+
+  it("cancels the task when the replacement connection closes before the hand-off resumes it", async () => {
+    const script = { statuses: [{ status: "working" }] };
+    const first = fakeModernTaskStack(script);
+    const replaced = await attach(first);
+    const replacement = await attach(fakeModernTaskStack(script, first.server, "second"));
+    const { tasks, sendMessage, manager } = registry();
+    let replacementClosed = false;
+    try {
+      const { done } = await startOn(tasks, replaced!.session);
+
+      const handingOver = tasks.handOver("task-server", { taskSession: replacement!.session, closed: () => replacementClosed });
+      replacementClosed = true;
+      await replacement!.session.close();
+      await handingOver;
+      await done;
+
+      expect(first.server.cancels).toEqual([{ connection: "first", taskId: "task-e2e-1" }]);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.calls[0]![0]).toMatchObject({
+        content: [
+          { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) cancelled." },
+          { type: "text", text: "The connection to task-server closed." },
+        ],
+        details: { task: { status: "cancelled" }, error: "task_cancelled" },
+      });
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    } finally {
+      await replaced!.session.close();
     }
   });
 });

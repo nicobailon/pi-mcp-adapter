@@ -29,6 +29,8 @@ export interface BackgroundTaskInfo {
 export interface ReplacementTaskSession {
     taskSession?: TaskEnabledSession | undefined;
     requestTimeoutMs?: number | undefined;
+    /** Whether the replacement connection has since been closed, by a disconnect, disable or session stop. */
+    closed: () => boolean;
 }
 /**
  * The tool result a call returns once its task runs in the background. `cancelHint` names

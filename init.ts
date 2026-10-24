@@ -281,6 +281,7 @@ export async function initializeMcp(
     manager.setConnectionReplacedListener?.((serverName, _stale, fresh) => backgroundTasks.handOver(serverName, {
       taskSession: fresh.taskSession,
       requestTimeoutMs: manager.getRequestOptions(serverName)?.timeout,
+      closed: () => fresh.status === "closed",
     }));
   }
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));

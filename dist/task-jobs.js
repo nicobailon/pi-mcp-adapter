@@ -92,17 +92,36 @@ export class BackgroundTaskRegistry {
                 this.follow(entry, resumed);
             }
             catch (error) {
-                logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
-                this.sendMessage({
-                    customType: "mcp-task-result",
-                    display: true,
-                    content: [{
-                            type: "text",
-                            text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}): outcome unknown after the connection was replaced. Calling the tool again may repeat the work.`,
-                        }],
-                    details: { task: { id: entry.taskId, server: entry.server, tool: entry.tool, status: "unknown" }, error: "task_outcome_unknown" },
-                }, { triggerTurn: true, deliverAs: "followUp" });
-                this.release(entry);
+                const identity = { id: entry.taskId, server: entry.server, tool: entry.tool };
+                try {
+                    // A close or session stop that cut the resume short cancels, as it would have without the hand-off.
+                    // The replaced connection stays open until this returns, and a detached execution can still cancel.
+                    if (this.ownerSignal.aborted || fresh.closed()) {
+                        await old.cancel().catch(() => { });
+                        const guarded = await entry.guard(`The connection to ${entry.server} closed.`);
+                        this.sendMessage({
+                            customType: "mcp-task-result",
+                            display: true,
+                            content: [{ type: "text", text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}) cancelled.` }, ...guarded.content],
+                            details: { task: { ...identity, status: "cancelled" }, error: "task_cancelled", ...guarded.details },
+                        }, { triggerTurn: true, deliverAs: "followUp" });
+                    }
+                    else {
+                        logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
+                        this.sendMessage({
+                            customType: "mcp-task-result",
+                            display: true,
+                            content: [{
+                                    type: "text",
+                                    text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}): outcome unknown after the connection was replaced. Calling the tool again may repeat the work.`,
+                                }],
+                            details: { task: { ...identity, status: "unknown" }, error: "task_outcome_unknown" },
+                        }, { triggerTurn: true, deliverAs: "followUp" });
+                    }
+                }
+                finally {
+                    this.release(entry);
+                }
             }
         }));
     }
