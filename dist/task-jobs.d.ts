@@ -43,6 +43,8 @@ export interface ReplacementTaskSession {
     requestTimeoutMs?: number | undefined;
     /** Whether the replacement connection has since been closed, by a disconnect, disable or session stop. */
     closed: () => boolean;
+    /** Why there is no task session to resume on, when the caller knows. */
+    unavailable?: "not-configured" | "unreachable" | undefined;
 }
 /**
  * The tool result a call returns once its task runs in the background. `cancelHint` names

@@ -498,10 +498,11 @@ interface FakeTaskServer {
  * shapes through a real RawRequestChannel attached to a connected transport.
  * tools/call answers with a CreateTaskResult and tasks/get walks the given
  * status sequence. Stacks given the same `server` act as two connections to one server;
- * each cancel it records names the `connection` that sent it.
+ * each cancel it records names the `connection` that sent it. `forgetsTasks` answers
+ * tasks/get with -32602, as a server does for a task id it doesn't know.
  */
 function fakeModernTaskStack(
-  script: { statuses: Array<Record<string, unknown>> },
+  script: { statuses: Array<Record<string, unknown>>; forgetsTasks?: boolean },
   server: FakeTaskServer = { polls: [], updates: [], cancels: [], headersByMethod: new Map() },
   connection = "first",
 ): {
@@ -532,6 +533,12 @@ function fakeModernTaskStack(
     if (frame.method === "tools/call") {
       respond({ resultType: "task", status: "working", ...task });
     } else if (frame.method === "tasks/get") {
+      if (script.forgetsTasks) {
+        queueMicrotask(() => {
+          transport.onmessage?.({ jsonrpc: "2.0", id: frame.id, error: { code: -32602, message: "Unknown task" } } as JSONRPCMessage);
+        });
+        return;
+      }
       const status = script.statuses[Math.min(server.polls.length, script.statuses.length - 1)]!;
       server.polls.push(frame.params ?? {});
       respond({ resultType: "complete", ...task, ...status });
@@ -910,15 +917,16 @@ describe("background task delivery over a task session", () => {
   });
 
   it.each([
-    ["has no task session", undefined],
-    ["is a different endpoint", { command: "other-server", tasks: true }],
-  ])("delivers one outcome-unknown message when the replacement connection %s", async (_case, replacementDefinition) => {
+    ["has no task session", undefined, false, "It could not be followed after its connection changed"],
+    ["is a different endpoint", { command: "other-server", tasks: true }, false, "Server 'task-server' was reconfigured since this task started"],
+    ["no longer knows the task", definition, true, "Expired on the server: outcome unknown"],
+  ])("delivers one outcome-unknown message, with why, when the replacement connection %s", async (_case, replacementDefinition, forgetsTasks, reason) => {
     const script = { statuses: [{ status: "working" }] };
     const first = fakeModernTaskStack(script);
     const replaced = await attach(first);
     const replacement = replacementDefinition === undefined
       ? undefined
-      : await attach(fakeModernTaskStack(script, first.server, "second"), replacementDefinition);
+      : await attach(fakeModernTaskStack({ ...script, forgetsTasks }, first.server, "second"), replacementDefinition);
     const { tasks, sendMessage, manager } = registry();
     try {
       const { done } = await startOn(tasks, replaced!.session);
@@ -930,10 +938,10 @@ describe("background task delivery over a task session", () => {
       expect(first.server.cancels).toEqual([]);
       expect(sendMessage).toHaveBeenCalledTimes(1);
       expect(sendMessage.mock.calls[0]![0]).toMatchObject({
-        content: [{
-          type: "text",
-          text: "MCP task task-e2e-1 (task-server/slow_tool): outcome unknown after the connection was replaced. Calling the tool again may repeat the work.",
-        }],
+        content: [
+          { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) outcome unknown." },
+          { type: "text", text: `${reason}. Calling the tool again may repeat the work.` },
+        ],
         details: { task: { status: "unknown" }, error: "task_outcome_unknown" },
       });
       expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);

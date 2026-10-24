@@ -115,10 +115,42 @@ describe("background MCP tasks in initializeMcp", () => {
     await initializeMcp({ getFlag: vi.fn(), sendMessage, appendEntry } as unknown as ExtensionAPI, sessionContext("s-1", branch));
     await delivery;
 
-    // The configured server is disabled, so the task can't be followed again.
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage.mock.calls[0]![0]).toMatchObject({ customType: "mcp-task-result", details: { task: { id: "t-1", status: "unknown" } } });
+    // The configured server is disabled, so the task can't be followed again.
+    expect(sendMessage.mock.calls[0]![0]).toMatchObject({
+      customType: "mcp-task-result",
+      content: [
+        { type: "text", text: "MCP task t-1 (demo/build) outcome unknown." },
+        { type: "text", text: "Server 'demo' is not configured in this session; the task may still be running on it. Calling the tool again may repeat the work." },
+      ],
+      details: { task: { id: "t-1", status: "unknown" }, error: "task_outcome_unknown" },
+    });
     expect(appendEntry).not.toHaveBeenCalled();
+  });
+
+  it("says the server could not be reached when a restored task's server needs sign-in", async () => {
+    const { restoreBackgroundTasks } = await import("../init.ts");
+    const { BackgroundTaskRegistry } = await import("../task-jobs.ts");
+    const sendMessage = vi.fn();
+    const manager = {
+      getConnection: vi.fn(() => undefined),
+      connect: vi.fn(async () => ({ status: "needs-auth" })),
+      getRequestOptions: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
+      touch: vi.fn(),
+    };
+    const state = { config: { mcpServers: { demo: { url: "https://demo.test/mcp" } }, settings: {} }, manager, failureTracker: new Map() };
+    const registry = new BackgroundTaskRegistry(manager, sendMessage, new AbortController().signal);
+
+    await restoreBackgroundTasks(state as never, registry, [{ key: "demo/t-1", server: "demo", tool: "build", reference: reference as never }]);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]![0].content).toEqual([
+      { type: "text", text: "MCP task t-1 (demo/build) outcome unknown." },
+      { type: "text", text: "Could not reach 'demo'. Calling the tool again may repeat the work." },
+    ]);
+    expect(manager.incrementInFlight).not.toHaveBeenCalled();
   });
 
   it("does not resume a pending task whose outcome message is already in the session", async () => {

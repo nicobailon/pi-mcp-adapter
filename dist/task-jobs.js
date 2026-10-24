@@ -1,7 +1,22 @@
-import { TaskExecutionClosedError, taskViewFromExecutionEvent, } from "@modelcontextprotocol/ext-tasks/client";
+import { JsonRpcResponseError, TaskExecutionClosedError, taskViewFromExecutionEvent, } from "@modelcontextprotocol/ext-tasks/client";
 import { logger } from "./logger.js";
 /** The custom message a task's outcome reaches the model as. */
 export const MCP_TASK_RESULT_TYPE = "mcp-task-result";
+/** Why a handed-off task can't be followed, for its one outcome-unknown message. */
+function unfollowableReason(server, session, error) {
+    if (session.unavailable === "not-configured")
+        return `Server '${server}' is not configured in this session; the task may still be running on it`;
+    if (session.unavailable === "unreachable")
+        return `Could not reach '${server}'`;
+    // ext-tasks rejects resumeTask with this plain Error when the server's name now maps to another url or command.
+    if (error instanceof Error && error.message === "Task reference belongs to a different endpoint") {
+        return `Server '${server}' was reconfigured since this task started`;
+    }
+    // tasks/get answering -32602 (invalid params) is how a server says it doesn't know the task id.
+    if (error instanceof JsonRpcResponseError && error.code === -32602)
+        return "Expired on the server: outcome unknown";
+    return "It could not be followed after its connection changed";
+}
 /**
  * The tool result a call returns once its task runs in the background. `cancelHint` names
  * mcp({ cancelTask }) only while the `mcp` tool exists to take it.
@@ -206,12 +221,10 @@ export class BackgroundTaskRegistry {
                 }
                 else {
                     logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
+                    const guarded = await entry.guard(`${unfollowableReason(entry.server, session, error)}. Calling the tool again may repeat the work.`);
                     this.deliver(entry, {
-                        content: [{
-                                type: "text",
-                                text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}): outcome unknown after the connection was replaced. Calling the tool again may repeat the work.`,
-                            }],
-                        details: { task: { ...identity, status: "unknown" }, error: "task_outcome_unknown" },
+                        content: [{ type: "text", text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}) outcome unknown.` }, ...guarded.content],
+                        details: { task: { ...identity, status: "unknown" }, error: "task_outcome_unknown", ...guarded.details },
                     });
                 }
             }

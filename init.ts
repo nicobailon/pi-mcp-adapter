@@ -657,7 +657,9 @@ export async function restoreBackgroundTasks(
     return { content: guarded.content, details: { ...(result.isError ? { error: "tool_error" } : {}), ...guardedMcpDetails(guarded) } };
   };
   await Promise.all(tasks.map(async (task) => {
-    const connected = await lazyConnect(state, task.server).catch(() => false);
+    const definition = state.config.mcpServers[task.server];
+    const configured = definition !== undefined && !isServerDisabled(definition);
+    const connected = configured && await lazyConnect(state, task.server).catch(() => false);
     const connection = connected ? state.manager.getConnection(task.server) : undefined;
     if (connection) state.manager.incrementInFlight(task.server);
     await registry.restore(
@@ -673,6 +675,7 @@ export async function restoreBackgroundTasks(
         taskSession: connection?.taskSession,
         requestTimeoutMs: state.manager.getRequestOptions(task.server)?.timeout,
         closed: () => connection?.status === "closed",
+        unavailable: !configured ? "not-configured" : connection === undefined ? "unreachable" : undefined,
       },
     );
   }));
