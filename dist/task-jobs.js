@@ -62,7 +62,10 @@ export class BackgroundTaskRegistry {
         return new Promise((finish) => {
             const { execution, ...rest } = task;
             const entry = this.entry(rest, finish);
-            this.follow(entry, entry.generation, execution);
+            if (this.stopping)
+                void this.persistOnStop(entry, execution);
+            else
+                this.follow(entry, entry.generation, execution);
         });
     }
     /**
@@ -102,27 +105,30 @@ export class BackgroundTaskRegistry {
      * session stop, since it also claims tasks still being restored or resumed.
      */
     async handOffForShutdown() {
-        const persist = this.persistHandedOff;
-        if (persist === undefined)
+        if (this.persistHandedOff === undefined)
             return;
         this.stopping = true;
         await Promise.all([...this.running.values()].map(async (entry) => {
-            const old = entry.execution;
             this.takeOver(entry);
             // Final for this runtime: no later hand-over or stop may pick the task up again.
             this.remove(entry);
-            try {
-                await old.handoff((reference) => persist({ key: entry.info.key, server: entry.server, tool: entry.tool, reference }));
-                await old.result();
-            }
-            catch (error) {
-                // Still owned by its task session, whose teardown cancels it as it did before.
-                logger.warn(`MCP task ${entry.info.key} could not be handed off: ${error instanceof Error ? error.message : String(error)}`);
-            }
-            finally {
-                this.release(entry);
-            }
+            await this.persistOnStop(entry, entry.execution);
         }));
+    }
+    /** Hands a task off without cancelling it and records it for the stopping session, then releases it. */
+    async persistOnStop(entry, execution) {
+        const persist = this.persistHandedOff;
+        try {
+            await execution.handoff((reference) => persist({ key: entry.info.key, server: entry.server, tool: entry.tool, reference }));
+            await execution.result();
+        }
+        catch (error) {
+            // Still owned by its task session, whose teardown cancels it as it did before.
+            logger.warn(`MCP task ${entry.info.key} could not be handed off: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        finally {
+            this.release(entry);
+        }
     }
     /*
      * Ownership: at most one continuation owns an entry at a time, the one whose
@@ -134,10 +140,10 @@ export class BackgroundTaskRegistry {
      * holds, and releases the in-flight count only if nobody took the entry over.
      * Taking an entry out of `running` ends the contest for it, since every
      * take-over starts from `running`. Once the session starts stopping, it owns
-     * every task: it takes over those in `running`, and every other continuation
-     * (a restore or resume in flight, a follow about to start) loses ownership,
-     * so a restored record stays pending. A stopping session persists its tasks
-     * and never cancels them.
+     * every task, including one started after: it takes over those in `running`,
+     * persists one that starts, and every other continuation (a restore or resume
+     * in flight, a follow about to start) loses ownership, so a restored record
+     * stays pending. A stopping session persists its tasks and never cancels them.
      */
     takeOver(entry) {
         entry.generation += 1;

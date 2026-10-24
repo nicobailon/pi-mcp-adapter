@@ -1373,5 +1373,35 @@ describe("background tasks across a session stop and start", () => {
       expect(sendMessage).not.toHaveBeenCalled();
       expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
     });
+
+    it("persists, and never cancels, a task that starts after the session began stopping", async () => {
+      const log: string[] = [];
+      const persisted: HandedOffTask[] = [];
+      const { tasks, sendMessage, manager, owner } = registry({ persist: (task) => persisted.push(task) });
+      await tasks.handOffForShutdown();
+
+      const done = tasks.start({ server: "task-server", tool: "slow_tool", taskId: "t-1", execution: loggedExecution(log, "late"), render, guard });
+      owner.abort();
+      await done;
+
+      expect(persisted).toEqual([expect.objectContaining({ key: "task-server/t-1", reference: expect.objectContaining({ taskId: "t-1" }) })]);
+      expect(cancels(log)).toEqual([]);
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+      expect(tasks.size).toBe(0);
+    });
+
+    it("still cancels a task that starts while a runtime without a session record stops", async () => {
+      const log: string[] = [];
+      const { tasks, manager, owner } = registry();
+      await tasks.handOffForShutdown();
+
+      const done = tasks.start({ server: "task-server", tool: "slow_tool", taskId: "t-1", execution: loggedExecution(log, "late"), render, guard });
+      owner.abort();
+      await done;
+
+      expect(cancels(log)).toEqual(["late.cancel"]);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    });
   });
 });
