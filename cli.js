@@ -590,6 +590,8 @@ async function runDoctor(argv, log, error) {
   const serverManager = new manager.McpServerManager(cwd);
   serverManager.setDefaultRequestTimeoutMs(effective.settings?.requestTimeoutMs);
   serverManager.setAuthStorageOptions(authOptions);
+  const initialized = new Set();
+  serverManager.setConnectionInitializedListener((name) => initialized.add(name));
 
   const check = async (name, definition, signal) => {
     const block = blockedServers.get(name);
@@ -638,7 +640,8 @@ async function runDoctor(argv, log, error) {
     const timedOut = new Promise((resolve) => {
       timer = setTimeout(() => {
         controller.abort();
-        resolve({ state: "failed", message: `no response within ${DOCTOR_CONNECT_TIMEOUT_MS / 1000}s` });
+        const step = initialized.has(name) ? "connected, but did not finish listing its tools, resources and prompts" : "did not finish connecting";
+        resolve({ state: "failed", message: `${step} within ${DOCTOR_CONNECT_TIMEOUT_MS / 1000}s` });
       }, DOCTOR_CONNECT_TIMEOUT_MS);
     });
     const result = await Promise.race([

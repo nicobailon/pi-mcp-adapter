@@ -591,6 +591,27 @@ describe("cli doctor", { timeout: 30_000 }, () => {
     expect(result.stdout).not.toContain("path-secret-value");
   });
 
+  it("says whether a server that timed out stalled while connecting or while listing tools", { timeout: 45_000 }, async () => {
+    // Answers initialize, then never answers tools/list.
+    const listStall = `require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method } = JSON.parse(line);
+      const reply = (body) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, ...body }) + "\\n");
+      if (method === "server/discover") reply({ error: { code: -32601, message: "not supported" } });
+      if (method === "initialize") reply({ result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "stall", version: "1.0.0" } } });
+    });`;
+    const context = setup({
+      mcpServers: {
+        connectStall: { command: process.execPath, args: ["-e", "process.stdin.resume()"] },
+        listStall: { command: process.execPath, args: ["-e", listStall] },
+      },
+    });
+
+    const result = await doctor([], context);
+
+    expect(result.stdout).toContain("connectStall: failed — did not finish connecting within 15s");
+    expect(result.stdout).toContain("listStall: failed — connected, but did not finish listing its tools, resources and prompts within 15s");
+  });
+
   it("reports OAuth servers without a sign-in and never starts an OAuth flow", async () => {
     const paths: string[] = [];
     const url = await listen((request, response) => {
