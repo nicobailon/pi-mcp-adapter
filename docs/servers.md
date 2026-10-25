@@ -87,12 +87,22 @@ Use `"2026-07-28"` to pin that revision. Pinning has no legacy or SSE fallback a
 
 ### Task-augmented tool calls
 
-The adapter supports the [MCP Tasks extension](https://modelcontextprotocol.io/extensions/tasks/overview) (`io.modelcontextprotocol/tasks`, SEP-2663), which lets long-running tools return a durable task handle instead of blocking the connection. Support is negotiated per connection and needs no configuration: the task session only activates when a 2026-07-28 connection's server advertises the extension, so nothing changes for servers without task support. Set `tasks: false` on a server to opt out and keep the plain synchronous call path. Legacy (2025-11-25) experimental tasks are not supported.
+The adapter supports the [MCP Tasks extension](https://modelcontextprotocol.io/extensions/tasks/overview) (`io.modelcontextprotocol/tasks`, SEP-2663), which lets long-running tools return a durable task handle instead of blocking the connection. Tasks need an MCP 2026-07-28 connection, and the default `"legacy"` handshake doesn't offer one, so set `protocolVersion` on the server:
+
+```json
+{
+  "mcpServers": {
+    "ci": { "url": "https://ci.example.com/mcp", "protocolVersion": "auto" }
+  }
+}
+```
+
+The task session then activates only when the server advertises the extension, so nothing changes for servers without task support. Set `tasks: false` on a server to opt out and keep the plain synchronous call path. Legacy (2025-11-25) experimental tasks are not supported.
 
 When the server answers a call with a task, Pi doesn't wait for it:
 
 - The tool call returns right away with the task id, and the agent keeps working. The adapter polls the task in the background, honoring the server's suggested poll interval.
-- When the task ends, its result reaches the model once, as an `mcp-task-result` message. If the agent is idle, the message starts a turn; if it is busy, the message waits until the current turn ends. Results go through the same output guard as a normal call. A failed task delivers its error, and a tool result with `isError: true` arrives as a tool error.
+- When the task ends, its result reaches the model once, as a new message that starts `MCP task <id> (<server>/<tool>) completed.` (or `failed.` or `cancelled.`). If the agent is idle, the message starts a turn; if it is busy, the message waits until the current turn ends. Results go through the same output guard as a normal call. A failed task delivers its error, and a tool result with `isError: true` arrives as a tool error.
 - If the task asks a question (`input_required`), the same form or browser prompt opens as for a direct `elicitation/create` request, even though the call already returned. Your answer goes back via `tasks/update`.
 - Esc while the call is still waiting for the server cancels the task with a cooperative `tasks/cancel`. Once the task id is back, Esc no longer touches the task. To stop it, run `/mcp-adapter tasks`, which lists running tasks with their latest status, then `/mcp-adapter tasks stop <server>/<taskId>`. The footer shows how many tasks are running.
 - The agent can stop a task too, for example when you ask it to. The call's result tells it the key, and `mcp({ cancelTask: "<server>/<taskId>" })` sends the same `tasks/cancel`; the task's message then says the agent stopped it. It only stops work the agent started, so like the command it needs no tool approval. This works only while the `mcp` tool is available; with `disableProxyTool` the call's result leaves the hint out, and only `/mcp-adapter tasks stop` can stop the task.
