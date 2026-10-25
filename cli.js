@@ -83,11 +83,6 @@ function printHelp(log = console.log) {
   log("  pi-mcp-adapter token set <server>     Store a token read from stdin (masked prompt or pipe; never argv)");
   log("  pi-mcp-adapter token status <server>  Report whether a stored token matches the configured URL");
   log("  pi-mcp-adapter token remove <server>  Remove the stored token");
-  log("");
-  log("Jev API key storage (SYSTEMONE_ENDPOINT selects the provider endpoint):");
-  log("  pi-mcp-adapter key set systemone     Store a key read from stdin (masked prompt or pipe; never argv)");
-  log("  pi-mcp-adapter key status systemone  Report the effective credential source without revealing it");
-  log("  pi-mcp-adapter key remove systemone  Remove the stored key");
 }
 
 function readJsonFile(filePath) {
@@ -226,8 +221,8 @@ async function importTokenModules(error) {
   }
 }
 
-function readSecretFromStdin(stdin, prompt = "Enter bearer token (input hidden): ") {
-  if (stdin.isTTY) return readSecretMasked(stdin, prompt);
+function readSecretFromStdin(stdin) {
+  if (stdin.isTTY) return readSecretMasked(stdin, "Enter bearer token (input hidden): ");
   return new Promise((resolve, reject) => {
     let data = "";
     stdin.setEncoding("utf8");
@@ -361,60 +356,6 @@ async function runToken(argv, log, error, stdin) {
     return 1;
   }
   log(`Bearer token removed for "${safeName}".`);
-  return 0;
-}
-
-async function runKey(argv, log, error, stdin) {
-  const [action, provider, ...extra] = argv;
-  // `typesafe` is the pre-endpoint provider name, kept for existing scripts.
-  if (!["set", "status", "remove"].includes(action) || (provider !== "systemone" && provider !== "typesafe")) {
-    error("Usage: pi-mcp-adapter key <set|status|remove> systemone");
-    error("`key set` reads the API key from stdin only. Never pass the key as an argument.");
-    return 1;
-  }
-  if (extra.length > 0) {
-    error("Unexpected extra arguments. The API key must not be passed on the command line; pipe it on stdin or use the interactive prompt.");
-    return 1;
-  }
-  let store;
-  try { store = await import("./dist/jev-key-store.js"); }
-  catch (err) {
-    error("Unable to load Jev key command module.");
-    error(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
-  }
-  const resolution = store.resolveJevEndpoint();
-  if (resolution.status === "unavailable") {
-    error("SYSTEMONE_ENDPOINT is set but invalid, so no key can be stored or read for it.");
-    error(resolution.message);
-    return 1;
-  }
-  const endpoint = resolution.endpoint;
-
-  if (action === "status") {
-    const status = store.resolveJevCredential(process.env, endpoint);
-    if (status.status === "present") { log(`source=${status.source}`); log(`endpoint=${endpoint.href}`); return 0; }
-    if (status.status === "unavailable") { error(`unavailable: ${status.message}`); return 1; }
-    log("missing");
-    return 1;
-  }
-  if (action === "set") {
-    const apiKey = await readSecretFromStdin(stdin, `Enter Jev API key for ${endpoint.href} (input hidden): `);
-    if (!apiKey) { error("No API key provided on stdin."); return 1; }
-    try { store.saveJevApiKey(apiKey, endpoint); }
-    catch (err) { error(err instanceof Error ? err.message : "Jev API key could not be stored."); return 1; }
-    log("Jev API key stored in the OS secure credential store.");
-    log(`endpoint=${endpoint.href}`);
-  } else {
-    try { store.removeJevApiKey(endpoint); }
-    catch (err) { error(err instanceof Error ? err.message : "Jev API key could not be removed."); return 1; }
-    log("Jev API key removed from the OS secure credential store.");
-  }
-  if (Object.hasOwn(process.env, "SYSTEMONE_API_KEY")) log("Note: SYSTEMONE_API_KEY is present and overrides the stored key.");
-  else if (endpoint.origin === store.OPENROUTER_ORIGIN && Object.hasOwn(process.env, "OPENROUTER_API_KEY")) log("Note: OPENROUTER_API_KEY is present and overrides the stored key.");
-  else if (Object.hasOwn(process.env, "TYPESAFE_API_KEY")) log(endpoint.href === store.JEV_DEFAULT_ENDPOINT
-    ? "Note: TYPESAFE_API_KEY is present and overrides the stored key."
-    : `Note: TYPESAFE_API_KEY is ignored for ${endpoint.href}; it is a TypeSafe credential and is never sent there.`);
   return 0;
 }
 
@@ -714,10 +655,6 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
 
   if (command === "token") {
     return runToken(rest, log, error, stdin);
-  }
-
-  if (command === "key") {
-    return runKey(rest, log, error, stdin);
   }
 
   if (command === "doctor") {

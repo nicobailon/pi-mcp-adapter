@@ -195,31 +195,6 @@ test("doctor CLI loads built server modules from the packed package", async () =
   }
 });
 
-test("System One key CLI loads built secure-store modules from the packed package", async () => {
-  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "pi-mcp-key-cli-"));
-  try {
-    await extractPackedPackage(fixtureRoot);
-    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", [
-      'const { main } = await import("./node_modules/pi-mcp-adapter/cli.js");',
-      'const { Readable } = await import("node:stream");',
-      'const run = (args, input = "") => { const logs = []; const errors = []; return main(args, line => logs.push(line), line => errors.push(line), Readable.from([input])).then(code => ({ code, logs, errors })); };',
-      'const set = await run(["key", "set", "systemone"], "packed-secret\\n");',
-      'if (set.code !== 0 || JSON.stringify(set).includes("packed-secret")) process.exit(2);',
-      'const status = await run(["key", "status", "systemone"]);',
-      'if (status.code !== 0 || status.logs[0] !== "source=keyring") process.exit(3);',
-      'const remove = await run(["key", "remove", "systemone"]);',
-      'if (remove.code !== 0) process.exit(4);',
-    ].join("\n")], {
-      cwd: fixtureRoot,
-      env: { ...process.env, PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory", SYSTEMONE_API_KEY: undefined, TYPESAFE_API_KEY: undefined },
-      encoding: "utf8",
-    });
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  } finally {
-    await rm(fixtureRoot, { recursive: true, force: true });
-  }
-});
-
 test("packed root export exposes the protocol extension API to Pi extension loaders", async () => {
   const fixtureRoot = await mkdtemp(path.join(tmpdir(), "pi-mcp-connection-export-"));
   try {

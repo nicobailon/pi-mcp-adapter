@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpAdapter } from "../index.ts";
 import { semanticSearch, type SemanticClassifierRegistry } from "../semantic-search.ts";
-import { getTestSecureKeyringReadCount, resetTestSecureKeyring } from "../secure-keyring.ts";
 import { isToolCallApprovalRequired } from "../tool-approval.ts";
 import type { McpExtensionState } from "../state.ts";
 
@@ -19,13 +18,10 @@ function state(): McpExtensionState {
   } as unknown as McpExtensionState;
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+afterEach(() => vi.restoreAllMocks());
 
-describe("Jev integration boundaries", () => {
-  it("does no credential or network I/O during extension registration", () => {
-    vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "memory");
-    vi.stubEnv("SYSTEMONE_API_KEY", "configured-but-inert");
-    resetTestSecureKeyring();
+describe("semantic search boundaries", () => {
+  it("does no network I/O during extension registration", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const registerTool = vi.fn();
     createMcpAdapter({ config: { settings: {}, mcpServers: {} } })({
@@ -38,7 +34,6 @@ describe("Jev integration boundaries", () => {
     } as any);
     expect(registerTool).toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(getTestSecureKeyringReadCount()).toBe(0);
   });
 
   it("keeps high semantic confidence separate from tool approval", async () => {

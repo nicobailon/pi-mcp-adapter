@@ -16,8 +16,6 @@
     "metadata-cache.ts",
     "mcp-bearer-store.ts",
     "secure-keyring.ts",
-    "jev-contracts.ts",
-    "jev-key-store.ts",
     "semantic-settings.ts",
     "types.ts",
     "project-server-trust.ts",
