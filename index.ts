@@ -7,6 +7,7 @@ import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type CachedTool, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { NestedCallHandOff } from "./proxy-modes.ts";
+import type { ExtractField } from "./extraction.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getProjectPiConfigPath, isExclusiveConfigMode, loadMcpConfig, loadMcpConfigWithSources, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
@@ -2885,6 +2886,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return proxyModes.executeCancelTask(proxyState, params.cancelTask);
         }
         if (params.tool) {
+          let extractFields: Record<string, ExtractField> | undefined;
           if (params.extract !== undefined) {
             if (!isExtractionConfigured(proxyState.config.settings)) {
               return {
@@ -2899,6 +2901,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
                 details: { mode: "call", error: "invalid_extract", message: parsed.message },
               };
             }
+            extractFields = parsed.fields;
           }
           // A script tool wins over an MCP tool of the same name; mcp({ tool, server }) reaches the MCP one.
           const scriptTool = params.server === undefined ? findScriptTool(gatewayScriptTools(), params.tool) : undefined;
@@ -2917,7 +2920,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
           const handOff = createProxyHandOff(_ctx, toolCallId, (server, canonicalTool, args, nestedSignal) =>
             proxyModes.executeCall(proxyState, canonicalTool, args, server, getPiTools, nestedSignal, undefined, undefined, toolCallId));
-          const result = await proxyModes.executeCall(proxyState, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, undefined, toolCallId, handOff);
+          const called = await proxyModes.executeCall(proxyState, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, undefined, toolCallId, handOff);
+          assertRuntimeGuard(proxyGuard);
+          const result = extractFields ? await proxyModes.applyExtraction(proxyState, called, extractFields, _ctx?.modelRegistry, signal) : called;
           assertRuntimeGuard(proxyGuard);
           if (lazyDirectTools.size === 0) return result;
           // A successful proxy call is as clear a signal as a search hit: the

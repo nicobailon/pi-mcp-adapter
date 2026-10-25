@@ -33,7 +33,7 @@ import { describeProjectServerBlock, disabledServerReason } from "./project-serv
 import { findScriptTool } from "./script-tool-surface.ts";
 
 // index.ts reaches field parsing through this lazily loaded module, so startup does not load it.
-export { parseExtractFields } from "./extraction.ts";
+export { applyExtraction, parseExtractFields } from "./extraction.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 /**

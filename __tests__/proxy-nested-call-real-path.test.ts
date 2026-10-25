@@ -147,6 +147,41 @@ describe("proxy calls through Pi's nested tool calls", () => {
     });
   }, 30_000);
 
+  it("returns extracted values for a handed-off call and an in-proxy call, with Pi's Workers AI credential", async () => {
+    vi.stubEnv("CLOUDFLARE_API_KEY", "cf-key");
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "acct_1");
+    const realFetch = globalThis.fetch;
+    const sent: Array<{ url: string; auth: string; state: string }> = [];
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      if (!String(url).includes("/ai/run/@cf/cloudflare/clairic")) return realFetch(url, init);
+      const body = JSON.parse(init!.body as string);
+      sent.push({ url: String(url), auth: (init!.headers as Record<string, string>).Authorization!, state: body.state });
+      return new Response(JSON.stringify({ success: true, result: { answers: { v: { type: "text", value: body.state, confidence: 0.99 } }, truncated: false } }));
+    });
+    try {
+      await withPiSession({ ...brokerFixture, settings: { extraction: { allowedServers: ["fixture"] } } }, async ({ runner, tool, toolCalls }) => {
+        await vi.waitFor(() => expect(runner.createToolContext("probe", undefined).tools.map(callable => callable.name))
+          .toContain("mcp__fixture__echo"), { timeout: 10_000 });
+
+        const handedOff = await tool("mcp").execute("proxy-call", { tool: "fixture_echo", args: { value: "a" }, extract: { v: "text" } }, undefined, undefined, runner.createToolContext("proxy-call", undefined));
+        const inProxy = await tool("mcp").execute("plain-call", { tool: "fixture_echo", args: { value: "c" }, extract: { v: "text" } }, undefined, undefined, runner.createContext());
+
+        expect(toolCalls).toEqual([{ name: "mcp__fixture__echo", id: "proxy-call/1", parent: "proxy-call" }]);
+        expect(sent).toEqual([
+          { url: "https://api.cloudflare.com/client/v4/accounts/acct_1/ai/run/@cf/cloudflare/clairic", auth: "Bearer cf-key", state: "a" },
+          { url: "https://api.cloudflare.com/client/v4/accounts/acct_1/ai/run/@cf/cloudflare/clairic", auth: "Bearer cf-key", state: "c" },
+        ]);
+        for (const [result, value] of [[handedOff, "a"], [inProxy, "c"]] as const) {
+          expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ values: { v: value } });
+          expect(result.details).toMatchObject({ mode: "call", server: "fixture", canonicalTool: "fixture_echo", extraction: { model: "cloudflare-workers-ai/clairic", status: "extracted" } });
+        }
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  }, 30_000);
+
   it("keeps mcp({ tool }) calls in the proxy with MCP_DIRECT_TOOLS=__none__", async () => {
     await withPiSession({ ...brokerFixture, directTools: "__none__" }, async ({ runner, tool, requests, toolCalls, receipts }) => {
       const result = await tool("mcp").execute("proxy-call", { tool: "fixture_echo", args: { value: "a" } }, undefined, undefined, runner.createToolContext("proxy-call", undefined));

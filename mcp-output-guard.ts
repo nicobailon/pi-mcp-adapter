@@ -472,6 +472,11 @@ async function saveArtifact(kind: string, text: string): Promise<{ path?: string
   }
 }
 
+/** Saves text to a private temp file the way a cut result is saved. */
+export function saveMcpOutputText(text: string): Promise<{ path?: string; error?: string }> {
+  return saveArtifact("output", text);
+}
+
 async function discardArtifact(path: string): Promise<void> {
   try {
     await rm(dirname(path), { recursive: true, force: true });

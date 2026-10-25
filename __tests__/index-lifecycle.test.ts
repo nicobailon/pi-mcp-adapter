@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => ({
   executeAuthComplete: vi.fn(),
   executeAuthStart: vi.fn(),
   executeCall: vi.fn(),
+  applyExtraction: vi.fn(),
   executeConnect: vi.fn(),
   executeGuardedDescribe: vi.fn(),
   executeList: vi.fn(),
@@ -172,6 +173,7 @@ vi.mock("../proxy-modes.ts", async () => {
   resolveDescribeTarget: mocks.resolveDescribeTarget,
   executeUiMessages: mocks.executeUiMessages,
   parseExtractFields: (await vi.importActual<typeof import("../extraction.ts")>("../extraction.ts")).parseExtractFields,
+  applyExtraction: mocks.applyExtraction,
   };
 });
 
