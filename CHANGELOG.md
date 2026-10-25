@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Long MCP jobs no longer freeze your session. When a tool kicks off something slow, like a CI run, a research job or a report export, Pi gets control back right away and keeps working. The result shows up as a new message when the job finishes, even if you quit Pi and come back later.
+
+Finding the right tool got smarter and cheaper to set up. Search understands what you mean, not just matching words, so "plan my week" finds a calendar's `schedule` tool even among hundreds of tools. It uses the model logins you already have in Pi, so there's no extra key to manage.
+
+The agent can also ask a tool for just the few values it needs, like a total and a due date, instead of reading a whole page of output.
+
+Copied `.mcp.json` files from Claude Code now work as they are. The `doctor` command now tells you what's actually wrong with a server instead of a vague "connection failed".
+
+One breaking change: if you set up a System One key for search, give that credential to Pi instead. The adapter tells you how when it starts.
+
 ### Breaking
 
 - Semantic tool search now uses the logins and classifier models you already have in Pi, so there is no separate System One key to set up. If you used one, give Pi the credential instead: `/login` to OpenRouter, `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` in Pi's environment, or a provider in Pi's `models.json`. The adapter's own key store is gone: `pi-mcp-adapter key` is an unknown command, `SYSTEMONE_ENDPOINT` and `SYSTEMONE_API_KEY` do nothing, and the adapter no longer reads `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` itself. `settings.jev` is now `settings.semanticSearch`: `allowedServers` stays, `model` takes a Pi model as `"provider/id"`, `semanticCandidateLimit` is now `candidateLimit`, `semanticMinProbability` is now `minProbability`, and `requestTimeoutMs`, `maxRetries`, `maxStateBytes` and `maxQuestionsPerRequest` are gone. `/mcp-adapter jev setup` is now `/mcp-adapter semantic setup`, which writes the new setting and removes the old one from that file. A config that still sets `settings.jev` loads and shows a notice that names the file. `settings.jev: false` no longer turns semantic search off; set `settings.semanticSearch` to `false`. A key you stored before stays in the OS credential store under the service `pi-mcp-adapter.service-key` until you delete it. The `Jev*` type exports of `pi-mcp-adapter/types` and the `@typesafe-ai/sdk` dependency are gone. See [#907](https://github.com/nicobailon/pi-mcp-adapter/issues/907) and [Moving from a System One key](docs/scripting.md#moving-from-a-system-one-key).
