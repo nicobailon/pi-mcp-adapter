@@ -196,17 +196,31 @@ describe("applyExtraction on the Workers AI route", () => {
     expect(result.details).toEqual({ ...plain.details, extraction: { status: "skipped", error: { code, message: expect.any(String) } } });
   });
 
-  it("sends nothing for a background task or a failed call", async () => {
+  it("sends nothing for a background task, a failed call, or a cut result whose full text was not saved", async () => {
     const fetch = clairic(() => ok({}));
     const state = createState([]);
     const task = { content: [{ type: "text" as const, text: "Running as task demo/t1" }], details: { mode: "call", server: "demo", task: { key: "demo/t1" } } };
     const failed = { content: [{ type: "text" as const, text: "Tool not found" }], details: { mode: "call", error: "tool_not_found" } };
+    const unsaved = { content: [{ type: "text" as const, text: "preview\n\n[MCP text output truncated: ...]" }], details: { mode: "call", server: "demo", outputGuard: { truncated: true, writeError: "disk full" } } };
 
     expect(textOf(await applyExtraction(state, task, FIELDS, registry()))).toBe("Extraction skipped: the call runs as a background task.\n\nRunning as task demo/t1");
     const failedResult = await applyExtraction(state, failed, FIELDS, registry());
     expect(failedResult.content).toEqual(failed.content);
     expect(failedResult.details).toMatchObject({ error: "tool_not_found", extraction: { status: "skipped", error: { code: "call_failed" } } });
+    expect(textOf(await applyExtraction(state, unsaved, FIELDS, registry()))).toBe(`Extraction skipped: the tool's own text is not available.\n\n${unsaved.content[0]!.text}`);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("sends a codemode call's text, with the structuredContent it carries", async () => {
+    const fetch = clairic(() => ok({ answers: { total: ANSWERS.total }, truncated: false }));
+    const state = createState([{ type: "text", text: ORDER }], { extra: { structuredContent: { total: 42.1 } } });
+    state.deliversToScript = (toolCallId) => toolCallId === "script-call";
+
+    const result = await applyExtraction(state, await executeCall(state, "demo_get", {}, undefined, undefined, undefined, undefined, undefined, "script-call"), fieldsOf({ total: "number" }), registry());
+
+    expect(result.details).not.toHaveProperty("mcpResult");
+    expect(JSON.parse(fetch.mock.calls[0]![1].body as string).state).toBe(`${ORDER}\nstructuredContent:\n${JSON.stringify({ total: 42.1 }, null, 2)}`);
+    expect(JSON.parse(textOf(result))).toMatchObject({ values: { total: 42.1 } });
   });
 
   const withBody = (status: number, body = `{"errors":[{"message":"${SECRET}"}]}`) => () => new Response(body, { status });

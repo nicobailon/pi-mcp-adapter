@@ -7,7 +7,7 @@ import { combineAbortSignals } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
 
 /** A field as Clairic receives it in the request's `fields` map. */
-export interface ClairicFieldSpec {
+interface ClairicFieldSpec {
   type: "text" | "number" | "date" | "time" | "datetime" | "duration" | "list";
   instructions?: string;
   unit?: string;
@@ -23,7 +23,7 @@ export interface ExtractField {
   spec: ClairicFieldSpec;
 }
 
-export type ParsedExtractFields =
+type ParsedExtractFields =
   | { ok: true; fields: Record<string, ExtractField> }
   | { ok: false; message: string };
 
@@ -107,12 +107,12 @@ type ToolResult = AgentToolResult<Record<string, unknown>>;
 type ContentBlock = ToolResult["content"][number];
 
 /** The part of Pi's ModelRegistry extraction uses. `ctx.modelRegistry` satisfies it on Pi >= 0.99. */
-export interface ExtractionRegistry {
+interface ExtractionRegistry {
   getProviderAuth(provider: string): Promise<unknown>;
   getProviderAuthStatus(provider: string): { configured: boolean };
 }
 
-export function extractionRegistryOf(value: unknown): ExtractionRegistry | undefined {
+function extractionRegistryOf(value: unknown): ExtractionRegistry | undefined {
   const registry = value as Partial<ExtractionRegistry> | undefined;
   return typeof registry?.getProviderAuth === "function" && typeof registry.getProviderAuthStatus === "function"
     ? registry as ExtractionRegistry
@@ -124,6 +124,7 @@ class ExtractionFailure extends Error {
   constructor(readonly failure: ExtractionError) { super(failure.message); }
 }
 const fail = (code: string, message: string): never => { throw new ExtractionFailure({ code, message }); };
+const invalidAnswer = (model: string): never => fail("invalid_response", `${model} returned an invalid answer.`);
 
 const EXTRACT_MAX_BYTES = 100 * 1024;
 const EXTRACT_THRESHOLD = 0.8;
@@ -202,7 +203,7 @@ function validValue(spec: ClairicFieldSpec, value: unknown): boolean {
 interface FieldResult { type: string; status: "extracted" | "null" | "uncertain"; value: unknown; guess?: unknown; confidence?: number; pNull?: number }
 
 function readAnswers(fields: Record<string, ExtractField>, body: unknown, model: string): { fields: Record<string, FieldResult>; truncated: boolean; usage?: unknown } {
-  const invalid = () => fail("invalid_response", `${model} returned an invalid answer.`);
+  const invalid = () => invalidAnswer(model);
   const envelope = body as { success?: unknown; result?: unknown } | null;
   const result = envelope?.success === true ? envelope.result as { answers?: unknown; truncated?: unknown; usage?: unknown } : undefined;
   if (!result || typeof result !== "object" || Array.isArray(result)) return invalid();
@@ -248,7 +249,7 @@ async function sendToClairic(route: Route, text: string, fields: Record<string, 
       body = await response.text();
     } catch {
       throwIfAborted(ownedSignal);
-      return fail(timeout.signal.aborted ? "timeout" : "unavailable", timeout.signal.aborted ? `${route.model} timed out.` : `${route.model} could not be reached.`);
+      return timeout.signal.aborted ? fail("timeout", `${route.model} timed out.`) : fail("unavailable", `${route.model} could not be reached.`);
     }
     const status = response.status;
     if (status === 401 || status === 403) fail("authentication_failed", `${route.provider} rejected the credential.`);
@@ -261,7 +262,7 @@ async function sendToClairic(route: Route, text: string, fields: Record<string, 
     try {
       parsed = JSON.parse(body);
     } catch {
-      return fail("invalid_response", `${route.model} returned an invalid answer.`);
+      return invalidAnswer(route.model);
     }
     return { ...readAnswers(fields, parsed, route.model), latencyMs: Date.now() - started };
   } finally {
@@ -286,8 +287,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * read from a path the server could have written. A small raw result is the server's own object in
  * `details.mcpResult`, so only its `content` and `structuredContent` are read, and anything shaped like the guard's
  * spill summary (which a server can imitate) falls through to the text the adapter built: the guard's own spill file
- * from `details.outputGuard`, which only the adapter writes, or the returned text. Script deliveries record no raw
- * result and carry the unguarded text.
+ * from `details.outputGuard`, which only the adapter writes, or the returned text. Script deliveries and resource
+ * reads record no raw result and carry the text as returned, with an empty placeholder when there was none.
  */
 async function toolOwnText(result: ToolResult): Promise<string | undefined> {
   const details = (result.details ?? {}) as Record<string, unknown>;
@@ -313,7 +314,7 @@ async function toolOwnText(result: ToolResult): Promise<string | undefined> {
     }
   }
   const texts = result.content.flatMap(block => block.type === "text" ? [block.text] : []);
-  return texts.length === 1 && texts[0] === "(empty result)" ? "" : texts.join("\n");
+  return texts.length === 1 && (texts[0] === "(empty result)" || texts[0] === "(empty resource)") ? "" : texts.join("\n");
 }
 
 function localDate(date: Date): string {
@@ -342,7 +343,7 @@ export async function applyExtraction(
   modelRegistry: unknown,
   signal?: AbortSignal,
 ): Promise<ToolResult> {
-  const details = (result.details ?? {}) as { error?: unknown; task?: unknown; server?: unknown; outputGuard?: { fullOutputPath?: string; truncated?: boolean } };
+  const details = (result.details ?? {}) as { error?: unknown; task?: unknown; server?: unknown; outputGuard?: { fullOutputPath?: string } };
   const skip = (code: string, message: string, line?: string) => withLine(result, line, { status: "skipped", error: { code, message } });
   if (details.error !== undefined && details.error !== "tool_error") return skip("call_failed", "The call failed, so nothing was sent.");
   if (details.error === "tool_error") return skip("tool_error", "The tool returned an error.", "Extraction skipped: the tool returned an error.");
@@ -359,7 +360,6 @@ export async function applyExtraction(
   }
   if (source.trim().length === 0) return skip("no_text", "The result has no text.", "Extraction skipped: the result has no text.");
   const fullPath = details.outputGuard?.fullOutputPath;
-  let truncated = false;
 
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   const referenceDate = localDate(new Date());
@@ -370,7 +370,7 @@ export async function applyExtraction(
     model = route.model;
     const sent = cutUtf8(source, EXTRACT_MAX_BYTES);
     const answer = await sendToClairic(route, sent.text, fields, referenceDate, ownedSignal);
-    truncated ||= sent.cut || answer.truncated;
+    const truncated = sent.cut || answer.truncated;
     const saved = fullPath !== undefined ? { path: fullPath } : await saveMcpOutputText(source);
     const values = Object.fromEntries(Object.entries(answer.fields).map(([name, field]) => [name, field.value]));
     const uncertainEntries = Object.entries(answer.fields).filter(([, field]) => field.status === "uncertain");

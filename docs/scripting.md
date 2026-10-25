@@ -61,12 +61,8 @@ The adapter no longer stores its own key. `pi-mcp-adapter key`, `SYSTEMONE_ENDPO
 
 Many tools return a long page of text when the agent needs two numbers from it. With `extract`, the agent names the values it wants and gets only those back, as real numbers and dates, so a 40 KB order page costs a line of context instead. The full result is saved to a file the agent can still read.
 
-```text
+```js
 mcp({ tool: "get_order", args: { id: "B-1001" }, extract: { total: "number", due: { type: "date", description: "Delivery date" } } })
-        │
-        ├── the tool runs as usual
-        ├── its text goes to Cloudflare's Clairic model
-        └── the agent gets {"values":{"total":42.1,"due":"2026-11-02"},"fullResult":"/tmp/pi-mcp-output-…/output-….txt"}
 ```
 
 It is off until you name the servers whose results may be sent:
@@ -75,7 +71,7 @@ It is off until you name the servers whose results may be sent:
 { "settings": { "extraction": { "allowedServers": ["orders"] } } }
 ```
 
-Only then does the `mcp` tool show the `extract` parameter, so sessions without the setting pay nothing for it. For an allowed server, the adapter sends the tool's own text to Cloudflare: its text blocks, the text of embedded resources, and `structuredContent` as JSON, never images, and at most 100 KiB. Nothing is sent for any other server. Review [Cloudflare's terms](https://www.cloudflare.com/service-specific-terms-developer-platform/) for how long it keeps what you send.
+Only then does the `mcp` tool show the `extract` parameter, so sessions without the setting pay nothing for it. For an allowed server, the adapter sends the tool's own text to Cloudflare: its text blocks, the text of embedded resources, and `structuredContent` as JSON (from a codemode call, only when the server's `appendStructuredContent` isn't `false`), never images, and at most 100 KiB. Nothing is sent for any other server. Review [Cloudflare's terms](https://www.cloudflare.com/service-specific-terms-developer-platform/) for how long it keeps what you send.
 
 The credentials come from Pi, so there is no key to store in the adapter. Two routes reach Clairic:
 
@@ -123,13 +119,7 @@ const { values } = JSON.parse(result);
 return values.total;
 ```
 
-Measured on Workers AI with the value on the last line of the text:
-
-| Text sent | Time |
-| --- | --- |
-| 8 KiB | 0.4 s |
-| 24 KiB | 0.7 s |
-| 100 KiB | 1.2 s |
+On Workers AI, reading 100 KiB of text takes about 1 second.
 
 ## Scripting MCP calls with Pi's codemode
 
