@@ -26,7 +26,7 @@ import { describeExecutorAppTool, isExecutorCatalogConnection, isExecutorCatalog
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, scoreToolMatch, type RankedToolMatch } from "./search-ranking.ts";
 import { approvalBlockedResult, ensureToolCallApproved, isToolCallApprovalRequired, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
-import { semanticSearch, type SemanticSearchBackend, type SemanticSearchEvaluator } from "./semantic-search.ts";
+import { semanticSearch, type SemanticClassifierRegistry, type SemanticSearchBackend } from "./semantic-search.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { describeProjectServerBlock, disabledServerReason } from "./project-server-trust.ts";
@@ -975,7 +975,7 @@ function renderSearchResults(
         .sort((a, b) => a.localeCompare(b));
     const scope = server ? ` in "${server}"` : "";
     const msg = backend?.requested === "semantic" && backend.used === "semantic" && backend.abstained
-      ? `Jev found no suitable tool for "${query}"${scope}`
+      ? `${backend.model} found no suitable tool for "${query}"${scope}`
       : `No tools matching "${query}"${scope}`;
     const connectingMessage = connectingServers.length === 1
       ? ` Server "${connectingServers[0]}" is still connecting; retry in a moment.`
@@ -1041,8 +1041,7 @@ export interface ToolSearchInput {
   server?: string | undefined;
   searchMode?: unknown;
   signal?: AbortSignal | undefined;
-  semanticEvaluator?: SemanticSearchEvaluator | undefined;
-  observedSources?: readonly string[];
+  classifier?: SemanticClassifierRegistry | undefined;
 }
 
 /** Ranked matches, unpaginated; each surface pages and renders them its own way. */
@@ -1064,7 +1063,7 @@ export function findTools(state: McpExtensionState, input: ToolSearchInput): Too
     return failure("Semantic search cannot be combined with regex search.", { error: "invalid_search_mode", query });
   }
   if (searchMode === "semantic") {
-    return semanticSearch(state, query, server, input.signal, input.semanticEvaluator, input.observedSources).then(result => result.ok
+    return semanticSearch(state, query, server, input.signal, input.classifier).then(result => result.ok
       ? { matches: result.matches, backend: result.backend }
       : failure(`Semantic search failed: ${result.error.message}`, { error: result.error.code, message: result.error.message, query }));
   }
@@ -1138,12 +1137,12 @@ export function executeSearch(
   offset = 0,
   searchMode: "lexical" | "semantic" = "lexical",
   signal?: AbortSignal,
-  semanticEvaluator?: SemanticSearchEvaluator,
+  classifier?: SemanticClassifierRegistry,
 ): ProxyToolResult | Promise<ProxyToolResult> {
   const render = (outcome: ToolSearchOutcome): ProxyToolResult => "error" in outcome
     ? outcome.error
     : renderSearchResults(state, query, server, includeSchemas !== false, limit, offset, outcome.matches, outcome.backend);
-  const outcome = findTools(state, { query, regex, server, searchMode, signal, semanticEvaluator });
+  const outcome = findTools(state, { query, regex, server, searchMode, signal, classifier });
   return outcome instanceof Promise ? outcome.then(render) : render(outcome);
 }
 

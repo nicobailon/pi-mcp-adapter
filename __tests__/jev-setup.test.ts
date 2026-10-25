@@ -42,13 +42,13 @@ describe("Jev setup", () => {
     const currentState = state();
     // A leftover jev.evaluate() setting no longer adds the script-payload sentence to the consent text,
     // and is not copied into the file setup writes.
-    currentState.config.settings = { jev: { model: "jev-1.13.0", scriptEvaluation: true, allowedServers: ["prior"] } as never };
+    currentState.config.settings = { jev: { model: "openrouter/typesafe/jev-1.13", scriptEvaluation: true, allowedServers: ["prior"] } as never };
 
     expect(await setupJevSemanticSearch(currentState, { hasUI: true, ui } as any, path)).toBe(true);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
       settings: {
         toolPrefix: "short",
-        jev: { model: "jev-1.13.0", semanticSearch: true, allowedServers: ["alpha", "zeta"] },
+        jev: { model: "openrouter/typesafe/jev-1.13", semanticSearch: true, allowedServers: ["alpha", "zeta"] },
       },
       custom: "kept",
     });

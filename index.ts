@@ -7,6 +7,7 @@ import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type CachedTool, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { NestedCallHandOff } from "./proxy-modes.ts";
+import type { SemanticClassifierRegistry } from "./semantic-search.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getProjectPiConfigPath, isExclusiveConfigMode, loadMcpConfig, loadMcpConfigWithSources, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
@@ -2726,7 +2727,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
         instructions: Type.Optional(Type.String({ description: "Server name to show that server's usage instructions" })),
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
-        searchMode: Type.Optional(Type.String({ enum: ["lexical", "semantic"], description: "Search backend (default: lexical; semantic is available when a System One key is configured)" })),
+        searchMode: Type.Optional(Type.String({ enum: ["lexical", "semantic"], description: "Search backend (default: lexical; semantic ranks tools by meaning with a Pi classifier model)" })),
         regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
         limit: optionalNumber({ minimum: 1, description: "Maximum search results to return (default: 12)" }),
@@ -2920,7 +2921,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return proxyModes.executeInstructions(proxyState, params.instructions);
         }
         if (params.search !== undefined) {
-          const result = await proxyModes.executeSearch(proxyState, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset, params.searchMode, signal);
+          // Pi before 0.99, and hosts without Pi's context, have no classifier models.
+          const registry = _ctx?.modelRegistry as Partial<SemanticClassifierRegistry> | undefined;
+          const classifier = typeof registry?.classify === "function" && typeof registry.findOfType === "function" && typeof registry.getProviderAuthStatus === "function"
+            ? registry as SemanticClassifierRegistry
+            : undefined;
+          const result = await proxyModes.executeSearch(proxyState, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset, params.searchMode, signal, classifier);
           assertRuntimeGuard(proxyGuard);
           if (lazyDirectTools.size === 0) return result;
           holdLazyToolsInactive();

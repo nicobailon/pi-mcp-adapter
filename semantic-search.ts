@@ -1,25 +1,97 @@
 import { createHash } from "node:crypto";
-import { areJevSourcesAllowed, evaluateJev, resolveSemanticJevSettings } from "./jev-client.ts";
-import type { JevEvaluateInput, JevEvaluationEnvelope } from "./jev-contracts.ts";
+import type { ClassifierApi, ClassifierContext, ClassifierModel, ClassifierResult, ModelsClassifierOptions } from "@earendil-works/pi-ai";
+import { resolveSemanticJevSettings } from "./jev-client.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+import { combineAbortSignals } from "./runtime-owner.ts";
 import { rankToolMatches, type RankedToolMatch } from "./search-ranking.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata } from "./types.ts";
 import { isServerDisabled } from "./types.ts";
 
-export type SemanticSearchEvaluator = (
-  state: McpExtensionState,
-  input: JevEvaluateInput,
-  options: { signal?: AbortSignal; observedSources?: readonly string[] },
-) => Promise<JevEvaluationEnvelope>;
+/** The part of Pi's ModelRegistry semantic search uses. `ctx.modelRegistry` satisfies it on Pi >= 0.99. */
+export interface SemanticClassifierRegistry {
+  findOfType(type: "classifier", provider: string, modelId: string): ClassifierModel<ClassifierApi> | undefined;
+  getProviderAuthStatus(provider: string): { configured: boolean };
+  classify(model: ClassifierModel<ClassifierApi>, context: ClassifierContext, options?: ModelsClassifierOptions): Promise<ClassifierResult>;
+}
 
 export type SemanticSearchBackend =
-  | { requested: "semantic"; used: "semantic"; degraded: false; model: string; usage: { inputTokens: number; outputTokens: number }; abstained: boolean }
-  | { requested: "semantic"; used: "lexical"; degraded: true; reason: "timeout" | "rate_limited" | "service_unavailable" };
+  | {
+    requested: "semantic"; used: "semantic"; degraded: false; provider: string; model: string;
+    usage?: { input: number; output: number; cost?: number }; abstained: boolean;
+  }
+  | {
+    requested: "semantic"; used: "lexical"; degraded: true; provider: string; model: string;
+    reason: "timeout" | "rate_limited" | "service_unavailable";
+  };
 
 export type SemanticSearchResult =
   | { ok: true; matches: RankedToolMatch[]; backend: SemanticSearchBackend }
   | { ok: false; error: { code: string; message: string } };
+
+export type SemanticClassifierChoice =
+  | { ok: true; provider: string; model: string; classifier: ClassifierModel<ClassifierApi> }
+  | { ok: false; error: { code: "unknown_model" | "no_classifier"; message: string } };
+
+/** Tried in order when no model is configured; the first one Pi knows and has a credential for is used. */
+const DEFAULT_MODELS = [
+  "typesafe/jev-latest",
+  "openrouter/typesafe/jev-1.13",
+  "cloudflare-workers-ai/typesafe/jev",
+  "opencode/jev-1.13",
+  "vercel-ai-gateway/typesafe-ai/jev",
+] as const;
+const REQUEST_TIMEOUT_MS = 5_000;
+const FALLBACK_CODES = new Set(["timeout", "rate_limited", "service_unavailable"]);
+
+function splitModel(model: string): { provider: string; id: string } {
+  const slash = model.indexOf("/");
+  return { provider: model.slice(0, slash), id: model.slice(slash + 1) };
+}
+
+/**
+ * An explicit model skips the credential check: local providers such as llama.cpp need none, and a missing
+ * credential is reported by the classify call itself.
+ */
+export function resolveSemanticClassifier(registry: SemanticClassifierRegistry, configuredModel: string | undefined): SemanticClassifierChoice {
+  if (configuredModel !== undefined) {
+    const { provider, id } = splitModel(configuredModel);
+    const classifier = registry.findOfType("classifier", provider, id);
+    return classifier
+      ? { ok: true, provider, model: configuredModel, classifier }
+      : { ok: false, error: { code: "unknown_model", message: `Classifier model "${configuredModel}" is not in Pi's model list. Check settings.semanticSearch.model.` } };
+  }
+  for (const model of DEFAULT_MODELS) {
+    const { provider, id } = splitModel(model);
+    const classifier = registry.findOfType("classifier", provider, id);
+    if (classifier && registry.getProviderAuthStatus(provider).configured) return { ok: true, provider, model, classifier };
+  }
+  return {
+    ok: false,
+    error: {
+      code: "no_classifier",
+      message: "Semantic search needs a classifier model in Pi. Sign in to OpenRouter with /login, set TYPESAFE_API_KEY or OPENROUTER_API_KEY, or set settings.semanticSearch.model to a classifier you have, such as a llama.cpp model.",
+    },
+  };
+}
+
+/** Maps a failed classify result to a code. `errorMessage` can carry provider text, so it is parsed, never copied. */
+function classifierFailure(result: ClassifierResult, provider: string, model: string): { code: string; message: string } {
+  if (result.stopReason === "aborted") return { code: "aborted", message: "Semantic search was cancelled." };
+  const errorMessage = result.errorMessage ?? "";
+  if (errorMessage.startsWith("Request timed out after")) return { code: "timeout", message: `${model} timed out.` };
+  if (errorMessage.startsWith("No API key for provider")) {
+    return { code: "credential_missing", message: `${provider} has no credential in Pi. Sign in with /login or set its API key.` };
+  }
+  const statusMatch = /\((\d{3})\):/.exec(errorMessage);
+  const status = statusMatch ? Number(statusMatch[1]) : undefined;
+  if (status === 408) return { code: "timeout", message: `${model} timed out.` };
+  if (status === 429) return { code: "rate_limited", message: `${model} is rate limited.` };
+  if (status !== undefined && status >= 500) return { code: "service_unavailable", message: `${model} is unavailable.` };
+  if (status === 401 || status === 403) return { code: "authentication_failed", message: `${provider} rejected the credential.` };
+  if (status === 402) return { code: "payment_required", message: `${provider} requires payment for this account.` };
+  return { code: "provider_error", message: status === undefined ? `${model} could not rank tools.` : `${model} could not rank tools (HTTP ${status}).` };
+}
 
 interface Candidate {
   id: string;
@@ -107,36 +179,38 @@ export async function semanticSearch(
   query: string,
   server?: string,
   signal?: AbortSignal,
-  evaluator: SemanticSearchEvaluator = evaluateJev,
-  observedSources: readonly string[] = [],
+  registry?: SemanticClassifierRegistry,
 ): Promise<SemanticSearchResult> {
   let settings;
   try {
     settings = resolveSemanticJevSettings(state);
   } catch {
-    return { ok: false, error: { code: "invalid_request", message: "Invalid Jev semantic search settings." } };
+    return { ok: false, error: { code: "invalid_request", message: "Invalid semantic search settings." } };
   }
   if (!settings.semanticSearch) {
-    return { ok: false, error: { code: "disabled", message: "Jev semantic search is disabled." } };
+    return { ok: false, error: { code: "disabled", message: "Semantic search is turned off by settings.semanticSearch." } };
+  }
+  if (!registry) {
+    return { ok: false, error: { code: "unavailable", message: "Semantic search needs Pi 0.99 or later with classifier models; word search still works." } };
   }
   if (settings.allowedServers.length === 0) {
-    return { ok: false, error: { code: "data_policy_denied", message: "Semantic search is enabled, but settings.jev.allowedServers is empty. Run /mcp-adapter jev setup or allow specific MCP servers." } };
+    return { ok: false, error: { code: "data_policy_denied", message: "Semantic search is enabled, but settings.semanticSearch.allowedServers is empty. Run /mcp-adapter semantic setup or allow specific MCP servers." } };
   }
   if (server && !settings.allowedServers.includes(server)) {
-    return { ok: false, error: { code: "data_policy_denied", message: `Server "${server}" is not allowed by settings.jev.allowedServers.` } };
-  }
-  if (!areJevSourcesAllowed(state, settings, observedSources)) {
-    return { ok: false, error: { code: "data_policy_denied", message: "Evaluation sources are not allowed by policy." } };
+    return { ok: false, error: { code: "data_policy_denied", message: `Server "${server}" is not allowed by settings.semanticSearch.allowedServers.` } };
   }
   if (query.trim().length === 0) {
     return { ok: false, error: { code: "empty_query", message: "Semantic search query cannot be empty." } };
   }
+  const choice = resolveSemanticClassifier(registry, settings.model);
+  if (!choice.ok) return choice;
+  const { provider, model } = choice;
   const allowedServers = new Set(settings.allowedServers);
   const candidates = selectSemanticCandidates(state, query, server, allowedServers, settings.semanticCandidateLimit);
   if (candidates.length === 0) {
-    return { ok: false, error: { code: "no_eligible_tools", message: "Semantic search has no eligible cached tools from the allowed servers. Connect an allowed server or update settings.jev.allowedServers." } };
+    return { ok: false, error: { code: "no_eligible_tools", message: "Semantic search has no eligible cached tools from the allowed servers. Connect an allowed server or update settings.semanticSearch.allowedServers." } };
   }
-  const input: JevEvaluateInput = {
+  const context: ClassifierContext = {
     state: {
       query,
       candidates: candidates.map(candidate => ({ id: candidate.id, path: candidate.tool.name,
@@ -147,27 +221,30 @@ export async function semanticSearch(
         type: "choice",
         instructions: "Rank which tool best matches the query. Choose none when no tool is suitable.",
         criteria: Object.fromEntries([
-          ...candidates.map(candidate => [candidate.id, { path: candidate.tool.name }]),
-          ["none", { noSuitableTool: true }],
+          ...candidates.map(candidate => [candidate.id, `The tool at path ${candidate.tool.name}`]),
+          ["none", "No listed tool is suitable"],
         ]),
       },
     },
-    sources: [...new Set(candidates.map(candidate => candidate.server))],
   };
-  const envelope = await evaluator(state, input, { ...(signal ? { signal } : {}), ...(observedSources.length > 0 ? { observedSources } : {}) });
-  if (!envelope.ok) {
-    if (envelope.error.code === "timeout" || envelope.error.code === "rate_limited" || envelope.error.code === "service_unavailable") {
+  const requestSignal = combineAbortSignals(signal, state.owner.signal);
+  const result = await registry.classify(choice.classifier, context, {
+    ...(requestSignal ? { signal: requestSignal } : {}), timeoutMs: REQUEST_TIMEOUT_MS, maxRetries: 0,
+  });
+  if (result.stopReason !== "stop") {
+    const failure = classifierFailure(result, provider, model);
+    if (FALLBACK_CODES.has(failure.code)) {
       return {
         ok: true,
         matches: rankToolMatches(state, query, server).filter(match => allowedServers.has(match.server)),
-        backend: { requested: "semantic", used: "lexical", degraded: true, reason: envelope.error.code },
+        backend: { requested: "semantic", used: "lexical", degraded: true, provider, model, reason: failure.code as "timeout" | "rate_limited" | "service_unavailable" },
       };
     }
-    return { ok: false, error: { code: envelope.error.code, message: envelope.error.message } };
+    return { ok: false, error: failure };
   }
-  const answer = envelope.data.answers.match;
+  const answer = result.answers.match;
   if (!answer || answer.type !== "choice") {
-    return { ok: false, error: { code: "invalid_response", message: "Jev returned an invalid semantic search response." } };
+    return { ok: false, error: { code: "invalid_response", message: `${model} returned an invalid answer.` } };
   }
   const ranked = candidates
     .map(candidate => ({ candidate, probability: answer.probabilities[candidate.id] ?? 0 }))
@@ -176,12 +253,12 @@ export async function semanticSearch(
   const noneProbability = answer.probabilities.none ?? 0;
   const abstained = answer.choice === "none" || !top || noneProbability >= top.probability || top.probability < settings.semanticMinProbability;
   const matches = abstained ? [] : ranked.map(({ candidate, probability }) => ({ server: candidate.server, tool: candidate.tool, score: probability }));
+  const usage = result.usage
+    ? { input: result.usage.input, output: result.usage.output, ...(result.usage.cost ? { cost: result.usage.cost.total } : {}) }
+    : undefined;
   return {
     ok: true,
     matches,
-    backend: {
-      requested: "semantic", used: "semantic", degraded: false, model: envelope.data.model,
-      usage: envelope.data.usage, abstained,
-    },
+    backend: { requested: "semantic", used: "semantic", degraded: false, provider, model, ...(usage ? { usage } : {}), abstained },
   };
 }

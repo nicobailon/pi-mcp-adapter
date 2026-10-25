@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpAdapter } from "../index.ts";
-import { semanticSearch, type SemanticSearchEvaluator } from "../semantic-search.ts";
+import { semanticSearch, type SemanticClassifierRegistry } from "../semantic-search.ts";
 import { getTestSecureKeyringReadCount, resetTestSecureKeyring } from "../secure-keyring.ts";
 import { isToolCallApprovalRequired } from "../tool-approval.ts";
 import type { McpExtensionState } from "../state.ts";
 
 function state(): McpExtensionState {
   return {
+    owner: { signal: new AbortController().signal },
     config: {
       settings: { approveTools: true, jev: { semanticSearch: true, allowedServers: ["demo"] } },
       mcpServers: { demo: { command: "unused" } },
@@ -42,11 +43,15 @@ describe("Jev integration boundaries", () => {
 
   it("keeps high semantic confidence separate from tool approval", async () => {
     const runtime = state();
-    const evaluator: SemanticSearchEvaluator = async (_state, input) => {
-      const id = (input.state as { candidates: Array<{ id: string }> }).candidates[0]!.id;
-      return { ok: true, data: { model: "fixture", usage: { inputTokens: 1, outputTokens: 1 }, answers: { match: { type: "choice", choice: id, confidence: 1, probabilities: { [id]: 1, none: 0 } } } } };
-    };
-    const result = await semanticSearch(runtime, "do it", undefined, undefined, evaluator);
+    const classifier = {
+      findOfType: (_type, provider, id) => ({ provider, id }) as never,
+      getProviderAuthStatus: () => ({ configured: true }),
+      classify: async (_model, context) => {
+        const id = (context.state as { candidates: Array<{ id: string }> }).candidates[0]!.id;
+        return { api: "fixture", provider: "typesafe", model: "jev-latest", stopReason: "stop", timestamp: 0, answers: { match: { type: "choice", choice: id, confidence: 1, probabilities: { [id]: 1, none: 0 } } } };
+      },
+    } satisfies SemanticClassifierRegistry;
+    const result = await semanticSearch(runtime, "do it", undefined, undefined, classifier);
     expect(result).toMatchObject({ ok: true, matches: [{ tool: { name: "demo_act" }, score: 1 }] });
     expect(isToolCallApprovalRequired(runtime.config, "demo", runtime.toolMetadata.get("demo")![0]!, runtime.toolMetadata)).toBe(true);
   });

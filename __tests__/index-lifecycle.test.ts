@@ -2393,7 +2393,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(proxyTool.parameters.properties.searchMode.enum).toEqual(["lexical", "semantic"]);
   });
 
-  it("forwards explicit semantic search mode and the request signal", async () => {
+  it("forwards explicit semantic search mode, the request signal, and Pi's classifier registry", async () => {
     const state = createState();
     const result = { content: [{ type: "text", text: "semantic results" }], details: { mode: "search", matches: [] } };
     mocks.initializeMcp.mockResolvedValue(state);
@@ -2402,13 +2402,20 @@ describe("mcpAdapter session lifecycle", () => {
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
     const signal = new AbortController().signal;
+    const modelRegistry = { classify: vi.fn(), findOfType: vi.fn(), getProviderAuthStatus: vi.fn() };
 
     await expect(registeredTool(api, "mcp").execute("search-1", {
       search: "find by meaning",
       searchMode: "semantic",
-    }, signal)).resolves.toBe(result);
+    }, signal, undefined, { modelRegistry })).resolves.toBe(result);
     expect(mocks.executeSearch).toHaveBeenCalledWith(
-      state, "find by meaning", undefined, undefined, undefined, undefined, undefined, "semantic", signal,
+      state, "find by meaning", undefined, undefined, undefined, undefined, undefined, "semantic", signal, modelRegistry,
+    );
+
+    // Pi before 0.99 has a model registry without classify().
+    await registeredTool(api, "mcp").execute("search-2", { search: "find by meaning", searchMode: "semantic" }, signal, undefined, { modelRegistry: { findOfType: vi.fn() } });
+    expect(mocks.executeSearch).toHaveBeenLastCalledWith(
+      state, "find by meaning", undefined, undefined, undefined, undefined, undefined, "semantic", signal, undefined,
     );
   });
 
@@ -3687,7 +3694,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
     expect(mocks.initializeMcp.mock.calls[1][1]).toBe(callCtx);
     expect(result).toEqual({ content: [{ type: "text", text: "results" }] });
-    expect(mocks.executeSearch).toHaveBeenCalledWith(state, "demo", undefined, undefined, undefined, undefined, undefined, undefined, undefined);
+    expect(mocks.executeSearch).toHaveBeenCalledWith(state, "demo", undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined);
   });
 
   it("refreshes the command owner and context after retrying failed initialization", async () => {
