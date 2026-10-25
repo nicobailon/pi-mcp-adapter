@@ -2411,12 +2411,6 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.executeSearch).toHaveBeenCalledWith(
       state, "find by meaning", undefined, undefined, undefined, undefined, undefined, "semantic", signal, modelRegistry,
     );
-
-    // Pi before 0.99 has a model registry without classify().
-    await registeredTool(api, "mcp").execute("search-2", { search: "find by meaning", searchMode: "semantic" }, signal, undefined, { modelRegistry: { findOfType: vi.fn() } });
-    expect(mocks.executeSearch).toHaveBeenLastCalledWith(
-      state, "find by meaning", undefined, undefined, undefined, undefined, undefined, "semantic", signal, undefined,
-    );
   });
 
   it("forwards the server selector for describe operations", async () => {

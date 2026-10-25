@@ -26,7 +26,7 @@ import { describeExecutorAppTool, isExecutorCatalogConnection, isExecutorCatalog
 import { paginate, rankSuggestions, rankToolMatches, resolveSearchKeywords, scoreToolMatch, type RankedToolMatch } from "./search-ranking.ts";
 import { approvalBlockedResult, ensureToolCallApproved, isToolCallApprovalRequired, type ToolCallApprovalResult } from "./tool-approval.ts";
 import { describeFailure, isServerInActiveFailureBackoff } from "./failure-backoff.ts";
-import { semanticSearch, type SemanticClassifierRegistry, type SemanticSearchBackend } from "./semantic-search.ts";
+import { classifierRegistryOf, semanticSearch, type SemanticClassifierRegistry, type SemanticSearchBackend } from "./semantic-search.ts";
 import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { describeProjectServerBlock, disabledServerReason } from "./project-server-trust.ts";
@@ -1137,12 +1137,13 @@ export function executeSearch(
   offset = 0,
   searchMode: "lexical" | "semantic" = "lexical",
   signal?: AbortSignal,
-  classifier?: SemanticClassifierRegistry,
+  /** Pi's `ctx.modelRegistry`, as the host passes it. */
+  modelRegistry?: unknown,
 ): ProxyToolResult | Promise<ProxyToolResult> {
   const render = (outcome: ToolSearchOutcome): ProxyToolResult => "error" in outcome
     ? outcome.error
     : renderSearchResults(state, query, server, includeSchemas !== false, limit, offset, outcome.matches, outcome.backend);
-  const outcome = findTools(state, { query, regex, server, searchMode, signal, classifier });
+  const outcome = findTools(state, { query, regex, server, searchMode, signal, classifier: classifierRegistryOf(modelRegistry) });
   return outcome instanceof Promise ? outcome.then(render) : render(outcome);
 }
 

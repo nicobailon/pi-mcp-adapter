@@ -47,8 +47,8 @@ const FALLBACK_CODES = new Set(["timeout", "rate_limited", "service_unavailable"
 export const SEMANTIC_SEARCH_UNAVAILABLE = "Semantic search needs Pi 0.99 or later with classifier models; word search still works.";
 
 /** Pi before 0.99, and hosts without Pi's context, have no classifier models. */
-export function classifierRegistryOf(ctx: { modelRegistry?: unknown } | undefined): SemanticClassifierRegistry | undefined {
-  const registry = ctx?.modelRegistry as Partial<SemanticClassifierRegistry> | undefined;
+export function classifierRegistryOf(modelRegistry: unknown): SemanticClassifierRegistry | undefined {
+  const registry = modelRegistry as Partial<SemanticClassifierRegistry> | undefined;
   return typeof registry?.classify === "function" && typeof registry.findOfType === "function" && typeof registry.getProviderAuthStatus === "function"
     ? registry as SemanticClassifierRegistry
     : undefined;

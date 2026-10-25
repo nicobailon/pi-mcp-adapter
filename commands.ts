@@ -36,7 +36,6 @@ import { findPiSignInImports, importPiSignIn } from "./pi-signin-import.ts";
 import { formatTerminalError, openPath, providerSignInMessage, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
 import { classifierRegistryOf, resolveSemanticClassifier, SEMANTIC_SEARCH_UNAVAILABLE } from "./semantic-search.ts";
-import { validateSemanticSearchSettings } from "./semantic-settings.ts";
 import { describeProjectServerBlock, keepProjectServerApprovals } from "./project-server-trust.ts";
 
 function terminalHyperlink(label: string, url: string): string {
@@ -77,12 +76,12 @@ export async function setupSemanticSearch(
   configOverridePath?: string,
 ): Promise<boolean> {
   if (!ctx.hasUI) return false;
-  const registry = classifierRegistryOf(ctx);
+  const registry = classifierRegistryOf(ctx.modelRegistry);
   if (!registry) {
     ctx.ui.notify(SEMANTIC_SEARCH_UNAVAILABLE, "error");
     return false;
   }
-  const choice = resolveSemanticClassifier(registry, validateSemanticSearchSettings(state.config.settings?.semanticSearch).model);
+  const choice = resolveSemanticClassifier(registry, state.config.settings?.semanticSearch ? state.config.settings.semanticSearch.model : undefined);
   if (!choice.ok) {
     ctx.ui.notify(choice.error.message, "error");
     return false;

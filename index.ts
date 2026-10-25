@@ -7,7 +7,6 @@ import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type CachedTool, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { NestedCallHandOff } from "./proxy-modes.ts";
-import type { SemanticClassifierRegistry } from "./semantic-search.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getProjectPiConfigPath, isExclusiveConfigMode, loadMcpConfig, loadMcpConfigWithSources, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
@@ -2921,12 +2920,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return proxyModes.executeInstructions(proxyState, params.instructions);
         }
         if (params.search !== undefined) {
-          // Pi before 0.99, and hosts without Pi's context, have no classifier models.
-          const registry = _ctx?.modelRegistry as Partial<SemanticClassifierRegistry> | undefined;
-          const classifier = typeof registry?.classify === "function" && typeof registry.findOfType === "function" && typeof registry.getProviderAuthStatus === "function"
-            ? registry as SemanticClassifierRegistry
-            : undefined;
-          const result = await proxyModes.executeSearch(proxyState, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset, params.searchMode, signal, classifier);
+          const result = await proxyModes.executeSearch(proxyState, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset, params.searchMode, signal, _ctx?.modelRegistry);
           assertRuntimeGuard(proxyGuard);
           if (lazyDirectTools.size === 0) return result;
           holdLazyToolsInactive();

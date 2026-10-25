@@ -231,7 +231,7 @@ Per-server `idleTimeout`, `requestTimeoutMs`, `approveTools`, and `exposeResourc
 
 A config that still sets the settings of the adapter's removed script tool loads as before. The adapter shows a notice that names the file and the keys to remove; Pi's `codemode` replaces that tool ([MCP scripting](scripting.md#scripting-mcp-calls-with-pis-codemode)).
 
-A config that still sets `settings.jev` also loads, and `settings.jev` does nothing. The notice for that file says `settings.semanticSearch` replaced it and how its keys moved, or, when the file has `settings.jev: false`, that it no longer turns semantic search off and to set `settings.semanticSearch` to `false` instead ([Moving from a System One key](scripting.md#moving-from-a-system-one-key)).
+A config that still sets `settings.jev` loads too, and a notice names the file and says how to move to `settings.semanticSearch` ([Moving from a System One key](scripting.md#moving-from-a-system-one-key)).
 
 ## Script tools
 

@@ -34,7 +34,7 @@ To use another model, set `settings.semanticSearch.model` to any classifier in P
 { "settings": { "semanticSearch": { "model": "cloudflare-workers-ai/@cf/cloudflare/clef" } } }
 ```
 
-Semantic search sends the query text, server names, normalized and original tool names, tool paths, and descriptions to the model's provider through Pi. It does not send tool results. Review your provider's terms for privacy and retention. Stdio MCP servers inherit Pi's environment by default, provider keys included, so set `inheritEnv: false` on servers that must not receive them.
+Semantic search sends the query text, server names, normalized and original tool names, tool paths, and descriptions to the model's provider through Pi. It does not send tool results. Review your provider's terms for privacy and retention.
 
 By default every enabled server's tools may be sent. Run `/mcp-adapter semantic setup` to choose which servers may share them: it names the model it will use, saves a project-scoped `allowedServers` list, removes the old `jev` setting from that file, and reloads Pi. To turn semantic search off, set `{ "settings": { "semanticSearch": false } }`. `candidateLimit` caps how many tools go into one request (2 to 127, default 127), and below `minProbability` (default 0.2) the search answers that no tool fits.
 

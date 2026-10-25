@@ -62,7 +62,7 @@ function choose(selectPath: string | "none", scores?: Record<string, number>): A
 
 const failWith = (errorMessage: string, stopReason: "error" | "aborted" = "error"): Answer => () => ({ stopReason, errorMessage });
 
-function gatewaySemantic(state: McpExtensionState, query: string, classifier: SemanticClassifierRegistry | undefined, regex = false) {
+function gatewaySemantic(state: McpExtensionState, query: string, classifier: unknown, regex = false) {
   return executeSearch(state, query, regex, undefined, false, 12, 0, "semantic", undefined, classifier) as Promise<any>;
 }
 
@@ -125,9 +125,12 @@ describe("semantic search", () => {
     expect(classifier.findOfType).not.toHaveBeenCalled();
 
     delete state.config.settings;
-    const unavailable = await gatewaySemantic(state, "anything", undefined);
-    expect(unavailable.details).toMatchObject({ error: "unavailable" });
-    expect(unavailable.content[0].text).toContain("word search still works");
+    // Pi before 0.99 has a model registry without classify(); other hosts have none.
+    for (const modelRegistry of [{ findOfType: vi.fn() }, undefined]) {
+      const unavailable = await gatewaySemantic(state, "anything", modelRegistry);
+      expect(unavailable.details).toMatchObject({ error: "unavailable" });
+      expect(unavailable.content[0].text).toContain("word search still works");
+    }
   });
 
   it("uses the first default model Pi has a credential for, and an explicit model without a credential check", async () => {
