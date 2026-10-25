@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Long MCP jobs no longer freeze your session. When a tool kicks off something slow, like a CI run, a research job or a report export, Pi gets control back right away and keeps working. The result shows up as a new message when the job finishes, even if you quit Pi and come back later.
+Long MCP jobs no longer freeze your session. When a tool kicks off something slow, like a CI run, a research job or a report export, Pi gets control back right away and keeps working. The result shows up as a new message when the job finishes. If you quit Pi, it arrives when you reopen that session, as long as the server kept the job running.
 
 Finding the right tool got smarter and cheaper to set up. Search understands what you mean, not just matching words, so "plan my week" finds a calendar's `schedule` tool even among hundreds of tools. It uses the model logins you already have in Pi, so there's no extra key to manage.
 
