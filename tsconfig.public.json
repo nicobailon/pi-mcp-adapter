@@ -18,7 +18,7 @@
     "secure-keyring.ts",
     "jev-contracts.ts",
     "jev-key-store.ts",
-    "jev-client.ts",
+    "semantic-settings.ts",
     "types.ts",
     "project-server-trust.ts",
     "server-manager.ts"

@@ -163,7 +163,7 @@
     "secure-keyring.ts",
     "jev-contracts.ts",
     "jev-key-store.ts",
-    "jev-client.ts",
+    "semantic-settings.ts",
     "semantic-search.ts",
     "mcp-keyring-helper.cjs",
     "mcp-oauth-provider.ts",

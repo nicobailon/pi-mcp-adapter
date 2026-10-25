@@ -10,7 +10,7 @@ function state(): McpExtensionState {
   return {
     owner: { signal: new AbortController().signal },
     config: {
-      settings: { approveTools: true, jev: { semanticSearch: true, allowedServers: ["demo"] } },
+      settings: { approveTools: true, semanticSearch: { allowedServers: ["demo"] } },
       mcpServers: { demo: { command: "unused" } },
     },
     toolMetadata: new Map([["demo", [{ name: "demo_act", originalName: "act", description: "Perform an action" }]]]),

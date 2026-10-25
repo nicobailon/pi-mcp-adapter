@@ -43,7 +43,7 @@ const mocks = vi.hoisted(() => ({
   openMcpAuthPanel: vi.fn(),
   openMcpPanel: vi.fn(),
   openMcpSetup: vi.fn(),
-  setupJevSemanticSearch: vi.fn(),
+  setupSemanticSearch: vi.fn(),
   getPiGlobalConfigPath: vi.fn(() => "/tmp/agent/mcp-adapter.json"),
   getProjectConfigPath: vi.fn(() => "/tmp/project/.mcp.json"),
   writeSharedServerEntry: vi.fn((path: string) => path),
@@ -154,7 +154,7 @@ vi.mock("../commands.ts", async () => {
   openMcpAuthPanel: mocks.openMcpAuthPanel,
   openMcpPanel: mocks.openMcpPanel,
   openMcpSetup: mocks.openMcpSetup,
-  setupJevSemanticSearch: mocks.setupJevSemanticSearch,
+  setupSemanticSearch: mocks.setupSemanticSearch,
   };
 });
 
@@ -3802,7 +3802,7 @@ describe("mcpAdapter session lifecycle", () => {
       "prompts",
       "tasks",
       "setup",
-      "jev",
+      "semantic",
       "edit",
       "logout",
       "token",
@@ -3829,8 +3829,8 @@ describe("mcpAdapter session lifecycle", () => {
     expect(commandDef.getArgumentCompletions("enable not")).toEqual([
       { value: "enable notion", label: "notion" },
     ]);
-    expect(commandDef.getArgumentCompletions("jev s")).toEqual([
-      { value: "jev setup", label: "setup — Configure Jev semantic search" },
+    expect(commandDef.getArgumentCompletions("semantic s")).toEqual([
+      { value: "semantic setup", label: "setup — Choose which servers semantic search may use" },
     ]);
     state.backgroundTasks = { list: () => [{ key: "github/t-1", tool: "build", status: "working" }] };
     expect(commandDef.getArgumentCompletions("tasks ")).toEqual([
@@ -3965,10 +3965,10 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.flushMetadataCache).not.toHaveBeenCalledWith(initialState);
   });
 
-  it("reloads after `/mcp jev setup` enables semantic search", async () => {
+  it("reloads after `/mcp semantic setup` enables semantic search", async () => {
     const initialState = createState();
     mocks.initializeMcp.mockResolvedValue(initialState);
-    mocks.setupJevSemanticSearch.mockResolvedValue(true);
+    mocks.setupSemanticSearch.mockResolvedValue(true);
 
     const { api, handlers } = await loadAdapter();
     const ui = { notify: vi.fn() };
@@ -3978,9 +3978,9 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.resolve();
 
     const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp")?.[1];
-    await commandDef.handler("jev setup", { hasUI: true, ui, reload });
+    await commandDef.handler("semantic setup", { hasUI: true, ui, reload });
 
-    expect(mocks.setupJevSemanticSearch).toHaveBeenCalledWith(initialState, expect.any(Object), undefined);
+    expect(mocks.setupSemanticSearch).toHaveBeenCalledWith(initialState, expect.any(Object), undefined);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 

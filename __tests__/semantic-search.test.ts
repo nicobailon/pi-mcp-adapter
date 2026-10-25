@@ -10,7 +10,7 @@ function stateWithTools(count = 3): McpExtensionState {
     owner: { signal: abort.signal },
     config: {
       mcpServers: { demo: { command: "demo" }, other: { command: "other" } },
-      settings: { jev: { semanticSearch: true, allowedServers: ["demo", "other"] } },
+      settings: { semanticSearch: { allowedServers: ["demo", "other"] } },
     },
     toolMetadata: new Map([
       ["demo", Array.from({ length: count }, (_, index) => ({
@@ -120,9 +120,7 @@ describe("semantic search", () => {
   it("does nothing when semantic search is turned off or Pi has no classifier models", async () => {
     const state = stateWithTools();
     const classifier = registry(choose("none"));
-    state.config.settings!.jev = { semanticSearch: false, allowedServers: ["demo"] };
-    expect((await gatewaySemantic(state, "anything", classifier)).details).toMatchObject({ error: "disabled" });
-    state.config.settings!.jev = false;
+    state.config.settings!.semanticSearch = false;
     expect((await gatewaySemantic(state, "anything", classifier)).details).toMatchObject({ error: "disabled" });
     expect(classifier.findOfType).not.toHaveBeenCalled();
 
@@ -140,7 +138,7 @@ describe("semantic search", () => {
     expect(defaulted.calls.map(call => call.model)).toEqual(["openrouter/typesafe/jev-1.13"]);
     expect(result).toMatchObject({ ok: true, backend: { provider: "openrouter", model: "openrouter/typesafe/jev-1.13" } });
 
-    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo"], model: "llama/qwen3" };
+    state.config.settings!.semanticSearch = { allowedServers: ["demo"], model: "llama/qwen3" };
     const explicit = registry(choose("none"), { models, authed: [] });
     await semanticSearch(state, "invoices", undefined, undefined, explicit);
     expect(explicit.calls.map(call => call.model)).toEqual(["llama/qwen3"]);
@@ -151,7 +149,7 @@ describe("semantic search", () => {
     const state = stateWithTools();
     const none = registry(choose("none"), { authed: [] });
     expect(await semanticSearch(state, "invoices", undefined, undefined, none)).toMatchObject({ ok: false, error: { code: "no_classifier" } });
-    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo"], model: "openrouter/missing" };
+    state.config.settings!.semanticSearch = { allowedServers: ["demo"], model: "openrouter/missing" };
     const unknown = await gatewaySemantic(state, "invoices", none);
     expect(unknown.details).toMatchObject({ error: "unknown_model" });
     expect(unknown.content[0].text).toContain('Classifier model "openrouter/missing" is not in Pi\'s model list');
@@ -167,7 +165,7 @@ describe("semantic search", () => {
     expect(result.ok && result.matches.map(match => match.server)).toEqual(["demo", "demo", "demo"]);
 
     state.config.mcpServers.other!.disabled = false;
-    state.config.settings = { jev: { semanticSearch: true, allowedServers: ["demo"] } };
+    state.config.settings = { semanticSearch: { allowedServers: ["demo"] } };
     await semanticSearch(state, "anything", undefined, undefined, classifier);
     const sent = classifier.calls[1]!.context;
     expect(candidatesOf(sent).map(candidate => candidate.server)).toEqual(["demo", "demo", "demo"]);
@@ -184,12 +182,12 @@ describe("semantic search", () => {
   it("explains missing policy before classifying", async () => {
     const state = stateWithTools();
     const classifier = registry(choose("none"));
-    state.config.settings!.jev = { semanticSearch: true, allowedServers: [] };
+    state.config.settings!.semanticSearch = { allowedServers: [] };
     const noServers = await gatewaySemantic(state, "anything", classifier);
     expect(noServers.content[0].text).toContain("settings.semanticSearch.allowedServers is empty");
     expect(noServers.details).toMatchObject({ error: "data_policy_denied" });
 
-    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo"] };
+    state.config.settings!.semanticSearch = { allowedServers: ["demo"] };
     const blockedServer = await executeSearch(state, "anything", false, "other", false, 12, 0, "semantic", undefined, classifier);
     expect(blockedServer.details).toMatchObject({ error: "data_policy_denied" });
     expect(blockedServer.content[0]!.text).toContain('Server "other" is not allowed');
@@ -199,7 +197,7 @@ describe("semantic search", () => {
   it("caps at 127 and reserves a deterministic nonlexical recovery lane", async () => {
     const state = stateWithTools(140);
     for (let index = 0; index < 70; index++) state.toolMetadata.get("demo")![index]!.description = `needle match ${index}`;
-    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo"], semanticCandidateLimit: 127 };
+    state.config.settings!.semanticSearch = { allowedServers: ["demo"], candidateLimit: 127 };
     const classifier = registry(choose("none"));
     await semanticSearch(state, "needle", undefined, undefined, classifier);
     await semanticSearch(state, "needle", undefined, undefined, classifier);
@@ -219,7 +217,7 @@ describe("semantic search", () => {
     expect(renderedNone.content[0].text).toBe('typesafe/jev-latest found no suitable tool for "query"');
     const inconsistentNone = await semanticSearch(state, "query", undefined, undefined, registry(choose("none", { c0: 0.9, none: 0.1 })));
     expect(inconsistentNone).toMatchObject({ ok: true, matches: [], backend: { abstained: true } });
-    state.config.settings!.jev = { semanticSearch: true, allowedServers: ["demo", "other"], semanticMinProbability: 0.9 };
+    state.config.settings!.semanticSearch = { allowedServers: ["demo", "other"], minProbability: 0.9 };
     const below = await semanticSearch(state, "query", undefined, undefined, registry(choose("demo_tool_0")));
     expect(below).toMatchObject({ ok: true, matches: [], backend: { abstained: true } });
   });

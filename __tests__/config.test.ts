@@ -1002,16 +1002,16 @@ describe("config discovery", () => {
     expect(existsSync(target)).toBe(false);
   });
 
-  it.each(["Jev settings", "project server override"])("preserves a broken config symlink when writing %s", async (kind) => {
+  it.each(["semantic search settings", "project server override"])("preserves a broken config symlink when writing %s", async (kind) => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-broken-pi-link-"));
     const path = join(project, ".pi", "mcp-adapter.json");
     const target = join(project, "missing.json");
     mkdirSync(dirname(path), { recursive: true });
     symlinkSync(target, path);
-    const { writeJevSemanticSearchConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
+    const { writeSemanticSearchConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
 
-    if (kind === "Jev settings") {
-      expect(() => writeJevSemanticSearchConfig(undefined, project, ["demo"])).toThrow();
+    if (kind === "semantic search settings") {
+      expect(() => writeSemanticSearchConfig(undefined, project, ["demo"])).toThrow();
     } else {
       expect(() => writeProjectServerDisabledOverride(undefined, project, "demo", true)).toThrow();
     }
@@ -1019,15 +1019,15 @@ describe("config discovery", () => {
     expect(existsSync(target)).toBe(false);
   });
 
-  it.each(["Jev settings", "project server override"])("updates an existing blank config when writing %s", async (kind) => {
+  it.each(["semantic search settings", "project server override"])("updates an existing blank config when writing %s", async (kind) => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-blank-pi-config-"));
     const path = join(project, ".pi", "mcp-adapter.json");
     writeText(path, "  \n");
-    const { writeJevSemanticSearchConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
+    const { writeSemanticSearchConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
 
-    if (kind === "Jev settings") {
-      expect(writeJevSemanticSearchConfig(undefined, project, ["demo"]).changed).toBe(true);
-      expect(JSON.parse(readFileSync(path, "utf-8")).settings.jev.allowedServers).toEqual(["demo"]);
+    if (kind === "semantic search settings") {
+      expect(writeSemanticSearchConfig(undefined, project, ["demo"]).changed).toBe(true);
+      expect(JSON.parse(readFileSync(path, "utf-8")).settings.semanticSearch.allowedServers).toEqual(["demo"]);
     } else {
       expect(writeProjectServerDisabledOverride(undefined, project, "demo", true).changed).toBe(true);
       expect(JSON.parse(readFileSync(path, "utf-8")).mcpServers.demo.disabled).toBe(true);
@@ -2212,7 +2212,7 @@ describe("config discovery", () => {
     expect(getLegacyMcpMigrationNotices(project)).toEqual([]);
   });
 
-  it("loads a config that still sets jev.evaluate()'s settings, and names them in the same notice", async () => {
+  it("loads a config that still sets settings.jev, and says once per file what replaced it", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-removed-jev-home-"));
     const project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-removed-jev-project-")));
     process.env.HOME = home;
@@ -2221,38 +2221,18 @@ describe("config discovery", () => {
     const projectPath = join(project, ".pi", "mcp-adapter.json");
     writeJson(adapterPath, {
       mcpServers: { docs: { url: "https://docs.test/mcp" } },
-      settings: {
-        scriptMode: false,
-        jev: { semanticSearch: true, scriptEvaluation: true, maxEvaluationsPerScript: 2, maxEvaluationBytesPerScript: 0, maxEvaluationTokensPerScript: 1 },
-      },
+      settings: { scriptMode: false, jev: { semanticSearch: true, scriptEvaluation: true, maxRetries: 9, evaluationBudget: 2 } },
     });
-    writeJson(projectPath, { mcpServers: { local: { command: "local-mcp" } }, settings: { jev: { scriptEvaluation: false } } });
+    writeJson(projectPath, { mcpServers: { local: { command: "local-mcp" } }, settings: { jev: false } });
 
     const { getLegacyMcpMigrationNotices, loadMcpConfig } = await import("../config.ts");
-    const config = loadMcpConfig(undefined, project);
-    expect(Object.keys(config.mcpServers).sort()).toEqual(["docs", "local"]);
+    expect(Object.keys(loadMcpConfig(undefined, project).mcpServers).sort()).toEqual(["docs", "local"]);
+    const replaced = "settings.jev was replaced by settings.semanticSearch, and semantic search now uses Pi's classifier models instead of a System One key. Move allowedServers there (semanticCandidateLimit is now candidateLimit and semanticMinProbability is minProbability), or run /mcp-adapter semantic setup.";
     expect(getLegacyMcpMigrationNotices(project)).toEqual([
-      `${adapterPath}: pi-mcp-adapter no longer has mcpScript, so settings.scriptMode, settings.jev.scriptEvaluation, settings.jev.maxEvaluationsPerScript, settings.jev.maxEvaluationBytesPerScript and settings.jev.maxEvaluationTokensPerScript do nothing. Remove them, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`,
-      `${projectPath}: pi-mcp-adapter no longer has mcpScript, so settings.jev.scriptEvaluation does nothing. Remove it, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`,
+      `${adapterPath}: pi-mcp-adapter no longer has mcpScript, so settings.scriptMode does nothing. Remove it, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`,
+      `${adapterPath}: ${replaced}`,
+      `${projectPath}: ${replaced}`,
     ]);
-  });
-
-  it("still drops a config file with an unknown jev setting, and gives it no mcpScript notice", async () => {
-    const home = mkdtempSync(join(tmpdir(), "pi-mcp-unknown-jev-home-"));
-    const project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-unknown-jev-project-")));
-    process.env.HOME = home;
-    process.chdir(project);
-    writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), {
-      mcpServers: { docs: { url: "https://docs.test/mcp" } },
-      settings: { jev: { scriptEvaluation: true, evaluationBudget: 2 } },
-    });
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    const { getLegacyMcpMigrationNotices, loadMcpConfig } = await import("../config.ts");
-    expect(loadMcpConfig(undefined, project).mcpServers).not.toHaveProperty("docs");
-    expect(warning).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.objectContaining({ message: "settings.jev.evaluationBudget is not supported" }));
-    expect(getLegacyMcpMigrationNotices(project)).toEqual([]);
-    warning.mockRestore();
   });
 
   it("reports a key a project OpenCode entry inherits from the global file, against the global file", async () => {
@@ -2630,18 +2610,23 @@ describe("config discovery", () => {
 
 });
 
-describe("Jev config validation", () => {
-  it("accepts bounded settings and rejects out-of-range ones at the file boundary", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-mcp-jev-config-"));
+describe("semantic search config validation", () => {
+  it("accepts bounded settings and rejects unknown or out-of-range ones at the file boundary", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-mcp-semantic-config-"));
     const valid = join(root, "valid.json");
-    const invalid = join(root, "invalid.json");
-    writeJson(valid, { settings: { jev: { semanticSearch: true, allowedServers: ["safe"], model: "openrouter/typesafe/jev-1.13" } }, mcpServers: {} });
-    writeJson(invalid, { settings: { jev: { semanticSearch: true, model: "jev-1.13.0" } }, mcpServers: {} });
+    const unknown = join(root, "unknown.json");
+    const outOfRange = join(root, "out-of-range.json");
+    const semanticSearch = { allowedServers: ["safe"], model: "openrouter/typesafe/jev-1.13", candidateLimit: 40, minProbability: 0.3 };
+    writeJson(valid, { settings: { semanticSearch }, mcpServers: {} });
+    writeJson(unknown, { settings: { semanticSearch: { semanticSearch: true } }, mcpServers: {} });
+    writeJson(outOfRange, { settings: { semanticSearch: { candidateLimit: 128 } }, mcpServers: {} });
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { loadMcpConfig } = await import("../config.ts");
-    expect(loadMcpConfig(valid, root).settings?.jev).toMatchObject({ semanticSearch: true, model: "openrouter/typesafe/jev-1.13" });
-    expect(loadMcpConfig(invalid, root).settings?.jev).toBeUndefined();
-    expect(warning).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.any(Error));
+    expect(loadMcpConfig(valid, root).settings?.semanticSearch).toEqual(semanticSearch);
+    expect(loadMcpConfig(unknown, root).settings?.semanticSearch).toBeUndefined();
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.objectContaining({ message: "settings.semanticSearch.semanticSearch is not supported" }));
+    expect(loadMcpConfig(outOfRange, root).settings?.semanticSearch).toBeUndefined();
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.objectContaining({ message: "settings.semanticSearch.candidateLimit must be an integer from 2 to 127" }));
     rmSync(root, { recursive: true, force: true });
   });
 });

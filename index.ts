@@ -2012,7 +2012,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           { value: "prompts", label: "prompts — List all MCP prompts" },
           { value: "tasks", label: "tasks — List and stop background MCP tasks" },
           { value: "setup", label: "setup — Configure MCP servers" },
-          { value: "jev", label: "jev setup — Configure Jev semantic search" },
+          { value: "semantic", label: "semantic setup — Choose which servers semantic search may use" },
           { value: "edit", label: "edit — Edit .mcp.json or the global config" },
           { value: "logout", label: "logout — Clear server credentials" },
           { value: "token", label: "token — Manage stored bearer tokens" },
@@ -2024,9 +2024,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
 
       const [, subcommand, argumentPrefix] = argumentMatch;
-      if (subcommand === "jev") {
+      if (subcommand === "semantic") {
         return "setup".startsWith((argumentPrefix ?? "").trimStart())
-          ? [{ value: "jev setup", label: "setup — Configure Jev semantic search" }]
+          ? [{ value: "semantic setup", label: "setup — Choose which servers semantic search may use" }]
           : null;
       }
       if (subcommand === "tasks") {
@@ -2139,17 +2139,17 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
           break;
         }
-        case "jev": {
+        case "semantic": {
           if (parts[1] !== "setup" || parts.length !== 2) {
-            commandCtx.ui?.notify("Usage: /mcp-adapter jev setup", "error");
+            commandCtx.ui?.notify("Usage: /mcp-adapter semantic setup", "error");
             break;
           }
           if (programmaticConfig) {
-            commandCtx.ui?.notify("Jev setup is unavailable when config is supplied by createMcpAdapter().", "info");
+            commandCtx.ui?.notify("Semantic search setup is unavailable when config is supplied by createMcpAdapter().", "info");
             break;
           }
           commandOwner?.throwIfInactive();
-          if (await commands.setupJevSemanticSearch(state, commandCtx, earlyConfigPath)) {
+          if (await commands.setupSemanticSearch(state, commandCtx, earlyConfigPath)) {
             commandOwner?.throwIfInactive();
             await commandReload();
             return;

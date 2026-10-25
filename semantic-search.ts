@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ClassifierApi, ClassifierContext, ClassifierModel, ClassifierResult, ModelsClassifierOptions } from "@earendil-works/pi-ai";
-import { resolveSemanticJevSettings } from "./jev-client.ts";
+import { resolveSemanticSearchSettings } from "./semantic-settings.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { rankToolMatches, type RankedToolMatch } from "./search-ranking.ts";
@@ -43,6 +43,16 @@ const DEFAULT_MODELS = [
 ] as const;
 const REQUEST_TIMEOUT_MS = 5_000;
 const FALLBACK_CODES = new Set(["timeout", "rate_limited", "service_unavailable"]);
+
+export const SEMANTIC_SEARCH_UNAVAILABLE = "Semantic search needs Pi 0.99 or later with classifier models; word search still works.";
+
+/** Pi before 0.99, and hosts without Pi's context, have no classifier models. */
+export function classifierRegistryOf(ctx: { modelRegistry?: unknown } | undefined): SemanticClassifierRegistry | undefined {
+  const registry = ctx?.modelRegistry as Partial<SemanticClassifierRegistry> | undefined;
+  return typeof registry?.classify === "function" && typeof registry.findOfType === "function" && typeof registry.getProviderAuthStatus === "function"
+    ? registry as SemanticClassifierRegistry
+    : undefined;
+}
 
 function splitModel(model: string): { provider: string; id: string } {
   const slash = model.indexOf("/");
@@ -183,16 +193,14 @@ export async function semanticSearch(
 ): Promise<SemanticSearchResult> {
   let settings;
   try {
-    settings = resolveSemanticJevSettings(state);
+    settings = resolveSemanticSearchSettings(state);
   } catch {
     return { ok: false, error: { code: "invalid_request", message: "Invalid semantic search settings." } };
   }
-  if (!settings.semanticSearch) {
+  if (!settings.enabled) {
     return { ok: false, error: { code: "disabled", message: "Semantic search is turned off by settings.semanticSearch." } };
   }
-  if (!registry) {
-    return { ok: false, error: { code: "unavailable", message: "Semantic search needs Pi 0.99 or later with classifier models; word search still works." } };
-  }
+  if (!registry) return { ok: false, error: { code: "unavailable", message: SEMANTIC_SEARCH_UNAVAILABLE } };
   if (settings.allowedServers.length === 0) {
     return { ok: false, error: { code: "data_policy_denied", message: "Semantic search is enabled, but settings.semanticSearch.allowedServers is empty. Run /mcp-adapter semantic setup or allow specific MCP servers." } };
   }
@@ -206,7 +214,7 @@ export async function semanticSearch(
   if (!choice.ok) return choice;
   const { provider, model } = choice;
   const allowedServers = new Set(settings.allowedServers);
-  const candidates = selectSemanticCandidates(state, query, server, allowedServers, settings.semanticCandidateLimit);
+  const candidates = selectSemanticCandidates(state, query, server, allowedServers, settings.candidateLimit);
   if (candidates.length === 0) {
     return { ok: false, error: { code: "no_eligible_tools", message: "Semantic search has no eligible cached tools from the allowed servers. Connect an allowed server or update settings.semanticSearch.allowedServers." } };
   }
@@ -251,7 +259,7 @@ export async function semanticSearch(
     .sort((a, b) => b.probability - a.probability || a.candidate.id.localeCompare(b.candidate.id));
   const top = ranked[0];
   const noneProbability = answer.probabilities.none ?? 0;
-  const abstained = answer.choice === "none" || !top || noneProbability >= top.probability || top.probability < settings.semanticMinProbability;
+  const abstained = answer.choice === "none" || !top || noneProbability >= top.probability || top.probability < settings.minProbability;
   const matches = abstained ? [] : ranked.map(({ candidate, probability }) => ({ server: candidate.server, tool: candidate.tool, score: probability }));
   const usage = result.usage
     ? { input: result.usage.input, output: result.usage.output, ...(result.usage.cost ? { cost: result.usage.cost.total } : {}) }

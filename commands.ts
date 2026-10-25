@@ -18,8 +18,8 @@ import {
   previewSharedServerEntry,
   previewStarterSharedConfig,
   writeDirectToolsConfig,
-  writeJevSemanticSearchConfig,
   writeProjectServerDisabledOverride,
+  writeSemanticSearchConfig,
   writeSharedServerEntry,
   writeSharedConfigText,
   writeStarterSharedConfig,
@@ -35,7 +35,8 @@ import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markS
 import { findPiSignInImports, importPiSignIn } from "./pi-signin-import.ts";
 import { formatTerminalError, openPath, providerSignInMessage, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
-import { resolveJevCredential } from "./jev-key-store.ts";
+import { classifierRegistryOf, resolveSemanticClassifier, SEMANTIC_SEARCH_UNAVAILABLE } from "./semantic-search.ts";
+import { validateSemanticSearchSettings } from "./semantic-settings.ts";
 import { describeProjectServerBlock, keepProjectServerApprovals } from "./project-server-trust.ts";
 
 function terminalHyperlink(label: string, url: string): string {
@@ -70,43 +71,45 @@ export async function editSharedConfig(ctx: ExtensionContext, target: SharedConf
   return true;
 }
 
-export async function setupJevSemanticSearch(
+export async function setupSemanticSearch(
   state: McpExtensionState,
   ctx: ExtensionContext,
   configOverridePath?: string,
 ): Promise<boolean> {
   if (!ctx.hasUI) return false;
-  const credential = resolveJevCredential();
-  if (credential.status !== "present") {
-    const detail = credential.status === "unavailable" ? ` ${credential.message}` : "";
-    ctx.ui.notify(
-      `Jev needs a System One API key.${detail}\nRun \`pi-mcp-adapter key set systemone\` in a terminal, then run \`/mcp-adapter jev setup\` again.`,
-      "error",
-    );
+  const registry = classifierRegistryOf(ctx);
+  if (!registry) {
+    ctx.ui.notify(SEMANTIC_SEARCH_UNAVAILABLE, "error");
     return false;
   }
+  const choice = resolveSemanticClassifier(registry, validateSemanticSearchSettings(state.config.settings?.semanticSearch).model);
+  if (!choice.ok) {
+    ctx.ui.notify(choice.error.message, "error");
+    return false;
+  }
+  const { model } = choice;
 
   const servers = Object.keys(state.config.mcpServers)
     .filter((name) => !isServerDisabled(state.config.mcpServers[name]))
     .sort((a, b) => a.localeCompare(b));
   if (servers.length === 0) {
-    ctx.ui.notify("Enable or add an MCP server before setting up Jev semantic search.", "error");
+    ctx.ui.notify("Enable or add an MCP server before setting up semantic search.", "error");
     return false;
   }
   const payloadDisclosure = " Semantic search does not send tool results.";
 
-  const choice = await ctx.ui.select("Configure Jev semantic search", [
+  const scope = await ctx.ui.select("Configure semantic search", [
     `Use all ${servers.length} enabled servers (default)`,
     "Restrict to selected servers",
     "Cancel",
   ]);
-  if (!choice || choice === "Cancel") return false;
+  if (!scope || scope === "Cancel") return false;
 
   let allowedServers: string[];
-  if (choice.startsWith("Use all ")) {
+  if (scope.startsWith("Use all ")) {
     const confirmed = await ctx.ui.confirm(
-      "Share MCP tool metadata with Jev?",
-      `Semantic searches send the query text, server names, tool paths, tool names, and descriptions from ${servers.length} servers to the configured Jev endpoint.${payloadDisclosure}`,
+      `Share MCP tool metadata with ${model}?`,
+      `Semantic searches send the query text, server names, tool paths, tool names, and descriptions from ${servers.length} servers to ${model} through Pi.${payloadDisclosure}`,
     );
     if (!confirmed) return false;
     allowedServers = servers;
@@ -115,26 +118,26 @@ export async function setupJevSemanticSearch(
     for (const server of servers) {
       if (await ctx.ui.confirm(
         `Allow ${server}?`,
-        `Semantic searches send the query text, server name, tool paths, tool names, and descriptions to the configured Jev endpoint.${payloadDisclosure}`,
+        `Semantic searches send the query text, server name, tool paths, tool names, and descriptions to ${model} through Pi.${payloadDisclosure}`,
       )) allowedServers.push(server);
     }
     if (allowedServers.length === 0) {
-      ctx.ui.notify("Jev setup cancelled because no servers were allowed.", "info");
+      ctx.ui.notify("Semantic search setup cancelled because no servers were allowed.", "info");
       return false;
     }
   }
 
   try {
-    const result = writeJevSemanticSearchConfig(configOverridePath, ctx.cwd, allowedServers, state.config.settings?.jev);
+    const result = writeSemanticSearchConfig(configOverridePath, ctx.cwd, allowedServers, state.config.settings?.semanticSearch);
     ctx.ui.notify(
       result.changed
-        ? `Jev semantic search configured for ${allowedServers.length} server${allowedServers.length === 1 ? "" : "s"}. Reloading Pi…`
-        : "Jev semantic search is already configured for those servers.",
+        ? `Semantic search configured for ${allowedServers.length} server${allowedServers.length === 1 ? "" : "s"}. Reloading Pi…`
+        : "Semantic search is already configured for those servers.",
       "info",
     );
     return result.changed;
   } catch (error) {
-    ctx.ui.notify(`Jev setup failed: ${formatTerminalError(error)}`, "error");
+    ctx.ui.notify(`Semantic search setup failed: ${formatTerminalError(error)}`, "error");
     return false;
   }
 }

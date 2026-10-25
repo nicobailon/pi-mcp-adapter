@@ -141,7 +141,7 @@ export declare function buildUnifiedDiff(beforeText: string, afterText: string, 
     context?: number;
 }): string;
 export declare function writeSharedConfigText(filePath: string, text: string): void;
-export declare function writeJevSemanticSearchConfig(overridePath: string | undefined, cwd: string, allowedServers: string[], effectiveJev?: unknown): {
+export declare function writeSemanticSearchConfig(overridePath: string | undefined, cwd: string, allowedServers: string[], effectiveSettings?: unknown): {
     path: string;
     changed: boolean;
 };

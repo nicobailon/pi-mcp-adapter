@@ -9,7 +9,7 @@ import { getAgentPluginSummaries, loadAgentPluginConfigs, type AgentPluginSummar
 import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "./agent-plugin-provenance.ts";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.ts";
-import { REMOVED_JEV_KEYS, validateJevSettings } from "./jev-client.ts";
+import { validateSemanticSearchSettings } from "./semantic-settings.ts";
 import { parseScriptTools } from "./script-tools.ts";
 import { formatServerNamespace, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type OAuthConfig, type ServerEntry, type McpSettings, type ImportKind, type ScriptToolDefinition, type ServerProvenance } from "./types.ts";
 import { interpolateEnvVars, parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.ts";
@@ -277,10 +277,11 @@ export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath?:
     ...getOpenCodeImportNotices(cwd, overridePath),
     ...getDroppedCredentialNotices(cwd, overridePath),
     ...getRemovedScriptSettingNotices(cwd, overridePath),
+    ...getRemovedJevSettingNotices(cwd, overridePath),
   ];
 }
 
-/** Settings that only configured mcpScript, besides the jev ones in REMOVED_JEV_KEYS. They still load, and do nothing. */
+/** Settings that only configured mcpScript. They still load, and do nothing. */
 const REMOVED_SCRIPT_SETTINGS = ["scriptMode", "scriptSkill"] as const;
 
 /** One notice per config file that still sets a setting mcpScript's removal left without effect. */
@@ -288,15 +289,19 @@ function getRemovedScriptSettingNotices(cwd: string, overridePath?: string): str
   return getConfigSources(overridePath, cwd).flatMap((source) => {
     const settings = readSourceConfig(source.id, source.readPath)?.settings as Record<string, unknown> | undefined;
     if (!settings) return [];
-    const jev = settings.jev && typeof settings.jev === "object" ? settings.jev as Record<string, unknown> : {};
-    const keys = [
-      ...REMOVED_SCRIPT_SETTINGS.filter((key) => settings[key] !== undefined).map((key) => `settings.${key}`),
-      ...[...REMOVED_JEV_KEYS].filter((key) => jev[key] !== undefined).map((key) => `settings.jev.${key}`),
-    ];
+    const keys = REMOVED_SCRIPT_SETTINGS.filter((key) => settings[key] !== undefined).map((key) => `settings.${key}`);
     if (keys.length === 0) return [];
     const [verb, pronoun] = keys.length === 1 ? ["does", "it"] : ["do", "them"];
-    const named = keys.length > 2 ? `${keys.slice(0, -1).join(", ")} and ${keys.at(-1)}` : keys.join(" and ");
-    return [`${source.readPath}: pi-mcp-adapter no longer has mcpScript, so ${named} ${verb} nothing. Remove ${pronoun}, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`];
+    return [`${source.readPath}: pi-mcp-adapter no longer has mcpScript, so ${keys.join(" and ")} ${verb} nothing. Remove ${pronoun}, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`];
+  });
+}
+
+/** `settings.jev` still loads and does nothing; one notice per file that sets it. */
+function getRemovedJevSettingNotices(cwd: string, overridePath?: string): string[] {
+  return getConfigSources(overridePath, cwd).flatMap((source) => {
+    const settings = readSourceConfig(source.id, source.readPath)?.settings as Record<string, unknown> | undefined;
+    if (settings?.jev === undefined) return [];
+    return [`${source.readPath}: settings.jev was replaced by settings.semanticSearch, and semantic search now uses Pi's classifier models instead of a System One key. Move allowedServers there (semanticCandidateLimit is now candidateLimit and semanticMinProbability is minProbability), or run /mcp-adapter semantic setup.`];
   });
 }
 
@@ -1512,10 +1517,7 @@ function validateConfig(raw: unknown, sourcePath?: string): ValidatedConfig {
 function parseSettings(value: unknown): McpSettings {
   if (!isRecord(value)) throw new Error("settings must be an object");
   const settings = { ...value } as McpSettings;
-  if (value.jev !== undefined) {
-    validateJevSettings(value.jev);
-    settings.jev = value.jev as NonNullable<McpSettings["jev"]>;
-  }
+  if (value.semanticSearch !== undefined) validateSemanticSearchSettings(value.semanticSearch);
   return settings;
 }
 
@@ -1942,30 +1944,28 @@ export function writeSharedConfigText(filePath: string, text: string): void {
   writeConfigText(filePath, text);
 }
 
-export function writeJevSemanticSearchConfig(
+export function writeSemanticSearchConfig(
   overridePath: string | undefined,
   cwd: string,
   allowedServers: string[],
-  effectiveJev?: unknown,
+  effectiveSettings?: unknown,
 ): { path: string; changed: boolean } {
   const filePath = overridePath ? getPiGlobalConfigPath(overridePath) : getProjectPiConfigPath(cwd);
   const raw = readRawConfigObject(filePath);
   if (raw.settings !== undefined && !isRecord(raw.settings)) {
-    throw new Error(`Failed to update Jev settings at ${filePath}: settings must be an object`);
+    throw new Error(`Failed to update semantic search settings at ${filePath}: settings must be an object`);
   }
   const settings = raw.settings as Record<string, unknown> | undefined;
-  const currentJev = settings?.jev;
-  if (currentJev !== undefined && currentJev !== false && !isRecord(currentJev)) {
-    throw new Error(`Failed to update Jev settings at ${filePath}: settings.jev must be an object or false`);
+  const current = settings?.semanticSearch;
+  if (current !== undefined && current !== false && !isRecord(current)) {
+    throw new Error(`Failed to update semantic search settings at ${filePath}: settings.semanticSearch must be an object or false`);
   }
-  const source = isRecord(effectiveJev) ? effectiveJev : isRecord(currentJev) ? currentJev : {};
-  // Settings of the removed jev.evaluate() would only earn the file a migration notice.
-  const jev = Object.fromEntries(Object.entries(source).filter(([key]) => !REMOVED_JEV_KEYS.has(key)));
-  const nextServers = [...new Set(allowedServers)].sort((a, b) => a.localeCompare(b));
-  const nextJev = { ...jev, semanticSearch: true, allowedServers: nextServers };
-  validateJevSettings(nextJev);
-  if (isRecord(currentJev) && JSON.stringify(currentJev) === JSON.stringify(nextJev)) return { path: filePath, changed: false };
-  raw.settings = { ...settings, jev: nextJev };
+  // The effective settings may come from a lower-precedence file; writing them keeps this file's policy complete.
+  const source = isRecord(effectiveSettings) ? effectiveSettings : isRecord(current) ? current : {};
+  const next = { ...source, allowedServers: [...new Set(allowedServers)].sort((a, b) => a.localeCompare(b)) };
+  validateSemanticSearchSettings(next);
+  if (isRecord(current) && JSON.stringify(current) === JSON.stringify(next)) return { path: filePath, changed: false };
+  raw.settings = { ...settings, semanticSearch: next };
   writeRawConfigObject(filePath, raw);
   return { path: filePath, changed: true };
 }

@@ -616,8 +616,6 @@ export interface McpToolApprovalRequest {
   claim(handler: McpToolApprovalHandler): boolean;
 }
 
-export type { JevAnswer, JevErrorCode, JevEvaluateInput, JevEvaluationData, JevEvaluationEnvelope, JevJson, JevQuestion } from "./jev-contracts.ts";
-
 export interface McpSettings {
   /** Admission policy for unapproved project-local MCP servers. Only user-global config may set this. */
   projectServers?: "ask" | "allow";
@@ -659,19 +657,16 @@ export interface McpSettings {
   warnOnLargeDirectTools?: boolean;
   /** Expose MCP resources as tools (default: true). Set to false to disable globally across all servers. */
   exposeResources?: boolean;
-  /** Optional Jev (System One) semantic tool search. A valid key enables it. */
-  jev?: false | {
-    semanticSearch?: boolean;
-    /** Restrict semantic-search metadata to these servers. Defaults to every enabled server. */
+  /** Semantic tool search through a Pi classifier model. `false` turns it off. */
+  semanticSearch?: false | {
+    /** Servers whose tool metadata may be sent. Omitted: every enabled server. `[]`: none (search refuses). */
     allowedServers?: string[];
+    /** Pi classifier model as "provider/id", e.g. "openrouter/typesafe/jev-1.13". Split at the first "/". */
     model?: string;
-    requestTimeoutMs?: number;
-    maxRetries?: number;
-    maxStateBytes?: number;
-    maxQuestionsPerRequest?: number;
-    /** Maximum semantic candidates per request. Defaults to 127; range 2..127. */
-    semanticCandidateLimit?: number;
-    semanticMinProbability?: number;
+    /** Candidates per request, 2..127. Default 127. */
+    candidateLimit?: number;
+    /** Abstain below this top probability, 0..1. Default 0.2. */
+    minProbability?: number;
   };
   /** Render MCP tool results as compact self-rendered rows by default, or as the legacy boxed row. */
   toolResultRendering?: "compact" | "boxed";
