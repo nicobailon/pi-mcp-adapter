@@ -57,6 +57,80 @@ The default `minProbability` of 0.2 was enough for all four: on the 15 queries w
 
 The adapter no longer stores its own key. `pi-mcp-adapter key`, `SYSTEMONE_ENDPOINT` and `SYSTEMONE_API_KEY` are gone, and the adapter doesn't read `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` itself; Pi does. Give Pi the credential instead: `/login` to OpenRouter, `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` in Pi's environment, or a provider in Pi's `models.json`, which also covers a local server. `settings.jev` is replaced by `settings.semanticSearch`: `allowedServers` moves as it is; `model` now names a Pi model as `"provider/id"`, such as `typesafe/jev-latest`, so an old name like `jev-1.13.0` must be rewritten; `semanticCandidateLimit` is now `candidateLimit`, `semanticMinProbability` is now `minProbability`, and the timeout, retry and request-size settings are gone. `/mcp-adapter semantic setup` writes the new setting for you. A key you stored with `pi-mcp-adapter key set systemone` stays in the OS credential store under the service `pi-mcp-adapter.service-key`; delete it there if you don't need it.
 
+## Typed values from tool results
+
+Many tools return a long page of text when the agent needs two numbers from it. With `extract`, the agent names the values it wants and gets only those back, as real numbers and dates, so a 40 KB order page costs a line of context instead. The full result is saved to a file the agent can still read.
+
+```text
+mcp({ tool: "get_order", args: { id: "B-1001" }, extract: { total: "number", due: { type: "date", description: "Delivery date" } } })
+        │
+        ├── the tool runs as usual
+        ├── its text goes to Cloudflare's Clairic model
+        └── the agent gets {"values":{"total":42.1,"due":"2026-11-02"},"fullResult":"/tmp/pi-mcp-output-…/output-….txt"}
+```
+
+It is off until you name the servers whose results may be sent:
+
+```json
+{ "settings": { "extraction": { "allowedServers": ["orders"] } } }
+```
+
+Only then does the `mcp` tool show the `extract` parameter, so sessions without the setting pay nothing for it. For an allowed server, the adapter sends the tool's own text to Cloudflare: its text blocks, the text of embedded resources, and `structuredContent` as JSON, never images, and at most 100 KiB. Nothing is sent for any other server. Review [Cloudflare's terms](https://www.cloudflare.com/service-specific-terms-developer-platform/) for how long it keeps what you send.
+
+The credentials come from Pi, so there is no key to store in the adapter. Two routes reach Clairic:
+
+| `model` | What Pi needs |
+| --- | --- |
+| `cloudflare-workers-ai/clairic` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID`, or the `cloudflare-workers-ai` login |
+| `cloudflare-ai-gateway/clairic` | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_GATEWAY_ID`, for the gateway's logs, caching and rate limits |
+
+Without `model`, the adapter uses Workers AI if Pi has a credential for it, then the gateway. The AI Gateway route has been checked only against a test server, not a live gateway.
+
+Each field is a type name, or an object with `type` and an optional `description` (what to look for), `unit` (number and duration fields) and `decimals` (0 to 6; number, duration and `list.number` fields). Ask for 1 to 16 fields per call.
+
+| Type | Value |
+| --- | --- |
+| `text` | a string |
+| `number`, `integer` | a number |
+| `date`, `time`, `datetime` | `2026-11-02`, `14:30`, `2026-11-02T14:30` |
+| `duration`, `duration.minutes` (or `seconds`, `hours`, `days`, `weeks`, `months`, `years`) | a number in that unit |
+| `list`, `list.number`, `list.date` | a list of strings, numbers or dates |
+
+The result is one line of JSON. Every field you asked for is in `values`: its value, or `null` when it isn't in the result. A value Clairic is less than 0.80 sure of is withheld as `null` and listed in `uncertain` with its guess, and `"truncated": true` means only part of the text was read, because it was over 100 KiB or Clairic cut it:
+
+```json
+{"values":{"total":42.1,"due":"2026-11-02","carrier":null},"uncertain":{"carrier":{"guess":"UPS","confidence":0.62}},"fullResult":"/tmp/pi-mcp-output-AbC/output-1a2b3c4d.txt"}
+```
+
+When nothing can be sent, the agent gets the tool's normal result after one line that says why, and result details carry the code under `extraction`:
+
+| Code | Line |
+| --- | --- |
+| `server_not_allowed` | `Extraction skipped: server "<name>" is not in settings.extraction.allowedServers.` |
+| `tool_error` | `Extraction skipped: the tool returned an error.` |
+| `background_task` | `Extraction skipped: the call runs as a background task.` |
+| `no_text` | `Extraction skipped: the result has no text.` |
+| `no_source` | `Extraction skipped: the tool's own text is not available.` |
+| `call_failed` | no line; the call's own error already says what failed |
+
+If the request itself fails, the line is `Extraction failed (<code>): <message>`, with a code such as `no_credentials`, `authentication_failed`, `payment_required`, `rate_limited`, `timeout` (5 seconds), `service_unavailable` or `invalid_response`. Cloudflare's own error text is never shown. `extract` works with MCP tools only, not script tools.
+
+A codemode script parses the line:
+
+```js
+const result = await tools.mcp({ tool: "orders_get_order", args: { id: "B-1001" }, extract: { total: "number" } });
+const { values } = JSON.parse(result);
+return values.total;
+```
+
+Measured on Workers AI with the value on the last line of the text:
+
+| Text sent | Time |
+| --- | --- |
+| 8 KiB | 0.4 s |
+| 24 KiB | 0.7 s |
+| 100 KiB | 1.2 s |
+
 ## Scripting MCP calls with Pi's codemode
 
 Pi's `codemode` tool (Pi 0.99 and later) runs a JavaScript script that calls other tools, and only the script's output reaches the model. Use it to loop over, filter, chain, or fan out MCP calls in one step. For a single call, search, describe, status check, or auth action, use `mcp`.
