@@ -281,6 +281,8 @@ export async function attachTaskSession(options) {
         // Tool declarations only add per-tool taskSupport hints; the adapter's
         // cached tools/list is not threaded through here, and a miss is harmless.
         tools: { currentTool: () => undefined },
+        // ext-tasks 0.1.0 stopped a call after 10 input-required rounds; 0.2.x is unbounded unless asked.
+        maxInputRounds: 10,
         onInputRequest,
         onError: (error) => logger.warn(`ext-tasks background error for ${serverName}: ${String(error)}`),
     });

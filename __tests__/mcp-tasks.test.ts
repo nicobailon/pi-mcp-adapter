@@ -491,6 +491,7 @@ interface FakeTaskServer {
   updates: Record<string, unknown>[];
   cancels: Record<string, unknown>[];
   headersByMethod: Map<string, Record<string, string> | undefined>;
+  callRounds?: number;
 }
 
 /**
@@ -504,7 +505,7 @@ interface FakeTaskServer {
  * `pollIntervalMs`, as a server that suggests no interval does.
  */
 function fakeModernTaskStack(
-  script: { statuses: Array<Record<string, unknown>>; forgetsTasks?: boolean; beforePoll?: () => Promise<void>; noPollHint?: boolean },
+  script: { statuses: Array<Record<string, unknown>>; forgetsTasks?: boolean; beforePoll?: () => Promise<void>; noPollHint?: boolean; callInputRounds?: number },
   server: FakeTaskServer = { polls: [], updates: [], cancels: [], headersByMethod: new Map() },
   connection = "first",
 ): {
@@ -533,7 +534,12 @@ function fakeModernTaskStack(
       });
     };
     if (frame.method === "tools/call") {
-      respond({ resultType: "task", status: "working", ...task });
+      const round = (server.callRounds = (server.callRounds ?? 0) + 1);
+      if (round <= (script.callInputRounds ?? 0)) {
+        respond({ resultType: "input_required", inputRequests: { where: { method: "roots/list", params: {} } }, requestState: `round-${round}` });
+      } else {
+        respond({ resultType: "task", status: "working", ...task });
+      }
     } else if (frame.method === "tasks/get") {
       const answer = () => {
         if (script.forgetsTasks) {
@@ -747,6 +753,28 @@ describe("attachTaskSession", () => {
     try {
       await callToolViaTaskSession(attachment!.session, { name: "scan", args: {} });
       expect(server.updates[0]).toMatchObject({ inputResponses: { where: { roots } } });
+    } finally {
+      await attachment!.session.close();
+    }
+  });
+
+  it("stops a tool call that keeps asking for input after 10 rounds", async () => {
+    const { client, transport, server } = fakeModernTaskStack({
+      statuses: [{ status: "completed", result: { resultType: "complete", content: [], isError: false } }],
+      callInputRounds: 11,
+    });
+    const attachment = await attachTaskSession({
+      client,
+      serverName: "task-server",
+      definition,
+      transport,
+      clientInfo,
+      clientCapabilities: { roots: {} },
+      roots: [],
+    });
+    try {
+      await expect(callToolViaTaskSession(attachment!.session, { name: "scan", args: {} })).rejects.toThrow(/10 input-required rounds/);
+      expect(server.callRounds).toBe(11);
     } finally {
       await attachment!.session.close();
     }
