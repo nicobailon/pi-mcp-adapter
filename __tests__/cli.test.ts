@@ -705,6 +705,23 @@ describe("cli doctor", { timeout: 30_000 }, () => {
     expect(result.stdout).toContain("project: blocked — blocked: project server approval required");
   });
 
+  it.skipIf(process.platform === "win32")("reads project trust from a Pi managed install whose launcher is on PATH", async () => {
+    const agent = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-agent-"));
+    mkdirSync(join(agent, "install"));
+    writeFileSync(join(agent, "install", "current-version"), "1.0.4\n");
+    fakePiCore(join(agent, "install", "releases", "1.0.4", "node_modules", "@earendil-works", "pi-coding-agent"));
+    mkdirSync(join(agent, "bin"));
+    writeFileSync(join(agent, "bin", "pi"), "#!/bin/sh\necho 1.0.4\n", { mode: 0o755 });
+    const bin = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-bin-"));
+    symlinkSync(join(agent, "bin", "pi"), join(bin, "pi"));
+    const context = setup({ mcpServers: {} }, { mcpServers: { project: { command: "unused" } } });
+
+    const result = await doctor([], context, { PATH: `${bin}:${process.env.PATH}` }, cliWithoutPi());
+
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("project: blocked — blocked: project server approval required");
+  });
+
   it.skipIf(process.platform === "win32")("ignores a Pi package that doesn't own the pi on PATH", async () => {
     const prefix = mkdtempSync(join(tmpdir(), "pi-mcp-doctor-prefix-"));
     fakePiCore(join(prefix, "node_modules", "@earendil-works", "pi-coding-agent"));

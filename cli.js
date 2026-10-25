@@ -511,9 +511,17 @@ async function importPiCore() {
       if (/node_modules[\\/]@earendil-works[\\/]pi-coding-agent[\\/]/i.test(fs.readFileSync(bin, "utf8")) && isPiCore(shimmed)) root = shimmed;
     } else {
       // npm links bin/pi to a file inside Pi's package; only the package that owns that file counts.
-      for (let dir = path.dirname(fs.realpathSync(bin)); !root; dir = path.dirname(dir)) {
+      const real = fs.realpathSync(bin);
+      for (let dir = path.dirname(real); !root; dir = path.dirname(dir)) {
         if (isPiCore(dir)) root = dir;
         else if (path.dirname(dir) === dir) break;
+      }
+      // Pi's own installer makes bin/pi a shell launcher in the agent dir that runs the release
+      // named by install/current-version, so look where that launcher looks.
+      const current = path.join(path.dirname(path.dirname(real)), "install", "current-version");
+      if (!root && fs.existsSync(current)) {
+        const managed = path.join(path.dirname(current), "releases", fs.readFileSync(current, "utf8").trim(), "node_modules", PI_CORE_PACKAGE);
+        if (isPiCore(managed)) root = managed;
       }
     }
     if (!root) throw err;
