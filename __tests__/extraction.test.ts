@@ -162,6 +162,16 @@ describe("applyExtraction on the Workers AI route", () => {
     });
   });
 
+  it("keeps the original result after the values when the full result can't be saved", async () => {
+    clairic(() => ok({ model: "clairic", answers: ANSWERS, truncated: false }));
+    vi.stubEnv("TMPDIR", "/nonexistent-pi-mcp-tmp");
+    const result = await callWithExtract(createState([{ type: "text", text: ORDER }]));
+    vi.unstubAllEnvs();
+
+    expect(JSON.parse((result.content[0] as { text: string }).text).fullResult).toBeNull();
+    expect(result.content[1]).toEqual({ type: "text", text: ORDER });
+  });
+
   it("sends the full text of a cut result, capped at 100 KiB, and points at the guard's file", async () => {
     const big = `${"x".repeat(150 * 1024)}\nOrder total $42.10`;
     const fetch = clairic(() => ok({ model: "clairic", answers: { total: ANSWERS.total }, truncated: false }));
@@ -246,6 +256,7 @@ describe("applyExtraction on the Workers AI route", () => {
     ["success: false", withBody(200, JSON.stringify({ success: false, errors: [SECRET] })), "invalid_response", "cloudflare-workers-ai/clairic returned an invalid answer."],
     ["a missing field", () => ok({ answers: { total: ANSWERS.total }, note: SECRET }), "invalid_response", "cloudflare-workers-ai/clairic returned an invalid answer."],
     ["a value of the wrong type", () => ok({ answers: { ...ANSWERS, total: { type: "number", value: SECRET, confidence: 0.99 } } }), "invalid_response", "cloudflare-workers-ai/clairic returned an invalid answer."],
+    ["a date that does not exist", () => ok({ answers: { ...ANSWERS, due: { type: "date", value: "2026-02-31", confidence: 0.99 } }, note: SECRET }), "invalid_response", "cloudflare-workers-ai/clairic returned an invalid answer."],
   ])("maps %s to its code without the provider's text", async (_label, respond, code, message) => {
     clairic(respond);
     const result = await callWithExtract(createState([{ type: "text", text: ORDER }]));

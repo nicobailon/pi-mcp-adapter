@@ -132,11 +132,20 @@ const EXTRACT_THRESHOLD = 0.8;
 const REQUEST_TIMEOUT_MS = 5_000;
 const CLOUDFLARE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const GATEWAY = "cloudflare-ai-gateway";
-const VALUE_PATTERNS: Record<string, RegExp> = {
-  date: /^\d{4}-\d{2}-\d{2}$/,
-  time: /^\d{2}:\d{2}(:\d{2})?$/,
-  datetime: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/,
-};
+
+/** A real calendar date: `2026-02-31` has the right shape but does not exist. */
+function isDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [year, month, day] = match.slice(1).map(Number) as [number, number, number];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function isTime(value: string): boolean {
+  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
+  return match !== null && Number(match[1]) < 24 && Number(match[2]) < 60 && (match[3] === undefined || Number(match[3]) < 60);
+}
 
 interface Route { model: ExtractionModelId; provider: string; url: string; headers: Record<string, string> }
 
@@ -198,7 +207,11 @@ function validValue(spec: ClairicFieldSpec, value: unknown): boolean {
   if (spec.type === "number" || spec.type === "duration") {
     return typeof value === "number" && Number.isFinite(value) && (!spec.integer || Number.isInteger(value));
   }
-  return typeof value === "string" && VALUE_PATTERNS[spec.type]!.test(value);
+  if (typeof value !== "string") return false;
+  if (spec.type === "date") return isDate(value);
+  if (spec.type === "time") return isTime(value);
+  const [date = "", time = "", extra] = value.split("T");
+  return extra === undefined && isDate(date) && isTime(time);
 }
 
 interface FieldResult { type: string; status: "extracted" | "null" | "uncertain"; value: unknown; guess?: unknown; confidence?: number; pNull?: number }
@@ -388,7 +401,8 @@ export async function applyExtraction(
     });
     const status = uncertainEntries.length === 0 ? "extracted" : uncertainEntries.length === Object.keys(fields).length ? "uncertain" : "partial";
     return {
-      content: [{ type: "text", text }],
+      // Without a saved copy, the original result stays after the values so nothing is lost.
+      content: saved.path !== undefined ? [{ type: "text", text }] : [{ type: "text", text }, ...result.content],
       details: {
         ...details,
         extraction: {

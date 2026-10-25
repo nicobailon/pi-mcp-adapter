@@ -98,6 +98,8 @@ The result is one line of JSON. Every field you asked for is in `values`: its va
 {"values":{"total":42.1,"due":"2026-11-02","carrier":null},"uncertain":{"carrier":{"guess":"UPS","confidence":0.62}},"fullResult":"/tmp/pi-mcp-output-AbC/output-1a2b3c4d.txt"}
 ```
 
+If the full result can't be saved, `fullResult` is `null` and the tool's normal result follows the values. A date or time that doesn't exist, such as `2026-02-31`, counts as an invalid answer.
+
 When nothing can be sent, the agent gets the tool's normal result after one line that says why, and result details carry the code under `extraction`:
 
 | Code | Line |
