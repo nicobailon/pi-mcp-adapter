@@ -272,3 +272,92 @@ describe("semantic search", () => {
     expect(result.content[0]!.text).toContain("Shape:");
   });
 });
+
+/** Notes tools share words with "plan my week"; the calendar tool that fits does not, and mail is noise. */
+function bigCatalog(): McpExtensionState {
+  const tools = (server: string, count: number, description: (index: number) => string) =>
+    Array.from({ length: count }, (_, index) => ({ name: `${server}_tool_${index}`, originalName: `tool_${index}`, description: description(index) }));
+  const state = stateWithTools();
+  state.config.mcpServers = { notes: { command: "n" }, mail: { command: "m" }, calendar: { command: "c" }, off: { command: "o", disabled: true }, private: { command: "p" } };
+  state.config.settings = { semanticSearch: { allowedServers: ["notes", "mail", "calendar", "off"], candidateLimit: 4 } };
+  state.toolMetadata = new Map([
+    ["notes", tools("notes", 10, index => `Plan my week notes ${index}`)],
+    ["mail", tools("mail", 10, index => `Send message ${index}`)],
+    ["calendar", [
+      { name: "calendar_book", originalName: "book", description: "Create an event at a time" },
+      { name: "calendar_list", originalName: "list", description: "List events" },
+    ]],
+    ["off", tools("off", 3, () => "Plan my week")],
+    ["private", tools("private", 3, () => "Plan my week")],
+  ]);
+  return state;
+}
+
+const serversOf = (context: ClassifierContext) => (context.state as { servers: Array<{ id: string; name: string; tools: string[] }> }).servers;
+
+/** Stage 1 puts `first` on top; stage 2 picks `tool`. */
+function serverFirst(first: string, tool: string): Answer {
+  return (context) => {
+    if (!context.questions.server) return choose(tool)(context);
+    const probabilities = Object.fromEntries([...serversOf(context).map(entry => [entry.id, entry.name === first ? 0.9 : 0.02]), ["none", 0.01]]);
+    const choice = serversOf(context).find(entry => entry.name === first)!.id;
+    return {
+      answers: { server: { type: "choice", choice, confidence: 0.9, probabilities } },
+      usage: { input: 12, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.0001 } },
+    };
+  };
+}
+
+describe("semantic search on big catalogs", () => {
+  it("asks which servers fit first, so a tool that shares no words with the query is still ranked", async () => {
+    const classifier = registry(serverFirst("calendar", "calendar_book"));
+    const result = await semanticSearch(bigCatalog(), "plan my week", undefined, undefined, classifier);
+
+    const candidates = candidatesOf(classifier.calls.at(-1)!.context).map(candidate => candidate.path);
+    expect(candidates).toContain("calendar_book");
+    expect(candidates).toHaveLength(4);
+    expect(candidates.slice(0, 2)).toEqual(["calendar_book", "calendar_list"]);
+    expect(classifier.calls).toHaveLength(2);
+    expect(result.ok && result.matches[0]).toMatchObject({ server: "calendar", tool: { name: "calendar_book" } });
+    // Both calls' usage is counted.
+    expect(result).toMatchObject({ backend: { usage: { input: 24, output: 6, cost: 0.0002 } } });
+  });
+
+  it("sends only the allowed, enabled servers and their tool names in the first call", async () => {
+    const classifier = registry(serverFirst("calendar", "calendar_book"));
+    await semanticSearch(bigCatalog(), "plan my week", undefined, undefined, classifier);
+
+    const first = classifier.calls[0]!.context;
+    expect(first.state).toEqual({
+      query: "plan my week",
+      servers: [
+        { id: "s0", name: "notes", tools: Array.from({ length: 10 }, (_, index) => `tool_${index}`) },
+        { id: "s1", name: "mail", tools: Array.from({ length: 10 }, (_, index) => `tool_${index}`) },
+        { id: "s2", name: "calendar", tools: ["book", "list"] },
+      ],
+    });
+    expect(first.questions.server!.criteria).toEqual({ s0: "The notes server", s1: "The mail server", s2: "The calendar server", none: "No listed server fits" });
+  });
+
+  it("makes one call when the catalog fits or one server is asked for", async () => {
+    const fits = bigCatalog();
+    fits.config.settings!.semanticSearch = { allowedServers: ["notes", "mail", "calendar"] };
+    const classifier = registry(choose("calendar_book"));
+    await semanticSearch(fits, "plan my week", undefined, undefined, classifier);
+    await semanticSearch(bigCatalog(), "plan my week", "notes", undefined, classifier);
+
+    expect(classifier.calls).toHaveLength(2);
+    expect(classifier.calls.every(call => call.context.questions.match !== undefined)).toBe(true);
+  });
+
+  it("treats a failed first call like a failed ranking", async () => {
+    const timedOut = await semanticSearch(bigCatalog(), "plan my week", undefined, undefined, registry(failWith("Request timed out after 5000ms")));
+    expect(timedOut).toMatchObject({ ok: true, backend: { used: "lexical", degraded: true, reason: "timeout" } });
+    expect(timedOut.ok && timedOut.matches.every(match => ["notes", "mail", "calendar"].includes(match.server))).toBe(true);
+
+    const rejected = registry(failWith("System One API error (401): secret"));
+    const denied = await semanticSearch(bigCatalog(), "plan my week", undefined, undefined, rejected);
+    expect(denied).toEqual({ ok: false, error: { code: "authentication_failed", message: "typesafe rejected the credential." } });
+    expect(rejected.classify).toHaveBeenCalledOnce();
+  });
+});

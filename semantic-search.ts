@@ -43,6 +43,10 @@ const DEFAULT_MODELS = [
 ] as const;
 const REQUEST_TIMEOUT_MS = 5_000;
 const FALLBACK_CODES = new Set(["timeout", "rate_limited", "service_unavailable"]);
+/** Stage 1 lists each server with this many tool names, each cut to this length. */
+const SERVER_TOOL_NAMES = 40;
+const SERVER_TOOL_NAME_LENGTH = 64;
+const MAX_RANKED_SERVERS = 127;
 
 export const SEMANTIC_SEARCH_UNAVAILABLE = "Semantic search needs Pi 0.99 or later with classifier models; word search still works.";
 
@@ -161,23 +165,44 @@ function roundRobinNonLexical(query: string, matches: RankedToolMatch[]): Ranked
   return result;
 }
 
+const pathOf = (match: RankedToolMatch) => `${match.server}\0${match.tool.name}`;
+
+/**
+ * Over the limit, a stage-1 server order fills the list server by server; a server that doesn't fit whole gives its
+ * word matches first. Without one, half the list is word matches and the rest a stable spread across servers.
+ */
 function selectSemanticCandidates(
   state: McpExtensionState,
   query: string,
   server: string | undefined,
-  allowedServers: ReadonlySet<string>,
+  eligible: RankedToolMatch[],
   limit: number,
+  serverOrder?: readonly string[],
 ): Candidate[] {
-  const eligible = eligibleMatches(state, server, allowedServers);
   let selected = eligible;
-  if (eligible.length > limit) {
-    const eligiblePaths = new Set(eligible.map(match => `${match.server}\0${match.tool.name}`));
+  if (eligible.length > limit && serverOrder) {
+    selected = [];
+    for (const name of serverOrder) {
+      const tools = eligible.filter(match => match.server === name);
+      const room = limit - selected.length;
+      if (tools.length <= room) {
+        selected.push(...tools);
+        continue;
+      }
+      const paths = new Set(tools.map(pathOf));
+      const lexical = rankToolMatches(state, query, name).filter(match => paths.has(pathOf(match)));
+      const lexicalPaths = new Set(lexical.map(pathOf));
+      selected.push(...[...lexical, ...roundRobinNonLexical(query, tools.filter(match => !lexicalPaths.has(pathOf(match))))].slice(0, room));
+      break;
+    }
+  } else if (eligible.length > limit) {
+    const eligiblePaths = new Set(eligible.map(pathOf));
     const lexical = rankToolMatches(state, query, server)
-      .filter(match => eligiblePaths.has(`${match.server}\0${match.tool.name}`));
+      .filter(match => eligiblePaths.has(pathOf(match)));
     const lexicalCount = Math.floor(limit / 2);
     const first = lexical.slice(0, lexicalCount);
-    const lexicalPaths = new Set(lexical.map(match => `${match.server}\0${match.tool.name}`));
-    const broad = roundRobinNonLexical(query, eligible.filter(match => !lexicalPaths.has(`${match.server}\0${match.tool.name}`)));
+    const lexicalPaths = new Set(lexical.map(pathOf));
+    const broad = roundRobinNonLexical(query, eligible.filter(match => !lexicalPaths.has(pathOf(match))));
     selected = [...first, ...broad.slice(0, limit - first.length)];
   }
   return selected.map((match, index) => ({ id: `c${index}`, server: match.server,
@@ -214,10 +239,62 @@ export async function semanticSearch(
   if (!choice.ok) return choice;
   const { provider, model } = choice;
   const allowedServers = new Set(settings.allowedServers);
-  const candidates = selectSemanticCandidates(state, query, server, allowedServers, settings.candidateLimit);
-  if (candidates.length === 0) {
+  const eligible = eligibleMatches(state, server, allowedServers);
+  if (eligible.length === 0) {
     return { ok: false, error: { code: "no_eligible_tools", message: "Semantic search has no eligible cached tools from the allowed servers. Connect an allowed server or update settings.semanticSearch.allowedServers." } };
   }
+  const requestSignal = combineAbortSignals(signal, state.owner.signal);
+  const options: ModelsClassifierOptions = { ...(requestSignal ? { signal: requestSignal } : {}), timeoutMs: REQUEST_TIMEOUT_MS, maxRetries: 0 };
+  const failed = (result: ClassifierResult): SemanticSearchResult => {
+    const failure = classifierFailure(result, provider, model);
+    if (!FALLBACK_CODES.has(failure.code)) return { ok: false, error: failure };
+    return {
+      ok: true,
+      matches: rankToolMatches(state, query, server).filter(match => allowedServers.has(match.server)),
+      backend: { requested: "semantic", used: "lexical", degraded: true, provider, model, reason: failure.code as "timeout" | "rate_limited" | "service_unavailable" },
+    };
+  };
+  const invalid: SemanticSearchResult = { ok: false, error: { code: "invalid_response", message: `${model} returned an invalid answer.` } };
+  const usages: NonNullable<ClassifierResult["usage"]>[] = [];
+
+  // A big catalog spread over several servers first asks which servers fit, so a tool that shares no words with the
+  // query still reaches the ranking when its server does.
+  const eligibleServers = [...new Set(eligible.map(match => match.server))];
+  let serverOrder: string[] | undefined;
+  if (eligible.length > settings.candidateLimit && !server && eligibleServers.length >= 2 && eligibleServers.length <= MAX_RANKED_SERVERS) {
+    const serverResult = await registry.classify(choice.classifier, {
+      state: {
+        query,
+        servers: eligibleServers.map((name, index) => ({
+          id: `s${index}`,
+          name,
+          tools: eligible.filter(match => match.server === name).slice(0, SERVER_TOOL_NAMES)
+            .map(match => match.tool.originalName.slice(0, SERVER_TOOL_NAME_LENGTH)),
+        })),
+      },
+      questions: {
+        server: {
+          type: "choice",
+          instructions: "Which server's tools are most likely to fit the query? Choose none when no server fits.",
+          criteria: Object.fromEntries([
+            ...eligibleServers.map((name, index) => [`s${index}`, `The ${name} server`]),
+            ["none", "No listed server fits"],
+          ]),
+        },
+      },
+    }, options);
+    if (serverResult.stopReason !== "stop") return failed(serverResult);
+    const serverAnswer = serverResult.answers.server;
+    if (!serverAnswer || serverAnswer.type !== "choice") return invalid;
+    if (serverResult.usage) usages.push(serverResult.usage);
+    const probabilities = serverAnswer.probabilities;
+    serverOrder = eligibleServers
+      .map((name, index) => ({ name, probability: probabilities[`s${index}`] ?? 0 }))
+      .sort((a, b) => b.probability - a.probability || a.name.localeCompare(b.name))
+      .map(entry => entry.name);
+  }
+
+  const candidates = selectSemanticCandidates(state, query, server, eligible, settings.candidateLimit, serverOrder);
   const context: ClassifierContext = {
     state: {
       query,
@@ -235,25 +312,11 @@ export async function semanticSearch(
       },
     },
   };
-  const requestSignal = combineAbortSignals(signal, state.owner.signal);
-  const result = await registry.classify(choice.classifier, context, {
-    ...(requestSignal ? { signal: requestSignal } : {}), timeoutMs: REQUEST_TIMEOUT_MS, maxRetries: 0,
-  });
-  if (result.stopReason !== "stop") {
-    const failure = classifierFailure(result, provider, model);
-    if (FALLBACK_CODES.has(failure.code)) {
-      return {
-        ok: true,
-        matches: rankToolMatches(state, query, server).filter(match => allowedServers.has(match.server)),
-        backend: { requested: "semantic", used: "lexical", degraded: true, provider, model, reason: failure.code as "timeout" | "rate_limited" | "service_unavailable" },
-      };
-    }
-    return { ok: false, error: failure };
-  }
+  const result = await registry.classify(choice.classifier, context, options);
+  if (result.stopReason !== "stop") return failed(result);
   const answer = result.answers.match;
-  if (!answer || answer.type !== "choice") {
-    return { ok: false, error: { code: "invalid_response", message: `${model} returned an invalid answer.` } };
-  }
+  if (!answer || answer.type !== "choice") return invalid;
+  if (result.usage) usages.push(result.usage);
   const ranked = candidates
     .map(candidate => ({ candidate, probability: answer.probabilities[candidate.id] ?? 0 }))
     .sort((a, b) => b.probability - a.probability || a.candidate.id.localeCompare(b.candidate.id));
@@ -261,9 +324,12 @@ export async function semanticSearch(
   const noneProbability = answer.probabilities.none ?? 0;
   const abstained = answer.choice === "none" || !top || noneProbability >= top.probability || top.probability < settings.minProbability;
   const matches = abstained ? [] : ranked.map(({ candidate, probability }) => ({ server: candidate.server, tool: candidate.tool, score: probability }));
-  const usage = result.usage
-    ? { input: result.usage.input, output: result.usage.output, ...(result.usage.cost ? { cost: result.usage.cost.total } : {}) }
-    : undefined;
+  const costs = usages.flatMap(entry => entry.cost ? [entry.cost.total] : []);
+  const usage = usages.length === 0 ? undefined : {
+    input: usages.reduce((sum, entry) => sum + entry.input, 0),
+    output: usages.reduce((sum, entry) => sum + entry.output, 0),
+    ...(costs.length > 0 ? { cost: costs.reduce((sum, cost) => sum + cost, 0) } : {}),
+  };
   return {
     ok: true,
     matches,
