@@ -83,11 +83,13 @@ describe("semantic search", () => {
     expect(semantic.details.matches[0]).toEqual({ server: "other", tool: "other_weather", score: 0.8 });
   });
 
-  it("asks one choice question with string criteria and a none option, bounded by a timeout and the call signal", async () => {
+  it("asks one choice question with string criteria and a none option, bounded by a timeout, the call signal and the runtime owner", async () => {
     const classifier = registry(choose("none"));
     const call = new AbortController();
-    call.abort();
-    await semanticSearch(stateWithTools(1), "invoices", undefined, call.signal, classifier);
+    const owner = new AbortController();
+    const state = stateWithTools(1);
+    state.owner = { signal: owner.signal } as McpExtensionState["owner"];
+    await semanticSearch(state, "invoices", undefined, call.signal, classifier);
     const { context, options } = classifier.calls[0]!;
     expect(context.questions).toEqual({
       match: {
@@ -97,7 +99,12 @@ describe("semantic search", () => {
       },
     });
     expect(options).toMatchObject({ timeoutMs: 5000, maxRetries: 0 });
+    // Either the tool call or the adapter's runtime shutting down cancels the request.
+    owner.abort();
     expect(options?.signal?.aborted).toBe(true);
+    await semanticSearch(stateWithTools(1), "invoices", undefined, call.signal, classifier);
+    call.abort();
+    expect(classifier.calls[1]!.options?.signal?.aborted).toBe(true);
   });
 
   it("rejects semantic regex, empty queries, and invalid modes without classifying", async () => {
