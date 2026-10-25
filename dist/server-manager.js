@@ -227,6 +227,7 @@ export class McpServerManager {
     metadataListChangedListener;
     listenStateChangedListener;
     connectionReplacedListener;
+    connectionInitializedListener;
     resourceUpdatedListeners = new Map();
     pendingMetadataPublications = new Map();
     elicitationConfig;
@@ -257,6 +258,10 @@ export class McpServerManager {
     }
     setConnectionReplacedListener(listener) {
         this.connectionReplacedListener = listener;
+    }
+    /** Called once a connection attempt's initialize handshake succeeds, before tool discovery. */
+    setConnectionInitializedListener(listener) {
+        this.connectionInitializedListener = listener;
     }
     publishMetadataChanged(name, expectedConnection, reason) {
         const current = this.connections.get(name);
@@ -992,6 +997,7 @@ export class McpServerManager {
             if (!clientConnected) {
                 await this.connectClientWithAbort(client, transport, requestOptions, signal);
             }
+            this.connectionInitializedListener?.(name);
             this.attachAdapterNotificationHandlers(name, client);
             const instructions = client.getInstructions?.();
             const protocolEra = client.getProtocolEra?.();

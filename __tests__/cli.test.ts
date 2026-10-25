@@ -591,6 +591,27 @@ describe("cli doctor", { timeout: 30_000 }, () => {
     expect(result.stdout).not.toContain("path-secret-value");
   });
 
+  it("says whether a server that timed out stalled while connecting or while listing tools", { timeout: 45_000 }, async () => {
+    // Answers initialize, then never answers tools/list.
+    const listStall = `require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method } = JSON.parse(line);
+      const reply = (body) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, ...body }) + "\\n");
+      if (method === "server/discover") reply({ error: { code: -32601, message: "not supported" } });
+      if (method === "initialize") reply({ result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "stall", version: "1.0.0" } } });
+    });`;
+    const context = setup({
+      mcpServers: {
+        connectStall: { command: process.execPath, args: ["-e", "process.stdin.resume()"] },
+        listStall: { command: process.execPath, args: ["-e", listStall] },
+      },
+    });
+
+    const result = await doctor([], context);
+
+    expect(result.stdout).toContain("connectStall: failed — did not finish connecting within 15s");
+    expect(result.stdout).toContain("listStall: failed — connected, but did not finish listing its tools, resources and prompts within 15s");
+  });
+
   it("reports OAuth servers without a sign-in and never starts an OAuth flow", async () => {
     const paths: string[] = [];
     const url = await listen((request, response) => {
@@ -758,6 +779,36 @@ describe("cli doctor", { timeout: 30_000 }, () => {
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
     }
+  });
+
+  it("names the field of an invalid tool list without printing what the server sent", async () => {
+    const url = await listen((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        const message = body ? JSON.parse(body) : {};
+        if (request.method !== "POST" || message.id === undefined) {
+          response.writeHead(request.method === "POST" ? 202 : 405).end();
+          return;
+        }
+        const result = message.method === "initialize"
+          ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "bad-list", version: "1.0.0" } }
+          : { tools: [
+            { name: "ok", inputSchema: { type: "object" } },
+            { name: "bad", inputSchema: { type: "object" }, annotations: "annotation-secret-value" },
+            // JSON.parse reads 1e999 as Infinity, which fails validation under a key the server chose.
+            { name: "badKey", inputSchema: { type: "object", properties: { "property-secret-name": "INFINITY" } } },
+          ] };
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }).replace('"INFINITY"', "1e999"));
+      });
+    });
+
+    const result = await doctor([], setup({ mcpServers: { badList: { url } } }));
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("badList: failed — server sent an invalid tools/list result: tools[1].annotations (expected object), tools[2].inputSchema.properties");
+    expect(result.stdout + result.stderr).not.toMatch(/annotation-secret-value|property-secret-name/);
   });
 
   it("reports tool counts and leaves no server process running after exit", async () => {

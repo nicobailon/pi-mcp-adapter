@@ -257,6 +257,7 @@ type ListenStateChangedListener = (serverName: string, state: McpListenState) =>
 type ResourceUpdatedListener = (serverName: string, uri: string) => void;
 /** Awaited before the replaced connection is disposed, so work on it can move to the fresh one first. */
 type ConnectionReplacedListener = (serverName: string, fresh: ServerConnection) => Promise<void>;
+type ConnectionInitializedListener = (serverName: string) => void;
 
 export type ToolRefreshResult = "updated" | "unchanged" | "superseded" | "refresh-timeout";
 
@@ -373,6 +374,7 @@ export class McpServerManager {
   private metadataListChangedListener: MetadataListChangedListener | undefined;
   private listenStateChangedListener: ListenStateChangedListener | undefined;
   private connectionReplacedListener: ConnectionReplacedListener | undefined;
+  private connectionInitializedListener: ConnectionInitializedListener | undefined;
   private resourceUpdatedListeners = new Map<string, {
     serverName: string;
     uri: string;
@@ -413,6 +415,11 @@ export class McpServerManager {
 
   setConnectionReplacedListener(listener: ConnectionReplacedListener | undefined): void {
     this.connectionReplacedListener = listener;
+  }
+
+  /** Called once a connection attempt's initialize handshake succeeds, before tool discovery. */
+  setConnectionInitializedListener(listener: ConnectionInitializedListener | undefined): void {
+    this.connectionInitializedListener = listener;
   }
 
   publishMetadataChanged(
@@ -1289,6 +1296,7 @@ export class McpServerManager {
       if (!clientConnected) {
         await this.connectClientWithAbort(client, transport, requestOptions, signal);
       }
+      this.connectionInitializedListener?.(name);
       this.attachAdapterNotificationHandlers(name, client);
 
       const instructions = client.getInstructions?.();
