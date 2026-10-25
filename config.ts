@@ -301,6 +301,9 @@ function getRemovedJevSettingNotices(cwd: string, overridePath?: string): string
   return getConfigSources(overridePath, cwd).flatMap((source) => {
     const settings = readSourceConfig(source.id, source.readPath)?.settings as Record<string, unknown> | undefined;
     if (settings?.jev === undefined) return [];
+    if (settings.jev === false) {
+      return [`${source.readPath}: settings.jev was replaced by settings.semanticSearch, and settings.jev: false no longer turns semantic search off. Set settings.semanticSearch to false to keep it off.`];
+    }
     return [`${source.readPath}: settings.jev was replaced by settings.semanticSearch, and semantic search now uses Pi's classifier models instead of a System One key. Move allowedServers there (semanticCandidateLimit is now candidateLimit and semanticMinProbability is minProbability), or run /mcp-adapter semantic setup.`];
   });
 }
@@ -1964,8 +1967,11 @@ export function writeSemanticSearchConfig(
   const source = isRecord(effectiveSettings) ? effectiveSettings : isRecord(current) ? current : {};
   const next = { ...source, allowedServers: [...new Set(allowedServers)].sort((a, b) => a.localeCompare(b)) };
   validateSemanticSearchSettings(next);
-  if (isRecord(current) && JSON.stringify(current) === JSON.stringify(next)) return { path: filePath, changed: false };
-  raw.settings = { ...settings, semanticSearch: next };
+  if (isRecord(current) && JSON.stringify(current) === JSON.stringify(next) && settings?.jev === undefined) return { path: filePath, changed: false };
+  // Setup is the migration path off settings.jev, so the file it writes stops repeating that notice.
+  const nextSettings: Record<string, unknown> = { ...settings, semanticSearch: next };
+  delete nextSettings.jev;
+  raw.settings = nextSettings;
   writeRawConfigObject(filePath, raw);
   return { path: filePath, changed: true };
 }

@@ -2231,7 +2231,7 @@ describe("config discovery", () => {
     expect(getLegacyMcpMigrationNotices(project)).toEqual([
       `${adapterPath}: pi-mcp-adapter no longer has mcpScript, so settings.scriptMode does nothing. Remove it, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`,
       `${adapterPath}: ${replaced}`,
-      `${projectPath}: ${replaced}`,
+      `${projectPath}: settings.jev was replaced by settings.semanticSearch, and settings.jev: false no longer turns semantic search off. Set settings.semanticSearch to false to keep it off.`,
     ]);
   });
 

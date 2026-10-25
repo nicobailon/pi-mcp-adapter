@@ -32,10 +32,10 @@ const ui = () => ({ select: vi.fn(async () => "Use all 2 enabled servers (defaul
 afterEach(() => vi.unstubAllEnvs());
 
 describe("semantic search setup", () => {
-  it("writes the allowlist for confirmed servers, names the model, and keeps other settings", async () => {
+  it("writes the allowlist for confirmed servers, names the model, keeps other settings, and drops settings.jev", async () => {
     const root = mkdtempSync(join(tmpdir(), "mcp-semantic-setup-"));
     const path = join(root, "mcp.json");
-    writeFileSync(path, '{"settings":{"toolPrefix":"short","semanticSearch":{"candidateLimit":40}},"custom":"kept"}\n');
+    writeFileSync(path, '{"settings":{"toolPrefix":"short","jev":{"allowedServers":["alpha"]},"semanticSearch":{"candidateLimit":40}},"custom":"kept"}\n');
     const prompts = ui();
 
     const ctx = { hasUI: true, ui: prompts, modelRegistry: modelRegistry(["typesafe/jev-latest"]) };
