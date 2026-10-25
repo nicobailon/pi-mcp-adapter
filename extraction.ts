@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { throwIfAborted } from "./abort.ts";
-import { validateExtractionSettings, type ExtractionModelId } from "./extraction-settings.ts";
+import { EXTRACTION_MODELS, validateExtractionSettings, type ExtractionModelId } from "./extraction-settings.ts";
 import { saveMcpOutputText } from "./mcp-output-guard.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
@@ -129,7 +129,7 @@ const EXTRACT_MAX_BYTES = 100 * 1024;
 const EXTRACT_THRESHOLD = 0.8;
 const REQUEST_TIMEOUT_MS = 5_000;
 const CLOUDFLARE_ID = /^[A-Za-z0-9_-]{1,64}$/;
-const WORKERS_AI = "cloudflare-workers-ai";
+const GATEWAY = "cloudflare-ai-gateway";
 const VALUE_PATTERNS: Record<string, RegExp> = {
   date: /^\d{4}-\d{2}-\d{2}$/,
   time: /^\d{2}:\d{2}(:\d{2})?$/,
@@ -138,26 +138,52 @@ const VALUE_PATTERNS: Record<string, RegExp> = {
 
 interface Route { model: ExtractionModelId; provider: string; url: string; headers: Record<string, string> }
 
+function providerOf(model: ExtractionModelId): string {
+  return model.slice(0, model.indexOf("/"));
+}
+
+function isConfigured(registry: ExtractionRegistry, provider: string): boolean {
+  try {
+    return registry.getProviderAuthStatus(provider).configured === true;
+  } catch {
+    return false;
+  }
+}
+
+/** The configured model, or the first route Pi has a credential for, with its URL and auth header from Pi. */
 async function resolveRoute(registry: ExtractionRegistry, configured: ExtractionModelId | undefined): Promise<Route> {
-  const model = configured ?? "cloudflare-workers-ai/clairic";
-  if (model !== "cloudflare-workers-ai/clairic") fail("unavailable", `${model} is not supported yet.`);
+  const model = configured ?? EXTRACTION_MODELS.find(id => isConfigured(registry, providerOf(id)))
+    ?? fail("no_credentials", "Extraction needs Cloudflare credentials in Pi: CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID, or the cloudflare-workers-ai login.");
+  const provider = providerOf(model);
+  const gateway = provider === GATEWAY;
   let resolved: unknown;
   try {
-    resolved = await registry.getProviderAuth(WORKERS_AI);
+    resolved = await registry.getProviderAuth(provider);
   } catch {
     resolved = undefined;
   }
-  const { auth, env } = (resolved ?? {}) as { auth?: { apiKey?: unknown }; env?: Record<string, unknown> };
-  const apiKey = typeof auth?.apiKey === "string" ? auth.apiKey.trim() : "";
+  const { auth, env } = (resolved ?? {}) as { auth?: { apiKey?: unknown; headers?: Record<string, unknown> }; env?: Record<string, unknown> };
   const account = env?.CLOUDFLARE_ACCOUNT_ID;
-  if (!apiKey || typeof account !== "string" || !CLOUDFLARE_ID.test(account)) {
-    fail("no_credentials", `${WORKERS_AI} has no complete credential in Pi (key and account id).`);
+  const gatewayId = env?.CLOUDFLARE_GATEWAY_ID;
+  const credential = gateway ? auth?.headers?.["cf-aig-authorization"] : auth?.apiKey;
+  const usable = typeof credential === "string" && credential.trim().length > 0
+    && typeof account === "string" && CLOUDFLARE_ID.test(account)
+    && (!gateway || (typeof gatewayId === "string" && CLOUDFLARE_ID.test(gatewayId)));
+  if (!usable) {
+    fail("no_credentials", `${provider} has no complete credential in Pi (key and account id${gateway ? ", gateway id" : ""}).`);
   }
-  return {
-    model, provider: WORKERS_AI,
-    url: `https://api.cloudflare.com/client/v4/accounts/${account as string}/ai/run/@cf/cloudflare/clairic`,
-    headers: { Authorization: `Bearer ${apiKey}` },
-  };
+  const key = (credential as string).trim();
+  return gateway
+    ? {
+      model, provider,
+      url: `https://gateway.ai.cloudflare.com/v1/${account as string}/${gatewayId as string}/workers-ai/@cf/cloudflare/clairic`,
+      headers: { "cf-aig-authorization": key },
+    }
+    : {
+      model, provider,
+      url: `https://api.cloudflare.com/client/v4/accounts/${account as string}/ai/run/@cf/cloudflare/clairic`,
+      headers: { Authorization: `Bearer ${key}` },
+    };
 }
 
 function isProbability(value: unknown): value is number {

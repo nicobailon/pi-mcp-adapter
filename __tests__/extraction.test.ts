@@ -64,11 +64,11 @@ function fieldsOf(value: unknown): Record<string, ExtractField> {
 }
 const FIELDS = fieldsOf({ total: { type: "number", description: "Order total" }, due: "date", coupon: "text", carrier: "text" });
 
-function createState(content: unknown[], options: { isError?: boolean; allowed?: string[]; owner?: AbortSignal } = {}) {
+function createState(content: unknown[], options: { isError?: boolean; allowed?: string[]; owner?: AbortSignal; model?: string } = {}) {
   const callTool = vi.fn().mockResolvedValue({ content, ...(options.isError ? { isError: true } : {}) });
   const connection = { status: "connected", client: { callTool }, tools: [{ name: "get", description: "Get" }], resources: [], prompts: [] };
   return {
-    config: { mcpServers: { demo: { command: "demo" } }, settings: { extraction: { allowedServers: options.allowed ?? ["demo"] } } },
+    config: { mcpServers: { demo: { command: "demo" } }, settings: { extraction: { allowedServers: options.allowed ?? ["demo"], ...(options.model ? { model: options.model } : {}) } } },
     toolMetadata: new Map([["demo", [{ name: "demo_get", originalName: "get", description: "Get" }]]]),
     resourceCounts: new Map(), promptMetadata: new Map(), promptMetadataLive: new Set(), serverInstructions: new Map(),
     approvedToolCalls: new Map(), approvalEvents: { emit: vi.fn() },
@@ -250,5 +250,51 @@ describe("applyExtraction on the Workers AI route", () => {
     const plain = await executeCall(state, "demo_get", {});
 
     await expect(applyExtraction(state, plain, FIELDS, registry())).rejects.toThrow("MCP extension session restarted");
+  });
+});
+
+describe("applyExtraction routes", () => {
+  const GATEWAY_AUTH = {
+    auth: { headers: { "cf-aig-authorization": "Bearer gw-key", Authorization: null, "x-api-key": null } },
+    env: { CLOUDFLARE_ACCOUNT_ID: "acct_1", CLOUDFLARE_GATEWAY_ID: "gw_1" },
+  };
+  const WORKERS_AUTH = { auth: { apiKey: "cf-key" }, env: { CLOUDFLARE_ACCOUNT_ID: "acct_1" } };
+  const routedRegistry = (configured: string[]) => ({
+    getProviderAuth: vi.fn(async (provider: string) => provider === "cloudflare-ai-gateway" ? GATEWAY_AUTH : WORKERS_AUTH),
+    getProviderAuthStatus: (provider: string) => ({ configured: configured.includes(provider) }),
+  });
+  const GATEWAY_URL = "https://gateway.ai.cloudflare.com/v1/acct_1/gw_1/workers-ai/@cf/cloudflare/clairic";
+  const answered = () => clairic(() => ok({ answers: { total: ANSWERS.total }, truncated: false }));
+
+  it("sends to the AI Gateway with Pi's cf-aig-authorization and no Authorization header", async () => {
+    const fetch = answered();
+    const modelRegistry = routedRegistry([]);
+    const result = await callWithExtract(createState([{ type: "text", text: ORDER }], { model: "cloudflare-ai-gateway/clairic" }), fieldsOf({ total: "number" }), modelRegistry);
+
+    expect(modelRegistry.getProviderAuth).toHaveBeenCalledWith("cloudflare-ai-gateway");
+    expect(fetch.mock.calls[0]![0]).toBe(GATEWAY_URL);
+    expect(fetch.mock.calls[0]![1].headers).toEqual({ "cf-aig-authorization": "Bearer gw-key", "Content-Type": "application/json" });
+    expect(result.details).toMatchObject({ extraction: { model: "cloudflare-ai-gateway/clairic", status: "extracted" } });
+  });
+
+  it.each([
+    [["cloudflare-workers-ai", "cloudflare-ai-gateway"], URL],
+    [["cloudflare-ai-gateway"], GATEWAY_URL],
+  ])("without a model, uses Workers AI, then the gateway, by Pi's credentials (%j)", async (configured, url) => {
+    const fetch = answered();
+    await callWithExtract(createState([{ type: "text", text: ORDER }]), fieldsOf({ total: "number" }), routedRegistry(configured));
+    expect(fetch.mock.calls[0]![0]).toBe(url);
+  });
+
+  it.each([
+    ["no Cloudflare credential", routedRegistry([]), undefined, "Extraction needs Cloudflare credentials in Pi: CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID, or the cloudflare-workers-ai login."],
+    ["a gateway id that is not an id", { getProviderAuth: async () => ({ ...GATEWAY_AUTH, env: { ...GATEWAY_AUTH.env, CLOUDFLARE_GATEWAY_ID: "gw/../x" } }), getProviderAuthStatus: () => ({ configured: true }) },
+      "cloudflare-ai-gateway/clairic", "cloudflare-ai-gateway has no complete credential in Pi (key and account id, gateway id)."],
+  ])("sends nothing with %s", async (_label, modelRegistry, model, message) => {
+    const fetch = answered();
+    const result = await callWithExtract(createState([{ type: "text", text: ORDER }], model ? { model } : {}), fieldsOf({ total: "number" }), modelRegistry);
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(textOf(result)).toBe(`Extraction failed (no_credentials): ${message}\n\n${ORDER}`);
   });
 });
