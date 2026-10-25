@@ -269,7 +269,7 @@ export async function semanticSearch(
           id: `s${index}`,
           name,
           tools: eligible.filter(match => match.server === name).slice(0, SERVER_TOOL_NAMES)
-            .map(match => match.tool.originalName.slice(0, SERVER_TOOL_NAME_LENGTH)),
+            .map(match => Array.from(match.tool.originalName).slice(0, SERVER_TOOL_NAME_LENGTH).join("")),
         })),
       },
       questions: {
