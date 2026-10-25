@@ -37,6 +37,7 @@ import { createRetryableLoader } from "./lazy-loader.ts";
 import { toToolParameters } from "./tool-parameters.ts";
 import { readPanelOpenKeys } from "./panel-keys.ts";
 import { getAgentPath } from "./agent-dir.ts";
+import { showUpgradeNotice } from "./upgrade-notice.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
 export type { ServerEntry } from "./types.ts";
@@ -1666,6 +1667,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   pi.on("session_start", async (_event, ctx) => {
     sessionCtx = null;
+    // A host that embeds the adapter with its own config ships it inside another package; its users never installed this one.
+    if (options.config === undefined && options.configPath === undefined) {
+      void showUpgradeNotice(ctx).catch((error) => console.error("Failed to show the pi-mcp-adapter upgrade notice:", error));
+    }
     sessionMigrationNotices = programmaticConfig
       ? []
       : getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath);

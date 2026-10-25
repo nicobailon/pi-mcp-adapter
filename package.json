@@ -176,6 +176,7 @@
     "mcp-tasks.ts",
     "task-jobs.ts",
     "task-entries.ts",
+    "upgrade-notice.ts",
     "mcp-trace.ts",
     "logger.ts",
     "errors.ts",
