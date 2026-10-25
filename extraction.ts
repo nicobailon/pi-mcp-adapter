@@ -199,7 +199,10 @@ function readAnswers(fields: Record<string, ExtractField>, body: unknown, model:
     else if (typeof confidence === "number" && confidence >= EXTRACT_THRESHOLD) out[name] = { type, status: "extracted", value, ...scores };
     else out[name] = { type, status: "uncertain", value: null, guess: value, ...scores };
   }
-  return { fields: out, truncated: result.truncated === true, ...(result.usage !== undefined ? { usage: result.usage } : {}) };
+  const usage = result.usage && typeof result.usage === "object"
+    ? Object.fromEntries(Object.entries(result.usage).filter(([, count]) => typeof count === "number" && Number.isFinite(count)))
+    : {};
+  return { fields: out, truncated: result.truncated === true, ...(Object.keys(usage).length > 0 ? { usage } : {}) };
 }
 
 async function sendToClairic(route: Route, text: string, fields: Record<string, ExtractField>, referenceDate: string, ownedSignal: AbortSignal | undefined) {
@@ -248,6 +251,47 @@ function cutUtf8(text: string, maxBytes: number): { text: string; cut: boolean }
   return { text: bytes.subarray(0, end).toString("utf8"), cut: true };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The raw MCP result `executeCall` records in `details.mcpResult`, inline or, when it was too big, in its saved file. */
+async function recordedMcpResult(details: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
+  const recorded = details.mcpResult;
+  if (!isRecord(recorded)) return undefined;
+  if (recorded.omitted !== true || typeof recorded.rawResultBytes !== "number") return recorded;
+  if (typeof recorded.fullResultPath !== "string") return undefined;
+  try {
+    const parsed: unknown = JSON.parse(await readFile(recorded.fullResultPath, "utf8"));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The text the tool itself returned: its text blocks, embedded text resources and structuredContent, never the
+ * adapter's placeholder, UI-session note or truncation notice. Script deliveries record no raw result, but their
+ * content is unguarded, so it is the tool's text unless a UI session or the empty placeholder was added.
+ */
+async function toolOwnText(result: ToolResult): Promise<string | undefined> {
+  const details = (result.details ?? {}) as Record<string, unknown>;
+  const raw = await recordedMcpResult(details);
+  if (raw === undefined) {
+    if (details.mcpResult !== undefined || details.outputGuard !== undefined || details.uiOpen !== undefined) return undefined;
+    const texts = result.content.flatMap(block => block.type === "text" ? [block.text] : []);
+    return texts.length === 1 && texts[0] === "(empty result)" ? "" : texts.join("\n");
+  }
+  const parts: string[] = [];
+  for (const block of Array.isArray(raw.content) ? raw.content as unknown[] : []) {
+    if (!isRecord(block)) continue;
+    if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
+    else if (block.type === "resource" && isRecord(block.resource) && typeof block.resource.text === "string") parts.push(block.resource.text);
+  }
+  if (raw.structuredContent !== undefined && raw.structuredContent !== null) parts.push(JSON.stringify(raw.structuredContent, null, 2));
+  return parts.join("\n");
+}
+
 function localDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
@@ -285,18 +329,13 @@ export async function applyExtraction(
     const line = `Extraction skipped: server "${server ?? "unknown"}" is not in settings.extraction.allowedServers.`;
     return skip("server_not_allowed", line.slice("Extraction skipped: ".length), line);
   }
-  const preview = result.content.filter(block => block.type === "text").map(block => (block as { text: string }).text).join("\n");
-  const fullPath = details.outputGuard?.fullOutputPath;
-  let source = preview;
-  let truncated = details.outputGuard?.truncated === true && fullPath === undefined;
-  if (fullPath !== undefined) {
-    try {
-      source = await readFile(fullPath, "utf8");
-    } catch {
-      truncated = true;
-    }
+  const source = await toolOwnText(result);
+  if (source === undefined) {
+    return skip("no_source", "The tool's own text is not available.", "Extraction skipped: the tool's own text is not available.");
   }
   if (source.trim().length === 0) return skip("no_text", "The result has no text.", "Extraction skipped: the result has no text.");
+  const fullPath = details.outputGuard?.fullOutputPath;
+  let truncated = false;
 
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   const referenceDate = localDate(new Date());

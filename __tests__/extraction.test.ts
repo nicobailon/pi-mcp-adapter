@@ -126,7 +126,7 @@ describe("applyExtraction on the Workers AI route", () => {
   });
 
   it("returns only the values, withholding one below 0.80 as uncertain, and saves the full result", async () => {
-    clairic(() => ok({ model: "clairic", answers: ANSWERS, truncated: false, usage: { input_tokens: 40 } }));
+    clairic(() => ok({ model: "clairic", answers: ANSWERS, truncated: false, usage: { input_tokens: 40, note: SECRET, ratio: Number.NaN } }));
     const result = await callWithExtract(createState([{ type: "text", text: ORDER }]));
 
     const text = JSON.parse(textOf(result));
@@ -137,10 +137,11 @@ describe("applyExtraction on the Workers AI route", () => {
     });
     expect(Object.keys(text)).toEqual(["values", "uncertain", "fullResult"]);
     expect(readFileSync(text.fullResult, "utf8")).toBe(ORDER);
+    expect((result.details as any).extraction.usage).toEqual({ input_tokens: 40 });
     expect(result.details).toMatchObject({
       mode: "call", server: "demo", tool: "get", canonicalTool: "demo_get",
       extraction: {
-        model: "cloudflare-workers-ai/clairic", status: "partial", fullResultPath: text.fullResult, usage: { input_tokens: 40 },
+        model: "cloudflare-workers-ai/clairic", status: "partial", fullResultPath: text.fullResult,
         fields: {
           total: { type: "number", status: "extracted", value: 42.1, confidence: 0.99, pNull: 0.01 },
           coupon: { type: "text", status: "null", value: null },
@@ -167,6 +168,7 @@ describe("applyExtraction on the Workers AI route", () => {
     ["a server outside the allowlist", createState([{ type: "text", text: ORDER }], { allowed: ["other"] }), 'Extraction skipped: server "demo" is not in settings.extraction.allowedServers.', "server_not_allowed"],
     ["a tool error", createState([{ type: "text", text: "boom" }], { isError: true }), "Extraction skipped: the tool returned an error.", "tool_error"],
     ["an image-only result", createState([{ type: "image", data: "aGk=", mimeType: "image/png" }]), "Extraction skipped: the result has no text.", "no_text"],
+    ["an empty result", createState([]), "Extraction skipped: the result has no text.", "no_text"],
   ])("sends nothing for %s and keeps the call's result after one line", async (_label, state, line, code) => {
     const fetch = clairic(() => ok({}));
     const plain = await executeCall(state, "demo_get", {});
