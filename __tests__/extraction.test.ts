@@ -162,6 +162,13 @@ describe("applyExtraction on the Workers AI route", () => {
     });
   });
 
+  it("accepts real dates in any year, including years before 100", async () => {
+    clairic(() => ok({ model: "clairic", answers: { ...ANSWERS, due: { type: "date", value: "0048-02-29", confidence: 0.99 } } }));
+    const result = await callWithExtract(createState([{ type: "text", text: ORDER }]));
+
+    expect(JSON.parse(textOf(result)).values.due).toBe("0048-02-29");
+  });
+
   it("keeps the original result after the values when the full result can't be saved", async () => {
     clairic(() => ok({ model: "clairic", answers: ANSWERS, truncated: false }));
     vi.stubEnv("TMPDIR", "/nonexistent-pi-mcp-tmp");
