@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -5,6 +8,8 @@ export default defineConfig({
     globals: true,
     environment: "node",
     env: {
+      // A test that starts a session without its own HOME must never write state into the developer's real Pi agent dir.
+      HOME: mkdtempSync(join(tmpdir(), "pi-mcp-test-home-")),
       PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory",
       // Cache tests opt in explicitly to keep existing tests platform-neutral.
       PI_MCP_ADAPTER_DISABLE_AUTH_CACHE: "1",
