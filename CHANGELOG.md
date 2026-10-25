@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `pi-mcp-adapter doctor`, the shell command that checks each configured server, failed to start with "Unable to load doctor command modules" when the adapter was installed with `pi install`, the normal way to install it. It exited 1, the same as when a server fails. It now starts and checks your servers. Thanks to [@felipe-saavedra](https://github.com/felipe-saavedra) for [#880](https://github.com/nicobailon/pi-mcp-adapter/issues/880).
+- When Pi was installed with Pi's own installer, `pi-mcp-adapter doctor` couldn't read Pi's project trust and reported every project server as blocked, even ones that load fine in a Pi session. Doctor now finds Pi through the `pi` launcher that installer creates. Thanks to [@amchen2310](https://github.com/amchen2310) for [#896](https://github.com/nicobailon/pi-mcp-adapter/issues/896).
 - When an HTTP server accepted the connection but then sent something the MCP SDK rejects, such as an invalid tool list, the error ended with "this URL does not appear to speak MCP", which sent you looking at the wrong problem. Errors after a successful connection now show only the server's actual failure. The endpoint check still runs when the connection itself fails. Thanks to [@blalor](https://github.com/blalor) for reporting [#881](https://github.com/nicobailon/pi-mcp-adapter/issues/881).
 
 ## [6.0.0] - 2026-10-22
