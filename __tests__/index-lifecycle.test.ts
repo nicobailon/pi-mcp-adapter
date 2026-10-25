@@ -171,6 +171,7 @@ vi.mock("../proxy-modes.ts", async () => {
   executeStatus: mocks.executeStatus,
   resolveDescribeTarget: mocks.resolveDescribeTarget,
   executeUiMessages: mocks.executeUiMessages,
+  parseExtractFields: (await vi.importActual<typeof import("../extraction.ts")>("../extraction.ts")).parseExtractFields,
   };
 });
 
@@ -2391,6 +2392,37 @@ describe("mcpAdapter session lifecycle", () => {
     expect(JSON.stringify(argsSchema)).not.toContain("patternProperties");
     expect(proxyTool.parameters.properties.server.description).toContain("describe operations");
     expect(proxyTool.parameters.properties.searchMode.enum).toEqual(["lexical", "semantic"]);
+  });
+
+  it("adds the extract parameter only when settings.extraction is configured, leaving every other parameter as it was", async () => {
+    const plain = registeredTool((await loadAdapter()).api, "mcp").parameters;
+    vi.resetModules();
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: { extraction: { allowedServers: ["demo"] } } });
+    const configured = registeredTool((await loadAdapter()).api, "mcp").parameters;
+
+    expect(plain.properties).not.toHaveProperty("extract");
+    const { extract, ...rest } = configured.properties;
+    expect(JSON.stringify({ ...configured, properties: rest })).toBe(JSON.stringify(plain));
+    expect(extract).toMatchObject({ type: "object", additionalProperties: true });
+    expect(extract.description).toContain("return only these typed values");
+  });
+
+  it.each([
+    [{}, { a: "number" }, "Extraction is not configured. Set settings.extraction.allowedServers to use extract.", "extraction_not_configured"],
+    [{ extraction: { allowedServers: ["demo"] } }, { a: "colour" }, 'Invalid extract: field "a" has an unknown type.', "invalid_extract"],
+    [{ extraction: { allowedServers: ["demo"] } }, {}, "Invalid extract: extract needs 1 to 16 fields.", "invalid_extract"],
+  ])("refuses extract before any MCP call (settings %j, extract %j)", async (settings, extract, text, error) => {
+    const state = createState();
+    state.config = { mcpServers: {}, settings };
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { api, handlers } = await loadAdapter();
+    await handlers.get("session_start")?.({}, {});
+
+    const result = await registeredTool(api, "mcp").execute("call-1", { tool: "demo_search", extract });
+
+    expect(result.content).toEqual([{ type: "text", text }]);
+    expect(result.details).toMatchObject({ mode: "call", error });
+    expect(mocks.executeCall).not.toHaveBeenCalled();
   });
 
   it("forwards explicit semantic search mode, the request signal, and Pi's classifier registry", async () => {
@@ -5342,6 +5374,21 @@ describe("directTools: \"search\" — registered inactive, activated by search o
           expect(executeTool).toHaveBeenCalledWith("mcp__script__close_stale", { repo: "a/b" });
           expect(result).toEqual(ran);
         }
+        expect(mocks.executeCall).not.toHaveBeenCalled();
+      });
+
+      it("refuses extract on a script tool without running it", async () => {
+        const { api, state } = await bootScripts({ close_stale: closeStale }, eager, { extraction: { allowedServers: ["boot"] } });
+        await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
+        const executeTool = vi.fn();
+
+        const result = await registeredTool(api, "mcp").execute("mcp-1", { tool: "close_stale", args: { repo: "a/b" }, extract: { n: "number" } }, undefined, undefined, { executeTool, tools: [] });
+
+        expect(result).toEqual({
+          content: [{ type: "text", text: "extract works only with MCP tools, not script tools." }],
+          details: { mode: "call", error: "extract_not_supported" },
+        });
+        expect(executeTool).not.toHaveBeenCalled();
         expect(mocks.executeCall).not.toHaveBeenCalled();
       });
 

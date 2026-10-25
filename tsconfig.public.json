@@ -13,6 +13,7 @@
   },
   "include": [
     "config.ts",
+    "extraction-settings.ts",
     "metadata-cache.ts",
     "mcp-bearer-store.ts",
     "secure-keyring.ts",

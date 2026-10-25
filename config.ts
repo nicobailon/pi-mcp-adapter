@@ -9,6 +9,7 @@ import { getAgentPluginSummaries, loadAgentPluginConfigs, type AgentPluginSummar
 import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "./agent-plugin-provenance.ts";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.ts";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.ts";
+import { validateExtractionSettings } from "./extraction-settings.ts";
 import { validateSemanticSearchSettings } from "./semantic-settings.ts";
 import { parseScriptTools } from "./script-tools.ts";
 import { formatServerNamespace, isServerDisabled, type ClaudePluginConfig, type HostConfigDiscovery, type McpConfig, type OAuthConfig, type ServerEntry, type McpSettings, type ImportKind, type ScriptToolDefinition, type ServerProvenance } from "./types.ts";
@@ -1521,6 +1522,7 @@ function parseSettings(value: unknown): McpSettings {
   if (!isRecord(value)) throw new Error("settings must be an object");
   const settings = { ...value } as McpSettings;
   if (value.semanticSearch !== undefined) validateSemanticSearchSettings(value.semanticSearch);
+  if (value.extraction !== undefined) validateExtractionSettings(value.extraction);
   return settings;
 }
 

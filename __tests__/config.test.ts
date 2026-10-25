@@ -2631,6 +2631,32 @@ describe("semantic search config validation", () => {
   });
 });
 
+describe("extraction config validation", () => {
+  it.each([
+    [{ allowedServers: ["safe", "safe"], model: "cloudflare-ai-gateway/clairic" }, undefined],
+    [{ allowedServers: [] }, "settings.extraction.allowedServers must name at least one server"],
+    [{ model: "cloudflare-workers-ai/clairic" }, "settings.extraction.allowedServers must name at least one server"],
+    [{ allowedServers: ["safe"], route: "x" }, "settings.extraction.route is not supported"],
+    [{ allowedServers: ["safe"], model: "openrouter/clairic" }, 'settings.extraction.model must be "cloudflare-workers-ai/clairic" or "cloudflare-ai-gateway/clairic"'],
+  ])("loads %j only when valid, otherwise drops the file with the reason", async (extraction, reason) => {
+    const root = mkdtempSync(join(tmpdir(), "pi-mcp-extraction-config-"));
+    const path = join(root, "mcp.json");
+    writeJson(path, { settings: { extraction }, mcpServers: { safe: { command: "safe" } } });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(path, root);
+    if (reason === undefined) {
+      expect(config.settings?.extraction).toEqual(extraction);
+      expect(config.mcpServers).toHaveProperty("safe");
+    } else {
+      expect(config.mcpServers).not.toHaveProperty("safe");
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.objectContaining({ message: reason }));
+    }
+    warning.mockRestore();
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
 describe("settings.exposeResources", () => {
   it("defaults servers to settings.exposeResources when not explicitly configured", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-mcp-expose-resources-"));

@@ -32,6 +32,9 @@ import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { describeProjectServerBlock, disabledServerReason } from "./project-server-trust.ts";
 import { findScriptTool } from "./script-tool-surface.ts";
 
+// index.ts reaches field parsing through this lazily loaded module, so startup does not load it.
+export { parseExtractFields } from "./extraction.ts";
+
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 /**
  * Runs a resolved, connected and validated proxy call as a nested Pi call of the tool registered

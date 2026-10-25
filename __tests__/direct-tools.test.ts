@@ -232,6 +232,19 @@ describe("buildProxyDescription", () => {
     expect(buildProxyDescription({ ...config, settings: { allowScriptToolSave: true } })).toBe(withSave);
   });
 
+  it("documents extract in one line only when settings.extraction is configured", () => {
+    const toolCall = `  mcp({ tool: "name", args: { key: "value" } })         → Call a tool (object args; JSON string also accepted)\n`;
+    const extract = `  mcp({ tool: "name", args, extract: { total: "number" } }) → Call a tool and return only typed values from its result\n`;
+    const config: McpConfig = { mcpServers: { demo: { command: "demo" } } };
+    const plain = buildProxyDescription(config);
+    const configured = buildProxyDescription({ ...config, settings: { extraction: { allowedServers: ["demo"] } } });
+
+    expect(configured).toBe(plain.replace(toolCall, toolCall + extract));
+    expect(plain).not.toContain("extract");
+    expect(buildProxyDescription({ ...config, settings: { extraction: false } })).toBe(plain);
+    expect(buildProxyDescription({ ...config, settings: { extraction: { allowedServers: [] } } })).toBe(plain);
+  });
+
   it("documents the ui-messages action", () => {
     const config: McpConfig = {
       mcpServers: {

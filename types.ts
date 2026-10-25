@@ -668,6 +668,13 @@ export interface McpSettings {
     /** Abstain below this top probability, 0..1. Default 0.2. */
     minProbability?: number;
   };
+  /** Read typed values from MCP tool results with an extraction model. Off unless set. Sends tool results to the provider. */
+  extraction?: false | {
+    /** Servers whose tool results may be sent. Required, at least one. */
+    allowedServers: string[];
+    /** "cloudflare-workers-ai/clairic" or "cloudflare-ai-gateway/clairic". Unset: the first of those two Pi has a credential for. */
+    model?: string;
+  };
   /** Render MCP tool results as compact self-rendered rows by default, or as the legacy boxed row. */
   toolResultRendering?: "compact" | "boxed";
   /** Number of result text lines to show before expansion. Supports 1, 2, or 3. Defaults to 1 in compact mode and 3 in boxed mode. */

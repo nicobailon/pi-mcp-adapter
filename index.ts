@@ -11,6 +11,7 @@ import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import { cloneMcpConfig, discoverConfiguredClaudePluginSkills, getLegacyMcpMigrationNotices, getPiGlobalConfigPath, getPiMcpAuthPath, getProjectConfigPath, getProjectPiConfigPath, isExclusiveConfigMode, loadMcpConfig, loadMcpConfigWithSources, resolveConfiguredClaudePluginMcp, setPiMcpConfigEnabled, translatePiMcpServer, writeProjectServerDisabledOverride, writeSharedServerEntry } from "./config.ts";
 import { approveProjectScriptTool, approveProjectServer, describeBlockedScriptTool, excludeProjectServersAtLoadTime, hasProjectScriptToolDefinitions, hasProjectServerDefinitions, loadedScriptToolIssues } from "./project-server-trust.ts";
+import { isExtractionConfigured } from "./extraction-settings.ts";
 import { buildProxyDescription, getLargeDirectToolsAdvisory, getMissingConfiguredDirectToolServers, prepareDirectToolArguments, resolveDirectTools } from "./direct-tool-surface.ts";
 import { deferredToolKey, resolveDeferredToolSpecs, type DeferredToolSpec } from "./deferred-tool-surface.ts";
 import { findScriptTool, nestedScriptToolResult, resolveScriptToolSpecs, runScriptTool, SCRIPT_TOOL_NAMESPACE, scriptToolNameConflict, scriptToolOwnerKey, type ScriptToolReservation, type ScriptToolSpec } from "./script-tool-surface.ts";
@@ -2705,7 +2706,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     return `Saved script tool "${name}", but it is not registered in this session. ${issue ?? `${toolName} was left out of the tool surface.`}`;
   }
 
-  function registerProxyTool(description: string, allowScriptToolSave: boolean): void {
+  function registerProxyTool(description: string, allowScriptToolSave: boolean, extraction: boolean): void {
     callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)({
       name: "mcp",
       label: "MCP",
@@ -2722,6 +2723,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             description: 'Arguments as a JSON object (e.g., { "key": "value" })',
           }),
         ], { description: "Tool arguments as a JSON object, or as a JSON string encoding one" })),
+        ...(extraction ? { extract: Type.Optional(Type.Object({}, {
+          additionalProperties: true,
+          description: 'With tool: return only these typed values from its result instead of the whole text, e.g. { total: "number", due: { type: "date", description: "Payment due date" } }. Types: text, number, integer, date, time, datetime, duration.<unit>, list, list.number, list.date. The full result is saved to a file.',
+        })) } : {}),
         connect: Type.Optional(Type.String({ description: "Server name to connect (lazy connect + metadata refresh)" })),
         describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
         instructions: Type.Optional(Type.String({ description: "Server name to show that server's usage instructions" })),
@@ -2744,6 +2749,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       async execute(toolCallId: string, params: {
         tool?: string;
         args?: string | Record<string, unknown>;
+        extract?: unknown;
         connect?: string;
         describe?: string;
         instructions?: string;
@@ -2879,8 +2885,29 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return proxyModes.executeCancelTask(proxyState, params.cancelTask);
         }
         if (params.tool) {
+          if (params.extract !== undefined) {
+            if (!isExtractionConfigured(proxyState.config.settings)) {
+              return {
+                content: [{ type: "text" as const, text: "Extraction is not configured. Set settings.extraction.allowedServers to use extract." }],
+                details: { mode: "call", error: "extraction_not_configured" },
+              };
+            }
+            const parsed = proxyModes.parseExtractFields(params.extract);
+            if (!parsed.ok) {
+              return {
+                content: [{ type: "text" as const, text: `Invalid extract: ${parsed.message}.` }],
+                details: { mode: "call", error: "invalid_extract", message: parsed.message },
+              };
+            }
+          }
           // A script tool wins over an MCP tool of the same name; mcp({ tool, server }) reaches the MCP one.
           const scriptTool = params.server === undefined ? findScriptTool(gatewayScriptTools(), params.tool) : undefined;
+          if (scriptTool && params.extract !== undefined) {
+            return {
+              content: [{ type: "text" as const, text: "extract works only with MCP tools, not script tools." }],
+              details: { mode: "call", error: "extract_not_supported" },
+            };
+          }
           if (scriptTool) {
             const mcpMatch = proxyModes.resolveDescribeTarget(proxyState, params.tool);
             const shadowed = "error" in mcpMatch ? undefined : { server: mcpMatch.server, tool: params.tool };
@@ -2966,7 +2993,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const description = buildProxyDescription(config);
       if (!proxyToolRegistered || proxyToolDescription !== description) {
         finalizationRegistrations?.add("mcp");
-        registerProxyTool(description, config.settings?.allowScriptToolSave !== false);
+        registerProxyTool(description, config.settings?.allowScriptToolSave !== false, isExtractionConfigured(config.settings));
         finalizationGuard?.();
       }
       const activeTools = getActiveToolsIfReady();

@@ -163,6 +163,8 @@
     "secure-keyring.ts",
     "semantic-settings.ts",
     "semantic-search.ts",
+    "extraction-settings.ts",
+    "extraction.ts",
     "mcp-keyring-helper.cjs",
     "mcp-oauth-provider.ts",
     "mcp-callback-server.ts",

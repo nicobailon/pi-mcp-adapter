@@ -9,6 +9,7 @@ import { getAgentPluginSummaries, loadAgentPluginConfigs } from "./agent-plugin-
 import { cloneBuiltInAgentPluginEntry, isBuiltInAgentPlugin, mergeBuiltInAgentPluginEntries } from "./agent-plugin-provenance.js";
 import { loadClaudePluginBundles } from "./claude-plugin-loader.js";
 import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
+import { validateExtractionSettings } from "./extraction-settings.js";
 import { validateSemanticSearchSettings } from "./semantic-settings.js";
 import { parseScriptTools } from "./script-tools.js";
 import { formatServerNamespace, isServerDisabled } from "./types.js";
@@ -1346,6 +1347,8 @@ function parseSettings(value) {
     const settings = { ...value };
     if (value.semanticSearch !== undefined)
         validateSemanticSearchSettings(value.semanticSearch);
+    if (value.extraction !== undefined)
+        validateExtractionSettings(value.extraction);
     return settings;
 }
 function parseClaudePlugins(value) {

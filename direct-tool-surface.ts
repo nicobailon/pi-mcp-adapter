@@ -5,6 +5,7 @@ import type { MetadataCache } from "./metadata-cache.ts";
 import { isExecutorOwnTool, isServerCacheValid, isUsableCachedAppTool, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
+import { isExtractionConfigured } from "./extraction-settings.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
@@ -265,6 +266,9 @@ export function buildProxyDescription(config: McpConfig): string {
   desc += `  mcp({ instructions: "name" })         → Show full server usage instructions\n`;
   desc += `  mcp({ connect: "server-name" })       → Connect to a server and refresh metadata\n`;
   desc += `  mcp({ tool: "name", args: { key: "value" } })         → Call a tool (object args; JSON string also accepted)\n`;
+  if (isExtractionConfigured(config.settings)) {
+    desc += `  mcp({ tool: "name", args, extract: { total: "number" } }) → Call a tool and return only typed values from its result\n`;
+  }
   desc += `  mcp({ action: "ui-messages" })        → Retrieve accumulated messages from completed UI sessions\n`;
   if (config.settings?.allowScriptToolSave !== false) {
     desc += `  mcp({ action: "save-script", args: { name, description, code, inputSchema } }) → Save a script as a reusable tool (asks you first)\n`;
