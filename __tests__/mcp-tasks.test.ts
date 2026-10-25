@@ -500,10 +500,11 @@ interface FakeTaskServer {
  * status sequence. Stacks given the same `server` act as two connections to one server;
  * each cancel it records names the `connection` that sent it. `forgetsTasks` answers
  * tasks/get with -32602, as a server does for a task id it doesn't know. `beforePoll`
- * holds each tasks/get answer until the promise it returns resolves.
+ * holds each tasks/get answer until the promise it returns resolves. `noPollHint` leaves out
+ * `pollIntervalMs`, as a server that suggests no interval does.
  */
 function fakeModernTaskStack(
-  script: { statuses: Array<Record<string, unknown>>; forgetsTasks?: boolean; beforePoll?: () => Promise<void> },
+  script: { statuses: Array<Record<string, unknown>>; forgetsTasks?: boolean; beforePoll?: () => Promise<void>; noPollHint?: boolean },
   server: FakeTaskServer = { polls: [], updates: [], cancels: [], headersByMethod: new Map() },
   connection = "first",
 ): {
@@ -516,7 +517,7 @@ function fakeModernTaskStack(
     createdAt: "2026-09-17T00:00:00Z",
     lastUpdatedAt: "2026-09-17T00:00:00Z",
     ttlMs: 60_000,
-    pollIntervalMs: 1,
+    ...(script.noPollHint ? {} : { pollIntervalMs: 1 }),
   };
   const transport = fakeTransport();
   transport.onmessage = () => {}; // the "SDK handler" installed at connect
@@ -747,6 +748,32 @@ describe("attachTaskSession", () => {
       await callToolViaTaskSession(attachment!.session, { name: "scan", args: {} });
       expect(server.updates[0]).toMatchObject({ inputResponses: { where: { roots } } });
     } finally {
+      await attachment!.session.close();
+    }
+  });
+
+  it("checks a task about once a second when the server suggests no poll interval", async () => {
+    vi.useFakeTimers();
+    const { client, transport, server } = fakeModernTaskStack({ statuses: [{ status: "working" }], noPollHint: true });
+    const attachment = await attachTaskSession({
+      client,
+      serverName: "task-server",
+      definition,
+      transport,
+      clientInfo,
+      clientCapabilities,
+    });
+    const controller = new AbortController();
+    try {
+      const pending = callToolViaTaskSession(attachment!.session, { name: "slow_tool", args: {}, signal: controller.signal });
+      pending.catch(() => {});
+      await vi.advanceTimersByTimeAsync(3_500);
+      expect(server.polls.length).toBeGreaterThanOrEqual(3);
+      expect(server.polls.length).toBeLessThanOrEqual(4);
+      controller.abort();
+      await expect(pending).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
       await attachment!.session.close();
     }
   });

@@ -44,6 +44,7 @@ import {
   TaskFailedError,
   type ApplicationElicitContentValue,
   type ApplicationRoot,
+  type ApplicationSamplingContentBlock,
   type RawClientDispatch,
   type TaskEnabledSession,
 } from "@modelcontextprotocol/ext-tasks/client";
@@ -358,7 +359,7 @@ export async function attachTaskSession(
       return {
         model: result.model,
         role: result.role,
-        content: result.content as never,
+        content: result.content as ApplicationSamplingContentBlock | readonly ApplicationSamplingContentBlock[],
       };
     },
     roots: async () => ({ roots: options.roots ?? [] }),
