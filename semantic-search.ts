@@ -22,6 +22,7 @@ export type SemanticSearchBackend =
   }
   | {
     requested: "semantic"; used: "lexical"; degraded: true; provider: string; model: string;
+    usage?: { input: number; output: number; cost?: number };
     reason: "timeout" | "rate_limited" | "service_unavailable";
   };
 
@@ -245,17 +246,27 @@ export async function semanticSearch(
   }
   const requestSignal = combineAbortSignals(signal, state.owner.signal);
   const options: ModelsClassifierOptions = { ...(requestSignal ? { signal: requestSignal } : {}), timeoutMs: REQUEST_TIMEOUT_MS, maxRetries: 0 };
+  const usages: NonNullable<ClassifierResult["usage"]>[] = [];
+  // Both calls are paid, so a fallback after a finished first call still reports its usage.
+  const totalUsage = () => {
+    if (usages.length === 0) return {};
+    const costs = usages.flatMap(entry => entry.cost ? [entry.cost.total] : []);
+    return { usage: {
+      input: usages.reduce((sum, entry) => sum + entry.input, 0),
+      output: usages.reduce((sum, entry) => sum + entry.output, 0),
+      ...(costs.length > 0 ? { cost: costs.reduce((sum, cost) => sum + cost, 0) } : {}),
+    } };
+  };
   const failed = (result: ClassifierResult): SemanticSearchResult => {
     const failure = classifierFailure(result, provider, model);
     if (!FALLBACK_CODES.has(failure.code)) return { ok: false, error: failure };
     return {
       ok: true,
       matches: rankToolMatches(state, query, server).filter(match => allowedServers.has(match.server)),
-      backend: { requested: "semantic", used: "lexical", degraded: true, provider, model, reason: failure.code as "timeout" | "rate_limited" | "service_unavailable" },
+      backend: { requested: "semantic", used: "lexical", degraded: true, provider, model, ...totalUsage(), reason: failure.code as "timeout" | "rate_limited" | "service_unavailable" },
     };
   };
   const invalid: SemanticSearchResult = { ok: false, error: { code: "invalid_response", message: `${model} returned an invalid answer.` } };
-  const usages: NonNullable<ClassifierResult["usage"]>[] = [];
 
   // A big catalog spread over several servers first asks which servers fit, so a tool that shares no words with the
   // query still reaches the ranking when its server does.
@@ -324,15 +335,9 @@ export async function semanticSearch(
   const noneProbability = answer.probabilities.none ?? 0;
   const abstained = answer.choice === "none" || !top || noneProbability >= top.probability || top.probability < settings.minProbability;
   const matches = abstained ? [] : ranked.map(({ candidate, probability }) => ({ server: candidate.server, tool: candidate.tool, score: probability }));
-  const costs = usages.flatMap(entry => entry.cost ? [entry.cost.total] : []);
-  const usage = usages.length === 0 ? undefined : {
-    input: usages.reduce((sum, entry) => sum + entry.input, 0),
-    output: usages.reduce((sum, entry) => sum + entry.output, 0),
-    ...(costs.length > 0 ? { cost: costs.reduce((sum, cost) => sum + cost, 0) } : {}),
-  };
   return {
     ok: true,
     matches,
-    backend: { requested: "semantic", used: "semantic", degraded: false, provider, model, ...(usage ? { usage } : {}), abstained },
+    backend: { requested: "semantic", used: "semantic", degraded: false, provider, model, ...totalUsage(), abstained },
   };
 }

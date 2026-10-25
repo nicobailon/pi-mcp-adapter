@@ -360,4 +360,13 @@ describe("semantic search on big catalogs", () => {
     expect(denied).toEqual({ ok: false, error: { code: "authentication_failed", message: "typesafe rejected the credential." } });
     expect(rejected.classify).toHaveBeenCalledOnce();
   });
+
+  it("still reports the first call's usage when the ranking call falls back", async () => {
+    const pickServer = serverFirst("calendar", "calendar_book");
+    const timeOut = failWith("Request timed out after 5000ms");
+    const result = await semanticSearch(bigCatalog(), "plan my week", undefined, undefined,
+      registry(context => context.questions.server ? pickServer(context) : timeOut(context)));
+
+    expect(result).toMatchObject({ ok: true, backend: { used: "lexical", reason: "timeout", usage: { input: 12, output: 3, cost: 0.0001 } } });
+  });
 });
