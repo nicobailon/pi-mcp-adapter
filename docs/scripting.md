@@ -71,7 +71,7 @@ It is off until you name the servers whose results may be sent:
 { "settings": { "extraction": { "allowedServers": ["orders"] } } }
 ```
 
-Only then does the `mcp` tool show the `extract` parameter, so sessions without the setting pay nothing for it. For an allowed server, the adapter sends the tool's own text to Cloudflare: its text blocks, the text of embedded resources, and `structuredContent` as JSON (from a codemode call, only when the server's `appendStructuredContent` isn't `false`), never images, and at most 100 KiB. Nothing is sent for any other server. Review [Cloudflare's terms](https://www.cloudflare.com/service-specific-terms-developer-platform/) for how long it keeps what you send.
+Only then does the `mcp` tool show the `extract` parameter, so sessions without the setting pay nothing for it. For an allowed server, the adapter sends the tool's own text to Cloudflare: its text blocks, the text of embedded resources, and `structuredContent` as JSON (for a result over 16 KiB or a codemode call, only when the server's `appendStructuredContent` isn't `false`), never images or binary resources, and at most 100 KiB. In a result over 16 KiB or a codemode call, a binary resource is sent as the adapter's short note about it: its URI, MIME type and the local path where it was saved. Nothing is sent for any other server. Review [Cloudflare's terms](https://www.cloudflare.com/service-specific-terms-developer-platform/) for how long it keeps what you send.
 
 The credentials come from Pi, so there is no key to store in the adapter. Two routes reach Clairic:
 

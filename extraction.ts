@@ -5,6 +5,7 @@ import { EXTRACTION_MODELS, validateExtractionSettings, type ExtractionModelId }
 import { saveMcpOutputText } from "./mcp-output-guard.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
+import { isRewrittenBinaryResource } from "./tool-registrar.ts";
 
 /** A field as Clairic receives it in the request's `fields` map. */
 interface ClairicFieldSpec {
@@ -298,7 +299,8 @@ async function toolOwnText(result: ToolResult): Promise<string | undefined> {
     for (const block of Array.isArray(raw.content) ? raw.content as unknown[] : []) {
       if (!isRecord(block)) continue;
       if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
-      else if (block.type === "resource" && isRecord(block.resource) && typeof block.resource.text === "string") parts.push(block.resource.text);
+      else if (block.type === "resource" && isRecord(block.resource) && typeof block.resource.text === "string"
+        && !isRewrittenBinaryResource(block.resource)) parts.push(block.resource.text);
     }
     if (raw.structuredContent !== undefined && raw.structuredContent !== null) parts.push(JSON.stringify(raw.structuredContent, null, 2));
     return parts.join("\n");

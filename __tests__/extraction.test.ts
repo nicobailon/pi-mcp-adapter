@@ -127,6 +127,15 @@ describe("applyExtraction on the Workers AI route", () => {
     });
   });
 
+  it("does not send the adapter's note for a binary resource", async () => {
+    const fetch = clairic(() => ok({ model: "clairic", answers: ANSWERS, truncated: false }));
+    const state = createState([{ type: "text", text: ORDER }, { type: "resource", resource: { uri: "file:///x.bin", mimeType: "application/pdf", blob: "aGk=" } }]);
+
+    await callWithExtract(state);
+
+    expect(JSON.parse(fetch.mock.calls[0]![1].body as string).state).toBe(ORDER);
+  });
+
   it("returns only the values, withholding one below 0.80 as uncertain, and saves the full result", async () => {
     clairic(() => ok({ model: "clairic", answers: ANSWERS, truncated: false, usage: { input_tokens: 40, note: SECRET, ratio: Number.NaN } }));
     const result = await callWithExtract(createState([{ type: "text", text: ORDER }]));

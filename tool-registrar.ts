@@ -116,9 +116,17 @@ export function cleanupMaterializedBinaryResources(scope?: object): void {
   drainPendingCleanupDirectories();
 }
 
+const rewrittenBinaryResources = new WeakSet<object>();
+
+/** True for a resource whose blob the adapter replaced with its own note, so its text is not the server's. */
+export function isRewrittenBinaryResource(resource: object): boolean {
+  return rewrittenBinaryResources.has(resource);
+}
+
 function replaceBlob(resource: BinaryResource, text: string): string {
   delete (resource as Partial<BinaryResource>).blob;
   resource.text = text;
+  rewrittenBinaryResources.add(resource);
   return text;
 }
 
