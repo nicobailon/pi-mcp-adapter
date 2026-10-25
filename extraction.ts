@@ -281,41 +281,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The raw MCP result `executeCall` records in `details.mcpResult`, inline or, when it was too big, in its saved file. */
-async function recordedMcpResult(details: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
-  const recorded = details.mcpResult;
-  if (!isRecord(recorded)) return undefined;
-  if (recorded.omitted !== true || typeof recorded.rawResultBytes !== "number") return recorded;
-  if (typeof recorded.fullResultPath !== "string") return undefined;
-  try {
-    const parsed: unknown = JSON.parse(await readFile(recorded.fullResultPath, "utf8"));
-    return isRecord(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
- * The text the tool itself returned: its text blocks, embedded text resources and structuredContent, never the
- * adapter's placeholder, UI-session note or truncation notice. Script deliveries record no raw result, but their
- * content is unguarded, so it is the tool's text unless a UI session or the empty placeholder was added.
+ * The text the tool itself returned, never the adapter's placeholder, UI-session note or truncation notice, and never
+ * read from a path the server could have written. A small raw result is the server's own object in
+ * `details.mcpResult`, so only its `content` and `structuredContent` are read, and anything shaped like the guard's
+ * spill summary (which a server can imitate) falls through to the text the adapter built: the guard's own spill file
+ * from `details.outputGuard`, which only the adapter writes, or the returned text. Script deliveries record no raw
+ * result and carry the unguarded text.
  */
 async function toolOwnText(result: ToolResult): Promise<string | undefined> {
   const details = (result.details ?? {}) as Record<string, unknown>;
-  const raw = await recordedMcpResult(details);
-  if (raw === undefined) {
-    if (details.mcpResult !== undefined || details.outputGuard !== undefined || details.uiOpen !== undefined) return undefined;
-    const texts = result.content.flatMap(block => block.type === "text" ? [block.text] : []);
-    return texts.length === 1 && texts[0] === "(empty result)" ? "" : texts.join("\n");
+  const raw = details.mcpResult;
+  if (isRecord(raw) && !(raw.omitted === true && typeof raw.rawResultBytes === "number")) {
+    const parts: string[] = [];
+    for (const block of Array.isArray(raw.content) ? raw.content as unknown[] : []) {
+      if (!isRecord(block)) continue;
+      if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
+      else if (block.type === "resource" && isRecord(block.resource) && typeof block.resource.text === "string") parts.push(block.resource.text);
+    }
+    if (raw.structuredContent !== undefined && raw.structuredContent !== null) parts.push(JSON.stringify(raw.structuredContent, null, 2));
+    return parts.join("\n");
   }
-  const parts: string[] = [];
-  for (const block of Array.isArray(raw.content) ? raw.content as unknown[] : []) {
-    if (!isRecord(block)) continue;
-    if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
-    else if (block.type === "resource" && isRecord(block.resource) && typeof block.resource.text === "string") parts.push(block.resource.text);
+  if (details.uiOpen !== undefined) return undefined;
+  const guard = details.outputGuard as { fullOutputPath?: unknown } | undefined;
+  if (guard !== undefined) {
+    if (typeof guard.fullOutputPath !== "string") return undefined;
+    try {
+      return await readFile(guard.fullOutputPath, "utf8");
+    } catch {
+      return undefined;
+    }
   }
-  if (raw.structuredContent !== undefined && raw.structuredContent !== null) parts.push(JSON.stringify(raw.structuredContent, null, 2));
-  return parts.join("\n");
+  const texts = result.content.flatMap(block => block.type === "text" ? [block.text] : []);
+  return texts.length === 1 && texts[0] === "(empty result)" ? "" : texts.join("\n");
 }
 
 function localDate(date: Date): string {
