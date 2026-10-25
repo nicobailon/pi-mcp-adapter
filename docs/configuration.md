@@ -218,7 +218,7 @@ A `lazy` [Executor](prompts-and-ui.md#executor-app-tools) server stays connected
 | `warnOnLargeDirectTools` | Show the advisory when 75 or more direct tools resolve (default: `true`). Set to `false` to suppress only this advisory. |
 | `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so metadata updates and explicit reconnects do not rebuild the system prompt. Proxy/search/cache metadata still refreshes. Default: false. |
 | `exposeResources` | Expose MCP resources as tools (default: `true`). Set to `false` to disable globally across all servers. Per-server `exposeResources` overrides this. |
-| `jev` | Optional System One Jev settings. A valid System One key enables semantic search across every enabled MCP server by default; `semanticSearch: false` or `jev: false` disables it. Run `/mcp-adapter jev setup` for guided configuration. |
+| `semanticSearch` | Semantic tool search through a Pi classifier model: `allowedServers`, `model` (`"provider/id"`), `candidateLimit` and `minProbability`. On by default for every enabled server whenever Pi has a classifier model; `false` turns it off. Run `/mcp-adapter semantic setup` to choose the servers ([Semantic search](scripting.md#semantic-search)). |
 | `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. Ignored while any server uses `directTools: "search"`, whose tools are registered inactive and are activated through the gateway (`mcp({ search })` or a successful `mcp({ tool })` call), or by Pi's `tool_search` on Pi 0.99 and later. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
@@ -229,7 +229,9 @@ A `lazy` [Executor](prompts-and-ui.md#executor-app-tools) server stays connected
 
 Per-server `idleTimeout`, `requestTimeoutMs`, `approveTools`, and `exposeResources` override the global settings. `debug` remains stderr display and is unrelated to protocol tracing.
 
-A config that still sets the settings of the adapter's removed script tool, including its `jev` keys, loads as before. The adapter shows a notice that names the file and the keys to remove; Pi's `codemode` replaces that tool ([MCP scripting](scripting.md#scripting-mcp-calls-with-pis-codemode)).
+A config that still sets the settings of the adapter's removed script tool loads as before. The adapter shows a notice that names the file and the keys to remove; Pi's `codemode` replaces that tool ([MCP scripting](scripting.md#scripting-mcp-calls-with-pis-codemode)).
+
+A config that still sets `settings.jev` also loads, and `settings.jev` does nothing. The notice for that file says `settings.semanticSearch` replaced it and how its keys moved, or, when the file has `settings.jev: false`, that it no longer turns semantic search off and to set `settings.semanticSearch` to `false` instead ([Moving from a System One key](scripting.md#moving-from-a-system-one-key)).
 
 ## Script tools
 

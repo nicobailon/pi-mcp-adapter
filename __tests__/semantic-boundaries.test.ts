@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpAdapter } from "../index.ts";
 import { semanticSearch, type SemanticClassifierRegistry } from "../semantic-search.ts";
@@ -49,15 +48,5 @@ describe("semantic search boundaries", () => {
     const result = await semanticSearch(runtime, "do it", undefined, undefined, classifier);
     expect(result).toMatchObject({ ok: true, matches: [{ tool: { name: "demo_act" }, score: 1 }] });
     expect(isToolCallApprovalRequired(runtime.config, "demo", runtime.toolMetadata.get("demo")![0]!, runtime.toolMetadata)).toBe(true);
-  });
-
-  it("documents the privacy and inherited-environment boundary", () => {
-    const readme = readFileSync(new URL("../docs/scripting.md", import.meta.url), "utf8");
-    expect(readme).toContain("https://api.typesafe.ai");
-    expect(readme).toContain("https://docs.typesafe.ai/legal");
-    expect(readme).toContain("privacy and retention");
-    expect(readme).toContain("no-training commitment does not mean zero retention");
-    expect(readme).toContain("Stdio MCP subprocesses inherit the host environment");
-    expect(readme).toContain("Jev ranks matching tools but never executes them");
   });
 });

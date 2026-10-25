@@ -1,68 +1,61 @@
 # MCP scripting
 
-Semantic tool search with Jev, scripts that call MCP tools through Pi's `codemode`, and script tools that save a script as a tool.
+Semantic tool search with Pi's classifier models, scripts that call MCP tools through Pi's `codemode`, and script tools that save a script as a tool.
 
-## Jev semantic search
+## Semantic search
 
-A valid System One key makes semantic search available across every enabled MCP server; it does not run Jev searches automatically. A search uses Jev only when `searchMode: "semantic"` is explicitly requested. Jev ranks matching tools but never executes them. Requests use the pinned model from `settings.jev.model` (`jev-1.13.0` by default) against the endpoint in `SYSTEMONE_ENDPOINT`, which defaults to TypeSafe at `https://api.typesafe.ai/v1/systemone`. Review your provider's current legal terms — for TypeSafe, [legal terms](https://docs.typesafe.ai/legal), including privacy and retention; a no-training commitment does not mean zero retention.
+Word search matches the words of a query against tool names and descriptions. Semantic search asks a classifier model in Pi which tool fits what the query means, so "plan my week" can find a calendar tool that never says "plan". It runs only when a search asks for it, and it ranks tools but never runs them:
 
 ```text
 Normal search
 mcp({ search: "calendar" })
         │
-        └── local lexical search
-            no Jev request
+        └── local word search
+            nothing leaves the machine
 
 Explicit semantic search
 mcp({ search: "calendar", searchMode: "semantic" })
         │
-        └── Jev ranks matching tools
+        └── a Pi classifier model ranks matching tools
             no tool is executed
 ```
 
-The quickest desktop setup is:
+Semantic search uses Pi's own logins, so there is no separate key to set up. Without a model setting, the adapter uses the first of these that Pi has a credential for:
 
-```sh
-pi-mcp-adapter key set systemone
-```
+1. `typesafe/jev-latest`, with `TYPESAFE_API_KEY`
+2. `openrouter/typesafe/jev-1.13`, with `/login` to OpenRouter or `OPENROUTER_API_KEY`
+3. `cloudflare-workers-ai/typesafe/jev`, with `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID`
+4. `opencode/jev-1.13`, with `OPENCODE_API_KEY`
+5. `vercel-ai-gateway/typesafe-ai/jev`, with `AI_GATEWAY_API_KEY`
 
-That is enough to use semantic search across all enabled MCP tools. Run `/mcp-adapter jev setup` in Pi when you want to restrict which enabled servers may share semantic-search data. The command saves a project-scoped allowlist and reloads Pi automatically. Verify the stored credential at any time with `pi-mcp-adapter key status systemone`.
-
-`SYSTEMONE_API_KEY` is for CI/headless use and overrides the keyring. Stdio MCP subprocesses inherit the host environment by default, so set `inheritEnv: false` where they must not receive it.
-
-### Choosing a provider endpoint
-
-System One decisions are the same API at different origins, so pointing at another provider needs an endpoint and, usually, a model:
-
-| Provider | `SYSTEMONE_ENDPOINT` | Model |
-| --- | --- | --- |
-| TypeSafe (default) | `https://api.typesafe.ai/v1/systemone` | `jev-1.13.0` |
-| OpenCode Zen | `https://opencode.ai/zen/v1/systemone` | `jev-1.13` |
-| Command Code | `https://api.commandcode.ai/provider/v1/systemone` | `typesafe/jev` |
-| OpenRouter | `https://openrouter.ai/api/alpha/decisions` | `typesafe/jev-1.13` |
-| Local server | `http://127.0.0.1:8080/v1/systemone` | the model your server serves |
-
-These are example configurations, subject to each provider's current documentation ([OpenCode Zen](https://opencode.ai/docs/zen/), [Command Code](https://commandcode.ai/docs/provider), [OpenRouter](https://openrouter.ai/docs/guides/community/jev), [TypeSafe](https://docs.typesafe.ai/)).
-
-With `SYSTEMONE_ENDPOINT` pointed at OpenRouter, an existing `OPENROUTER_API_KEY` works as the key and the model defaults to `typesafe/jev-1.13`. `OPENROUTER_API_KEY` is never sent to any other endpoint, and `SYSTEMONE_API_KEY` takes precedence over it.
-
-The endpoint must be an absolute `https` URL with a path; plain `http` is accepted only on `localhost`, `127.0.0.0/8`, or `[::1]`, so the key and payload never leave the machine unencrypted. A local server that ignores keys still needs some non-empty `SYSTEMONE_API_KEY`, because Jev does not run without a key. A set-but-invalid `SYSTEMONE_ENDPOINT` disables Jev instead of falling back to the default. Treat the endpoint as trusted configuration: it receives the API key and the judgment payload. Credentials are stored per endpoint, so switching endpoints does not overwrite a saved key. Set the model with:
+To use another model, set `settings.semanticSearch.model` to any classifier in Pi's model list, written as `"provider/id"`: Cloudflare's Clef (`cloudflare-workers-ai/@cf/cloudflare/clef`), OpenAI's GPT-6 Luna (`openai/gpt-6-luna`), or a model on a local llama.cpp server that you added to Pi's `models.json`. Pi's [classifier models](https://pi.dev/docs/latest/models#use-classifier-models) page lists them. A model you name is used without checking for a credential first, because a local server may need none.
 
 ```json
-{ "settings": { "jev": { "model": "jev-1.13" } } }
+{ "settings": { "semanticSearch": { "model": "cloudflare-workers-ai/@cf/cloudflare/clef" } } }
 ```
 
-The older `TYPESAFE_API_KEY` variable still works for the default TypeSafe endpoint and is never sent to any other endpoint.
+Semantic search sends the query text, server names, normalized and original tool names, tool paths, and descriptions to the model's provider through Pi. It does not send tool results. Review your provider's terms for privacy and retention. Stdio MCP servers inherit Pi's environment by default, provider keys included, so set `inheritEnv: false` on servers that must not receive them.
 
-Semantic search sends the query text, server names, normalized and original tool names, tool paths, and descriptions to the configured endpoint. It does not send tool results. `allowedServers` restricts semantic search to named servers.
+By default every enabled server's tools may be sent. Run `/mcp-adapter semantic setup` to choose which servers may share them: it names the model it will use, saves a project-scoped `allowedServers` list, removes the old `jev` setting from that file, and reloads Pi. To turn semantic search off, set `{ "settings": { "semanticSearch": false } }`. `candidateLimit` caps how many tools go into one request (2 to 127, default 127), and below `minProbability` (default 0.2) the search answers that no tool fits.
 
-Request semantic discovery explicitly with `mcp({ search: "triage customer reports", searchMode: "semantic" })`. Regex is incompatible. Timeout, rate-limit, and service failures return marked lexical fallback; credential, policy, configuration, and response failures do not. If no allowed server has cached tools, search explains how to connect a server or update the allowlist; if Jev decides no tool fits, the result says that Jev abstained.
+Request semantic search with `mcp({ search: "triage customer reports", searchMode: "semantic" })`. Regex can't be combined with it. If the model times out after 5 seconds, is rate limited or is down, the search falls back to word search and marks the result as a fallback. A missing credential, an unknown model, a server outside `allowedServers`, or an invalid answer returns an error that says what to fix, and the provider's own error text is never shown. On Pi before 0.99, which has no classifier models, semantic search says so and word search keeps working. When the model decides no tool fits, the result says so, for example `typesafe/jev-latest found no suitable tool for "query"`. Result details name the provider and model that ranked the tools.
 
-Optional `jev` settings bound the timeout and retries, the request size (`maxStateBytes`, `maxQuestionsPerRequest`), the number of semantic candidates (at most 127), and the minimum probability. The endpoint is set by `SYSTEMONE_ENDPOINT`; headers and SDK logging are not configurable.
+On 15 sample catalogs with 31 queries that have a right tool, the measured models picked:
 
-`allowedServers` only covers the Jev calls the adapter makes, which are semantic searches. A codemode script can pass MCP results to a classifier such as Jev with `models.classify()`. Those calls use Pi's credentials and don't go through the adapter, so `allowedServers` doesn't apply to them.
+| Model | Right tool first | Median time |
+| --- | --- | --- |
+| `typesafe/jev-latest` | 31 of 31 | 213 ms |
+| `cloudflare-workers-ai/typesafe/jev` | 30 of 31 | 257 ms |
+| `cloudflare-workers-ai/@cf/cloudflare/clef` | 30 of 31 | 398 ms |
+| `cloudflare-workers-ai/@cf/cloudflare/clef-flash` | 30 of 31 | 292 ms |
 
-Semantic search sends your request and the available tool descriptions to Jev, which works out which tools best match what you’re trying to do. In a live test with 12 everyday requests and 95 tools and resources, Jev chose the expected result first in 10 of 11 answerable cases and placed it second once. Regular text search found the expected result first in 5 cases. Jev also correctly returned no result for an unrelated request. This was a small test using one local setup, so results will vary with different tools and queries.
+The default `minProbability` of 0.2 was enough for all four: on the 15 queries with no right tool, each model answered that none fit. In an earlier live test with Jev, 12 everyday requests and 95 tools and resources, Jev put the expected result first in 10 of 11 answerable cases, where word search did so in 5.
+
+`allowedServers` only covers the searches the adapter makes. A codemode script can pass MCP results to a classifier with `models.classify()`; those calls use Pi's credentials and don't go through the adapter, so `allowedServers` doesn't apply to them.
+
+### Moving from a System One key
+
+The adapter no longer stores its own key. `pi-mcp-adapter key`, `SYSTEMONE_ENDPOINT` and `SYSTEMONE_API_KEY` are gone, and the adapter doesn't read `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` itself; Pi does. Give Pi the credential instead: `/login` to OpenRouter, `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` in Pi's environment, or a provider in Pi's `models.json`, which also covers a local server. `settings.jev` is replaced by `settings.semanticSearch`: `allowedServers` and `model` move as they are (the model is now `"provider/id"`), `semanticCandidateLimit` is now `candidateLimit`, `semanticMinProbability` is now `minProbability`, and the timeout, retry and request-size settings are gone. `/mcp-adapter semantic setup` writes the new setting for you. A key you stored with `pi-mcp-adapter key set systemone` stays in the OS credential store under the service `pi-mcp-adapter.service-key`; delete it there if you don't need it.
 
 ## Scripting MCP calls with Pi's codemode
 
