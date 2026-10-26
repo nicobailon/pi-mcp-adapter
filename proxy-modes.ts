@@ -31,6 +31,7 @@ import { getInputRequiredNeedsUiDetails } from "./errors.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { describeProjectServerBlock, disabledServerReason } from "./project-server-trust.ts";
 import { findScriptTool } from "./script-tool-surface.ts";
+import { extractionServers } from "./extraction-settings.ts";
 
 // index.ts reaches extraction through this lazily loaded module, so startup does not load it.
 export { applyExtraction, parseExtractFields } from "./extraction.ts";
@@ -52,6 +53,10 @@ type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
 const require = createRequire(import.meta.url);
 const proxyArgumentValidators = new WeakMap<object, JsonSchemaValidator<unknown>>();
 const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
+// Semantic scores are probabilities, and most hits after the first sit near zero, so only hits within this
+// factor of the top one get a schema. Measured on queries that have a right tool: when one hit was this far ahead,
+// it was the right one in 59 of 59 cases across Jev and Clef; two close hits both get a schema.
+const STRONG_MATCH_RATIO = 4;
 // The `server` of a script tool's search match, which belongs to no server.
 const SCRIPT_TOOL_SERVER = "mcp__script";
 
@@ -996,12 +1001,18 @@ function renderSearchResults(
   }
 
   let text = `Found ${page.total} tool${page.total === 1 ? "" : "s"} matching "${query}":\n\n`;
+  const strongFloor = backend?.used === "semantic" ? matches[0]!.score / STRONG_MATCH_RATIO : undefined;
+  const extractable = extractionServers(state.config.settings);
+  let demoted = false;
   for (const match of page.items) {
     // A script tool's own calls ask for approval, never the script tool itself.
-    const marker = match.scriptTool
+    let marker = match.scriptTool
       ? " (script tool)"
       : isToolCallApprovalRequired(state.config, match.server, match.tool, state.toolMetadata) ? " (requires approval)" : "";
-    if (showSchemas) {
+    if (!match.scriptTool && extractable.includes(match.server)) marker += " (extract allowed)";
+    const full = showSchemas && (strongFloor === undefined || match.score >= strongFloor);
+    demoted ||= showSchemas && !full;
+    if (full) {
       text += `${match.tool.name}${marker}\n`;
       text += `  ${match.tool.description || "(no description)"}\n`;
       if (match.tool.inputSchema && !match.tool.resourceUri) {
@@ -1024,6 +1035,7 @@ function renderSearchResults(
     }
   }
   if (page.hasMore) text += `\n${page.items.length} of ${page.total} — offset: ${page.nextOffset} for more\n`;
+  if (demoted) text += `\nShapes shown for the strongest matches only; mcp({ describe, server }) shows any other.\n`;
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],

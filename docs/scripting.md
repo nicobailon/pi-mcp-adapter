@@ -42,6 +42,8 @@ By default every enabled server's tools may be sent. Run `/mcp-adapter semantic 
 
 Request semantic search with `mcp({ search: "triage customer reports", searchMode: "semantic" })`. Regex can't be combined with it. If the model times out after 5 seconds, is rate limited or is down, the search falls back to word search and marks the result as a fallback. A missing credential, an unknown model, a server outside `allowedServers`, or an invalid answer returns an error that says what to fix, and the provider's own error text is never shown. On Pi before 0.99, which has no classifier models, semantic search says so and word search keeps working. When the model decides no tool fits, the result says so, for example `typesafe/jev-latest found no suitable tool for "query"`. Result details name the provider and model that ranked the tools.
 
+Results show the parameter shape only for tools that scored at least a quarter of the top match. The rest are listed by name, because the model rated them unlikely, and `mcp({ describe, server })` shows any of them in full. Usually that means one shape instead of twelve.
+
 On 15 sample catalogs with 31 queries that have a right tool, the measured models picked:
 
 | Model | Right tool first | Median time |
@@ -74,6 +76,8 @@ It is off until you name the servers whose results may be sent:
 ```
 
 Only then does the `mcp` tool show the `extract` parameter, so sessions without the setting pay nothing for it. For an allowed server, the adapter sends the tool's own text to Cloudflare: its text blocks, the text of embedded resources, and `structuredContent` as JSON (for a result over 16 KiB or a codemode call, only when the server's `appendStructuredContent` isn't `false`), never images or binary resources, and at most 100 KiB. In a result over 16 KiB or a codemode call, a binary resource is sent as the adapter's short note about it: its URI, MIME type and the local path where it was saved. Nothing is sent for any other server. Review [Cloudflare's terms](https://www.cloudflare.com/service-specific-terms-developer-platform/) for how long it keeps what you send.
+
+Search results mark the tools of those servers `(extract allowed)`, so the agent knows which calls can take `extract` before it makes one.
 
 The credentials come from Pi, so there is no key to store in the adapter. Two routes reach Clairic:
 

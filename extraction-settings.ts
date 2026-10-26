@@ -34,10 +34,15 @@ export function validateExtractionSettings(value: unknown): ResolvedExtractionSe
 }
 
 /** Settings that reached the config were validated on load; programmatic configs are validated here. */
-export function isExtractionConfigured(settings: { extraction?: unknown } | undefined): boolean {
+export function extractionServers(settings: { extraction?: unknown } | undefined): string[] {
   try {
-    return validateExtractionSettings(settings?.extraction).enabled;
+    const resolved = validateExtractionSettings(settings?.extraction);
+    return resolved.enabled ? resolved.allowedServers : [];
   } catch {
-    return false;
+    return [];
   }
+}
+
+export function isExtractionConfigured(settings: { extraction?: unknown } | undefined): boolean {
+  return extractionServers(settings).length > 0;
 }

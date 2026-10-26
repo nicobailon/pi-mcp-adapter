@@ -271,6 +271,36 @@ describe("semantic search", () => {
     expect(result.content[0]!.text).toContain("requires approval");
     expect(result.content[0]!.text).toContain("Shape:");
   });
+
+  it("prints schemas only for hits within a quarter of the top score", async () => {
+    const search = (answer: Answer, limit = 12, offset = 0) => executeSearch(stateWithTools(), "query", false, undefined, undefined, limit, offset, "semantic", undefined, registry(answer)) as Promise<any>;
+    const byPath = (scores: Record<string, number>): Answer => (context) => {
+      const ids = Object.fromEntries(candidatesOf(context).map(candidate => [candidate.path, candidate.id]));
+      return choose(Object.keys(scores)[0]!, Object.fromEntries(Object.entries(scores).map(([path, score]) => [ids[path]!, score])))(context);
+    };
+    const one = (await search(byPath({ demo_tool_0: 0.9, demo_tool_1: 0.05 }))).content[0].text;
+    expect(one.match(/Shape:/g)).toHaveLength(1);
+    expect(one).toContain("- demo_tool_1 - Unrelated capability 1");
+    expect(one).toContain("Shapes shown for the strongest matches only");
+    // The bar comes from the top of the whole result, so a later page lists names only.
+    const pageTwo = (await search(byPath({ demo_tool_0: 0.9, demo_tool_1: 0.05 }), 1, 1)).content[0].text;
+    expect(pageTwo).not.toContain("Shape:");
+    expect(pageTwo).toContain("- demo_tool_1 - Unrelated capability 1");
+
+    const two = (await search(byPath({ demo_tool_0: 0.6, demo_tool_1: 0.3 }))).content[0].text;
+    expect(two.match(/Shape:/g)).toHaveLength(2);
+    expect(two).toContain("- demo_tool_2 - Unrelated capability 2");
+  });
+
+  it("marks tools whose server allows extract, in either search mode", async () => {
+    const state = stateWithTools(1);
+    state.config.settings!.extraction = { allowedServers: ["demo"] };
+    const lexical = (executeSearch(state, "invoices|forecast", true, undefined, false) as any).content[0].text;
+    expect(lexical).toContain("- demo_tool_0 (extract allowed) - Search invoices");
+    expect(lexical).toContain("- other_weather - Forecast conditions");
+    const semantic = (await gatewaySemantic(state, "query", registry(choose("demo_tool_0")))).content[0].text;
+    expect(semantic).toContain("demo_tool_0 (extract allowed)");
+  });
 });
 
 /** Notes tools share words with "plan my week"; the calendar tool that fits does not, and mail is noise. */
