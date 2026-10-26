@@ -754,12 +754,9 @@ function applySettingDefaults(config: McpConfig): McpConfig {
 }
 
 function getMergedSettings(overridePath?: string, cwd = process.cwd()): McpSettings | undefined {
-  let settings: McpSettings | undefined;
-  for (const source of getConfigSources(overridePath, cwd)) {
-    const loaded = readSourceConfig(source.id, source.readPath);
-    if (loaded?.settings) settings = Object.assign(settings ?? {}, loaded.settings);
-  }
-  return settings;
+  const sources = getConfigSources(overridePath, cwd).flatMap((source) => readSourceConfig(source.id, source.readPath)?.settings ?? []);
+  // Later files win; fromEntries keeps a "__proto__" key as data, as a spread would.
+  return sources.length > 0 ? Object.fromEntries(sources.flatMap((settings) => Object.entries(settings))) as McpSettings : undefined;
 }
 
 function getConfiguredHostConfigDiscovery(overridePath?: string, cwd = process.cwd()): HostConfigDiscovery {
