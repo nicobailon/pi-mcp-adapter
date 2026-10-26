@@ -8,6 +8,12 @@ Use MCP servers with [Pi](https://github.com/badlogic/pi-mono/) without burning 
 
 https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a
 
+## What's new in 7.0
+
+https://github.com/user-attachments/assets/6223e9c1-a740-4d69-b8db-bc91431d88ca
+
+On servers that support MCP Tasks, slow tools now run in the background while the agent keeps working. Tool search can rank tools by meaning and send full schemas only for the ones that fit. And `extract` hands the agent just the values it asked for from a long result. Everything else is in the [changelog](CHANGELOG.md).
+
 ## Why This Exists
 
 Mario wrote about [why you might not need MCP](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/). The problem: tool definitions are verbose. A single MCP server can burn 10k+ tokens, and you're paying that cost whether you use those tools or not. Connect a few servers and you've burned half your context window before the conversation starts.
