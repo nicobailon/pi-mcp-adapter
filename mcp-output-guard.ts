@@ -256,7 +256,7 @@ function reserveBudget(maxBytes: number, maxLines: number, notice: string): { ma
   };
 }
 
-function truncateStringToBytes(value: string, maxBytes: number): string {
+export function truncateStringToBytes(value: string, maxBytes: number): string {
   if (byteLength(value) <= maxBytes) return value;
   const buffer = Buffer.from(value, "utf8");
   let end = Number.isFinite(maxBytes) ? Math.max(0, Math.floor(maxBytes)) : 0;
@@ -461,7 +461,8 @@ function serializedObjectEntryBytes(key: string, value: unknown, hasPrevious: bo
   return Math.max(0, byteLength(serialized) - byteLength("{}")) + (hasPrevious ? 1 : 0);
 }
 
-async function saveArtifact(kind: string, text: string): Promise<{ path?: string; error?: string }> {
+/** Saves text to a private temp file. */
+export async function saveArtifact(kind: string, text: string): Promise<{ path?: string; error?: string }> {
   try {
     const dir = await mkdtemp(join(tmpdir(), "pi-mcp-output-"));
     const path = join(dir, `${kind}-${randomBytes(4).toString("hex")}.txt`);
@@ -470,11 +471,6 @@ async function saveArtifact(kind: string, text: string): Promise<{ path?: string
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
-}
-
-/** Saves text to a private temp file the way a cut result is saved. */
-export function saveMcpOutputText(text: string): Promise<{ path?: string; error?: string }> {
-  return saveArtifact("output", text);
 }
 
 async function discardArtifact(path: string): Promise<void> {

@@ -8,7 +8,7 @@ export type ResolvedExtractionSettings = {
     model?: ExtractionModelId;
 };
 export declare function validateExtractionSettings(value: unknown): ResolvedExtractionSettings;
-/** Settings that reached the config were validated on load; programmatic configs are validated here. */
+/** Settings loaded from a file were validated on load; an invalid programmatic config allows no server. */
 export declare function extractionServers(settings: {
     extraction?: unknown;
 } | undefined): string[];

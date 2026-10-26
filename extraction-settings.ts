@@ -6,7 +6,6 @@ export type ResolvedExtractionSettings =
   | { enabled: true; allowedServers: string[]; model?: ExtractionModelId };
 
 const ACCEPTED_KEYS = new Set(["allowedServers", "model"]);
-const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
 export function validateExtractionSettings(value: unknown): ResolvedExtractionSettings {
@@ -20,7 +19,7 @@ export function validateExtractionSettings(value: unknown): ResolvedExtractionSe
   if (!Array.isArray(allowedServers) || allowedServers.length === 0) {
     throw new Error("settings.extraction.allowedServers must name at least one server");
   }
-  if (allowedServers.some(name => typeof name !== "string" || name.length === 0 || DANGEROUS_KEYS.has(name) || CONTROL_CHARACTERS.test(name))) {
+  if (!allowedServers.every((name): name is string => typeof name === "string" && name.length > 0 && !CONTROL_CHARACTERS.test(name))) {
     throw new Error("settings.extraction.allowedServers must contain non-empty safe server names");
   }
   if (model !== undefined && !EXTRACTION_MODELS.includes(model as ExtractionModelId)) {
@@ -28,12 +27,12 @@ export function validateExtractionSettings(value: unknown): ResolvedExtractionSe
   }
   return {
     enabled: true,
-    allowedServers: [...new Set(allowedServers as string[])],
+    allowedServers: [...new Set(allowedServers)],
     ...(model !== undefined ? { model: model as ExtractionModelId } : {}),
   };
 }
 
-/** Settings that reached the config were validated on load; programmatic configs are validated here. */
+/** Settings loaded from a file were validated on load; an invalid programmatic config allows no server. */
 export function extractionServers(settings: { extraction?: unknown } | undefined): string[] {
   try {
     const resolved = validateExtractionSettings(settings?.extraction);

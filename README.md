@@ -39,7 +39,7 @@ The built-in turns `codemode` on by itself; with the adapter, add `"+codemode"` 
 | Saved workflows as tools | No | A workflow you repeat becomes one tool with fixed inputs: a saved script that calls MCP and Pi tools, found by search and called like any other tool (`scriptTools`, [Script tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/scripting.md#script-tools)) |
 | Executor app tools | Only Executor's own six tools; the model reaches app tools through Executor's `search` and `call` | Each tool of your [Executor](https://executor.sh) apps is a Pi tool, found by search and called by name with Pi's approvals ([Executor app tools](https://github.com/nicobailon/pi-mcp-adapter/blob/main/docs/prompts-and-ui.md#executor-app-tools)) |
 | OAuth tokens | JSON file in `~/.pi/agent` | OS keychain |
-| MCP prompts, elicitation, sampling, Tasks | No | Yes. Long jobs run as Tasks in the background while the agent keeps working, and their results come back on their own; Tasks need `"protocolVersion": "auto"` |
+| MCP prompts, elicitation, sampling, Tasks | No | Yes; Tasks run in the background and need `"protocolVersion": "auto"` |
 | MCP UI apps | Left out | Native window or browser |
 | Add a server | `pi mcp add` in a shell, then `/reload` | Give the agent the URL: `mcp({ action: "install", url })` connects it and checks its tools in the current session; for an OAuth server it opens sign-in first and checks the tools once you approve |
 | Configs from Cursor, Claude Code, Codex, VS Code | Convert by hand | Imported |

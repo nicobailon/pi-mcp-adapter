@@ -1017,14 +1017,14 @@ describe("background task delivery over a task session", () => {
       await tasks.handOver("task-server", { taskSession: replacement!.session, closed: () => false });
       await replaced!.session.close();
 
-      expect(await tasks.stop("task-server/task-e2e-1", "you")).toBe(true);
+      expect(await tasks.stop("task-server/task-e2e-1", "the user")).toBe(true);
       await done;
 
       expect(first.server.cancels).toEqual([{ connection: "second", taskId: "task-e2e-1" }]);
       expect(sendMessage).toHaveBeenCalledTimes(1);
       expect(sendMessage.mock.calls[0]![0].content).toEqual([
         { type: "text", text: "MCP task task-e2e-1 (task-server/slow_tool) cancelled." },
-        { type: "text", text: "Stopped by you." },
+        { type: "text", text: "Stopped by the user." },
       ]);
     } finally {
       await replacement!.session.close();

@@ -87,7 +87,7 @@ describe("semantic search setup", () => {
     expect(JSON.parse(readFileSync(result.path, "utf8"))).toEqual({ settings: { semanticSearch: { allowedServers: ["demo"] } } });
 
     const invalidPath = join(cwd, "invalid.json");
-    expect(() => writeSemanticSearchConfig(invalidPath, cwd, ["__proto__"])).toThrow("allowedServers");
+    expect(() => writeSemanticSearchConfig(invalidPath, cwd, ["bad\nname"])).toThrow("allowedServers");
     expect(() => readFileSync(invalidPath, "utf8")).toThrow();
   });
 

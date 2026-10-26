@@ -1669,7 +1669,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     sessionCtx = null;
     // A host that embeds the adapter with its own config ships it inside another package; its users never installed this one.
     if (options.config === undefined && options.configPath === undefined) {
-      void showUpgradeNotice(ctx).catch((error) => console.error("Failed to show the pi-mcp-adapter upgrade notice:", error));
+      void showUpgradeNotice(ctx).catch((error) => console.error(`MCP: failed to show the upgrade notice: ${formatTerminalError(error)}`));
     }
     sessionMigrationNotices = programmaticConfig
       ? []

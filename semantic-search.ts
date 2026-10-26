@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { ClassifierApi, ClassifierContext, ClassifierModel, ClassifierResult, ModelsClassifierOptions } from "@earendil-works/pi-ai";
 import { resolveSemanticSearchSettings } from "./semantic-settings.ts";
 import { isServerInActiveFailureBackoff } from "./failure-backoff.ts";
+import { truncateStringToBytes } from "./mcp-output-guard.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { rankToolMatches, type RankedToolMatch } from "./search-ranking.ts";
 import type { McpExtensionState } from "./state.ts";
@@ -115,14 +116,6 @@ interface Candidate {
   tool: ToolMetadata;
 }
 
-function truncateUtf8(value: string, maxBytes: number): string {
-  const bytes = Buffer.from(value, "utf8");
-  if (bytes.length <= maxBytes) return value;
-  let end = maxBytes;
-  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;
-  return bytes.subarray(0, end).toString("utf8");
-}
-
 function stableHash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -181,7 +174,7 @@ function selectSemanticCandidates(
   serverOrder?: readonly string[],
 ): Candidate[] {
   let selected = eligible;
-  if (eligible.length > limit && serverOrder) {
+  if (serverOrder) {
     selected = [];
     for (const name of serverOrder) {
       const tools = eligible.filter(match => match.server === name);
@@ -207,7 +200,7 @@ function selectSemanticCandidates(
     selected = [...first, ...broad.slice(0, limit - first.length)];
   }
   return selected.map((match, index) => ({ id: `c${index}`, server: match.server,
-    description: truncateUtf8(match.tool.description ?? "", 512), tool: match.tool }));
+    description: truncateStringToBytes(match.tool.description ?? "", 512), tool: match.tool }));
 }
 
 export async function semanticSearch(
@@ -220,8 +213,9 @@ export async function semanticSearch(
   let settings;
   try {
     settings = resolveSemanticSearchSettings(state);
-  } catch {
-    return { ok: false, error: { code: "invalid_request", message: "Invalid semantic search settings." } };
+  } catch (error) {
+    // A programmatic config reaches this check unvalidated; the reasons are adapter-written.
+    return { ok: false, error: { code: "invalid_request", message: (error as Error).message } };
   }
   if (!settings.enabled) {
     return { ok: false, error: { code: "disabled", message: "Semantic search is turned off by settings.semanticSearch." } };
@@ -250,11 +244,10 @@ export async function semanticSearch(
   // Both calls are paid, so a fallback after a finished first call still reports its usage.
   const totalUsage = () => {
     if (usages.length === 0) return {};
-    const costs = usages.flatMap(entry => entry.cost ? [entry.cost.total] : []);
     return { usage: {
       input: usages.reduce((sum, entry) => sum + entry.input, 0),
       output: usages.reduce((sum, entry) => sum + entry.output, 0),
-      ...(costs.length > 0 ? { cost: costs.reduce((sum, cost) => sum + cost, 0) } : {}),
+      cost: usages.reduce((sum, entry) => sum + entry.cost.total, 0),
     } };
   };
   const failed = (result: ClassifierResult): SemanticSearchResult => {
@@ -298,9 +291,8 @@ export async function semanticSearch(
     const serverAnswer = serverResult.answers.server;
     if (!serverAnswer || serverAnswer.type !== "choice") return invalid;
     if (serverResult.usage) usages.push(serverResult.usage);
-    const probabilities = serverAnswer.probabilities;
     serverOrder = eligibleServers
-      .map((name, index) => ({ name, probability: probabilities[`s${index}`] ?? 0 }))
+      .map((name, index) => ({ name, probability: serverAnswer.probabilities[`s${index}`] ?? 0 }))
       .sort((a, b) => b.probability - a.probability || a.name.localeCompare(b.name))
       .map(entry => entry.name);
   }

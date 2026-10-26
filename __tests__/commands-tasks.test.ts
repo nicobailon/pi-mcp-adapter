@@ -33,7 +33,7 @@ const callSite = {
   guard: async (text: string) => ({ content: [{ type: "text" as const, text }], details: {} }),
 };
 
-describe("/mcp tasks", () => {
+describe("/mcp-adapter tasks", () => {
   it("lists running tasks with their latest status", () => {
     const { state, tasks, notify, ctx } = setup();
     const { execution, report } = runningTask();
@@ -57,7 +57,7 @@ describe("/mcp tasks", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]![0].content).toEqual([
       { type: "text", text: "MCP task t-1 (ci/build) cancelled." },
-      { type: "text", text: "Stopped by you." },
+      { type: "text", text: "Stopped by the user." },
     ]);
     expect(notify).toHaveBeenCalledWith('Stopped MCP task "ci/t-1".', "info");
     expect(tasks.list()).toEqual([]);

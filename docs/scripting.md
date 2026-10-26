@@ -42,7 +42,7 @@ By default every enabled server's tools may be sent. Run `/mcp-adapter semantic 
 
 Request semantic search with `mcp({ search: "triage customer reports", searchMode: "semantic" })`. Regex can't be combined with it. If the model times out after 5 seconds, is rate limited or is down, the search falls back to word search and marks the result as a fallback. A missing credential, an unknown model, a server outside `allowedServers`, or an invalid answer returns an error that says what to fix, and the provider's own error text is never shown. On Pi before 0.99, which has no classifier models, semantic search says so and word search keeps working. When the model decides no tool fits, the result says so, for example `typesafe/jev-latest found no suitable tool for "query"`. Result details name the provider and model that ranked the tools.
 
-Results show the parameter shape only for tools that scored at least a quarter of the top match. The rest are listed by name, because the model rated them unlikely, and `mcp({ describe, server })` shows any of them in full. Usually that means one shape instead of twelve.
+Results show the parameter shape only for tools that scored at least a quarter of the top match. The rest get one line with a short description, and `mcp({ describe, server })` shows any of them in full.
 
 On 15 sample catalogs with 31 queries that have a right tool, the measured models picked:
 

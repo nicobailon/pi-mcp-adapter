@@ -1,8 +1,8 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir } from "./agent-dir.ts";
+import { getAgentPath } from "./agent-dir.ts";
 
 const NAME = "pi-mcp-adapter";
 const CHANGELOG_URL = "https://github.com/nicobailon/pi-mcp-adapter/blob/main/CHANGELOG.md";
@@ -14,19 +14,18 @@ const versionNumber = (version: unknown) => typeof version === "string" && /^\d+
 
 export async function showUpgradeNotice(
   ctx: { hasUI: boolean; ui: { notify(message: string, type: "info"): void } },
-  stateDir = join(getAgentDir(), NAME),
+  statePath = getAgentPath("mcp-last-seen-version.json"),
   changelogPath = fileURLToPath(new URL("./CHANGELOG.md", import.meta.url)),
   version: string = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf-8")).version,
 ): Promise<void> {
   if (!ctx.hasUI) return;
-  const statePath = join(stateDir, "last-seen-version.json");
   const lastSeen = await readFile(statePath, "utf-8").then((raw) => JSON.parse(raw).version).catch(() => undefined);
   const previous = versionNumber(lastSeen);
   const current = versionNumber(version);
   if (current === undefined || previous === current) return;
   try {
-    mkdirSync(stateDir, { recursive: true });
-    writeFileSync(statePath, JSON.stringify({ version }));
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ version }));
   } catch {
     // Read-only installs cannot record the seen version. Without it the notice would repeat on every start, so skip it.
     return;

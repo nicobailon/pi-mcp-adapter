@@ -393,8 +393,7 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
     }
     if (decision === "deny" || typeof decision === "object") {
       const denyReason = typeof decision === "object" ? { denyReason: decision.reason } : {};
-      const blocked = approvalBlockedResult({ ok: false, reason: "denied", ...denyReason }, tool.server, name);
-      return textResult(blocked.text, blocked.details);
+      return approvalBlockedResult({ ok: false, reason: "denied", ...denyReason }, tool.server, name);
     }
     if (!isAllowed(decision)) {
       return textResult(`MCP tool "${name}" on server "${tool.server}" was not run: no approval handler allowed it.`, { error: "approval_required", server: tool.server, tool: name });
@@ -496,7 +495,7 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
         return dispatchFailureResult(tool, error, connection.retired.has(name));
       }
       const details = { error: "host_error", server: tool.server, tool: name, sent };
-      if (error instanceof HostManagedMcpError && error.denied && sent) {
+      if (error instanceof HostManagedMcpError && error.denied) {
         const why = error.denyReason ? ` Reason: ${error.denyReason}` : "";
         return textResult(`MCP tool "${name}" on server "${tool.server}" was sent and may have run; the host then failed because a follow-up read was blocked by the approval gate.${why} Do not retry automatically; check its effects first.`, { ...details, denied: true });
       }

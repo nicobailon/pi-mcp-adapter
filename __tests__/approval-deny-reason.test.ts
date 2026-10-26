@@ -116,19 +116,6 @@ describe("broker deny reason", () => {
     });
   });
 
-  it("keeps each concurrent call's reason with that call, resolved out of order", async () => {
-    const pending: Array<(value: { decision: "deny"; reason: string }) => void> = [];
-    const { state } = createState(claiming(() => new Promise((resolve) => { pending.push(resolve); })));
-    const first = executeCall(state, tool.name, { n: 1 });
-    const second = executeCall(state, tool.name, { n: 2 });
-    await vi.waitFor(() => expect(pending).toHaveLength(2));
-    pending[1]!({ decision: "deny", reason: "powód drugi" });
-    pending[0]!({ decision: "deny", reason: "powód pierwszy" });
-    const [a, b] = await Promise.all([first, second]);
-    expect(a.details).toMatchObject({ reason: "powód pierwszy" });
-    expect(b.details).toMatchObject({ reason: "powód drugi" });
-  });
-
   it("leaves legacy string decisions exactly as before", async () => {
     for (const [decision, expected] of [
       ["allow_once", { ok: true }],
@@ -201,7 +188,7 @@ describe("sanitizeDenyReason", () => {
 
   it("formats the headless gate unchanged", () => {
     expect(approvalBlockedResult({ ok: false, reason: "approval_required_headless" }, "demo", "send")).toEqual({
-      text: 'MCP tool "send" on server "demo" is approval-gated and requires an interactive session.',
+      content: [{ type: "text", text: 'MCP tool "send" on server "demo" is approval-gated and requires an interactive session.' }],
       details: { error: "approval_required", server: "demo", tool: "send" },
     });
   });

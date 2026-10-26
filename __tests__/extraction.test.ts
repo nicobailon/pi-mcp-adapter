@@ -148,7 +148,7 @@ describe("applyExtraction on the Workers AI route", () => {
     });
     expect(Object.keys(text)).toEqual(["values", "uncertain", "fullResult"]);
     expect(readFileSync(text.fullResult, "utf8")).toBe(ORDER);
-    expect((result.details as any).extraction.usage).toEqual({ input_tokens: 40 });
+    expect(result.details).toMatchObject({ extraction: { usage: { input_tokens: 40 } } });
     expect(result.details).toMatchObject({
       mode: "call", server: "demo", tool: "get", canonicalTool: "demo_get",
       extraction: {
@@ -189,7 +189,7 @@ describe("applyExtraction on the Workers AI route", () => {
     const text = JSON.parse(textOf(result));
     expect(text).toMatchObject({ values: { total: 42.1 }, truncated: true });
     expect(readFileSync(text.fullResult, "utf8")).toBe(big);
-    expect(text.fullResult).toBe((result.details as any).outputGuard.fullOutputPath);
+    expect(result.details).toMatchObject({ outputGuard: { fullOutputPath: text.fullResult } });
   });
 
   it("never reads a file a server's result points at, even when it imitates the guard's spill summary", async () => {

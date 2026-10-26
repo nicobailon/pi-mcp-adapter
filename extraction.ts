@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { throwIfAborted } from "./abort.ts";
 import { EXTRACTION_MODELS, validateExtractionSettings, type ExtractionModelId } from "./extraction-settings.ts";
-import { saveMcpOutputText } from "./mcp-output-guard.ts";
+import { saveArtifact, truncateStringToBytes } from "./mcp-output-guard.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
 import { isRewrittenBinaryResource } from "./tool-registrar.ts";
@@ -48,9 +48,7 @@ const FIELD_TYPES: Record<string, ClairicFieldSpec> = {
 const OBJECT_KEYS = new Set(["type", "description", "unit", "decimals"]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  return typeof value === "object" && value !== null && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 }
 
 function parseField(name: string, value: unknown): ExtractField | string {
@@ -80,8 +78,8 @@ function parseField(name: string, value: unknown): ExtractField | string {
   if (decimals !== undefined) {
     const allowed = type === "number" || spec.type === "duration" || type === "list.number";
     if (!allowed) return `${label}: decimals applies only to number, duration and list.number fields`;
-    if (!Number.isInteger(decimals) || (decimals as number) < 0 || (decimals as number) > 6) return `${label}: decimals must be an integer from 0 to 6`;
-    spec.decimals = decimals as number;
+    if (typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 6) return `${label}: decimals must be an integer from 0 to 6`;
+    spec.decimals = decimals;
   }
   if (spec.type !== "list") spec.null_threshold = NULL_THRESHOLD;
   return { type, spec };
@@ -120,11 +118,10 @@ function extractionRegistryOf(value: unknown): ExtractionRegistry | undefined {
     : undefined;
 }
 
-interface ExtractionError { code: string; message: string }
 class ExtractionFailure extends Error {
-  constructor(readonly failure: ExtractionError) { super(failure.message); }
+  constructor(readonly code: string, message: string) { super(message); }
 }
-const fail = (code: string, message: string): never => { throw new ExtractionFailure({ code, message }); };
+const fail = (code: string, message: string): never => { throw new ExtractionFailure(code, message); };
 const invalidAnswer = (model: string): never => fail("invalid_response", `${model} returned an invalid answer.`);
 
 const EXTRACT_MAX_BYTES = 100 * 1024;
@@ -154,26 +151,14 @@ function providerOf(model: ExtractionModelId): string {
   return model.slice(0, model.indexOf("/"));
 }
 
-function isConfigured(registry: ExtractionRegistry, provider: string): boolean {
-  try {
-    return registry.getProviderAuthStatus(provider).configured === true;
-  } catch {
-    return false;
-  }
-}
-
 /** The configured model, or the first route Pi has a credential for, with its URL and auth header from Pi. */
 async function resolveRoute(registry: ExtractionRegistry, configured: ExtractionModelId | undefined): Promise<Route> {
-  const model = configured ?? EXTRACTION_MODELS.find(id => isConfigured(registry, providerOf(id)))
+  const model = configured ?? EXTRACTION_MODELS.find(id => registry.getProviderAuthStatus(providerOf(id)).configured)
     ?? fail("no_credentials", "Extraction needs Cloudflare credentials in Pi: CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID, or the cloudflare-workers-ai login.");
   const provider = providerOf(model);
   const gateway = provider === GATEWAY;
-  let resolved: unknown;
-  try {
-    resolved = await registry.getProviderAuth(provider);
-  } catch {
-    resolved = undefined;
-  }
+  // Pi's error text can carry the credential, so a failed lookup reads as no credential.
+  const resolved = await registry.getProviderAuth(provider).catch(() => undefined);
   const { auth, env } = (resolved ?? {}) as { auth?: { apiKey?: unknown; headers?: Record<string, unknown> }; env?: Record<string, unknown> };
   const account = env?.CLOUDFLARE_ACCOUNT_ID;
   const gatewayId = env?.CLOUDFLARE_GATEWAY_ID;
@@ -181,19 +166,17 @@ async function resolveRoute(registry: ExtractionRegistry, configured: Extraction
   const usable = typeof credential === "string" && credential.trim().length > 0
     && typeof account === "string" && CLOUDFLARE_ID.test(account)
     && (!gateway || (typeof gatewayId === "string" && CLOUDFLARE_ID.test(gatewayId)));
-  if (!usable) {
-    fail("no_credentials", `${provider} has no complete credential in Pi (key and account id${gateway ? ", gateway id" : ""}).`);
-  }
-  const key = (credential as string).trim();
+  if (!usable) return fail("no_credentials", `${provider} has no complete credential in Pi (key and account id${gateway ? ", gateway id" : ""}).`);
+  const key = credential.trim();
   return gateway
     ? {
       model, provider,
-      url: `https://gateway.ai.cloudflare.com/v1/${account as string}/${gatewayId as string}/workers-ai/@cf/cloudflare/clairic`,
+      url: `https://gateway.ai.cloudflare.com/v1/${account}/${gatewayId}/workers-ai/@cf/cloudflare/clairic`,
       headers: { "cf-aig-authorization": key },
     }
     : {
       model, provider,
-      url: `https://api.cloudflare.com/client/v4/accounts/${account as string}/ai/run/@cf/cloudflare/clairic`,
+      url: `https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/@cf/cloudflare/clairic`,
       headers: { Authorization: `Bearer ${key}` },
     };
 }
@@ -219,19 +202,16 @@ interface FieldResult { type: string; status: "extracted" | "null" | "uncertain"
 
 function readAnswers(fields: Record<string, ExtractField>, body: unknown, model: string): { fields: Record<string, FieldResult>; truncated: boolean; usage?: unknown } {
   const invalid = () => invalidAnswer(model);
-  const envelope = body as { success?: unknown; result?: unknown } | null;
-  const result = envelope?.success === true ? envelope.result as { answers?: unknown; truncated?: unknown; usage?: unknown } : undefined;
-  if (!result || typeof result !== "object" || Array.isArray(result)) return invalid();
-  const answers = result.answers as Record<string, unknown> | undefined;
-  if (!answers || typeof answers !== "object" || Array.isArray(answers)) return invalid();
+  const result = isPlainObject(body) && body.success === true && isPlainObject(body.result) ? body.result : invalid();
+  const answers = isPlainObject(result.answers) ? result.answers : invalid();
   const names = Object.keys(fields);
   if (Object.keys(answers).length !== names.length || names.some(name => !Object.hasOwn(answers, name))) return invalid();
   if (result.truncated !== undefined && typeof result.truncated !== "boolean") return invalid();
   const out: Record<string, FieldResult> = {};
   for (const name of names) {
     const { type, spec } = fields[name]!;
-    const answer = answers[name] as { type?: unknown; value?: unknown; confidence?: unknown; p_null?: unknown } | null;
-    if (!answer || typeof answer !== "object" || answer.type !== spec.type) return invalid();
+    const answer = answers[name];
+    if (!isPlainObject(answer) || answer.type !== spec.type) return invalid();
     const { value, confidence, p_null: pNull } = answer;
     if ((value !== null && !validValue(spec, value)) || (confidence !== undefined && !isProbability(confidence)) || (pNull !== undefined && !isProbability(pNull))) {
       return invalid();
@@ -241,7 +221,7 @@ function readAnswers(fields: Record<string, ExtractField>, body: unknown, model:
     else if (typeof confidence === "number" && confidence >= EXTRACT_THRESHOLD) out[name] = { type, status: "extracted", value, ...scores };
     else out[name] = { type, status: "uncertain", value: null, guess: value, ...scores };
   }
-  const usage = result.usage && typeof result.usage === "object"
+  const usage = isPlainObject(result.usage)
     ? Object.fromEntries(Object.entries(result.usage).filter(([, count]) => typeof count === "number" && Number.isFinite(count)))
     : {};
   return { fields: out, truncated: result.truncated === true, ...(Object.keys(usage).length > 0 ? { usage } : {}) };
@@ -285,18 +265,6 @@ async function sendToClairic(route: Route, text: string, fields: Record<string, 
   }
 }
 
-function cutUtf8(text: string, maxBytes: number): { text: string; cut: boolean } {
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.length <= maxBytes) return { text, cut: false };
-  let end = maxBytes;
-  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;
-  return { text: bytes.subarray(0, end).toString("utf8"), cut: true };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * The text the tool itself returned, never the adapter's placeholder, UI-session note or truncation notice, and never
  * read from a path the server could have written. A small raw result is the server's own object in
@@ -306,14 +274,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * reads record no raw result and carry the text as returned, with an empty placeholder when there was none.
  */
 async function toolOwnText(result: ToolResult): Promise<string | undefined> {
-  const details = (result.details ?? {}) as Record<string, unknown>;
+  const details = result.details;
   const raw = details.mcpResult;
-  if (isRecord(raw) && !(raw.omitted === true && typeof raw.rawResultBytes === "number")) {
+  if (isPlainObject(raw) && !(raw.omitted === true && typeof raw.rawResultBytes === "number")) {
     const parts: string[] = [];
     for (const block of Array.isArray(raw.content) ? raw.content as unknown[] : []) {
-      if (!isRecord(block)) continue;
+      if (!isPlainObject(block)) continue;
       if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
-      else if (block.type === "resource" && isRecord(block.resource) && typeof block.resource.text === "string"
+      else if (block.type === "resource" && isPlainObject(block.resource) && typeof block.resource.text === "string"
         && !isRewrittenBinaryResource(block.resource)) parts.push(block.resource.text);
     }
     if (raw.structuredContent !== undefined && raw.structuredContent !== null) parts.push(JSON.stringify(raw.structuredContent, null, 2));
@@ -339,7 +307,7 @@ function localDate(date: Date): string {
 
 /** The call's own result with one line first: skipped or failed extraction never loses the tool result. */
 function withLine(result: ToolResult, line: string | undefined, extraction: Record<string, unknown>): ToolResult {
-  const details = { ...(result.details ?? {}), extraction };
+  const details = { ...result.details, extraction };
   if (line === undefined) return { ...result, details };
   const [first, ...rest] = result.content;
   const content: ContentBlock[] = first?.type === "text"
@@ -359,23 +327,21 @@ export async function applyExtraction(
   modelRegistry: unknown,
   signal?: AbortSignal,
 ): Promise<ToolResult> {
-  const details = (result.details ?? {}) as { error?: unknown; task?: unknown; server?: unknown; outputGuard?: { fullOutputPath?: string } };
-  const skip = (code: string, message: string, line?: string) => withLine(result, line, { status: "skipped", error: { code, message } });
-  if (details.error !== undefined && details.error !== "tool_error") return skip("call_failed", "The call failed, so nothing was sent.");
-  if (details.error === "tool_error") return skip("tool_error", "The tool returned an error.", "Extraction skipped: the tool returned an error.");
-  if (details.task !== undefined) return skip("background_task", "The call runs as a background task.", "Extraction skipped: the call runs as a background task.");
+  const details = result.details;
+  const skip = (code: string, message: string, shown = true) => withLine(result,
+    shown ? `Extraction skipped: ${message[0]!.toLowerCase()}${message.slice(1)}` : undefined, { status: "skipped", error: { code, message } });
+  if (details.error === "tool_error") return skip("tool_error", "The tool returned an error.");
+  if (details.error !== undefined) return skip("call_failed", "The call failed, so nothing was sent.", false);
+  if (details.task !== undefined) return skip("background_task", "The call runs as a background task.");
   const settings = validateExtractionSettings(state.config.settings?.extraction);
   const server = typeof details.server === "string" ? details.server : undefined;
   if (!settings.enabled || server === undefined || !settings.allowedServers.includes(server)) {
-    const line = `Extraction skipped: server "${server ?? "unknown"}" is not in settings.extraction.allowedServers.`;
-    return skip("server_not_allowed", line.slice("Extraction skipped: ".length), line);
+    return skip("server_not_allowed", `server "${server ?? "unknown"}" is not in settings.extraction.allowedServers.`);
   }
   const source = await toolOwnText(result);
-  if (source === undefined) {
-    return skip("no_source", "The tool's own text is not available.", "Extraction skipped: the tool's own text is not available.");
-  }
-  if (source.trim().length === 0) return skip("no_text", "The result has no text.", "Extraction skipped: the result has no text.");
-  const fullPath = details.outputGuard?.fullOutputPath;
+  if (source === undefined) return skip("no_source", "The tool's own text is not available.");
+  if (source.trim().length === 0) return skip("no_text", "The result has no text.");
+  const fullPath = (details.outputGuard as { fullOutputPath?: unknown } | undefined)?.fullOutputPath;
 
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   const referenceDate = localDate(new Date());
@@ -384,14 +350,14 @@ export async function applyExtraction(
     const registry = extractionRegistryOf(modelRegistry) ?? fail("unavailable", "Extraction needs Pi's model registry (Pi 0.99 or later).");
     const route = await resolveRoute(registry, settings.model);
     model = route.model;
-    const sent = cutUtf8(source, EXTRACT_MAX_BYTES);
-    const answer = await sendToClairic(route, sent.text, fields, referenceDate, ownedSignal);
-    const truncated = sent.cut || answer.truncated;
-    const saved = fullPath !== undefined ? { path: fullPath } : await saveMcpOutputText(source);
+    const sent = truncateStringToBytes(source, EXTRACT_MAX_BYTES);
+    const answer = await sendToClairic(route, sent, fields, referenceDate, ownedSignal);
+    const truncated = sent !== source || answer.truncated;
+    const saved = typeof fullPath === "string" ? { path: fullPath } : await saveArtifact("output", source);
     const values = Object.fromEntries(Object.entries(answer.fields).map(([name, field]) => [name, field.value]));
     const uncertainEntries = Object.entries(answer.fields).filter(([, field]) => field.status === "uncertain");
     const uncertain = Object.fromEntries(uncertainEntries.map(([name, field]) => [name, {
-      ...(field.guess !== undefined ? { guess: field.guess } : {}),
+      guess: field.guess,
       ...(field.confidence !== undefined ? { confidence: field.confidence } : {}),
     }]));
     const text = JSON.stringify({
@@ -417,7 +383,7 @@ export async function applyExtraction(
     };
   } catch (error) {
     if (!(error instanceof ExtractionFailure)) throw error;
-    const { code, message } = error.failure;
+    const { code, message } = error;
     return withLine(result, `Extraction failed (${code}): ${message}`, { ...(model ? { model } : {}), status: "failed", error: { code, message } });
   }
 }

@@ -325,12 +325,12 @@ export async function stopBackgroundTask(state: McpExtensionState, ctx: Extensio
     return;
   }
   try {
-    if (!await state.backgroundTasks.stop(key, "you")) {
+    if (!await state.backgroundTasks.stop(key, "the user")) {
       ctx.ui.notify(`No running MCP task "${key}". Run /mcp-adapter tasks to list them.`, "error");
       return;
     }
   } catch (error) {
-    ctx.ui.notify(`Could not stop MCP task "${key}": ${error instanceof Error ? error.message : String(error)}`, "error");
+    ctx.ui.notify(`Could not stop MCP task "${key}": ${formatTerminalError(error)}`, "error");
     return;
   }
   ctx.ui.notify(`Stopped MCP task "${key}".`, "info");

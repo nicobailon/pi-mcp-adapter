@@ -48,27 +48,23 @@ export function sanitizeDenyReason(reason: string): string | undefined {
   return `${cleaned.slice(0, read)}${DENY_REASON_TRUNCATED}`;
 }
 
-/** The text and details a denied or gated call returns, shared by every call path. */
+/** The result a denied or gated call returns, shared by every call path. */
 export function approvalBlockedResult(
   approval: Exclude<ToolCallApprovalResult, { ok: true }>,
   serverName: string,
   toolName: string,
-): { text: string; details: { error: "approval_denied" | "approval_required"; server: string; tool: string; reason?: string } } {
-  if (approval.reason === "denied") {
-    const base = `MCP tool "${toolName}" on server "${serverName}" was blocked by the approval gate; it was not executed. This does not by itself mean the user rejected it.`;
+): { content: [{ type: "text"; text: string }]; details: { error: "approval_denied" | "approval_required"; server: string; tool: string; reason?: string } } {
+  if (approval.reason !== "denied") {
     return {
-      text: approval.denyReason ? `${base}\nReason: ${approval.denyReason}` : base,
-      details: {
-        error: "approval_denied",
-        server: serverName,
-        tool: toolName,
-        ...(approval.denyReason ? { reason: approval.denyReason } : {}),
-      },
+      content: [{ type: "text", text: `MCP tool "${toolName}" on server "${serverName}" is approval-gated and requires an interactive session.` }],
+      details: { error: "approval_required", server: serverName, tool: toolName },
     };
   }
+  const { denyReason } = approval;
+  const base = `MCP tool "${toolName}" on server "${serverName}" was blocked by the approval gate; it was not executed. This does not by itself mean the user rejected it.`;
   return {
-    text: `MCP tool "${toolName}" on server "${serverName}" is approval-gated and requires an interactive session.`,
-    details: { error: "approval_required", server: serverName, tool: toolName },
+    content: [{ type: "text", text: denyReason ? `${base}\nReason: ${denyReason}` : base }],
+    details: { error: "approval_denied", server: serverName, tool: toolName, ...(denyReason ? { reason: denyReason } : {}) },
   };
 }
 
@@ -147,7 +143,6 @@ function isMcpToolApprovalDecision(value: unknown): value is McpToolApprovalDeci
     || value === "abstain";
 }
 
-/** Anything but a known string or a well-formed denial object is a deny. */
 function normalizeHandlerResult(value: unknown): McpToolApprovalHandlerResult {
   if (isMcpToolApprovalDecision(value)) return value;
   if (typeof value === "object" && value !== null && "decision" in value && value.decision === "deny"

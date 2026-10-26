@@ -44,9 +44,9 @@ export interface RestoredTask extends Omit<BackgroundTaskStart, "execution" | "t
   reference: SerializedTaskReference;
 }
 
-/** A running task as `/mcp tasks` shows it. */
+/** A running task as `/mcp-adapter tasks` shows it. */
 export interface BackgroundTaskInfo {
-  /** `<server>/<taskId>`, the name `/mcp tasks stop` takes. */
+  /** `<server>/<taskId>`, the name `/mcp-adapter tasks stop` takes. */
   key: string;
   tool: string;
   status: TaskState;
@@ -58,10 +58,10 @@ interface TaskEntry extends Omit<BackgroundTaskStart, "execution"> {
   /** Bumped when the task is handed off, so the superseded execution's outcome is ignored. */
   generation: number;
   /** Who asked to stop the task, named in the cancelled message. */
-  stoppedBy?: "you" | "the agent";
+  stoppedBy?: "the user" | "the agent";
   /** Removes the current execution's owner-abort cancel. */
   releaseCancel: () => void;
-  /** Resolves the promise `start()` returned. */
+  /** Resolves the promise `start()` or `restore()` returned. */
   finish: () => void;
 }
 
@@ -143,7 +143,7 @@ export class BackgroundTaskRegistry {
   }
 
   /** Resolves false for an unknown key; rejects when the cancel request fails. */
-  async stop(key: string, by: "you" | "the agent"): Promise<boolean> {
+  async stop(key: string, by: "the user" | "the agent"): Promise<boolean> {
     const entry = this.running.get(key);
     if (entry === undefined) return false;
     entry.stoppedBy = by;

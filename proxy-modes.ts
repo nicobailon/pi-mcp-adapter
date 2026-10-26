@@ -1152,7 +1152,6 @@ export function executeSearch(
   offset = 0,
   searchMode: "lexical" | "semantic" = "lexical",
   signal?: AbortSignal,
-  /** Pi's `ctx.modelRegistry`, as the host passes it. */
   modelRegistry?: unknown,
 ): ProxyToolResult | Promise<ProxyToolResult> {
   const render = (outcome: ToolSearchOutcome): ProxyToolResult => "error" in outcome
@@ -1841,10 +1840,7 @@ export async function executeCall(
     );
     if (approval.ok === false) {
       const blocked = approvalBlockedResult(approval, serverName, toolMeta.originalName);
-      return {
-        content: [{ type: "text" as const, text: blocked.text }],
-        details: { mode: "call", ...blocked.details },
-      };
+      return { ...blocked, details: { mode: "call", ...blocked.details } };
     }
 
     if (toolMeta.resourceUri) {

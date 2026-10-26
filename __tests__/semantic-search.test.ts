@@ -349,7 +349,6 @@ describe("semantic search on big catalogs", () => {
     expect(candidates.slice(0, 2)).toEqual(["calendar_book", "calendar_list"]);
     expect(classifier.calls).toHaveLength(2);
     expect(result.ok && result.matches[0]).toMatchObject({ server: "calendar", tool: { name: "calendar_book" } });
-    // Both calls' usage is counted.
     expect(result).toMatchObject({ backend: { usage: { input: 24, output: 6, cost: 0.0002 } } });
   });
 

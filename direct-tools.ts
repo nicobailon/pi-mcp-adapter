@@ -272,11 +272,7 @@ export function createDirectToolExecutor(
         ...(annotations !== undefined ? { annotations } : {}),
       }, normalizedParams, ownedSignal, spec.resourceUri ? "resource" : "direct");
       if (approval.ok === false) {
-        const blocked = approvalBlockedResult(approval, spec.serverName, spec.originalName);
-        return {
-          content: [{ type: "text" as const, text: blocked.text }],
-          details: blocked.details,
-        };
+        return approvalBlockedResult(approval, spec.serverName, spec.originalName);
       }
 
       if (spec.resourceUri) {

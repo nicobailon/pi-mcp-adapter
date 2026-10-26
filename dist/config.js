@@ -170,35 +170,30 @@ export function getLegacyMcpMigrationNotices(cwd = process.cwd(), overridePath) 
         ...getPiMcpConfigNotices(cwd, overridePath),
         ...getOpenCodeImportNotices(cwd, overridePath),
         ...getDroppedCredentialNotices(cwd, overridePath),
-        ...getRemovedScriptSettingNotices(cwd, overridePath),
-        ...getRemovedJevSettingNotices(cwd, overridePath),
+        ...getRemovedSettingNotices(cwd, overridePath),
     ];
 }
 /** Settings that only configured mcpScript. They still load, and do nothing. */
 const REMOVED_SCRIPT_SETTINGS = ["scriptMode", "scriptSkill"];
-/** One notice per config file that still sets a setting mcpScript's removal left without effect. */
-function getRemovedScriptSettingNotices(cwd, overridePath) {
+/** Notices for each config file that still sets settings that now do nothing: mcpScript's, and `settings.jev`. */
+function getRemovedSettingNotices(cwd, overridePath) {
     return getConfigSources(overridePath, cwd).flatMap((source) => {
         const settings = readSourceConfig(source.id, source.readPath)?.settings;
         if (!settings)
             return [];
+        const notices = [];
         const keys = REMOVED_SCRIPT_SETTINGS.filter((key) => settings[key] !== undefined).map((key) => `settings.${key}`);
-        if (keys.length === 0)
-            return [];
-        const [verb, pronoun] = keys.length === 1 ? ["does", "it"] : ["do", "them"];
-        return [`${source.readPath}: pi-mcp-adapter no longer has mcpScript, so ${keys.join(" and ")} ${verb} nothing. Remove ${pronoun}, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`];
-    });
-}
-/** `settings.jev` still loads and does nothing; one notice per file that sets it. */
-function getRemovedJevSettingNotices(cwd, overridePath) {
-    return getConfigSources(overridePath, cwd).flatMap((source) => {
-        const settings = readSourceConfig(source.id, source.readPath)?.settings;
-        if (settings?.jev === undefined)
-            return [];
-        if (settings.jev === false) {
-            return [`${source.readPath}: settings.jev was replaced by settings.semanticSearch, and settings.jev: false no longer turns semantic search off. Set settings.semanticSearch to false to keep it off.`];
+        if (keys.length > 0) {
+            const [verb, pronoun] = keys.length === 1 ? ["does", "it"] : ["do", "them"];
+            notices.push(`${source.readPath}: pi-mcp-adapter no longer has mcpScript, so ${keys.join(" and ")} ${verb} nothing. Remove ${pronoun}, and add "+codemode" to defaultTools in Pi's settings to script MCP calls with Pi's codemode.`);
         }
-        return [`${source.readPath}: settings.jev was replaced by settings.semanticSearch, and semantic search now uses Pi's classifier models instead of a System One key. Move allowedServers there (semanticCandidateLimit is now candidateLimit and semanticMinProbability is minProbability), or run /mcp-adapter semantic setup.`];
+        if (settings.jev === false) {
+            notices.push(`${source.readPath}: settings.jev was replaced by settings.semanticSearch, and settings.jev: false no longer turns semantic search off. Set settings.semanticSearch to false to keep it off.`);
+        }
+        else if (settings.jev !== undefined) {
+            notices.push(`${source.readPath}: settings.jev was replaced by settings.semanticSearch, and semantic search now uses Pi's classifier models instead of a System One key. Move allowedServers there (semanticCandidateLimit is now candidateLimit and semanticMinProbability is minProbability), or run /mcp-adapter semantic setup.`);
+        }
+        return notices;
     });
 }
 function credentialFiles(servers, fileOf) {

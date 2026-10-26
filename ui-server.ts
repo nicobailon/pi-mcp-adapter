@@ -518,14 +518,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               ? { ok: false as const, reason: "approval_required_headless" as const }
               : { ok: true as const };
           if (approval.ok === false) {
-            const blocked = approvalBlockedResult(approval, options.serverName, callParams.name);
-            sendJson(res, 200, {
-              ok: true,
-              result: {
-                content: [{ type: "text" as const, text: blocked.text }],
-                details: blocked.details,
-              },
-            });
+            sendJson(res, 200, { ok: true, result: approvalBlockedResult(approval, options.serverName, callParams.name) });
             return;
           }
           const callTool = async (conn: ServerConnection) => {
