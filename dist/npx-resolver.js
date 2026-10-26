@@ -233,7 +233,7 @@ async function forceNpxCache(packageSpec, signal) {
             });
         });
     }
-    catch (error) {
+    catch {
         if (signal?.aborted)
             throwIfAborted(signal);
         // Ignore failures, resolution will fall back to original command

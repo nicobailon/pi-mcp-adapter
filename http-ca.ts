@@ -66,14 +66,16 @@ export function createCaFetch(definition: ServerEntry): { fetch: (input: URL | R
             referrer: input.referrer,
             referrerPolicy: input.referrerPolicy,
             signal: input.signal,
-          } as unknown as UndiciRequestInit)
+          } as UndiciRequestInit)
           : input;
         const options = {
           ...init,
           ...(init?.headers !== undefined ? { headers: [...new Headers(init.headers)] } : {}),
           dispatcher,
           redirect: "error" as const,
-        } as unknown as UndiciRequestInit;
+        } as UndiciRequestInit;
+        // The bundled undici Response is the same runtime shape as the global one, typed apart.
+        // oxlint-disable-next-line anti-slop/no-chained-type-assertions
         return undiciFetch(bundledInput, options) as unknown as Promise<Response>;
       } catch (error) {
         return Promise.reject(error);

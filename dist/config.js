@@ -586,7 +586,7 @@ function getMergedSettings(overridePath, cwd = process.cwd()) {
     for (const source of getConfigSources(overridePath, cwd)) {
         const loaded = readSourceConfig(source.id, source.readPath);
         if (loaded?.settings)
-            settings = { ...settings, ...loaded.settings };
+            settings = Object.assign(settings ?? {}, loaded.settings);
     }
     return settings;
 }

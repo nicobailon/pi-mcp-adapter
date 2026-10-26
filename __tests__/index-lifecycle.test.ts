@@ -725,7 +725,7 @@ describe("mcpAdapter session lifecycle", () => {
     state.consentManager = new ConsentManager();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
     const context = { hasUI: false, sessionManager };
     await handlers.get("session_start")?.({}, context);
     await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(state));
@@ -753,7 +753,7 @@ describe("mcpAdapter session lifecycle", () => {
     state.consentManager = new ConsentManager();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, { hasUI: false, sessionManager: activeSessionManager });
     await handlers.get("session_tree")?.({}, { hasUI: false, sessionManager: staleSessionManager });
 
@@ -774,7 +774,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
     await Promise.resolve();
@@ -803,7 +803,7 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.loadMetadataCache.mockReturnValue(null);
     mocks.initializeMcp.mockReturnValue(initialization.promise);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
 
     let inputCompleted = false;
@@ -858,7 +858,7 @@ describe("mcpAdapter session lifecycle", () => {
       mocks.loadMcpConfig.mockReturnValue(config);
       mocks.initializeMcp.mockReturnValue(initialization.promise);
 
-      const { api, handlers } = await loadAdapter();
+      const { handlers } = await loadAdapter();
       await handlers.get("session_start")?.({}, {});
 
       let inputCompleted = false;
@@ -1019,7 +1019,7 @@ describe("mcpAdapter session lifecycle", () => {
     ]);
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
     await Promise.resolve();
@@ -2901,7 +2901,7 @@ describe("mcpAdapter session lifecycle", () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     expect(sessionStart).toBeTypeOf("function");
@@ -3022,7 +3022,7 @@ describe("mcpAdapter session lifecycle", () => {
       },
     });
 
-    const { api } = await loadAdapter();
+    await loadAdapter();
 
     await new Promise((resolve) => setImmediate(resolve));
 
@@ -3091,7 +3091,7 @@ describe("mcpAdapter session lifecycle", () => {
     }
 
     try {
-      const { api, handlers } = await loadAdapter();
+      const { handlers } = await loadAdapter();
       const starting = Promise.resolve(handlers.get("session_start")?.({}, { hasUI: false }));
       await vi.waitFor(() => expect(
         moduleName === "core" ? mocks.coreModuleStarted : mocks.oauthModuleStarted,
@@ -3612,7 +3612,7 @@ describe("mcpAdapter session lifecycle", () => {
       .mockReturnValueOnce(loadInit.promise)
       .mockReturnValueOnce(sessionInit.promise);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
 
     await new Promise((resolve) => setImmediate(resolve));
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
@@ -3644,7 +3644,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     await sessionStart?.({}, { hasUI: false });
@@ -3664,7 +3664,7 @@ describe("mcpAdapter session lifecycle", () => {
     const loadInit = createDeferred<any>();
     mocks.initializeMcp.mockReturnValue(loadInit.promise);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
 
     await new Promise((resolve) => setImmediate(resolve));
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
@@ -3791,7 +3791,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
 
-    const { api, handlers } = await loadAdapter();
+    const { handlers } = await loadAdapter();
 
     const sessionStart = handlers.get("session_start");
     const sessionShutdown = handlers.get("session_shutdown");

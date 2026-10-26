@@ -149,7 +149,7 @@ export function isUnauthorizedHttpError(error: unknown): boolean {
     || (error instanceof SdkHttpError && error.status === 401)
     // Some pinned-SDK transport paths emit this plain Error when bearer
     // request headers are used without an OAuth authProvider.
-    || (error instanceof Error && /^Error POSTing to endpoint \(HTTP 401\):/.test(error.message));
+    || (error instanceof Error && error.message.startsWith("Error POSTing to endpoint (HTTP 401):"));
 }
 
 function shouldFallbackToSse(error: unknown, definition: ServerDefinition): boolean {
@@ -1765,9 +1765,7 @@ export class McpServerManager {
         oauthAuthority,
       );
       provider.setAuthFetch(createOAuthFetch(serverUrl, () => serviceHeaders,
-        combineAbortSignals(this.oauthRuntime?.signal, signal), {
-          ...(caFetch ? { delegate: caFetch.fetch } : {}),
-        }));
+        combineAbortSignals(this.oauthRuntime?.signal, signal), caFetch ? { delegate: caFetch.fetch } : {}));
       return provider;
     };
 
@@ -1854,10 +1852,10 @@ export class McpServerManager {
       try {
         await this.connectClientWithAbort(client, transport, requestOptions, signal);
         return { status: "connected", client, transport };
-      } catch (error) {
-        if (error instanceof SseError && sseFetchFailure !== undefined) {
-          error = new AggregateError([error, sseFetchFailure], error.message);
-        }
+      } catch (caught) {
+        const error = caught instanceof SseError && sseFetchFailure !== undefined
+          ? new AggregateError([caught, sseFetchFailure], caught.message)
+          : caught;
         const abortCleanupFailed = error instanceof AggregateError
           && error.message === "MCP connection abort cleanup failed";
         if (!abortCleanupFailed) {

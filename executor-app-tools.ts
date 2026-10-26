@@ -66,8 +66,7 @@ function failure(text: string, response: unknown): ClientCallToolResult {
  * with `matches`), without `tools.`; undefined for any other result. Read after
  * `unwrapExecutorCallResult` accepted the result.
  */
-export function executorUnknownToolMatches(path: string, result: object): string[] | undefined {
-  const { structuredContent, isError } = result as { structuredContent?: unknown; isError?: unknown };
+export function executorUnknownToolMatches(path: string, { structuredContent, isError }: { structuredContent?: unknown; isError?: unknown }): string[] | undefined {
   if (isError === true || !isRecord(structuredContent) || !isRecord(structuredContent.execution)) return undefined;
   const outcome = structuredContent.execution.value;
   if (!isRecord(outcome) || outcome.ok !== false || outcome.matches === undefined) return undefined;

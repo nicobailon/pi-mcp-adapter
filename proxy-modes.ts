@@ -1969,7 +1969,7 @@ export async function executeCall(
     if (!result.isError) recordOutput(result);
 
     if (uiResourceUri) {
-      uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
+      uiSession?.sendToolResult(result as import("@modelcontextprotocol/client").CallToolResult);
     }
 
     if (!result.isError && internalDelivery) {

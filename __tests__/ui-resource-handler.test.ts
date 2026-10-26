@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 import { buildCspMetaContent } from "../host-html-template.ts";
 import { SdkErrorCode, SdkHttpError, UrlElicitationRequiredError } from "@modelcontextprotocol/client";

@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    ".agent/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".continue/**",
+    ".cursor/**",
+    ".gemini/**",
+    ".opencode/**",
+    ".pi/**",
+    ".roo/**",
+    ".windsurf/**",
+    "tools/oxlint/anti-slop/**",
+    "**/dist/**",
+    "app-bridge.bundle.js"
+  ],
+  "jsPlugins": [
+    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" }
+  ],
+  "rules": {
+    "eslint/no-control-regex": "off",
+    "unicorn/no-useless-spread": "off",
+    "eslint/no-unused-vars": ["warn", { "ignoreRestSiblings": true, "argsIgnorePattern": "^_" }],
+    "oxc/no-accumulating-spread": "error",
+    "anti-slop/no-reduce-accumulator-copy": "error",
+    "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    "anti-slop/no-widen-then-assert": "error"
+  },
+  "overrides": [
+    {
+      "files": ["__tests__/**", "conformance/**", "**/*.test.ts", "**/*.test.mjs"],
+      "rules": {
+        "anti-slop/no-chained-type-assertions": "off",
+        "typescript/no-this-alias": "off",
+        "unicorn/no-thenable": "off"
+      }
+    }
+  ]
+}

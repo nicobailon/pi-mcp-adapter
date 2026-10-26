@@ -69,7 +69,6 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map(),
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],

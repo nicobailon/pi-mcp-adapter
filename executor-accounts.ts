@@ -89,11 +89,11 @@ export function canonicalPath(path: string): string {
  * Only a result whose outcome carries an account code is parsed strictly; any other shape passes
  * through, so an Executor shape change cannot break unrelated calls.
  */
-export function findAccountGap(params: ToolCallParams, result: object): AccountGap | undefined {
+export function findAccountGap(params: ToolCallParams, result: { structuredContent?: unknown; isError?: unknown }): AccountGap | undefined {
   if (params.name !== "call") return undefined;
   const calls = isRecord(params.arguments) ? params.arguments.calls : undefined;
   if (Array.isArray(calls)) return undefined;
-  const content = (result as { structuredContent?: unknown }).structuredContent;
+  const content = result.structuredContent;
   if (!isRecord(content) || content.status !== "completed" || !isRecord(content.execution)) return undefined;
   const execution = content.execution;
   if (!namesMissingAccount(execution.value)) return undefined;

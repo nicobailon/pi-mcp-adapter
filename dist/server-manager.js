@@ -76,7 +76,7 @@ export function isUnauthorizedHttpError(error) {
         || (error instanceof SdkHttpError && error.status === 401)
         // Some pinned-SDK transport paths emit this plain Error when bearer
         // request headers are used without an OAuth authProvider.
-        || (error instanceof Error && /^Error POSTing to endpoint \(HTTP 401\):/.test(error.message));
+        || (error instanceof Error && error.message.startsWith("Error POSTing to endpoint (HTTP 401):"));
 }
 function shouldFallbackToSse(error, definition) {
     if (definition.protocolVersion === "2026-07-28")
@@ -1418,9 +1418,7 @@ export class McpServerManager {
                 if (!oauthAuthority)
                     throw new Error(`Missing OAuth authority for ${serverName}`);
                 const provider = new McpOAuthProvider(serverName, serverUrl, extractOAuthConfig(definition), { onRedirect: async () => { } }, this.authStorageOptions, this.oauthRuntime?.signal, undefined, oauthAuthority);
-                provider.setAuthFetch(createOAuthFetch(serverUrl, () => serviceHeaders, combineAbortSignals(this.oauthRuntime?.signal, signal), {
-                    ...(caFetch ? { delegate: caFetch.fetch } : {}),
-                }));
+                provider.setAuthFetch(createOAuthFetch(serverUrl, () => serviceHeaders, combineAbortSignals(this.oauthRuntime?.signal, signal), caFetch ? { delegate: caFetch.fetch } : {}));
                 return provider;
             };
             // Explicit OAuth checks secure storage immediately. Implicit OAuth keeps
@@ -1504,10 +1502,10 @@ export class McpServerManager {
                     await this.connectClientWithAbort(client, transport, requestOptions, signal);
                     return { status: "connected", client, transport };
                 }
-                catch (error) {
-                    if (error instanceof SseError && sseFetchFailure !== undefined) {
-                        error = new AggregateError([error, sseFetchFailure], error.message);
-                    }
+                catch (caught) {
+                    const error = caught instanceof SseError && sseFetchFailure !== undefined
+                        ? new AggregateError([caught, sseFetchFailure], caught.message)
+                        : caught;
                     const abortCleanupFailed = error instanceof AggregateError
                         && error.message === "MCP connection abort cleanup failed";
                     if (!abortCleanupFailed) {

@@ -263,7 +263,7 @@ async function probeAuthDiscovery(serverUrl, definition, signal) {
         await response.body?.cancel().catch(() => { });
         return { ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}), ...(scope ? { scope } : {}) };
     }
-    catch (error) {
+    catch {
         if (signal?.aborted)
             throwIfAborted(signal);
         return {};
@@ -757,6 +757,7 @@ export async function completeAuth(serverName, authorizationCode, options = {}) 
     throwIfAborted(signal);
     let keepPendingForRetry = false;
     let caughtError;
+    let failed = false;
     try {
         const fetchFn = createOAuthFetch(pendingAuth.serverUrl, pendingAuth.getHeaders, signal);
         pendingAuth.authProvider.setAuthFetch(fetchFn);
@@ -786,27 +787,24 @@ export async function completeAuth(serverName, authorizationCode, options = {}) 
         if (result !== "AUTHORIZED") {
             throw new UnauthorizedError("Failed to authorize");
         }
-        return "authenticated";
     }
     catch (error) {
+        failed = true;
         caughtError = error;
-        throw error;
     }
-    finally {
-        if (!keepPendingForRetry) {
-            try {
-                await clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, authStorageOptions);
-            }
-            catch (cleanupError) {
-                if (caughtError !== undefined) {
-                    throw new AggregateError([caughtError, cleanupError], "OAuth completion cleanup failed");
-                }
-                throw cleanupError;
-            }
-            if (caughtError === undefined)
-                pendingAuth.authority();
+    if (!keepPendingForRetry) {
+        try {
+            await clearPendingAuthAndReleaseIfIdle(runtime, serverName, oauthState, authStorageOptions);
         }
+        catch (cleanupError) {
+            throw failed ? new AggregateError([caughtError, cleanupError], "OAuth completion cleanup failed") : cleanupError;
+        }
+        if (!failed)
+            pendingAuth.authority();
     }
+    if (failed)
+        throw caughtError;
+    return "authenticated";
 }
 /**
  * Perform the complete OAuth authentication flow for a server.

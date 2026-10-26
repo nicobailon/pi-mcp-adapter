@@ -76,11 +76,14 @@ export function createOwnedUi(ui, owner) {
             get(_shadow, property, receiver) {
                 if (!owner.isActive())
                     return undefined;
+                // A Proxy trap forwards the property and receiver as given, which only Reflect does.
+                // oxlint-disable-next-line anti-slop/no-reflect-get
                 const member = Reflect.get(object, property, receiver);
                 if (typeof member === "function") {
                     return (...args) => {
                         if (!owner.isActive())
                             return undefined;
+                        // oxlint-disable-next-line anti-slop/no-reflect-apply
                         return Reflect.apply(member, object, args);
                     };
                 }

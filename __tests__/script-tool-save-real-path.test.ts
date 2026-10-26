@@ -119,7 +119,7 @@ describe("mcp({ action: \"save-script\" }) in a real session", () => {
 
       expect(session.getAllTools().find(tool => tool.name === "mcp__script__greet")).toMatchObject({ exposure: "deferred" });
       expect(session.getToolDefinition("mcp__script__greet")?.promptSnippet).toBeUndefined();
-      expect((session.getToolDefinition("mcp")?.parameters as any).properties.action.description).toBe("Action: 'install', 'ui-messages', 'auth-start', 'auth-complete', or 'save-script'");
+      expect((session.getToolDefinition("mcp")!.parameters as any).properties.action.description).toBe("Action: 'install', 'ui-messages', 'auth-start', 'auth-complete', or 'save-script'");
       expect(textOf(await callAs(session, "mcp__script__greet", "st-1", { who: "Ada" }))).toContain("hello Ada");
     });
   }, 30_000);
@@ -234,7 +234,7 @@ describe("mcp({ action: \"save-script\" }) in a real session", () => {
       expect(ui.select).not.toHaveBeenCalled();
       expect(existsSync(scriptPath)).toBe(false);
       expect(session.getToolDefinition("mcp")?.description).not.toContain("save-script");
-      expect((session.getToolDefinition("mcp")?.parameters as any).properties.action.description).toBe("Action: 'install', 'ui-messages', 'auth-start', or 'auth-complete'");
+      expect((session.getToolDefinition("mcp")!.parameters as any).properties.action.description).toBe("Action: 'install', 'ui-messages', 'auth-start', or 'auth-complete'");
     }, { settings: { allowScriptToolSave: false } });
   }, 60_000);
 

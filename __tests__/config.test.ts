@@ -689,7 +689,6 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
     process.env.HOME = home;
     process.chdir(project);
-    const realProject = realpathSync(project);
 
     writeJson(join(home, ".config", "mcp", "mcp.json"), {
       settings: { idleTimeout: 5, requestTimeoutMs: 1500, showStatusIcon: true, allowInstall: true },

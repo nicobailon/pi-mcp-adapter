@@ -56,8 +56,8 @@ describe("resolveMcpResultContent", () => {
   });
 
   it("cleans only the requested materialization scope", () => {
-    const scopeA = {};
-    const scopeB = {};
+    const scopeA = new AbortController().signal;
+    const scopeB = new AbortController().signal;
 
     const first = resolveMcpResultContent({
       content: [{ type: "resource", resource: { uri: "test://scope-a", blob: "YQ==" } }],
@@ -175,7 +175,7 @@ describe("resolveMcpResultContent", () => {
   });
 
   it("retries failed scoped cleanup from later cleanup calls", () => {
-    const scope = {};
+    const scope = new AbortController().signal;
     const blocks = resolveMcpResultContent({
       content: [{ type: "resource", resource: { uri: "test://scoped-cleanup", blob: "YQ==" } }],
     }, scope);
@@ -194,13 +194,13 @@ describe("resolveMcpResultContent", () => {
     }
 
     expect(existsSync(dirname(path!))).toBe(true);
-    cleanupMaterializedBinaryResources({});
+    cleanupMaterializedBinaryResources(new AbortController().signal);
     expect(existsSync(dirname(path!))).toBe(false);
   });
 
   it("schedules a retry without deleting active default-scope resources", () => {
     vi.useFakeTimers();
-    const scope = {};
+    const scope = new AbortController().signal;
     const blocks = resolveMcpResultContent({
       content: [{ type: "resource", resource: { uri: "test://scheduled-cleanup", blob: "YQ==" } }],
     }, scope);

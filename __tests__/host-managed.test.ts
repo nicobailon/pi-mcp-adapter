@@ -20,7 +20,7 @@ const SECRET = "sk-host-managed-sentinel-7f3a";
 
 type RegisteredTool = {
   name: string;
-  execute(toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: undefined, ctx: object): Promise<{
+  execute(toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: undefined, ctx: unknown): Promise<{
     content: Array<{ type: string; text?: string }>;
     details: Record<string, unknown>;
   }>;

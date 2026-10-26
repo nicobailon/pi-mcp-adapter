@@ -31,7 +31,7 @@ describe("turning off Pi's built-in MCP", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const writeSettings = (settings: object) => writeFileSync(settingsPath, JSON.stringify(settings));
+  const writeSettings = (settings: Record<string, unknown>) => writeFileSync(settingsPath, JSON.stringify(settings));
   const readSettings = () => JSON.parse(readFileSync(settingsPath, "utf-8"));
   const handledVersion = () => loadOnboardingState().piBuiltinMcpHandledVersion;
 

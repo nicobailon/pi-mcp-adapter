@@ -506,7 +506,7 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
       settled = true;
     }
 
-    const content = resolveMcpResultContent(result as unknown as Record<string, unknown>, lifetime.signal);
+    const content = resolveMcpResultContent(result as Record<string, unknown>, lifetime.signal);
     const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
     if (result.isError) {
       const guarded = await guardMcpOutput(outputContent, { ...guardOptions, prefix: "Error: ", emptyTextFallback: "Tool execution failed" });

@@ -570,13 +570,13 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     mocks.isServerCacheValid.mockReturnValue(true);
     state.manager.getConnection("srv").resourceDiscoveryFailed = true;
     updateMetadataCache(state, "srv");
-    expect((mocks.cache?.servers.srv as any).resources).toEqual(
+    expect((mocks.cache!.servers.srv as any).resources).toEqual(
       hasRuntimeSnapshot ? [] : [{ uri: "ui://old", name: "Old resource" }],
     );
 
     state.manager.getConnection("srv").resourceDiscoveryFailed = false;
     updateMetadataCache(state, "srv");
-    expect((mocks.cache?.servers.srv as any).resources).toEqual([]);
+    expect((mocks.cache!.servers.srv as any).resources).toEqual([]);
   });
 
   it("marks direct-tool metadata bootstrap spawns for health-check reconnects", async () => {

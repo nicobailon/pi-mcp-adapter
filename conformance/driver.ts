@@ -130,7 +130,7 @@ if (scenario === "auth/basic-cimd") {
   }
 }
 if (scenario.startsWith("auth/client-credentials")) {
-  definition.oauth = { ...(definition.oauth ?? {}), grantType: "client_credentials" }
+  definition.oauth = { ...definition.oauth, grantType: "client_credentials" }
 }
 
 const oauthRuntime = await initializeOAuth()

@@ -34,12 +34,8 @@ const pendingCleanupDirectories = new Set<string>();
 const cleanupRetryAttempts = new Map<string, number>();
 let pendingCleanupRetry: ReturnType<typeof setTimeout> | undefined;
 
-function isAbortedScope(scope: object | undefined): boolean {
-  return !!scope && "aborted" in scope && (scope as { aborted?: unknown }).aborted === true;
-}
-
-function getMaterializedResourceSession(scope?: object): MaterializedResourceSession | undefined {
-  if (isAbortedScope(scope)) return undefined;
+function getMaterializedResourceSession(scope?: AbortSignal): MaterializedResourceSession | undefined {
+  if (scope?.aborted) return undefined;
   if (!scope) return defaultMaterializedResourceSession;
   let session = scopedMaterializedResourceSessions.get(scope);
   if (!session) {
@@ -102,7 +98,7 @@ function drainPendingCleanupDirectories(): void {
   }
 }
 
-export function cleanupMaterializedBinaryResources(scope?: object): void {
+export function cleanupMaterializedBinaryResources(scope?: AbortSignal): void {
   const session = scope ? scopedMaterializedResourceSessions.get(scope) : defaultMaterializedResourceSession;
   if (session?.directory) pendingCleanupDirectories.add(session.directory);
   if (session) {
@@ -119,7 +115,7 @@ export function cleanupMaterializedBinaryResources(scope?: object): void {
 const rewrittenBinaryResources = new WeakSet<object>();
 
 /** True for a resource whose blob the adapter replaced with its own note, so its text is not the server's. */
-export function isRewrittenBinaryResource(resource: object): boolean {
+export function isRewrittenBinaryResource(resource: Record<string, unknown>): boolean {
   return rewrittenBinaryResources.has(resource);
 }
 
@@ -138,7 +134,7 @@ function omitBinaryResource(resource: BinaryResource, reason: string): string {
   ].join("\n"));
 }
 
-function materializeBinaryResource(resource: BinaryResource, scope?: object): string {
+function materializeBinaryResource(resource: BinaryResource, scope?: AbortSignal): string {
   const session = getMaterializedResourceSession(scope);
   if (!session) return omitBinaryResource(resource, "runtime stopped");
   const decodedBytes = Buffer.byteLength(resource.blob, "base64");
@@ -184,7 +180,7 @@ function materializeBinaryResource(resource: BinaryResource, scope?: object): st
 /**
  * Transform MCP content types to Pi content blocks.
  */
-export function transformMcpResourceContents(contents: McpResourceContent[], scope?: object): ContentBlock[] {
+export function transformMcpResourceContents(contents: McpResourceContent[], scope?: AbortSignal): ContentBlock[] {
   return contents.map(resource => {
     if (typeof resource.text === "string") return { type: "text" as const, text: resource.text };
     if (typeof resource.blob === "string") return { type: "text" as const, text: materializeBinaryResource(resource as BinaryResource, scope) };
@@ -192,7 +188,7 @@ export function transformMcpResourceContents(contents: McpResourceContent[], sco
   });
 }
 
-export function transformMcpContent(content: McpContent[], scope?: object): ContentBlock[] {
+export function transformMcpContent(content: McpContent[], scope?: AbortSignal): ContentBlock[] {
   return content.map(c => {
     if (c.type === "text") {
       return { type: "text" as const, text: c.text ?? "" };
@@ -244,7 +240,7 @@ export function transformMcpContent(content: McpContent[], scope?: object): Cont
  */
 export function resolveMcpResultContent(
   result: Record<string, unknown>,
-  scope?: object,
+  scope?: AbortSignal,
   appendStructuredContent = true,
 ): ContentBlock[] {
   const blocks = transformMcpContent((Array.isArray(result.content) ? result.content : []) as McpContent[], scope);

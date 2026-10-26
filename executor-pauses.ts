@@ -46,8 +46,8 @@ export function hasExecutorModelTools(tools: ReadonlyArray<{ name: string; input
     && isRecord(resume) && "requestId" in resume && "response" in resume;
 }
 
-function parseExecutorPause(result: object): ExecutorPause | undefined {
-  const content = (result as { structuredContent?: unknown }).structuredContent;
+function parseExecutorPause(result: { structuredContent?: unknown }): ExecutorPause | undefined {
+  const content = result.structuredContent;
   if (!isRecord(content)) return undefined;
   const { status, requestId, elicitation } = content;
   if (status !== "approval-required" && status !== "input-required") return undefined;

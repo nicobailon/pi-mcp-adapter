@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { McpServerManager } from "../server-manager.ts";
 import { fileURLToPath } from "node:url";
 

@@ -291,7 +291,7 @@ describe("project MCP server trust", () => {
   it("gates repo-local imports enabled by global config", async () => {
     writeJson(join(home, ".pi", "agent", "mcp-adapter.json"), { imports: ["vscode"], mcpServers: {} });
     writeJson(join(cwd, ".vscode", "mcp.json"), { mcpServers: { host: { command: "node" } } });
-    const { config, trust } = await load();
+    const { config } = await load();
     const loaded = config.loadMcpConfigWithSources(undefined, cwd);
 
     expect(loaded.projectServers.get("host")?.path).toBe(join(cwd, ".vscode", "mcp.json"));
@@ -305,7 +305,7 @@ describe("project MCP server trust", () => {
     writeJson(join(cwd, "opencode.json"), { mcp: {
       host: { type: "local", command: ["node", "marker.js"] },
     } });
-    const { config, trust } = await load();
+    const { config } = await load();
     const loaded = config.loadMcpConfigWithSources(undefined, cwd);
 
     expect(loaded.projectServers.get("host")?.path).toBe(join(cwd, "opencode.json"));
@@ -324,7 +324,7 @@ describe("project MCP server trust", () => {
   it("gates home-level imports requested by a project config", async () => {
     writeJson(join(cwd, ".mcp.json"), { imports: ["cursor"], mcpServers: {} });
     writeJson(join(home, ".cursor", "mcp.json"), { mcpServers: { home: { command: "node" } } });
-    const { config, trust } = await load();
+    const { config } = await load();
     const loaded = config.loadMcpConfigWithSources(undefined, cwd);
 
     expect(loaded.projectServers.get("home")?.path).toBe(join(cwd, ".mcp.json"));

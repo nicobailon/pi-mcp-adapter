@@ -310,7 +310,7 @@ function deactivateStaleNamespaceTools(input: SyncNamespaceProxyToolsInput, next
     (name) => !nextNames.has(name) && !activeDirectNames.has(name),
   );
   const deactivated: string[] = [];
-  const unregisterTool = (input.pi as unknown as {
+  const unregisterTool = (input.pi as {
     unregisterTool?: (name: string) => boolean;
   }).unregisterTool;
   for (const stale of staleNames) {

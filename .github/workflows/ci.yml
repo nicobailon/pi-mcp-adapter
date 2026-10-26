@@ -43,6 +43,8 @@ jobs:
           npm run --prefix examples/interactive-visualizer build
       - name: Typecheck
         run: npm run typecheck
+      - name: Lint
+        run: npm run lint
       - run: npm test
       # npm test ends with build:public, so any change here means a tracked dist/ file is stale.
       - name: Check tracked dist files match the sources

@@ -3,6 +3,7 @@ import Ajv2020Import from "ajv/dist/2020.js";
 import addFormatsImport from "ajv-formats";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 // ajv-formats types target its bundled ajv; the runtime accepts both instances.
+// oxlint-disable-next-line anti-slop/no-chained-type-assertions
 const addFormats = addFormatsImport;
 // Rust servers built with schemars annotate numbers with these formats. The
 // `type`, `minimum`, and `maximum` keywords already carry the constraint, so
@@ -41,6 +42,8 @@ export function createJsonSchemaValidator() {
             const dialect = schemaDialect(schema);
             if (dialect.status === "unstamped" || DRAFT_2020_12_SCHEMA_URIS.has(dialect.uri)) {
                 draft2020Validator ??= (() => {
+                    // The CJS default export is typed apart from the named Ajv class it extends.
+                    // oxlint-disable-next-line anti-slop/no-chained-type-assertions
                     const Ajv2020 = Ajv2020Import;
                     const ajv = new Ajv2020({ strict: false, allErrors: true });
                     addKnownFormats(ajv);

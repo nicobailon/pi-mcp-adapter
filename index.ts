@@ -85,6 +85,8 @@ function piSupportsMcp(pi: ExtensionAPI): boolean {
 function toCallToolResult(result: AgentToolResult<Record<string, unknown>>): AgentToolResult<Record<string, unknown>> {
   return {
     ...result,
+    // Content blocks are JSON but typed as interfaces, which JsonValue does not accept.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions
     structuredContent: {
       content: result.content,
       ...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
@@ -236,7 +238,7 @@ function optionalNumber(options: { minimum?: number; description: string }): TSc
   const number = (Type as { Number?: (opts: typeof options) => TSchema }).Number;
   return typeof number === "function"
     ? Type.Optional(number(options))
-    : ({ type: "number", ...options } as unknown as TSchema);
+    : ({ type: "number", ...options } as TSchema);
 }
 
 function parseEnvDirectToolOverride(raw: string | undefined): string[] | undefined {
@@ -1161,7 +1163,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         continue;
       }
       callReentrant(() => pi.registerCommand(spec.commandName, createPromptCommand(pi, () => state, spec, {
-        ensureState: (ctx) => ensureSessionRuntime(ctx as unknown as ExtensionContext),
+        ensureState: (ctx) => ensureSessionRuntime(ctx as ExtensionContext),
         lazyConnect: async (...args) => {
           const guard = captureRuntimeGuard(args[0]);
           return (await loadForRuntime(loadCoreRuntime, guard)).lazyConnect(...args);
@@ -1646,6 +1648,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const owner = createMcpRuntimeOwner();
       currentOwner = owner;
       currentOAuthRuntime = null;
+      // Load-time initialization runs before any session, so only these context fields exist.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions
       startInitialization({
         mode: "print",
         hasUI: false,
@@ -2077,12 +2081,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     handler: async (args, ctx) => {
       let commandOwner = currentOwner;
       const commandReload = typeof ctx.reload === "function" ? ctx.reload.bind(ctx) : async () => {};
-      let commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
+      let commandCtx = createCommandContext(ctx as ExtensionContext, commandOwner);
       if (!state) {
         try {
-          state = await ensureSessionRuntime(ctx as unknown as ExtensionContext);
+          state = await ensureSessionRuntime(ctx as ExtensionContext);
           commandOwner = currentOwner;
-          commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
+          commandCtx = createCommandContext(ctx as ExtensionContext, commandOwner);
           commandOwner?.throwIfInactive();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -2275,7 +2279,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     description: "Authenticate with an MCP server (OAuth)",
     handler: async (args, ctx) => {
       let commandOwner = currentOwner;
-      let commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
+      let commandCtx = createCommandContext(ctx as ExtensionContext, commandOwner);
       const serverName = args?.trim();
       if (!serverName && !commandCtx.hasUI) {
         return;
@@ -2283,9 +2287,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
       if (!state) {
         try {
-          state = await ensureSessionRuntime(ctx as unknown as ExtensionContext);
+          state = await ensureSessionRuntime(ctx as ExtensionContext);
           commandOwner = currentOwner;
-          commandCtx = createCommandContext(ctx as unknown as ExtensionContext, commandOwner);
+          commandCtx = createCommandContext(ctx as ExtensionContext, commandOwner);
           commandOwner?.throwIfInactive();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -2943,7 +2947,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           // Content is returned untouched: the call's output is already sized to
           // the output limits and is what a compact view previews. The tool
           // description tells the model a called tool is direct from then on.
-          return { ...result, details: { ...(result.details ?? {}), activated: added }, addedToolNames: added };
+          return { ...result, details: { ...result.details, activated: added }, addedToolNames: added };
         }
         if (params.connect) {
           return connectAndReport(proxyState, params.connect, signal, _ctx as ExtensionContext);
@@ -2968,7 +2972,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return {
             ...result,
             content: [{ type: "text" as const, text: `Activated as direct tools: ${added.join(", ")}.\n\n${text}` }],
-            details: { ...(result.details ?? {}), activated: added },
+            details: { ...result.details, activated: added },
             addedToolNames: added,
           };
         }

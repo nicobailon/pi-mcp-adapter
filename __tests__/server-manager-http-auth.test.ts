@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearAllCredentials, getAuthEntryFilePath, getAuthForUrl, resetTestAuthSecretStore, saveAuthEntry } from "../mcp-auth.ts";
+import { getAuthEntryFilePath, resetTestAuthSecretStore, saveAuthEntry } from "../mcp-auth.ts";
 
 type OAuthProviderLike = {
   redirectUrl?: string;

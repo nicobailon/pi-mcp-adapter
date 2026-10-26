@@ -76,6 +76,8 @@ export function createCaFetch(definition) {
                     dispatcher,
                     redirect: "error",
                 };
+                // The bundled undici Response is the same runtime shape as the global one, typed apart.
+                // oxlint-disable-next-line anti-slop/no-chained-type-assertions
                 return undiciFetch(bundledInput, options);
             }
             catch (error) {

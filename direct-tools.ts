@@ -385,7 +385,7 @@ export function createDirectToolExecutor(
           details: { error: "tool_not_found", server: spec.serverName, suggestions: executorMatches },
         };
       }
-      uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
+      uiSession?.sendToolResult(result as import("@modelcontextprotocol/client").CallToolResult);
       if (!result.isError) recordOutput(result);
 
       if (result.isError) {

@@ -142,7 +142,7 @@ export class RawRequestChannel {
       id,
       method: request.method,
       ...(params === undefined ? {} : { params }),
-    } as unknown as JSONRPCRequest;
+    } as JSONRPCRequest;
     const timeoutMs = options?.context?.requestTimeoutMs ?? this.defaultTimeoutMs;
 
     return new Promise<JsonRpcResponseShape>((resolve, reject) => {
@@ -338,7 +338,7 @@ export async function attachTaskSession(
         throw capabilityNotSupportedError(serverName, "elicitation/create", context.inputId);
       }
       const result = await options.onElicitation(
-        { method: "elicitation/create", params: request.params } as unknown as ElicitRequest,
+        { method: "elicitation/create", params: request.params } as ElicitRequest,
         context.signal,
       );
       return {
@@ -353,7 +353,7 @@ export async function attachTaskSession(
         throw capabilityNotSupportedError(serverName, "sampling/createMessage", context.inputId);
       }
       const result = await options.onSampling(
-        { method: "sampling/createMessage", params: request.params } as unknown as CreateMessageRequest,
+        { method: "sampling/createMessage", params: request.params } as CreateMessageRequest,
         context.signal,
       );
       return {

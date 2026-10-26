@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { OverlayHandle } from "@earendil-works/pi-tui";
-import type { openMcpAuthPanel, openMcpPanel } from "../commands.ts";
+import type { openMcpPanel } from "../commands.ts";
 import type { createMcpPanel } from "../mcp-panel.ts";
 
 const mocks = vi.hoisted(() => ({

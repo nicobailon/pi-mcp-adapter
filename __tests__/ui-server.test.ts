@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import http from "node:http";
 import net from "node:net";
 import { startUiServer, type UiServerOptions, type UiServerHandle } from "../ui-server.ts";
@@ -1813,7 +1813,7 @@ describe("UiServer", () => {
 
       const cancelled = events.find((e) => e.name === "tool-cancelled");
       expect(cancelled).toBeTruthy();
-      expect((cancelled?.data as { reason: string }).reason).toContain("Tool failed");
+      expect((cancelled!.data as { reason: string }).reason).toContain("Tool failed");
     });
   });
 

@@ -114,7 +114,7 @@ async function captureCodemode(pi: ExtensionAPI): Promise<Capture | undefined> {
   let open = true;
   const members: ShimMembers = {
     registerTool: (tool) => {
-      if (open && !capture.definition && tool.name === "codemode") capture.definition = tool as unknown as ToolDefinition;
+      if (open && !capture.definition && tool.name === "codemode") capture.definition = tool as ToolDefinition;
     },
     getSettings: () => pi.getSettings(),
     getAllTools: () => pi.getAllTools(),

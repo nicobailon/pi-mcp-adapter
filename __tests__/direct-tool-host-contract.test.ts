@@ -114,7 +114,6 @@ describe("direct tool host contracts", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map(),
       failureTracker: new Map(),
       completedUiSessions: [],
       deliversToScript: () => toScript,

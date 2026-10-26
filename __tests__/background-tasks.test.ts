@@ -24,7 +24,7 @@ function pendingTask() {
   return { execution, finish };
 }
 
-function taskState(execution: object, options: { background?: boolean } = {}) {
+function taskState(execution: unknown, options: { background?: boolean } = {}) {
   const callTool = vi.fn(async (_name: string, _args: unknown, _options: { signal?: AbortSignal }) => execution);
   const sendMessage = vi.fn();
   const manager = {

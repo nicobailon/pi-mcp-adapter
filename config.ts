@@ -757,7 +757,7 @@ function getMergedSettings(overridePath?: string, cwd = process.cwd()): McpSetti
   let settings: McpSettings | undefined;
   for (const source of getConfigSources(overridePath, cwd)) {
     const loaded = readSourceConfig(source.id, source.readPath);
-    if (loaded?.settings) settings = { ...settings, ...loaded.settings };
+    if (loaded?.settings) settings = Object.assign(settings ?? {}, loaded.settings);
   }
   return settings;
 }
