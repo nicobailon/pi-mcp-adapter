@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a
 
 https://github.com/user-attachments/assets/6223e9c1-a740-4d69-b8db-bc91431d88ca
 
-On servers that support MCP Tasks, slow tools now run in the background while the agent keeps working. Tool search can rank tools by meaning and send full schemas only for the ones that fit. And `extract` hands the agent just the values it asked for from a long result. Everything else is in the [changelog](CHANGELOG.md).
+On servers that support MCP Tasks, add `"protocolVersion": "auto"` and slow tools run in the background while the agent keeps working. Tool search can rank tools by meaning and send full schemas only for the ones that fit. And `extract` hands the agent just the values it asked for from a long result. Everything else is in the [changelog](CHANGELOG.md).
 
 ## Why This Exists
 
