@@ -9,6 +9,9 @@ export type ResolvedExtractionSettings = {
 };
 export declare function validateExtractionSettings(value: unknown): ResolvedExtractionSettings;
 /** Settings that reached the config were validated on load; programmatic configs are validated here. */
+export declare function extractionServers(settings: {
+    extraction?: unknown;
+} | undefined): string[];
 export declare function isExtractionConfigured(settings: {
     extraction?: unknown;
 } | undefined): boolean;

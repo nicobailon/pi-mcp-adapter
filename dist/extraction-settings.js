@@ -31,12 +31,16 @@ export function validateExtractionSettings(value) {
     };
 }
 /** Settings that reached the config were validated on load; programmatic configs are validated here. */
-export function isExtractionConfigured(settings) {
+export function extractionServers(settings) {
     try {
-        return validateExtractionSettings(settings?.extraction).enabled;
+        const resolved = validateExtractionSettings(settings?.extraction);
+        return resolved.enabled ? resolved.allowedServers : [];
     }
     catch {
-        return false;
+        return [];
     }
+}
+export function isExtractionConfigured(settings) {
+    return extractionServers(settings).length > 0;
 }
 //# sourceMappingURL=extraction-settings.js.map
