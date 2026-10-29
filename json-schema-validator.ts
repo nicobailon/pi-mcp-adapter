@@ -60,7 +60,8 @@ export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
           // The CJS default export is typed apart from the named Ajv class it extends.
           // oxlint-disable-next-line anti-slop/no-chained-type-assertions
           const Ajv2020 = Ajv2020Import as unknown as typeof Ajv;
-          const ajv = new Ajv2020({ strict: false, allErrors: true });
+          // Ajv diagnostics must not bypass Pi's renderer and overwrite its editor.
+          const ajv = new Ajv2020({ strict: false, allErrors: true, logger: false });
           addKnownFormats(ajv);
           return new AjvJsonSchemaValidator(ajv);
         })();
@@ -76,6 +77,7 @@ export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
           validateFormats: true,
           validateSchema: false,
           allErrors: true,
+          logger: false,
         });
         addKnownFormats(ajv);
         return new AjvJsonSchemaValidator(ajv);

@@ -85,6 +85,37 @@ describe("createJsonSchemaValidator", () => {
     expect(validate(schema, { name: "ok", extra: true }).valid).toBe(false);
   });
 
+  it.each([draft07, draft07Https, "https://json-schema.org/draft/2020-12/schema", undefined])(
+    "ignores unknown format annotations without writing to the terminal (%s)",
+    $schema => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const schema = {
+          ...($schema ? { $schema } : {}),
+          type: "object",
+          properties: {
+            payload: { type: "string", format: "json", minLength: 1 },
+            custom: { type: "string", format: "server-defined-format" },
+            email: { type: "string", format: "email" },
+          },
+          required: ["payload", "email"],
+          additionalProperties: false,
+        };
+        const check = createJsonSchemaValidator().getValidator(schema as JsonSchemaType);
+
+        expect(check({ payload: "{}", custom: "opaque", email: "valid@example.com" }).valid).toBe(true);
+        expect(check({ payload: 42, email: "valid@example.com" }).valid).toBe(false);
+        expect(check({ payload: "", email: "valid@example.com" }).valid).toBe(false);
+        expect(check({ payload: "{}", email: "not-an-email" }).valid).toBe(false);
+        expect(check({ payload: "{}" }).valid).toBe(false);
+        expect(check({ payload: "{}", email: "valid@example.com", extra: true }).valid).toBe(false);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
   it.each([draft07, undefined])("accepts schemars numeric formats without warnings (%s)", $schema => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
