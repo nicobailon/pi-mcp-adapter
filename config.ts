@@ -1348,6 +1348,12 @@ interface PiMcpConfigFile {
 }
 
 const PI_MCP_EXPOSURES = ["codemode", "codemode-deferred", "deferred", "direct", "hidden"];
+/**
+ * Exposure values an embedding engine (for example senpi) accepts on `registerMcpServer()` but
+ * Pi's `mcp.json` does not. They arrive only through runtime registration, so the adapter folds
+ * each into the behaviour it already has for the matching Pi value instead of dropping the server.
+ */
+const ENGINE_MCP_EXPOSURE_ALIASES: Record<string, string> = { search: "deferred", auto: "codemode", proxy: "codemode" };
 
 /** Pi's top-level `autoEnableCodemode` has no adapter equivalent and is ignored. */
 function readPiMcpConfig(path: string): PiMcpConfigFile | null {
@@ -1389,7 +1395,11 @@ export function translatePiMcpServer(name: string, value: unknown): { entry: Ser
   if (!isRecord(value)) return "must be an object";
   const { type, command, args, env, cwd, url, headers, oauth, exposure, toolExposure, enabled, timeout, auth, description, ...unknown } = value;
   const isExposure = (candidate: unknown) => typeof candidate === "string" && PI_MCP_EXPOSURES.includes(candidate);
-  if (exposure !== undefined && !isExposure(exposure)) return `exposure must be one of ${PI_MCP_EXPOSURES.join(", ")}`;
+  const isServerExposure = (candidate: unknown) =>
+    isExposure(candidate) || (typeof candidate === "string" && candidate in ENGINE_MCP_EXPOSURE_ALIASES);
+  if (exposure !== undefined && !isServerExposure(exposure)) {
+    return `exposure must be one of ${[...PI_MCP_EXPOSURES, ...Object.keys(ENGINE_MCP_EXPOSURE_ALIASES)].join(", ")}`;
+  }
   if (toolExposure !== undefined && (!isRecord(toolExposure) || !Object.values(toolExposure).every(isExposure))) {
     return `toolExposure must map tool names to one of ${PI_MCP_EXPOSURES.join(", ")}`;
   }
@@ -1433,7 +1443,9 @@ export function translatePiMcpServer(name: string, value: unknown): { entry: Ser
   if (description !== undefined) entry.description = description;
 
   // `codemode-deferred` is an alias of `codemode` since Pi 0.99.2; both are proxy-only here.
-  const serverExposure = exposure === undefined || exposure === "codemode-deferred" ? "codemode" : exposure;
+  // Engine-only values are folded first, so the rest of this function sees Pi's own vocabulary.
+  const mappedExposure = typeof exposure === "string" ? ENGINE_MCP_EXPOSURE_ALIASES[exposure] ?? exposure : exposure;
+  const serverExposure = mappedExposure === undefined || mappedExposure === "codemode-deferred" ? "codemode" : mappedExposure;
   if (enabled === false || serverExposure === "hidden") entry.disabled = true;
   if (serverExposure === "direct") entry.directTools = true;
   if (serverExposure === "deferred") entry.directTools = "search";

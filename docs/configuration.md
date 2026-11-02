@@ -50,6 +50,7 @@ On Pi 0.99 and later, the adapter also reads Pi's own `<Pi agent dir>/mcp.json` 
 | `oauth.callbackPort` | `oauth.redirectUri: "http://127.0.0.1:<port>/callback"` |
 | `oauth.callbackUrl` | `oauth.redirectUri`; without a port it gets `callbackPort`, or `{port}` |
 | `exposure: "direct"` / `"deferred"` / `"codemode"` / `"hidden"` | `directTools: true` / `directTools: "search"` / proxy only / `disabled: true` |
+| `exposure: "search"` / `"auto"` / `"proxy"` | Engine-only names, accepted on a runtime registration: `"deferred"` / `"codemode"` / `"codemode"` |
 | `toolExposure` exact names set to `"direct"` | `directTools: [names]` |
 | `toolExposure` entries set to `"hidden"` | `excludeTools`, which can hide more than Pi's `hidden` |
 | `auth: { "provider": ... }` | same; user-global file only, see [Pi provider tokens](auth.md#pi-provider-tokens) |

@@ -133,6 +133,26 @@ describe("servers registered with pi.registerMcpServer()", () => {
     );
   });
 
+  it("connects a server registered with an engine's own exposure vocabulary", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter } = await import("../index.ts");
+    // Engines other than Pi accept `search` on registerMcpServer(); the adapter must fold it into
+    // the behaviour Pi's `deferred` already has instead of skipping the server.
+    const engine = { name: "engine", config: { url: "https://engine.test/mcp", exposure: "search", lifecycle: "lazy" } };
+    const { api, handlers, ctx, notify, change } = createPi([engine]);
+    mcpAdapter(api);
+
+    await handlers.get("session_start")?.({}, ctx);
+    await settle();
+    await change([engine]);
+
+    expect((await callThroughMcp(api, ctx, "engine")).content[0].text)
+      .toBe(JSON.stringify({ url: "https://engine.test/mcp", directTools: false }));
+    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining("is not connected"), "warning");
+    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining("ignored settings exposure: search"), "warning");
+  });
+
   it("keeps a configured server of the same name until a later session's config drops it", async () => {
     // The startup config leaves out project servers; the session's config has the approved .pi/mcp.json entry.
     mocks.initializeMcp
