@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Long sign-in and browser-request links stay clickable when they wrap in the terminal. Before, clicking a wrapped link could open only the part on that line. Thanks to [@alangalvino](https://github.com/alangalvino) for [#920](https://github.com/nicobailon/pi-mcp-adapter/pull/920).
 - A server name with a line break in it can no longer add a fake entry to `mcp.log`, so every line there is a message a server really sent. Thanks to [@Eapp1e](https://github.com/Eapp1e) for [#921](https://github.com/nicobailon/pi-mcp-adapter/issues/921) and [#922](https://github.com/nicobailon/pi-mcp-adapter/pull/922).
 - A tool schema with a `format` the adapter doesn't know, such as `format: "json"`, no longer prints warnings over Pi's editor and status bar. Validation is unchanged. Thanks to [@gabrielpessoa1](https://github.com/gabrielpessoa1) for [#925](https://github.com/nicobailon/pi-mcp-adapter/pull/925).
+- An `mcp` call with an `action` the adapter doesn't know, such as a typo, now returns an error that names the value and lists the valid actions. Before, it quietly ran a different mode, for example listing a server's tools, and looked like a success. Thanks to [@brendanjerwin](https://github.com/brendanjerwin) for [#930](https://github.com/nicobailon/pi-mcp-adapter/issues/930).
 
 ## [7.0.0] - 2026-10-25
 
