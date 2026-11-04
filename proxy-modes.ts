@@ -3,7 +3,7 @@ import { UrlElicitationRequiredError, type Client, type JsonSchemaType, type Jso
 import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata } from "./types.ts";
-import { getServerPrefix, getToolNameCandidates, isServerDisabled, parseUiPromptHandoff, resolveToolPrefix, type ServerEntry } from "./types.ts";
+import { getServerPrefix, getToolNameCandidates, isServerDisabled, joinToolName, MAX_TOOL_NAME_LENGTH, parseUiPromptHandoff, resolveToolPrefix, type ServerEntry, type ToolPrefix } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure, repageExecutorCatalog, cacheExecutorSignature } from "./init.ts";
 import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
@@ -186,19 +186,31 @@ function getPrefixedServerScope(state: McpExtensionState, toolName: string): str
   return best.length === 1 ? best[0]!.name : undefined;
 }
 
+/** The full name of a tool whose displayed name was cut to the length limit, else undefined. */
+function cutFullToolName(tool: ToolMetadata, serverName: string, prefix: ToolPrefix): string | undefined {
+  const full = joinToolName(tool.originalName, serverName, prefix);
+  return full.length > MAX_TOOL_NAME_LENGTH ? full : undefined;
+}
+
 type ServerScopedToolMatch = { tool: ToolMetadata; precedence: number } | "ambiguous";
 
 function getServerScopedToolCandidates(
+  state: McpExtensionState,
+  serverName: string,
   metadata: ToolMetadata[] | undefined,
   toolName: string,
 ): { tools: ToolMetadata[]; precedence: number } | undefined {
   if (!metadata) return undefined;
+  const prefix = resolveToolPrefix(state.config.mcpServers[serverName], state.config.settings?.toolPrefix);
+  // A displayed name cut to the length limit still answers to its full name.
+  const fullName = (tool: ToolMetadata) => cutFullToolName(tool, serverName, prefix);
   const normalizedName = toolName.replace(/-/g, "_");
-  const exactDisplayedMatches = metadata.filter((tool) => tool.name === toolName);
+  const exactDisplayedMatches = metadata.filter((tool) => tool.name === toolName || fullName(tool) === toolName);
   if (exactDisplayedMatches.length > 0) return { tools: exactDisplayedMatches, precedence: 0 };
   const exactOriginalMatches = metadata.filter((tool) => tool.originalName === toolName);
   if (exactOriginalMatches.length > 0) return { tools: exactOriginalMatches, precedence: 1 };
-  const normalizedDisplayedMatches = metadata.filter((tool) => tool.name.replace(/-/g, "_") === normalizedName);
+  const normalizedDisplayedMatches = metadata.filter((tool) =>
+    tool.name.replace(/-/g, "_") === normalizedName || fullName(tool)?.replace(/-/g, "_") === normalizedName);
   const normalizedOriginalMatches = metadata.filter((tool) => tool.originalName.replace(/-/g, "_") === normalizedName);
   const normalizedMatches = new Set([...normalizedDisplayedMatches, ...normalizedOriginalMatches]);
   if (normalizedMatches.size === 0) return undefined;
@@ -208,8 +220,8 @@ function getServerScopedToolCandidates(
   };
 }
 
-function getServerScopedToolMatch(metadata: ToolMetadata[] | undefined, toolName: string): ServerScopedToolMatch | undefined {
-  const candidates = getServerScopedToolCandidates(metadata, toolName);
+function getServerScopedToolMatch(state: McpExtensionState, serverName: string, toolName: string): ServerScopedToolMatch | undefined {
+  const candidates = getServerScopedToolCandidates(state, serverName, state.toolMetadata.get(serverName), toolName);
   if (!candidates) return undefined;
   return candidates.tools.length === 1
     ? { tool: candidates.tools[0]!, precedence: candidates.precedence }
@@ -762,7 +774,7 @@ export function resolveDescribeTarget(
         },
       };
     }
-    const match = getServerScopedToolMatch(state.toolMetadata.get(serverOverride), toolName);
+    const match = getServerScopedToolMatch(state, serverOverride, toolName);
     if (match === "ambiguous") return { error: ambiguousServerToolResult("describe", toolName, serverOverride) };
     if (isServerDisabled(state.config.mcpServers[serverOverride])) return { error: disabledResult(state, "describe", serverOverride) };
     if (isServerInActiveFailureBackoff(state, serverOverride)) return { error: serverBackoffResult(state, "describe", serverOverride) };
@@ -772,7 +784,7 @@ export function resolveDescribeTarget(
     let failedMatch: string | undefined;
     const matches: Array<{ server: string; tool: ToolMetadata; precedence: number }> = [];
     for (const [server, metadata] of state.toolMetadata.entries()) {
-      const candidates = getServerScopedToolCandidates(metadata, toolName);
+      const candidates = getServerScopedToolCandidates(state, server, metadata, toolName);
       if (!candidates) continue;
       if (isServerDisabled(state.config.mcpServers[server])) {
         disabledMatch ??= server;
@@ -1115,8 +1127,11 @@ export function findTools(state: McpExtensionState, input: ToolSearchInput): Too
       if (isServerDisabled(definition)) continue;
       if (isServerInActiveFailureBackoff(state, serverName)) continue;
       if (server && serverName !== server) continue;
+      const prefix = resolveToolPrefix(definition, globalPrefix);
       for (const tool of metadata) {
-        const matched = pattern.test(tool.name) || pattern.test(tool.description)
+        // A name cut to the length limit still matches a pattern written for its full name.
+        const fullName = cutFullToolName(tool, serverName, prefix);
+        const matched = pattern.test(tool.name) || (fullName !== undefined && pattern.test(fullName)) || pattern.test(tool.description)
           || resolveSearchKeywords(definition, tool.originalName, serverName, globalPrefix).some(keyword => pattern.test(keyword));
         if (matched) matches.push({ server: serverName, tool, score: 0 });
       }

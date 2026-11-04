@@ -58,6 +58,40 @@ describe("formatToolName", () => {
       "my_20_server_read_guide",
     ]);
   });
+
+  it("fits direct resource tool names into 64 characters, keeping them unique and matching live metadata", () => {
+    const resources = [
+      { name: "home-assistant-best-practices/references/triggers-and-conditions.md", uri: "skill://triggers" },
+      { name: "home-assistant-best-practices/references/template-guidelines.md", uri: "skill://templates" },
+      { name: "guide", uri: "skill://guide" },
+    ];
+    const definition: ServerEntry = { command: "ha", directTools: true };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: { "home-assistant": { configHash: computeServerHash(definition), cachedAt: Date.now(), tools: [], resources } },
+    };
+    const names = resolveDirectTools({ mcpServers: { "home-assistant": definition } }, cache, "server").map((spec) => spec.prefixedName);
+
+    expect(names).toHaveLength(3);
+    expect(names[0]).toMatch(/^home-assistant_read_home_assistant_best_practices_refer_[0-9a-f]{8}$/);
+    expect(names[0]).toHaveLength(64);
+    expect(names[1]).toMatch(/^home-assistant_read_home_assistant_best_practices_refer_[0-9a-f]{8}$/);
+    expect(names[1]).not.toBe(names[0]);
+    expect(names[2]).toBe("home-assistant_read_guide");
+    // The proxy finds a tool by the same name it is registered under.
+    expect(buildToolMetadata([], resources as any, definition, "home-assistant", "server").metadata.map((tool) => tool.name)).toEqual(names);
+
+    // A selector written with the full name, or its older all-underscore form, still matches the shortened tool.
+    for (const fullName of [
+      "home-assistant_read_home_assistant_best_practices_references_triggers_and_conditions_md",
+      "home_assistant_read_home_assistant_best_practices_references_triggers_and_conditions_md",
+    ]) {
+      const excluded: ServerEntry = { ...definition, excludeTools: [fullName] };
+      const excludedCache: MetadataCache = { version: 1, servers: { "home-assistant": { ...cache.servers["home-assistant"]!, configHash: computeServerHash(excluded) } } };
+      expect(resolveDirectTools({ mcpServers: { "home-assistant": excluded } }, excludedCache, "server").map((spec) => spec.prefixedName))
+        .toEqual(names.slice(1));
+    }
+  });
 });
 
 describe("deferred tool names", () => {

@@ -1,12 +1,8 @@
-import { createHash } from "node:crypto";
 import type { DirectToolSpec, McpConfig } from "./types.ts";
-import { formatServerNamespace, isServerDisabled, resolveToolPrefix } from "./types.ts";
+import { formatServerNamespace, hashedToolName, isServerDisabled, MAX_TOOL_NAME_LENGTH, resolveToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { executorAppToolMetadata, isServerCacheValid } from "./metadata-cache.ts";
 import { createServerSelectorIndexResolver, resolveServerToolSpecs } from "./direct-tool-surface.ts";
-
-/** Provider tool names are limited to 64 characters of `[A-Za-z0-9_-]`. */
-const MAX_TOOL_NAME_LENGTH = 64;
 
 /** A tool registered with Pi as `deferred` under `name`; `prefixedName` stays the adapter's canonical name. */
 export interface DeferredToolSpec extends DirectToolSpec {
@@ -41,9 +37,7 @@ function plainDeferredToolName(serverName: string, toolName: string): string {
 export function formatDeferredToolName(serverName: string, toolName: string, isTaken: (name: string) => boolean, resourceUri?: string): string {
   const name = plainDeferredToolName(serverName, toolName);
   if (name.length <= MAX_TOOL_NAME_LENGTH && !isTaken(name)) return name;
-  const hashInput = `${serverName}\0${toolName}${resourceUri !== undefined ? `\0${resourceUri}` : ""}`;
-  const hash = createHash("sha256").update(hashInput).digest("hex").slice(0, 8);
-  return `${name.slice(0, MAX_TOOL_NAME_LENGTH - hash.length - 1)}_${hash}`;
+  return hashedToolName(name, `${serverName}\0${toolName}${resourceUri !== undefined ? `\0${resourceUri}` : ""}`);
 }
 
 /**

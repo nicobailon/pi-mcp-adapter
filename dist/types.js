@@ -131,15 +131,42 @@ export function getServerPrefix(serverName, mode) {
     return sanitizeServerPrefix(serverName);
 }
 /**
- * Format a tool name with server prefix.
+ * Provider tool names are limited to 64 characters (OpenAI, Anthropic, Bedrock); one name over
+ * the limit makes the provider reject the whole request.
+ * @internal
  */
-export function formatToolName(toolName, serverName, prefix) {
+export const MAX_TOOL_NAME_LENGTH = 64;
+/**
+ * `name` cut to fit {@link MAX_TOOL_NAME_LENGTH} with an 8-hex hash of `hashInput` appended.
+ * @internal
+ */
+export function hashedToolName(name, hashInput) {
+    const hash = createHash("sha256").update(hashInput).digest("hex").slice(0, 8);
+    return `${name.slice(0, MAX_TOOL_NAME_LENGTH - hash.length - 1)}_${hash}`;
+}
+/**
+ * A tool name with server prefix before {@link formatToolName} fits it to the length limit.
+ * @internal
+ */
+export function joinToolName(toolName, serverName, prefix) {
     const p = getServerPrefix(serverName, prefix);
     const sanitized = toolName.replace(/\./g, "_");
     if (p && sanitized.startsWith(`${p}_`) && sanitized.length > p.length + 1) {
         return sanitized;
     }
     return p ? `${p}_${sanitized}` : sanitized;
+}
+// The hash covers the whole joined name, so two tools get the same shortened name only when their
+// full names were already equal, which the collision checks already handle.
+function fitToolName(name) {
+    return name.length <= MAX_TOOL_NAME_LENGTH ? name : hashedToolName(name, name);
+}
+/**
+ * Format a tool name with server prefix. A name over 64 characters is cut and gets a hash of the
+ * full name.
+ */
+export function formatToolName(toolName, serverName, prefix) {
+    return fitToolName(joinToolName(toolName, serverName, prefix));
 }
 export function resolveToolPrefix(definition, globalPrefix) {
     return definition?.toolPrefix ?? globalPrefix ?? "server";
@@ -178,12 +205,22 @@ export function resolveUniqueNameOwnership(entries, getName) {
 export function resolveServerFromToolName(toolName, serverNames, prefix) {
     if (prefix === "none")
         return undefined;
+    // formatToolName keeps the first 55 characters of a name it cuts, so a server prefix longer than
+    // that survives only as a fragment and the full-prefix test below can't see it.
+    const keptLength = MAX_TOOL_NAME_LENGTH - 9;
+    const isCut = toolName.length === MAX_TOOL_NAME_LENGTH && /_[0-9a-f]{8}$/.test(toolName);
     const candidates = [];
+    const cutPrefixOwners = [];
     for (const name of serverNames) {
         const p = getServerPrefix(name, prefix);
         if (p && toolName.startsWith(p + "_"))
             candidates.push({ name, prefix: p });
+        else if (p && isCut && p.length + 1 > keptLength && p.startsWith(toolName.slice(0, keptLength)))
+            cutPrefixOwners.push(name);
     }
+    // Fail safe like the ambiguous case below: a cut prefix can't tell its server apart from another match.
+    if (cutPrefixOwners.length > 0)
+        return candidates.length === 0 && cutPrefixOwners.length === 1 ? cutPrefixOwners[0] : undefined;
     if (candidates.length === 0)
         return undefined;
     candidates.sort((a, b) => b.prefix.length - a.prefix.length);
@@ -221,28 +258,25 @@ function formatLegacyToolName(toolName, serverName, prefix) {
     return serverPrefix ? `${serverPrefix}_${sanitizedToolName}` : sanitizedToolName;
 }
 export function getToolNameCandidates(toolName, serverName, prefix, includeLegacy = true) {
-    const candidates = new Set([
-        toolName,
-        formatToolName(toolName, serverName, prefix),
-        formatToolName(toolName, serverName, "server"),
-        formatToolName(toolName, serverName, "short"),
-        formatToolName(toolName, serverName, "mcp"),
-    ]);
+    const candidates = new Set([toolName]);
+    for (const mode of [prefix, "server", "short", "mcp"]) {
+        const joined = joinToolName(toolName, serverName, mode);
+        // A name cut to fit the limit still matches a selector or call that uses its full name.
+        candidates.add(joined);
+        candidates.add(fitToolName(joined));
+    }
     if (includeLegacy) {
         const legacyToolName = toolName.replace(/-/g, "_");
         candidates.add(legacyToolName);
-        candidates.add(formatToolName(legacyToolName, serverName, prefix));
-        candidates.add(formatToolName(legacyToolName, serverName, "server"));
-        candidates.add(formatToolName(legacyToolName, serverName, "short"));
-        candidates.add(formatToolName(legacyToolName, serverName, "mcp"));
-        candidates.add(formatLegacyToolName(toolName, serverName, prefix));
-        candidates.add(formatLegacyToolName(toolName, serverName, "server"));
-        candidates.add(formatLegacyToolName(toolName, serverName, "short"));
-        candidates.add(formatLegacyToolName(toolName, serverName, "mcp"));
-        candidates.add(formatToolName(toolName, serverName, prefix).replace(/-/g, "_"));
-        candidates.add(formatToolName(toolName, serverName, "server").replace(/-/g, "_"));
-        candidates.add(formatToolName(toolName, serverName, "short").replace(/-/g, "_"));
-        candidates.add(formatToolName(toolName, serverName, "mcp").replace(/-/g, "_"));
+        for (const mode of [prefix, "server", "short", "mcp"]) {
+            const legacyJoined = joinToolName(legacyToolName, serverName, mode);
+            const joined = joinToolName(toolName, serverName, mode);
+            candidates.add(legacyJoined);
+            candidates.add(fitToolName(legacyJoined));
+            candidates.add(formatLegacyToolName(toolName, serverName, mode));
+            candidates.add(joined.replace(/-/g, "_"));
+            candidates.add(fitToolName(joined).replace(/-/g, "_"));
+        }
     }
     return candidates;
 }
