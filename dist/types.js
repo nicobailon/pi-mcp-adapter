@@ -205,12 +205,22 @@ export function resolveUniqueNameOwnership(entries, getName) {
 export function resolveServerFromToolName(toolName, serverNames, prefix) {
     if (prefix === "none")
         return undefined;
+    // formatToolName keeps the first 55 characters of a name it cuts, so a server prefix longer than
+    // that survives only as a fragment and the full-prefix test below can't see it.
+    const keptLength = MAX_TOOL_NAME_LENGTH - 9;
+    const isCut = toolName.length === MAX_TOOL_NAME_LENGTH && /_[0-9a-f]{8}$/.test(toolName);
     const candidates = [];
+    const cutPrefixOwners = [];
     for (const name of serverNames) {
         const p = getServerPrefix(name, prefix);
         if (p && toolName.startsWith(p + "_"))
             candidates.push({ name, prefix: p });
+        else if (p && isCut && p.length + 1 > keptLength && p.startsWith(toolName.slice(0, keptLength)))
+            cutPrefixOwners.push(name);
     }
+    // Fail safe like the ambiguous case below: a cut prefix can't tell its server apart from another match.
+    if (cutPrefixOwners.length > 0)
+        return candidates.length === 0 && cutPrefixOwners.length === 1 ? cutPrefixOwners[0] : undefined;
     if (candidates.length === 0)
         return undefined;
     candidates.sort((a, b) => b.prefix.length - a.prefix.length);
