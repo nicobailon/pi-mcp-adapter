@@ -2598,6 +2598,28 @@ describe("mcpAdapter session lifecycle", () => {
     );
   });
 
+  it("rejects an unknown proxy action instead of running another mode", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { api, handlers } = await loadAdapter();
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const result = await proxyTool.execute("call-1", { server: "wiki", action: "stale-key", args: '{"page":"home"}' });
+
+    expect(result.content[0].text).toBe(
+      "Unknown action \"stale-key\". Valid actions: 'install', 'ui-messages', 'auth-start', 'auth-complete', or 'save-script'.",
+    );
+    expect(result.details).toEqual({ mode: "action", error: "unknown_action", action: "stale-key" });
+    expect(mocks.executeList).not.toHaveBeenCalled();
+    expect(mocks.executeStatus).not.toHaveBeenCalled();
+  });
+
   it("forwards the proxy tool AbortSignal into executeCall", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);

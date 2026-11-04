@@ -241,6 +241,13 @@ function optionalNumber(options: { minimum?: number; description: string }): TSc
     : ({ type: "number", ...options } as TSchema);
 }
 
+// The `mcp` actions the gateway handles, as the schema describes them and an unknown action's error lists them.
+function gatewayActionList(allowScriptToolSave: boolean): string {
+  return allowScriptToolSave
+    ? "'install', 'ui-messages', 'auth-start', 'auth-complete', or 'save-script'"
+    : "'install', 'ui-messages', 'auth-start', or 'auth-complete'";
+}
+
 function parseEnvDirectToolOverride(raw: string | undefined): string[] | undefined {
   return raw?.split(",").map(s => s.trim()).filter(Boolean);
 }
@@ -2747,9 +2754,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         limit: optionalNumber({ minimum: 1, description: "Maximum search results to return (default: 12)" }),
         offset: optionalNumber({ minimum: 0, description: "Search result offset (default: 0)" }),
         server: Type.Optional(Type.String({ description: "Server name: filters searches, disambiguates calls and describe operations, and optionally names an install" })),
-        action: Type.Optional(Type.String({ description: allowScriptToolSave
-          ? "Action: 'install', 'ui-messages', 'auth-start', 'auth-complete', or 'save-script'"
-          : "Action: 'install', 'ui-messages', 'auth-start', or 'auth-complete'" })),
+        action: Type.Optional(Type.String({ description: `Action: ${gatewayActionList(allowScriptToolSave)}` })),
         url: Type.Optional(Type.String({ description: "MCP endpoint URL for action: 'install'" })),
         target: Type.Optional(Type.String({ description: "Install target: 'global' (default) or 'project'" })),
         cancelTask: Type.Optional(Type.String({ description: "Stop a background MCP task by its <server>/<taskId> key" })),
@@ -2890,6 +2895,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return signal
             ? proxyModes.executeAuthComplete(proxyState, params.server, input, signal)
             : proxyModes.executeAuthComplete(proxyState, params.server, input);
+        }
+        // Any other action would otherwise fall through to a lower-priority mode and look like success.
+        if (params.action !== undefined) {
+          const actions = gatewayActionList(proxyState.config.settings?.allowScriptToolSave !== false);
+          return {
+            content: [{ type: "text" as const, text: `Unknown action ${JSON.stringify(params.action)}. Valid actions: ${actions}.` }],
+            details: { mode: "action", error: "unknown_action", action: params.action },
+          };
         }
         if (params.cancelTask !== undefined) {
           return proxyModes.executeCancelTask(proxyState, params.cancelTask);
