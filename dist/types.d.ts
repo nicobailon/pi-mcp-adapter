@@ -709,7 +709,8 @@ export interface McpPanelResult {
 }
 export declare function getServerPrefix(serverName: string, mode: ToolPrefix): string;
 /**
- * Format a tool name with server prefix.
+ * Format a tool name with server prefix. A name over 64 characters is cut and gets a hash of the
+ * full name.
  */
 export declare function formatToolName(toolName: string, serverName: string, prefix: ToolPrefix): string;
 export declare function resolveToolPrefix(definition?: Pick<ServerEntry, "toolPrefix">, globalPrefix?: ToolPrefix): ToolPrefix;

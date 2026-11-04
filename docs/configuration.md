@@ -192,7 +192,7 @@ A `lazy` [Executor](prompts-and-ui.md#executor-app-tools) server stays connected
 
 | Setting | Description |
 |---------|-------------|
-| `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. |
+| `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. A prefixed name over 64 characters, the limit most providers set, is cut and ends in an 8-character hash of the full name; selectors may still use the full name. |
 | `allowInstall` | Allow URL installation through the `mcp` tool (default: `true`). Set to `false` to block it. |
 | `allowScriptToolSave` | Allow the `mcp` tool to save a script as a script tool after you approve it (default: `true`). Set to `false` to block it and remove its line from the `mcp` tool description. |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |

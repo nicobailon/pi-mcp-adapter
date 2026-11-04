@@ -131,15 +131,38 @@ export function getServerPrefix(serverName, mode) {
     return sanitizeServerPrefix(serverName);
 }
 /**
- * Format a tool name with server prefix.
+ * Provider tool names are limited to 64 characters (OpenAI, Anthropic, Bedrock); one name over
+ * the limit makes the provider reject the whole request.
+ * @internal
  */
-export function formatToolName(toolName, serverName, prefix) {
+export const MAX_TOOL_NAME_LENGTH = 64;
+/**
+ * `name` cut to fit {@link MAX_TOOL_NAME_LENGTH} with an 8-hex hash of `hashInput` appended.
+ * @internal
+ */
+export function hashedToolName(name, hashInput) {
+    const hash = createHash("sha256").update(hashInput).digest("hex").slice(0, 8);
+    return `${name.slice(0, MAX_TOOL_NAME_LENGTH - hash.length - 1)}_${hash}`;
+}
+function joinToolName(toolName, serverName, prefix) {
     const p = getServerPrefix(serverName, prefix);
     const sanitized = toolName.replace(/\./g, "_");
     if (p && sanitized.startsWith(`${p}_`) && sanitized.length > p.length + 1) {
         return sanitized;
     }
     return p ? `${p}_${sanitized}` : sanitized;
+}
+// The hash covers the whole joined name, so two tools get the same shortened name only when their
+// full names were already equal, which the collision checks already handle.
+function fitToolName(name) {
+    return name.length <= MAX_TOOL_NAME_LENGTH ? name : hashedToolName(name, name);
+}
+/**
+ * Format a tool name with server prefix. A name over 64 characters is cut and gets a hash of the
+ * full name.
+ */
+export function formatToolName(toolName, serverName, prefix) {
+    return fitToolName(joinToolName(toolName, serverName, prefix));
 }
 export function resolveToolPrefix(definition, globalPrefix) {
     return definition?.toolPrefix ?? globalPrefix ?? "server";
@@ -221,13 +244,13 @@ function formatLegacyToolName(toolName, serverName, prefix) {
     return serverPrefix ? `${serverPrefix}_${sanitizedToolName}` : sanitizedToolName;
 }
 export function getToolNameCandidates(toolName, serverName, prefix, includeLegacy = true) {
-    const candidates = new Set([
-        toolName,
-        formatToolName(toolName, serverName, prefix),
-        formatToolName(toolName, serverName, "server"),
-        formatToolName(toolName, serverName, "short"),
-        formatToolName(toolName, serverName, "mcp"),
-    ]);
+    const candidates = new Set([toolName]);
+    for (const mode of [prefix, "server", "short", "mcp"]) {
+        const joined = joinToolName(toolName, serverName, mode);
+        // A name cut to fit the limit still matches a selector or call that uses its full name.
+        candidates.add(joined);
+        candidates.add(fitToolName(joined));
+    }
     if (includeLegacy) {
         const legacyToolName = toolName.replace(/-/g, "_");
         candidates.add(legacyToolName);
