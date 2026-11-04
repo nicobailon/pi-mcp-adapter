@@ -144,7 +144,11 @@ export function hashedToolName(name, hashInput) {
     const hash = createHash("sha256").update(hashInput).digest("hex").slice(0, 8);
     return `${name.slice(0, MAX_TOOL_NAME_LENGTH - hash.length - 1)}_${hash}`;
 }
-function joinToolName(toolName, serverName, prefix) {
+/**
+ * A tool name with server prefix before {@link formatToolName} fits it to the length limit.
+ * @internal
+ */
+export function joinToolName(toolName, serverName, prefix) {
     const p = getServerPrefix(serverName, prefix);
     const sanitized = toolName.replace(/\./g, "_");
     if (p && sanitized.startsWith(`${p}_`) && sanitized.length > p.length + 1) {
@@ -254,18 +258,15 @@ export function getToolNameCandidates(toolName, serverName, prefix, includeLegac
     if (includeLegacy) {
         const legacyToolName = toolName.replace(/-/g, "_");
         candidates.add(legacyToolName);
-        candidates.add(formatToolName(legacyToolName, serverName, prefix));
-        candidates.add(formatToolName(legacyToolName, serverName, "server"));
-        candidates.add(formatToolName(legacyToolName, serverName, "short"));
-        candidates.add(formatToolName(legacyToolName, serverName, "mcp"));
-        candidates.add(formatLegacyToolName(toolName, serverName, prefix));
-        candidates.add(formatLegacyToolName(toolName, serverName, "server"));
-        candidates.add(formatLegacyToolName(toolName, serverName, "short"));
-        candidates.add(formatLegacyToolName(toolName, serverName, "mcp"));
-        candidates.add(formatToolName(toolName, serverName, prefix).replace(/-/g, "_"));
-        candidates.add(formatToolName(toolName, serverName, "server").replace(/-/g, "_"));
-        candidates.add(formatToolName(toolName, serverName, "short").replace(/-/g, "_"));
-        candidates.add(formatToolName(toolName, serverName, "mcp").replace(/-/g, "_"));
+        for (const mode of [prefix, "server", "short", "mcp"]) {
+            const legacyJoined = joinToolName(legacyToolName, serverName, mode);
+            const joined = joinToolName(toolName, serverName, mode);
+            candidates.add(legacyJoined);
+            candidates.add(fitToolName(legacyJoined));
+            candidates.add(formatLegacyToolName(toolName, serverName, mode));
+            candidates.add(joined.replace(/-/g, "_"));
+            candidates.add(fitToolName(joined).replace(/-/g, "_"));
+        }
     }
     return candidates;
 }

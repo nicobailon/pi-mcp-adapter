@@ -81,11 +81,16 @@ describe("formatToolName", () => {
     // The proxy finds a tool by the same name it is registered under.
     expect(buildToolMetadata([], resources as any, definition, "home-assistant", "server").metadata.map((tool) => tool.name)).toEqual(names);
 
-    // A selector written with the full name still matches the shortened tool.
-    const excluded: ServerEntry = { ...definition, excludeTools: ["home-assistant_read_home_assistant_best_practices_references_triggers_and_conditions_md"] };
-    const excludedCache: MetadataCache = { version: 1, servers: { "home-assistant": { ...cache.servers["home-assistant"]!, configHash: computeServerHash(excluded) } } };
-    expect(resolveDirectTools({ mcpServers: { "home-assistant": excluded } }, excludedCache, "server").map((spec) => spec.prefixedName))
-      .toEqual(names.slice(1));
+    // A selector written with the full name, or its older all-underscore form, still matches the shortened tool.
+    for (const fullName of [
+      "home-assistant_read_home_assistant_best_practices_references_triggers_and_conditions_md",
+      "home_assistant_read_home_assistant_best_practices_references_triggers_and_conditions_md",
+    ]) {
+      const excluded: ServerEntry = { ...definition, excludeTools: [fullName] };
+      const excludedCache: MetadataCache = { version: 1, servers: { "home-assistant": { ...cache.servers["home-assistant"]!, configHash: computeServerHash(excluded) } } };
+      expect(resolveDirectTools({ mcpServers: { "home-assistant": excluded } }, excludedCache, "server").map((spec) => spec.prefixedName))
+        .toEqual(names.slice(1));
+    }
   });
 });
 
