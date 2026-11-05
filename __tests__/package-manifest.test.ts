@@ -104,6 +104,14 @@ describe("package.json files", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it("ships an app bridge bundle built from the pinned ext-apps devDependency", () => {
+    const banner = readFileSync(join(repoRoot, "app-bridge.bundle.js"), "utf-8").slice(0, 200);
+    const pinned = packageJson.devDependencies?.["@modelcontextprotocol/ext-apps"];
+
+    expect(pinned).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(banner).toContain(`@modelcontextprotocol/ext-apps@${pinned} `);
+  });
 });
 
 describe("package.json dependency policy", () => {
