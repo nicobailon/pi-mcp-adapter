@@ -116,6 +116,8 @@ export function backgroundTaskHandle(server: string, tool: string, taskId: strin
  */
 export class BackgroundTaskRegistry {
   private readonly running = new Map<string, RunningTask>();
+  /** Settled tasks hidden from the running list, but not yet forwarded to Pi. */
+  private readonly pendingDelivery = new Map<TaskEntry, SerializedTaskReference>();
   /** Restores still waiting on `resumeTask`, which aren't in `running` yet but a replacement hands over too. */
   private readonly resuming = new Map<TaskEntry, {
     reference: SerializedTaskReference;
@@ -153,7 +155,7 @@ export class BackgroundTaskRegistry {
 
   /**
    * Takes over the call's in-flight count. Resolves once the outcome is
-   * delivered and the count released.
+   * forwarded to Pi and the count released. Pi may queue it for a later turn.
    */
   start(task: BackgroundTaskStart): Promise<void> {
     return new Promise((finish) => {
@@ -216,6 +218,17 @@ export class BackgroundTaskRegistry {
   async handOffForShutdown(): Promise<void> {
     if (this.persistHandedOff === undefined) return;
     this.stopping = true;
+    for (const [entry, reference] of this.pendingDelivery) {
+      this.takeOver(entry);
+      this.pendingDelivery.delete(entry);
+      try {
+        this.persistReference(entry, reference);
+      } catch (error) {
+        logger.warn(`MCP task ${entry.info.key} could not be handed off: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        this.release(entry);
+      }
+    }
     await Promise.all([...this.running.values()].map(async (entry) => {
       this.takeOver(entry);
       // Final for this runtime: no later hand-over or stop may pick the task up again.
@@ -226,7 +239,7 @@ export class BackgroundTaskRegistry {
 
   private async persistOnStop(entry: TaskEntry, execution: BackgroundToolExecution): Promise<void> {
     try {
-      await execution.handoff((reference) => this.persistHandedOff!({ key: entry.info.key, server: entry.server, tool: entry.tool, reference }));
+      await execution.handoff((reference) => this.persistReference(entry, reference));
       await execution.result();
     } catch (error) {
       // Still owned by its task session, whose teardown cancels it.
@@ -234,6 +247,10 @@ export class BackgroundTaskRegistry {
     } finally {
       this.release(entry);
     }
+  }
+
+  private persistReference(entry: TaskEntry, reference: SerializedTaskReference): void {
+    this.persistHandedOff!({ key: entry.info.key, server: entry.server, tool: entry.tool, reference });
   }
 
   /*
@@ -244,10 +261,10 @@ export class BackgroundTaskRegistry {
    * entry before any side effect (cancel, release, persist, delivery, adding
    * to `running`); one that lost ownership only detaches an execution it alone
    * holds, and releases the in-flight count only if nobody took the entry over.
-   * Taking an entry out of `running` ends the contest for it, since every
-   * take-over starts from `running`, or from `resuming` for a restore still
-   * resuming, and an entry leaving `running` never re-enters either. Once the
-   * session starts stopping, it owns every task, including one started after:
+   * A settled entry leaves `running` but remains in `pendingDelivery` until
+   * forwarded to Pi, so shutdown can still take it over during rendering or
+   * pre-turn convergence. Once the session starts stopping, it owns every task,
+   * including one started after:
    * it takes over those in `running`, persists one that starts, and every other
    * continuation (a restore or resume in flight, a follow about to start) loses
    * ownership, so a restored record stays pending. A stopping session persists
@@ -308,23 +325,33 @@ export class BackgroundTaskRegistry {
       if (resumed.kind !== "task") throw new Error("resumeTask returned an immediate execution");
     } catch (error) {
       if (!this.owns(entry, generation)) return this.relinquish(entry, generation);
+      if (this.persistHandedOff !== undefined) this.pendingDelivery.set(entry, reference);
       this.remove(entry);
-      try {
-        if (this.ownerSignal.aborted || session.closed()) {
-          // A restore cut short by another stop delivers nothing, so the session's record still says pending.
-          if (old === undefined) return;
-          // A close that cut a hand-over short cancels, as it would have without it. A stopping session that
-          // persists its tasks has taken the entry over by now, so this cancel is only for one that doesn't.
-          // The replaced connection stays open until handOver returns, and a detached execution can still cancel.
-          await old.cancel().catch(() => {});
-          this.deliver(entry, "cancelled", await entry.guard(`The connection to ${entry.server} closed.`));
-        } else {
-          logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
-          this.deliver(entry, "unknown", await entry.guard(`${unfollowableReason(entry.server, session, error)}. Calling the tool again may repeat the work.`));
-        }
-      } finally {
-        this.release(entry);
+      let status: "cancelled" | "unknown";
+      let reason: string;
+      if (this.ownerSignal.aborted || session.closed()) {
+        // A restore cut short by another stop delivers nothing, so the session's record still says pending.
+        if (old === undefined) return this.release(entry);
+        // A close that cut a hand-over short cancels, as it would have without it. A stopping session that
+        // persists its tasks has taken the entry over by now, so this cancel is only for one that doesn't.
+        // The replaced connection stays open until handOver returns, and a detached execution can still cancel.
+        await old.cancel().catch(() => {});
+        status = "cancelled";
+        reason = `The connection to ${entry.server} closed.`;
+      } else {
+        logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
+        status = "unknown";
+        reason = `${unfollowableReason(entry.server, session, error)}. Calling the tool again may repeat the work.`;
       }
+      // Not awaited: a hand-over runs inside keep-alive convergence, which a turn-triggering send waits for.
+      void entry.guard(reason)
+        .then((body) => this.deliver(entry, generation, status, body))
+        .catch((deliveryError: unknown) => {
+          logger.warn(`MCP task ${entry.info.key} could not be delivered: ${deliveryError instanceof Error ? deliveryError.message : String(deliveryError)}`);
+        })
+        .finally(() => {
+          if (entry.generation === generation) this.release(entry);
+        });
       return;
     }
     // The owner stopped during a restore: its record still says pending, so let the task run on.
@@ -355,19 +382,20 @@ export class BackgroundTaskRegistry {
     })
       .then(async ({ outcome }) => {
         if (!this.owns(entry, generation)) return;
+        if (this.persistHandedOff !== undefined) this.pendingDelivery.set(entry, execution.serializeReference());
         this.remove(entry);
         if (outcome.status === "completed") {
           const { resultType: _resultType, ...result } = outcome.result as Record<string, unknown>;
-          this.deliver(entry, "completed", await entry.render(result));
+          await this.deliver(entry, generation, "completed", await entry.render(result));
         } else if (outcome.status === "failed" && !(outcome.error.cause instanceof TaskExecutionClosedError)) {
-          this.deliver(entry, "failed", await entry.guard(outcome.error.message));
+          await this.deliver(entry, generation, "failed", await entry.guard(outcome.error.message));
         } else {
           const reason = outcome.status === "failed"
             ? `The connection to ${entry.server} closed.`
             : entry.stoppedBy !== undefined
               ? `Stopped by ${entry.stoppedBy}.`
               : outcome.task?.statusMessage ?? "Cancelled by the server.";
-          this.deliver(entry, "cancelled", await entry.guard(reason));
+          await this.deliver(entry, generation, "cancelled", await entry.guard(reason));
         }
       })
       .catch((error: unknown) => {
@@ -379,14 +407,18 @@ export class BackgroundTaskRegistry {
       });
   }
 
-  private deliver(entry: TaskEntry, status: keyof typeof OUTCOME_ERRORS, body: RenderedTaskResult): void {
+  private async deliver(entry: TaskEntry, generation: number, status: keyof typeof OUTCOME_ERRORS, body: RenderedTaskResult): Promise<void> {
+    if (!this.owns(entry, generation)) return;
     const error = OUTCOME_ERRORS[status];
-    this.sendMessage({
+    await this.sendMessage({
       customType: MCP_TASK_RESULT_TYPE,
       display: true,
       content: [{ type: "text", text: `MCP task ${entry.taskId} (${entry.server}/${entry.tool}) ${status === "unknown" ? "outcome unknown" : status}.` }, ...body.content],
       details: { task: { id: entry.taskId, server: entry.server, tool: entry.tool, status }, ...(error ? { error } : {}), ...body.details },
-    }, { triggerTurn: true, deliverAs: "followUp" });
+    }, { triggerTurn: true, deliverAs: "followUp" }, {
+      isCurrent: () => this.owns(entry, generation),
+      onSent: () => this.pendingDelivery.delete(entry),
+    });
   }
 
   // A list must never show a settled task, so the entry goes before the outcome is delivered.
@@ -398,6 +430,7 @@ export class BackgroundTaskRegistry {
 
   private release(entry: TaskEntry): void {
     this.remove(entry);
+    this.pendingDelivery.delete(entry);
     entry.releaseCancel();
     this.manager.decrementInFlight(entry.server);
     this.manager.touch(entry.server);

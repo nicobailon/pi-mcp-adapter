@@ -152,4 +152,76 @@ describe("background MCP tasks in initializeMcp", () => {
     ]);
     expect(manager.incrementInFlight).not.toHaveBeenCalled();
   });
+
+  it("waits for keep-alive convergence before reporting message delivery", async () => {
+    const { initializeMcp } = await import("../init.ts");
+    const deliveryOrder: string[] = [];
+    const sendMessage = vi.fn(() => {
+      deliveryOrder.push("sent");
+      queueMicrotask(() => deliveryOrder.push("next microtask"));
+    });
+    const state = await initializeMcp({ getFlag: vi.fn(), sendMessage } as unknown as ExtensionAPI, context("tui"));
+    let converge!: () => void;
+    const convergence = new Promise<void>(resolve => { converge = resolve; });
+    const ensureConverged = vi.spyOn(state.lifecycle, "ensureConverged").mockReturnValue(convergence);
+    const message = { customType: "mcp-task-result", content: [{ type: "text" as const, text: "build ok" }], display: true };
+    const onSent = vi.fn(() => deliveryOrder.push("acknowledged"));
+    const delivered = Promise.resolve(state.sendMessage!(
+      message, { triggerTurn: true, deliverAs: "followUp" }, { isCurrent: () => true, onSent },
+    ));
+    let deliveryFinished = false;
+    void delivered.then(() => { deliveryFinished = true; });
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      expect(ensureConverged).toHaveBeenCalledWith(state.owner.signal);
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(onSent).not.toHaveBeenCalled();
+      expect(deliveryFinished).toBe(false);
+
+      converge();
+      await delivered;
+
+      expect(sendMessage).toHaveBeenCalledWith(message, { triggerTurn: true, deliverAs: "followUp" });
+      expect(onSent).toHaveBeenCalledTimes(1);
+      expect(sendMessage.mock.invocationCallOrder[0]!).toBeLessThan(onSent.mock.invocationCallOrder[0]!);
+      expect(deliveryOrder).toEqual(["sent", "acknowledged", "next microtask"]);
+    } finally {
+      converge();
+      await delivered;
+      ensureConverged.mockRestore();
+      await state.owner.stop();
+    }
+  });
+
+  it.each(["owner stopped", "delivery superseded"])("does not send after convergence when %s", async (transition) => {
+    const { initializeMcp } = await import("../init.ts");
+    const sendMessage = vi.fn();
+    const state = await initializeMcp({ getFlag: vi.fn(), sendMessage } as unknown as ExtensionAPI, context("tui"));
+    let converge!: () => void;
+    const convergence = new Promise<void>(resolve => { converge = resolve; });
+    const ensureConverged = vi.spyOn(state.lifecycle, "ensureConverged").mockReturnValue(convergence);
+    let canDeliver = true;
+    const onSent = vi.fn();
+    const delivered = Promise.resolve(state.sendMessage!(
+      { customType: "mcp-task-result", content: [{ type: "text", text: "build ok" }], display: true },
+      { triggerTurn: true, deliverAs: "followUp" },
+      { isCurrent: () => canDeliver, onSent },
+    ));
+    try {
+      expect(ensureConverged).toHaveBeenCalledWith(state.owner.signal);
+      if (transition === "owner stopped") await state.owner.stop();
+      else canDeliver = false;
+      converge();
+      await delivered;
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(onSent).not.toHaveBeenCalled();
+    } finally {
+      converge();
+      await delivered;
+      ensureConverged.mockRestore();
+      await state.owner.stop();
+    }
+  });
 });

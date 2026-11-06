@@ -26,7 +26,12 @@ export type SendMessageFn = (message: {
 }, options?: {
     triggerTurn?: boolean;
     deliverAs?: "steer" | "followUp" | "nextTurn";
-}) => void;
+}, 
+/** Keeps a delayed send with its task owner; `onSent` runs synchronously after Pi accepts it. */
+delivery?: {
+    isCurrent: () => boolean;
+    onSent: () => void;
+}) => void | Promise<void>;
 export interface McpExtensionState {
     owner: McpRuntimeOwner;
     manager: McpServerManager;

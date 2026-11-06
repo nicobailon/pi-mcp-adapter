@@ -22,6 +22,7 @@ import {
   startToolViaTaskSession,
 } from "../mcp-tasks.ts";
 import { BackgroundTaskRegistry, type HandedOffTask } from "../task-jobs.ts";
+import type { SendMessageFn } from "../state.ts";
 
 type SentFrame = { message: JSONRPCMessage; options: Parameters<Transport["send"]>[1] };
 
@@ -1002,6 +1003,45 @@ describe("background task delivery over a task session", () => {
       expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
     } finally {
       await replacement?.session.close();
+    }
+  });
+
+  it("finishes a hand-over before its outcome-unknown message waits on the convergence that is doing the hand-over", async () => {
+    const script = { statuses: [{ status: "working" }] };
+    const first = fakeModernTaskStack(script);
+    const replaced = await attach(first);
+    const replacement = await attach(fakeModernTaskStack({ ...script, forgetsTasks: true }, first.server, "second"));
+    const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
+    // Like init.ts in the terminal: a turn-triggering send first waits for keep-alive convergence,
+    // and here that convergence is the reconnect whose listener runs this hand-over.
+    let convergence!: Promise<void>;
+    let sendStarted!: () => void;
+    const sending = new Promise<void>((resolve) => { sendStarted = resolve; });
+    const sent: unknown[] = [];
+    const sendMessage = vi.fn<SendMessageFn>(async (message, _options, delivery) => {
+      sendStarted();
+      await convergence;
+      if (delivery?.isCurrent() === false) return;
+      sent.push(message);
+      delivery?.onSent();
+    });
+    const tasks = new BackgroundTaskRegistry(manager, sendMessage, new AbortController().signal);
+    try {
+      const { done } = await startOn(tasks, replaced!.session);
+      let handedOver = false;
+      convergence = tasks.handOver("task-server", { taskSession: replacement!.session, closed: () => false })
+        .then(() => { handedOver = true; });
+      await sending;
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(handedOver).toBe(true);
+      await replaced!.session.close();
+      await done;
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ details: { task: { status: "unknown" }, error: "task_outcome_unknown" } });
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+    } finally {
+      await replacement!.session.close();
     }
   });
 
