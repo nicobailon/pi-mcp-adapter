@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The browser page that hosts MCP Apps no longer ships an old copy of the MCP SDK 1.25.2 that `npm audit` couldn't see. That copy fell in the range of [GHSA-345p-7cg4-v4c7](https://github.com/advisories/GHSA-345p-7cg4-v4c7) and [GHSA-22jm-h49p-29qw](https://github.com/advisories/GHSA-22jm-h49p-29qw), though the adapter never reached the affected code paths. The page now runs on the current MCP Apps bridge and the same MCP SDK 2 packages the adapter already uses, and MCP Apps built with either the old or the new MCP Apps SDK work as before. Thanks to [@taxor03](https://github.com/taxor03) for [#936](https://github.com/nicobailon/pi-mcp-adapter/issues/936).
 
+### Fixed
+
+- When a server changes a prompt's arguments, the next time you run that prompt as a slash command it uses the new arguments. Before, that run could put your values under the old argument names, or let you leave out a newly required argument without an error. Thanks to [@feiiiiii5](https://github.com/feiiiiii5) for [#938](https://github.com/nicobailon/pi-mcp-adapter/pull/938).
+- If you quit Pi just as a slow MCP job finishes, its result is no longer lost. Before, a result that was still being prepared or waiting to be sent to the session was dropped. Now it arrives when you reopen that session, as long as the server still has the job. Thanks to [@feiiiiii5](https://github.com/feiiiiii5) for [#939](https://github.com/nicobailon/pi-mcp-adapter/pull/939).
+
 ## [7.0.1] - 2026-11-03
 
 ### Highlights
