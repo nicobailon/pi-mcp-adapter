@@ -327,22 +327,31 @@ export class BackgroundTaskRegistry {
       if (!this.owns(entry, generation)) return this.relinquish(entry, generation);
       if (this.persistHandedOff !== undefined) this.pendingDelivery.set(entry, reference);
       this.remove(entry);
-      try {
-        if (this.ownerSignal.aborted || session.closed()) {
-          // A restore cut short by another stop delivers nothing, so the session's record still says pending.
-          if (old === undefined) return;
-          // A close that cut a hand-over short cancels, as it would have without it. A stopping session that
-          // persists its tasks has taken the entry over by now, so this cancel is only for one that doesn't.
-          // The replaced connection stays open until handOver returns, and a detached execution can still cancel.
-          await old.cancel().catch(() => {});
-          await this.deliver(entry, generation, "cancelled", await entry.guard(`The connection to ${entry.server} closed.`));
-        } else {
-          logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
-          await this.deliver(entry, generation, "unknown", await entry.guard(`${unfollowableReason(entry.server, session, error)}. Calling the tool again may repeat the work.`));
-        }
-      } finally {
-        if (entry.generation === generation) this.release(entry);
+      let status: "cancelled" | "unknown";
+      let reason: string;
+      if (this.ownerSignal.aborted || session.closed()) {
+        // A restore cut short by another stop delivers nothing, so the session's record still says pending.
+        if (old === undefined) return this.release(entry);
+        // A close that cut a hand-over short cancels, as it would have without it. A stopping session that
+        // persists its tasks has taken the entry over by now, so this cancel is only for one that doesn't.
+        // The replaced connection stays open until handOver returns, and a detached execution can still cancel.
+        await old.cancel().catch(() => {});
+        status = "cancelled";
+        reason = `The connection to ${entry.server} closed.`;
+      } else {
+        logger.warn(`MCP task ${entry.info.key} could not be resumed: ${error instanceof Error ? error.message : String(error)}`);
+        status = "unknown";
+        reason = `${unfollowableReason(entry.server, session, error)}. Calling the tool again may repeat the work.`;
       }
+      // Not awaited: a hand-over runs inside keep-alive convergence, which a turn-triggering send waits for.
+      void entry.guard(reason)
+        .then((body) => this.deliver(entry, generation, status, body))
+        .catch((deliveryError: unknown) => {
+          logger.warn(`MCP task ${entry.info.key} could not be delivered: ${deliveryError instanceof Error ? deliveryError.message : String(deliveryError)}`);
+        })
+        .finally(() => {
+          if (entry.generation === generation) this.release(entry);
+        });
       return;
     }
     // The owner stopped during a restore: its record still says pending, so let the task run on.
