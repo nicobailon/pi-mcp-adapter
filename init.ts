@@ -257,16 +257,17 @@ export async function initializeMcp(
       owner.throwIfInactive();
     },
     ...(ui !== undefined ? { ui } : {}),
-    sendMessage: (message, options) => {
+    sendMessage: (message, options, delivery) => {
       const deliver = () => {
-        if (!owner.isActive()) return;
+        if (!owner.isActive() || delivery?.isCurrent() === false) return;
         pi.sendMessage(message, options);
+        delivery?.onSent();
       };
       if (!options?.triggerTurn) {
         deliver();
         return;
       }
-      void lifecycle.ensureConverged(owner.signal).then(deliver, error => {
+      return lifecycle.ensureConverged(owner.signal).then(deliver, error => {
         if (!owner.isActive() || isAbortError(error, owner.signal)) return;
         const detail = error instanceof Error ? error.message : String(error);
         logger.debug(`MCP: pre-turn keep-alive convergence failed: ${sanitizeTerminalText(detail)}`);

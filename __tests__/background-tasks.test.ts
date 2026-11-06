@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { TaskFailedError, type TaskOutcome } from "@modelcontextprotocol/ext-tasks/client";
+import { TaskFailedError, withTasks, type ConnectedMcpSessionPort, type JsonRpcResponse, type TaskOutcome } from "@modelcontextprotocol/ext-tasks/client";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeCancelTask } from "../proxy-modes.ts";
-import { BackgroundTaskRegistry } from "../task-jobs.ts";
+import { BackgroundTaskRegistry, type HandedOffTask } from "../task-jobs.ts";
+import type { SendMessageFn } from "../state.ts";
 
 type Outcome = TaskOutcome<Record<string, unknown>>;
 
@@ -57,6 +58,194 @@ function taskState(execution: unknown, options: { background?: boolean } = {}) {
 
 const HANDLE_TEXT = 'Task t-1 started on demo/build. Do not call the tool again; the result arrives later in a message that starts "MCP task t-1". To stop it, call mcp({ cancelTask: "demo/t-1" }).';
 
+/** A JSON-RPC peer; executions, serialization and recovery use the real Tasks SDK. */
+function completedTaskSession(cancel: ReturnType<typeof vi.fn>) {
+  const task = {
+    taskId: "t-1",
+    createdAt: "2026-10-24T00:00:00Z",
+    lastUpdatedAt: "2026-10-24T00:00:00Z",
+    ttlMs: 60_000,
+    pollIntervalMs: 1,
+  };
+  const port: ConnectedMcpSessionPort = {
+    endpointId: "background-delivery-test",
+    taskCapabilities: { generation: "v2", capabilities: {} },
+    invalidated: false,
+    onServerRequest: () => () => {},
+    onNotification: () => () => {},
+    onInvalidated: () => () => {},
+    dispatch: async (request): Promise<JsonRpcResponse> => {
+      const { method } = request as { method: string };
+      if (method === "tools/call") return { kind: "result", result: { resultType: "task", ...task, status: "working" } };
+      if (method === "tasks/get") return {
+        kind: "result",
+        result: { resultType: "complete", ...task, status: "completed", result: { resultType: "complete", content: [{ type: "text", text: "build ok" }] } },
+      };
+      if (method === "tasks/cancel") {
+        cancel();
+        return { kind: "result", result: { resultType: "complete" } };
+      }
+      throw new Error(`Unexpected task request: ${method}`);
+    },
+  };
+  return withTasks(port, { tools: { currentTool: () => undefined } });
+}
+
+describe("completed background task recovery", () => {
+  it.each(["rendering", "delivery"])("recovers a completed task stopped during %s without cancelling or delivering it twice", async stage => {
+    const cancel = vi.fn();
+    const session = completedTaskSession(cancel);
+    const replacement = completedTaskSession(cancel);
+    const persisted: HandedOffTask[] = [];
+    const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
+    const owner = new AbortController();
+    let finishStage!: () => void;
+    const stageGate = new Promise<void>(resolve => { finishStage = resolve; });
+    let beginStage!: () => void;
+    const waiting = new Promise<void>(resolve => { beginStage = resolve; });
+    const waitAtStage = async () => { beginStage(); await stageGate; };
+    const deliveredMessages: Parameters<SendMessageFn>[0][] = [];
+    const sendMessage = vi.fn<SendMessageFn>(async (message, _options, delivery) => {
+      if (stage === "delivery") await waitAtStage();
+      if (owner.signal.aborted || delivery?.isCurrent() === false) return;
+      deliveredMessages.push(message);
+      delivery?.onSent();
+    });
+    const tasks = new BackgroundTaskRegistry(manager, sendMessage, owner.signal, undefined, task => persisted.push(task));
+    const render = async (result: Record<string, unknown>) => ({
+      content: result.content as Array<{ type: "text"; text: string }>,
+      details: {},
+    });
+    const guard = async (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+    const execution = await session.callTool("build", {});
+    if (execution.kind !== "task") throw new Error("Expected a task-backed execution");
+    const done = tasks.start({
+      server: "demo", tool: "build", taskId: execution.handle.taskId, execution, guard,
+      render: async result => {
+        if (stage === "rendering") await waitAtStage();
+        return render(result);
+      },
+    });
+    try {
+      await waiting;
+      expect(tasks.size).toBe(0);
+      expect(tasks.list()).toEqual([]);
+      await tasks.handOffForShutdown();
+      owner.abort();
+      finishStage();
+      await done;
+      await session.close();
+
+      expect(persisted).toHaveLength(1);
+      expect(deliveredMessages).toEqual([]);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+      const recoveredSend = vi.fn();
+      const recoveredManager = { decrementInFlight: vi.fn(), touch: vi.fn() };
+      const recovered = new BackgroundTaskRegistry(recoveredManager, recoveredSend, new AbortController().signal);
+
+      await recovered.restore({ ...persisted[0]!, render, guard }, { taskSession: replacement, closed: () => false });
+
+      expect(recoveredSend).toHaveBeenCalledTimes(1);
+      expect(recoveredSend.mock.calls[0]![0].content).toEqual([
+        { type: "text", text: "MCP task t-1 (demo/build) completed." },
+        { type: "text", text: "build ok" },
+      ]);
+      expect(recovered.size).toBe(0);
+      expect(recoveredManager.decrementInFlight).toHaveBeenCalledTimes(1);
+      expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      finishStage();
+      await Promise.all([session.close(), replacement.close()]);
+      await done;
+    }
+  });
+
+  it("does not restore a result already accepted when shutdown starts in the same delivery stack", async () => {
+    const cancel = vi.fn();
+    const session = completedTaskSession(cancel);
+    const persisted: HandedOffTask[] = [];
+    const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
+    const owner = new AbortController();
+    let tasks!: BackgroundTaskRegistry;
+    let shutdown: Promise<void> | undefined;
+    const deliveredMessages: Parameters<SendMessageFn>[0][] = [];
+    const sendMessage: SendMessageFn = (message, _options, delivery) => {
+      if (delivery?.isCurrent() === false) return;
+      deliveredMessages.push(message);
+      delivery?.onSent();
+      shutdown = tasks.handOffForShutdown();
+    };
+    tasks = new BackgroundTaskRegistry(manager, sendMessage, owner.signal, undefined, task => persisted.push(task));
+    const execution = await session.callTool("build", {});
+    if (execution.kind !== "task") throw new Error("Expected a task-backed execution");
+    try {
+      await tasks.start({
+        server: "demo", tool: "build", taskId: execution.handle.taskId, execution,
+        render: async result => ({ content: result.content as Array<{ type: "text"; text: string }>, details: {} }),
+        guard: async text => ({ content: [{ type: "text", text }], details: {} }),
+      });
+      await shutdown;
+      owner.abort();
+
+      expect(deliveredMessages).toHaveLength(1);
+      expect(deliveredMessages[0]!.content).toEqual([
+        { type: "text", text: "MCP task t-1 (demo/build) completed." },
+        { type: "text", text: "build ok" },
+      ]);
+      expect(persisted).toEqual([]);
+      expect(tasks.size).toBe(0);
+      expect(tasks.list()).toEqual([]);
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+      expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("keeps a restored task pending when shutdown interrupts its outcome-unknown message", async () => {
+    const cancel = vi.fn();
+    const session = completedTaskSession(cancel);
+    const execution = await session.callTool("build", {});
+    if (execution.kind !== "task") throw new Error("Expected a task-backed execution");
+    await execution.settle();
+    const reference = execution.serializeReference();
+    const persisted: HandedOffTask[] = [];
+    const manager = { decrementInFlight: vi.fn(), touch: vi.fn() };
+    const sendMessage = vi.fn();
+    const tasks = new BackgroundTaskRegistry(manager, sendMessage, new AbortController().signal, undefined, task => persisted.push(task));
+    let finishGuard!: () => void;
+    const guardGate = new Promise<void>(resolve => { finishGuard = resolve; });
+    let beginGuard!: () => void;
+    const guarding = new Promise<void>(resolve => { beginGuard = resolve; });
+    const done = tasks.restore({
+      server: "demo", tool: "build", reference,
+      render: async () => ({ content: [], details: {} }),
+      guard: async text => {
+        beginGuard();
+        await guardGate;
+        return { content: [{ type: "text", text }], details: {} };
+      },
+    }, { unavailable: "unreachable", closed: () => false });
+    try {
+      await guarding;
+      await tasks.handOffForShutdown();
+      finishGuard();
+      await done;
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(persisted).toEqual([{ key: "demo/t-1", server: "demo", tool: "build", reference }]);
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
+      expect(tasks.list()).toEqual([]);
+      expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      finishGuard();
+      await done;
+      await session.close();
+    }
+  });
+});
+
 describe("background MCP tasks through the proxy", () => {
   it("returns the task handle before the task finishes, then delivers the result once as a follow-up", async () => {
     const { execution, finish } = pendingTask();
@@ -84,6 +273,7 @@ describe("background MCP tasks through the proxy", () => {
         },
       },
       { triggerTurn: true, deliverAs: "followUp" },
+      expect.objectContaining({ isCurrent: expect.any(Function), onSent: expect.any(Function) }),
     );
     expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
   });
@@ -214,6 +404,7 @@ describe("background MCP tasks through direct tools", () => {
         details: { task: { id: "t-1", server: "demo", tool: "build", status: "completed" } },
       },
       { triggerTurn: true, deliverAs: "followUp" },
+      expect.objectContaining({ isCurrent: expect.any(Function), onSent: expect.any(Function) }),
     );
     expect(manager.decrementInFlight).toHaveBeenCalledTimes(1);
   });
