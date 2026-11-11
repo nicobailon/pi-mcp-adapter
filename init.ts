@@ -360,7 +360,8 @@ export async function initializeMcp(
     }
 
     const cachedEntry = cache?.servers?.[name];
-    if (cachedEntry && isServerCacheValid(cachedEntry, definition)) {
+    const plan = planServerMetadata(cachedEntry, definition);
+    if (cachedEntry && (plan === "cached" || plan === "catalog")) {
       const hasToolFilters =
         (Array.isArray(definition.includeTools) && definition.includeTools.length > 0) ||
         (Array.isArray(definition.excludeTools) && definition.excludeTools.length > 0);
@@ -368,19 +369,10 @@ export async function initializeMcp(
         cachedSelectorCandidateIndex = createCachedToolSelectorCandidateIndex(config.mcpServers, cache, prefix);
       }
       restoreCachedMetadata(state, name, cachedEntry, cache ?? undefined, cachedSelectorCandidateIndex);
-      // A cached Executor listing without its app catalog connects at startup so the catalog pass can
-      // run; keep-alive and eager servers connect anyway.
-      if (lifecycleMode !== "keep-alive" && lifecycleMode !== "eager" && !cachedEntry.executorApps
-        && process.env.MCP_DIRECT_TOOLS !== "__none__" && isExecutorCatalogEntry(cachedEntry)) {
-        needsDiscovery.add(name);
-        catalogDiscovery.add(name);
-      }
-    } else if (cachedEntry?.discoveryFailed && cachedEntry.configHash === tryComputeServerHash(definition)) {
-      // Startup tries a config once; a server that failed is tried again on first use.
-      failedDiscovery.add(name);
-    } else if (cachedEntry?.cacheScope !== "private") {
-      needsDiscovery.add(name);
     }
+    if (plan === "catalog") catalogDiscovery.add(name);
+    if (plan === "catalog" || plan === "discover") needsDiscovery.add(name);
+    if (plan === "failed") failedDiscovery.add(name);
   }
 
   const startupServers = serverEntries
@@ -443,8 +435,8 @@ export async function initializeMcp(
     }
     // Mark a failed discovery so later sessions skip this config; transient outages stay unmarked.
     if (!error || transient || !needsDiscovery.has(name) || catalogDiscovery.has(name)) return [];
-    const configHash = tryComputeServerHash(definition);
-    return configHash ? [[name, { configHash, tools: [], resources: [], discoveryFailed: true, cachedAt: Date.now() }]] : [];
+    const marker = failedDiscoveryEntry(definition);
+    return marker ? [[name, marker]] : [];
   });
   if (captured.length > 0) saveMetadataCache({ version: 1, servers: Object.fromEntries(captured) }, { startupSnapshot: cache?.servers ?? {} });
 
@@ -965,7 +957,13 @@ export function updateStatusBar(state: McpExtensionState): void {
   ui.setStatus("mcp", styledStatus);
 }
 
-export async function lazyConnect(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<boolean> {
+export async function lazyConnect(
+  state: McpExtensionState,
+  serverName: string,
+  signal?: AbortSignal,
+  /** Called with the error of a connect that failed for the server's current definition. */
+  onFailure?: (error: unknown) => void,
+): Promise<boolean> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
   const connection = state.manager.getConnection(serverName);
@@ -1007,6 +1005,7 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
     }
     // A server removed or replaced while connecting (closing it aborts the connect) didn't fail; its name may be in use again.
     if (state.config.mcpServers[serverName] !== definition) return false;
+    onFailure?.(error);
     const message = error instanceof Error ? error.message : String(error);
     recordFailure(state, serverName, message);
     logger.debug(`MCP: lazy connect failed for ${serverName}: ${sanitizeTerminalText(message)}`);
@@ -1033,23 +1032,49 @@ function restoreCachedMetadata(
 }
 
 /**
- * Gives a server added to a running session what startup gives a configured one: its valid cache
- * entry, or else one discovery connect, which the idle timeout closes like any lazy connect.
+ * What startup does with a server's cache entry: use it; use it and connect so the Executor catalog
+ * pass runs; leave the server for first use after a failed discovery or a private listing; or discover it.
+ */
+function planServerMetadata(entry: ServerCacheEntry | undefined, definition: ServerEntry): "cached" | "catalog" | "failed" | "private" | "discover" {
+  if (entry && isServerCacheValid(entry, definition)) {
+    // Keep-alive and eager servers connect anyway.
+    const lifecycleMode = definition.lifecycle ?? "lazy";
+    return lifecycleMode !== "keep-alive" && lifecycleMode !== "eager" && !entry.executorApps
+      && process.env.MCP_DIRECT_TOOLS !== "__none__" && isExecutorCatalogEntry(entry) ? "catalog" : "cached";
+  }
+  // A config is discovered once; one that failed is tried again on first use.
+  if (entry?.discoveryFailed && entry.configHash === tryComputeServerHash(definition)) return "failed";
+  return entry?.cacheScope === "private" ? "private" : "discover";
+}
+
+/** The cache marker that makes later sessions skip discovering a config that failed it. */
+function failedDiscoveryEntry(definition: ServerEntry): ServerCacheEntry | undefined {
+  const configHash = tryComputeServerHash(definition);
+  return configHash ? { configHash, tools: [], resources: [], discoveryFailed: true, cachedAt: Date.now() } : undefined;
+}
+
+/**
+ * Gives a server added to a running session what startup gives a configured one, by the same plan.
+ * Its connect is a lazy connect, which the idle timeout closes.
  */
 export async function loadAddedServerMetadata(state: McpExtensionState, serverName: string): Promise<void> {
   const definition = state.config.mcpServers[serverName];
   if (!definition || isServerDisabled(definition)) return;
   const cache = loadMetadataCache();
   const entry = cache?.servers?.[serverName];
-  if (entry && isServerCacheValid(entry, definition)) {
+  const plan = planServerMetadata(entry, definition);
+  if (entry && (plan === "cached" || plan === "catalog")) {
     restoreCachedMetadata(state, serverName, entry, cache ?? undefined);
     notifyToolMetadataUpdated(state, serverName, "cache");
-    return;
   }
-  // As at startup: a config that failed discovery waits for first use, and a private listing isn't discovered ahead of it.
-  if (entry?.discoveryFailed && entry.configHash === tryComputeServerHash(definition)) return;
-  if (entry?.cacheScope === "private") return;
-  await lazyConnect(state, serverName);
+  if (plan === "catalog") await lazyConnect(state, serverName);
+  if (plan !== "discover") return;
+  let failure: unknown;
+  await lazyConnect(state, serverName, undefined, (error) => { failure = error; });
+  if (failure === undefined || isAbortError(failure) || isTransientHttpConnectError(failure)) return;
+  const marker = failedDiscoveryEntry(definition);
+  // Written only if no other session changed the entry since it was read.
+  if (marker) saveMetadataCache({ version: 1, servers: { [serverName]: marker } }, { startupSnapshot: cache?.servers ?? {} });
 }
 
 function getEffectiveIdleTimeoutMinutes(state: McpExtensionState, serverName: string): number {

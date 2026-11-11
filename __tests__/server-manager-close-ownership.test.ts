@@ -29,13 +29,15 @@ describe("McpServerManager connection close ownership", () => {
   it("connects a new definition right after closing a connect still in flight under the same name", async () => {
     const manager = new McpServerManager(join(__dirname, ".."));
     const first = manager.connect("demo", definition);
+    // Attached now: close() rejects it before the replacement connect settles.
+    const firstClosed = expect(first).rejects.toThrow("MCP connection demo was closed");
     const closing = manager.close("demo");
     const replacement = { command: process.execPath, args: [fileURLToPath(new URL("./fixtures/tools-only-server.mjs", import.meta.url))] };
     try {
       const connection = await manager.connect("demo", replacement);
       expect(connection.status).toBe("connected");
       expect(connection.tools.map(tool => tool.name)).toEqual(["noop"]);
-      await expect(first).rejects.toThrow("MCP connection demo was closed");
+      await firstClosed;
       await closing;
     } finally {
       await manager.close("demo");
