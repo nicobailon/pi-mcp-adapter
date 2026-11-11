@@ -367,18 +367,7 @@ export async function initializeMcp(
       if (hasToolFilters && !cachedSelectorCandidateIndex && cache) {
         cachedSelectorCandidateIndex = createCachedToolSelectorCandidateIndex(config.mcpServers, cache, prefix);
       }
-      const metadata = reconstructToolMetadata(name, cachedEntry, prefix, definition, config.mcpServers, cache ?? undefined, cachedSelectorCandidateIndex);
-      toolMetadata.set(name, metadata);
-      if (Array.isArray(cachedEntry.resources)) {
-        resourceCounts.set(name, cachedEntry.resources.length);
-      }
-      if (cachedEntry.prompts?.length) {
-        promptMetadata.set(name, reconstructPromptMetadata(name, cachedEntry.prompts ?? [], prefix, definition));
-      }
-      if (cachedEntry.instructions) {
-        serverInstructions.set(name, cachedEntry.instructions);
-      }
-      seedObservedOutputs(state, name, cachedEntry);
+      restoreCachedMetadata(state, name, cachedEntry, cache ?? undefined, cachedSelectorCandidateIndex);
       // A cached Executor listing without its app catalog connects at startup so the catalog pass can
       // run; keep-alive and eager servers connect anyway.
       if (lifecycleMode !== "keep-alive" && lifecycleMode !== "eager" && !cachedEntry.executorApps
@@ -1016,12 +1005,51 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
     if (isAbortError(error, ownedSignal)) {
       throwIfAborted(ownedSignal);
     }
+    // A server removed or replaced while connecting (closing it aborts the connect) didn't fail; its name may be in use again.
+    if (state.config.mcpServers[serverName] !== definition) return false;
     const message = error instanceof Error ? error.message : String(error);
     recordFailure(state, serverName, message);
     logger.debug(`MCP: lazy connect failed for ${serverName}: ${sanitizeTerminalText(message)}`);
     updateStatusBar(state);
     return false;
   }
+}
+
+/** Loads a server's valid cache entry into the session, as startup does for every configured server. */
+function restoreCachedMetadata(
+  state: McpExtensionState,
+  serverName: string,
+  entry: ServerCacheEntry,
+  cache: MetadataCache | undefined,
+  selectorIndex?: ToolSelectorCandidateIndex,
+): void {
+  const definition = state.config.mcpServers[serverName]!;
+  const prefix = state.config.settings?.toolPrefix ?? "server";
+  state.toolMetadata.set(serverName, reconstructToolMetadata(serverName, entry, prefix, definition, state.config.mcpServers, cache, selectorIndex));
+  if (Array.isArray(entry.resources)) state.resourceCounts.set(serverName, entry.resources.length);
+  if (entry.prompts?.length) state.promptMetadata.set(serverName, reconstructPromptMetadata(serverName, entry.prompts, prefix, definition));
+  if (entry.instructions) state.serverInstructions.set(serverName, entry.instructions);
+  seedObservedOutputs(state, serverName, entry);
+}
+
+/**
+ * Gives a server added to a running session what startup gives a configured one: its valid cache
+ * entry, or else one discovery connect, which the idle timeout closes like any lazy connect.
+ */
+export async function loadAddedServerMetadata(state: McpExtensionState, serverName: string): Promise<void> {
+  const definition = state.config.mcpServers[serverName];
+  if (!definition || isServerDisabled(definition)) return;
+  const cache = loadMetadataCache();
+  const entry = cache?.servers?.[serverName];
+  if (entry && isServerCacheValid(entry, definition)) {
+    restoreCachedMetadata(state, serverName, entry, cache ?? undefined);
+    notifyToolMetadataUpdated(state, serverName, "cache");
+    return;
+  }
+  // As at startup: a config that failed discovery waits for first use, and a private listing isn't discovered ahead of it.
+  if (entry?.discoveryFailed && entry.configHash === tryComputeServerHash(definition)) return;
+  if (entry?.cacheScope === "private") return;
+  await lazyConnect(state, serverName);
 }
 
 function getEffectiveIdleTimeoutMinutes(state: McpExtensionState, serverName: string): number {

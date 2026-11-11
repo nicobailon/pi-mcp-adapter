@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - When a server changes a prompt's arguments, the next time you run that prompt as a slash command it uses the new arguments. Before, that run could put your values under the old argument names, or let you leave out a newly required argument without an error. Thanks to [@feiiiiii5](https://github.com/feiiiiii5) for [#938](https://github.com/nicobailon/pi-mcp-adapter/pull/938).
 - If you quit Pi just as a slow MCP job finishes, its result is no longer lost. Before, a result that was still being prepared or waiting to be sent to the session was dropped. Now it arrives when you reopen that session, as long as the server still has the job. Thanks to [@feiiiiii5](https://github.com/feiiiiii5) for [#939](https://github.com/nicobailon/pi-mcp-adapter/pull/939).
+- An MCP server that another Pi extension adds while Pi runs now shows its tools in `mcp` searches, server listings and the `/mcp` panel without you calling one of them first, the same as a server in your config. Before, a server added this way that wasn't saved from an earlier session, such as one started on a new port each time, showed as "(not cached)" with no tools, and one that was saved still didn't show up in searches. Thanks to [@meyverick](https://github.com/meyverick) for reporting [#942](https://github.com/nicobailon/pi-mcp-adapter/issues/942).
 
 ## [7.0.1] - 2026-11-03
 
