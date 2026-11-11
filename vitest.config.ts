@@ -5,6 +5,9 @@ import { defineConfig } from "vitest/config";
 
 const testHome = mkdtempSync(join(tmpdir(), "pi-mcp-test-home-"));
 process.on("exit", () => rmSync(testHome, { recursive: true, force: true }));
+// Pi subagents export MCP_DIRECT_TOOLS=__none__, which turns off direct, search-mode and script tools.
+// Tests that need it set their own value; an inherited one must not reach them.
+delete process.env.MCP_DIRECT_TOOLS;
 
 export default defineConfig({
   test: {
