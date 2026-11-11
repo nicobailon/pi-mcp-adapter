@@ -361,8 +361,10 @@ export class McpServerManager {
         if (!existingPromise)
             return undefined;
         const existingAuthority = authorities.get(name);
-        let reusable = oauthAuthority === undefined && existingAuthority === undefined;
-        if (oauthAuthority && existingAuthority) {
+        // close() aborts an attempt before its promise settles; a caller that joined it would get "was closed".
+        const aborted = attempts.get(name)?.signal.aborted === true;
+        let reusable = !aborted && oauthAuthority === undefined && existingAuthority === undefined;
+        if (!aborted && oauthAuthority && existingAuthority) {
             try {
                 existingAuthority();
                 reusable = true;

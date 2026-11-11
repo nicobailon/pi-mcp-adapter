@@ -499,6 +499,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (lifecycleMode === "keep-alive") targetState.lifecycle.markKeepAlive(name, definition);
   }
 
+  // Startup loads configured servers' tool metadata; a runtime server joins later, so it loads its own.
+  function loadRuntimeServerMetadata(targetState: McpExtensionState, name: string, entry: ServerEntry): void {
+    const guard = captureRuntimeGuard(targetState);
+    void loadForRuntime(loadCoreRuntime, guard)
+      .then((core) => {
+        if (targetState.config.mcpServers[name] === entry) return core.loadAddedServerMetadata(targetState, name);
+      })
+      .catch((error) => {
+        if (!isAbortError(error, guard.owner?.signal)) {
+          logger.debug(`MCP: could not load tools of runtime server ${name}: ${formatTerminalError(error)}`);
+        }
+      });
+  }
+
   function directToolFingerprint(spec: DirectToolSpec): string {
     return JSON.stringify({
       serverName: spec.serverName,
@@ -1208,6 +1222,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       registeredState.config.mcpServers[name] = entry;
       attachRuntimeServerLifecycle(registeredState, name, entry);
       syncToolSurface();
+      loadRuntimeServerMetadata(registeredState, name, entry);
       const guard = captureRuntimeGuard(registeredState);
       void loadForRuntime(loadCoreRuntime, guard)
         .then(({ updateStatusBar }) => updateStatusBar(registeredState))
@@ -1227,6 +1242,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         if (!currentState || currentState.config.mcpServers[name] !== entry) return;
         delete currentState.config.mcpServers[name];
         currentState.lifecycle.unregisterServer(name);
+        // Search and list read these maps, not the config, so a disposed server's tools would stay findable.
+        currentState.toolMetadata.delete(name);
+        currentState.resourceCounts?.delete(name);
+        currentState.promptMetadata?.delete(name);
+        currentState.promptMetadataLive?.delete(name);
+        currentState.serverInstructions?.delete(name);
         const guard = captureRuntimeGuard(currentState);
         await currentState.manager.close(name);
         assertRuntimeGuard(guard);
@@ -1528,6 +1549,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           nextState.config.mcpServers[name] = entry;
           guard();
           callReentrant(() => attachRuntimeServerLifecycle(nextState, name, entry));
+          loadRuntimeServerMetadata(nextState, name, entry);
         }
         guard();
         void callReentrant(() => applyPiMcpServers(nextState, ctx));
