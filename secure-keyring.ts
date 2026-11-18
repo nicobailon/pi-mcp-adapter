@@ -104,6 +104,16 @@ function recoverKeyring(operation: "read" | "write" | "remove", service: string,
   }
 }
 
+/**
+ * The macOS login keychain lets only the exact Node binary that saved an item read it back.
+ * Homebrew deletes the old binary when it upgrades Node, so a Pi started before the upgrade
+ * is refused even though the stored items are intact.
+ */
+export function removedNodeBinaryKeychainHint(): string | undefined {
+  if (process.platform !== "darwin" || existsSync(process.execPath)) return undefined;
+  return `This Pi process runs on a Node binary that has since been removed or replaced (${process.execPath}), for example by a Homebrew upgrade, so the macOS keychain refuses it. The stored credentials are intact: restart Pi.`;
+}
+
 export function createSecureKeyringStore(service: string): SecureKeyringStore {
   const mode = process.env[TEST_STORE_ENV];
   if (mode === "memory" || mode === "sizelimited") {

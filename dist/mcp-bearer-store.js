@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
-import { createSecureKeyringStore, getTestSecureKeyringEntries, getTestSecureKeyringReadCount, removeTestSecureKeyringEntry, resetTestSecureKeyring, setTestSecureKeyringEntry } from "./secure-keyring.js";
+import { createSecureKeyringStore, getTestSecureKeyringEntries, getTestSecureKeyringReadCount, removedNodeBinaryKeychainHint, removeTestSecureKeyringEntry, resetTestSecureKeyring, setTestSecureKeyringEntry } from "./secure-keyring.js";
 const BEARER_SECRET_SERVICE = "pi-mcp-adapter.bearer";
 const BEARER_SECRET_CHUNK_SIZE = 1000;
 export class BearerCredentialStoreError extends Error {
     code = "BEARER_CREDENTIAL_STORE_UNAVAILABLE";
     operation;
     constructor(message, operation, cause) {
-        super(message, { cause });
+        const keychainHint = operation === "read" ? removedNodeBinaryKeychainHint() : undefined;
+        super(keychainHint ? `${message}. ${keychainHint}` : message, { cause });
         this.name = "BearerCredentialStoreError";
         this.operation = operation;
     }
@@ -182,7 +183,8 @@ export function inspectBearerTokenForUrl(serverName, serverUrl) {
     catch (error) {
         if (!(error instanceof BearerCredentialStoreError))
             throw error;
-        return { status: "unavailable", message: "Bearer token secure credential store unavailable. Configure or unlock the OS credential store and retry." };
+        const keychainHint = removedNodeBinaryKeychainHint();
+        return { status: "unavailable", message: `Bearer token secure credential store unavailable. ${keychainHint ?? "Configure or unlock the OS credential store and retry."}` };
     }
 }
 export function resetTestBearerTokenStore() {
