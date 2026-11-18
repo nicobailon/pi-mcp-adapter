@@ -443,7 +443,8 @@ describe("project MCP server trust", () => {
     it("never lets a server approval stand in for a script tool's, nor the reverse", async () => {
       const definition = { description: "Close stale issues", file: "/abs/close.js" };
       writeJson(projectPath(), {
-        mcpServers: { "scriptTools/close_stale": { ...definition } },
+        // A server needs a transport to load, so it can't share the script tool's definition exactly.
+        mcpServers: { "scriptTools/close_stale": { ...definition, command: "node" } },
         scriptTools: { close_stale: { ...definition } },
       });
       // Allow the server, deny the script tool.

@@ -96,6 +96,8 @@ Prefer `.mcp.json` for project-local shared MCP config and `~/.config/mcp/mcp.js
 
 Entries for the same server merge field by field, but credentials (`headers`, bearer tokens, `oauth`, and the other auth fields) stay with the `url` they were written for: when a higher-precedence file sets a different `url`, the lower file's credentials are not sent, and the adapter says so at startup, naming both files. The notice covers config files and their imports; a url change between two files of the same host (such as global and project `opencode.json`), or for a server from a package or plugin, drops credentials the same way without a notice.
 
+One file may set only `lifecycle` or other settings for a server whose `command`, `url`, or `socket` comes from another file. After merging, an enabled server needs exactly one of the three. One with none, or with more than one, is not started, and the adapter says so once at startup, naming the files that declared it.
+
 ## Import Existing Configs
 
 Shared MCP files are loaded automatically. Use `imports` only for host-specific config formats that are not already covered by `.mcp.json` or `~/.config/mcp/mcp.json`.

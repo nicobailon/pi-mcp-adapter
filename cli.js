@@ -527,6 +527,8 @@ async function runDoctor(argv, log, error) {
     error("Pi 0.99 or later wasn't found on PATH, so Pi's own mcp.json files were not checked.");
   }
   const loaded = config.loadMcpConfigWithSources(undefined, cwd);
+  // Entries the loader left out, such as a server without a transport, never reach the report below.
+  for (const issue of loaded.scriptToolIssues ?? []) error(utils.sanitizeTerminalText(issue));
   const provenance = config.getServerProvenance(undefined, cwd);
   let projectTrusted = false;
   if (loaded.projectServers.size > 0) {

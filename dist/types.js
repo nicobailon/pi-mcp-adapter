@@ -70,6 +70,13 @@ export function createUiModelContextUpdate(params, maxChars = 12_000) {
 export function isServerDisabled(definition) {
     return definition?.disabled === true;
 }
+/** The transports an entry sets; a server needs exactly one. An empty string counts as unset. */
+export function configuredTransports(definition) {
+    return ["command", "url", "socket"].filter((field) => {
+        const value = definition[field];
+        return typeof value === "string" && value.length > 0;
+    });
+}
 const ENCODED_SERVER_NAMESPACE_MARKER = "_mcpns_";
 // Provider tool-name limit (64 for Bedrock, Anthropic, OpenAI) minus the `mcp__` proxy prefix.
 const MAX_SERVER_NAMESPACE_LENGTH = 59;

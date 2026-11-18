@@ -502,6 +502,15 @@ describe("cli doctor", { timeout: 30_000 }, () => {
     expect(result.stdout).toContain(`\n  Ignored OpenCode settings: args\n`);
   });
 
+  it("names the config file of a server it left out for having no transport", async () => {
+    const context = setup({ mcpServers: { paseo: { lifecycle: "eager" } } });
+
+    const result = await doctor([], context);
+
+    expect(result.stdout).not.toContain("paseo:");
+    expect(result.stderr).toContain(`MCP server "paseo" was not started: it has no command, url, or socket. Declared in ${join(context.agentDir, "mcp-adapter.json")}.`);
+  });
+
   it("exits 1 and explains a refused local server", async () => {
     const url = await listen(() => {});
     await new Promise((done) => servers.pop()!.close(done));

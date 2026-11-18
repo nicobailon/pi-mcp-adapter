@@ -363,6 +363,8 @@ export interface ServerEntry {
 }
 /** Only the literal boolean `true` disables a server. */
 export declare function isServerDisabled(definition: ServerEntry | undefined): boolean;
+/** The transports an entry sets; a server needs exactly one. An empty string counts as unset. */
+export declare function configuredTransports(definition: ServerEntry): Array<"command" | "url" | "socket">;
 export interface McpOutputGuardSettings {
     /** Maximum inline MCP text output bytes before truncation/spill-to-disk. Defaults to 51200 (50 KiB). */
     maxBytes?: number;
