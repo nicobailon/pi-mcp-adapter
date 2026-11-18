@@ -1086,7 +1086,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   // Shows each script-tool or server config issue once per session, whichever sync found it.
+  // Load-time initialization has no session to show them in; the session's own config load delivers them.
   function deliverScriptToolIssues(ctx: ExtensionContext, issues: readonly string[]): void {
+    if (!sessionStartedOnce) return;
     for (const issue of issues) {
       if (deliveredScriptToolIssues.has(issue)) continue;
       deliveredScriptToolIssues.add(issue);
@@ -1710,8 +1712,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       : getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath);
     // A config file's issues arrive with the session's config load: the deferred snapshot or initialization.
     sessionScriptToolIssues = programmaticConfig ? supplied?.issues ?? [] : [];
-    // Load-time initialization already printed its issues, so the first session counts them as shown.
-    deliveredScriptToolIssues = new Set([...sessionScriptToolIssues, ...(sessionStartedOnce ? [] : deliveredScriptToolIssues)]);
+    deliveredScriptToolIssues = new Set(sessionScriptToolIssues);
     sessionStartedOnce = true;
     if (ctx.hasUI) {
       for (const notice of [...sessionMigrationNotices, ...sessionScriptToolIssues]) ctx.ui.notify(notice, "warning");
