@@ -1084,7 +1084,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (ctx && state) deliverScriptToolIssues(ctx, scriptToolIssuesOf(state));
   }
 
-  // Shows each script-tool issue once per session, whichever sync found it.
+  // Shows each script-tool or server config issue once per session, whichever sync found it.
   function deliverScriptToolIssues(ctx: ExtensionContext, issues: readonly string[]): void {
     for (const issue of issues) {
       if (deliveredScriptToolIssues.has(issue)) continue;

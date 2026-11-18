@@ -537,7 +537,7 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
     for (const name of Object.keys(packageServers)) {
         const source = packageConfig.serverSources.get(name);
         if (source)
-            serverFiles.set(name, [source.settingsPath, ...serverFiles.get(name) ?? []]);
+            serverFiles.set(name, [source.configPath, ...serverFiles.get(name) ?? []]);
         if (source?.scope === "project")
             projectServers.set(name, { path: source.settingsPath });
     }

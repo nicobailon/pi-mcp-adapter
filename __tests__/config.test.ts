@@ -2946,6 +2946,19 @@ describe("servers without exactly one transport", () => {
     expect(loaded.scriptToolIssues).toEqual([]);
   });
 
+  it("names a package server's own MCP config file", async () => {
+    const packageRoot = join(home, ".pi", "agent", "npm", "node_modules", "acme-tools");
+    writeJson(join(home, ".pi", "agent", "settings.json"), { packages: ["npm:acme-tools"] });
+    writeJson(join(packageRoot, "package.json"), { name: "acme-tools", pi: { mcp: "./mcp.json" } });
+    writeJson(join(packageRoot, "mcp.json"), { mcpServers: { tools: { lifecycle: "eager" } } });
+
+    const { loadMcpConfigWithSources } = await import("../config.ts");
+    const loaded = loadMcpConfigWithSources(undefined, project);
+
+    expect(loaded.config.mcpServers).toEqual({});
+    expect(loaded.scriptToolIssues).toEqual([expect.stringContaining(`Declared in ${join(packageRoot, "mcp.json")}.`)]);
+  });
+
   it("reports an entry that sets more than one transport", async () => {
     writeJson(globalPath, { mcpServers: { both: { command: "node", url: "https://both.test/mcp" } } });
 
