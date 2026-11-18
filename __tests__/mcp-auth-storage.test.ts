@@ -72,6 +72,28 @@ describe("OAuth credential-store diagnostics", () => {
     expect(message).toContain("Configure or unlock the OS credential store");
     expect(message).not.toContain("Encrypted OAuth credential file store unavailable");
   });
+
+  it("says the macOS keychain refuses a read because the running Node binary was removed", () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const execPath = process.execPath;
+    const store = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+    Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
+    process.execPath = join(tmpdir(), "pi-mcp-removed-node", "bin", "node");
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+    resetTestAuthSecretStore();
+    try {
+      expect(() => getAuthForUrl("slack", SERVER_URL)).toThrow(
+        /^Failed to read OAuth credentials for slack from the OS secure credential store\. This Pi process runs on a Node binary that has since been removed.*restart Pi\.$/,
+      );
+      const status = inspectAuthForUrl("slack", SERVER_URL);
+      expect(status.status === "unavailable" && status.message).toMatch(/Homebrew upgrade.*credentials are intact: restart Pi\.$/);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      process.execPath = execPath;
+      if (store === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+      else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = store;
+    }
+  });
 });
 
 describe("encrypted OAuth credential file store", () => {
