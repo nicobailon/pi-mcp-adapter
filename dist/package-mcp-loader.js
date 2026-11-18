@@ -34,7 +34,7 @@ export function loadPackageMcpConfigs(cwd = process.cwd()) {
                 packageServers.add(normalizedName);
                 seen.add(normalizedName);
                 mcpServers[normalizedName] = server;
-                serverSources.set(normalizedName, packageSource);
+                serverSources.set(normalizedName, { ...packageSource, configPath });
             }
         }
     }

@@ -535,6 +535,14 @@ export function isServerDisabled(definition: ServerEntry | undefined): boolean {
   return definition?.disabled === true;
 }
 
+/** The transports an entry sets; a server needs exactly one. An empty string counts as unset. */
+export function configuredTransports(definition: ServerEntry): Array<"command" | "url" | "socket"> {
+  return (["command", "url", "socket"] as const).filter((field) => {
+    const value = definition[field];
+    return typeof value === "string" && value.length > 0;
+  });
+}
+
 // Output guard tuning (settings.outputGuard object form)
 export interface McpOutputGuardSettings {
   /** Maximum inline MCP text output bytes before truncation/spill-to-disk. Defaults to 51200 (50 KiB). */

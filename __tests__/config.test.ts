@@ -2892,3 +2892,96 @@ describe("scriptTools", () => {
     expect(loadMcpConfig(undefined, project)).toEqual({ mcpServers: { docs: { url: "https://docs.test/mcp" } } });
   });
 });
+
+describe("servers without exactly one transport", () => {
+  let home: string;
+  let project: string;
+  let globalPath: string;
+  let projectPath: string;
+
+  beforeEach(() => {
+    home = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-transport-home-")));
+    project = realpathSync(mkdtempSync(join(tmpdir(), "pi-mcp-transport-project-")));
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("PI_PACKAGE_DIR", "");
+    vi.stubEnv("PI_CODING_AGENT_DIR", "");
+    vi.stubEnv("PI_MCP_CONFIG_MODE", "merge");
+    vi.resetModules();
+    globalPath = join(home, ".pi", "agent", "mcp-adapter.json");
+    projectPath = join(project, ".pi", "mcp-adapter.json");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  });
+
+  it("leaves out an entry without a transport and reports it once, naming every file that declared it", async () => {
+    writeJson(globalPath, { mcpServers: { paseo: { lifecycle: "eager" }, docs: { url: "https://docs.test/mcp" } } });
+    writeJson(projectPath, { mcpServers: { paseo: { idleTimeout: 5 } } });
+
+    const { loadMcpConfigWithSources } = await import("../config.ts");
+    const loaded = loadMcpConfigWithSources(undefined, project);
+
+    expect(Object.keys(loaded.config.mcpServers)).toEqual(["docs"]);
+    // Not a project server either, so no approval prompt is shown for it.
+    expect(loaded.projectServers.has("paseo")).toBe(false);
+    expect(loaded.scriptToolIssues).toEqual([
+      `MCP server "paseo" was not started: it has no command, url, or socket. Declared in ${globalPath}, ${projectPath}. Add one, or set "disabled": true.`,
+    ]);
+  });
+
+  it("keeps an entry whose transport comes from a later file, and a disabled entry without one", async () => {
+    writeJson(globalPath, { mcpServers: { paseo: { lifecycle: "eager" }, off: { disabled: true } } });
+    writeJson(projectPath, { mcpServers: { paseo: { url: "http://127.0.0.1:6767/mcp" } } });
+
+    const { loadMcpConfigWithSources } = await import("../config.ts");
+    const loaded = loadMcpConfigWithSources(undefined, project);
+
+    expect(loaded.config.mcpServers).toEqual({
+      paseo: { lifecycle: "eager", url: "http://127.0.0.1:6767/mcp" },
+      off: { disabled: true },
+    });
+    expect(loaded.scriptToolIssues).toEqual([]);
+  });
+
+  it("names a package server's own MCP config file", async () => {
+    const packageRoot = join(home, ".pi", "agent", "npm", "node_modules", "acme-tools");
+    writeJson(join(home, ".pi", "agent", "settings.json"), { packages: ["npm:acme-tools"] });
+    writeJson(join(packageRoot, "package.json"), { name: "acme-tools", pi: { mcp: "./mcp.json" } });
+    writeJson(join(packageRoot, "mcp.json"), { mcpServers: { tools: { lifecycle: "eager" } } });
+
+    const { loadMcpConfigWithSources } = await import("../config.ts");
+    const loaded = loadMcpConfigWithSources(undefined, project);
+
+    expect(loaded.config.mcpServers).toEqual({});
+    expect(loaded.scriptToolIssues).toEqual([expect.stringContaining(`Declared in ${join(packageRoot, "mcp.json")}.`)]);
+  });
+
+  it("names every discovered host file that defined the server", async () => {
+    writeJson(globalPath, { settings: { hostConfigDiscovery: "on" }, mcpServers: {} });
+    writeJson(join(home, ".cursor", "mcp.json"), { mcpServers: { paseo: { env: { A: "1" } } } });
+    writeJson(join(home, ".windsurf", "mcp.json"), { mcpServers: { paseo: { args: ["--x"] } } });
+
+    const { loadMcpConfigWithSources } = await import("../config.ts");
+    const loaded = loadMcpConfigWithSources(undefined, project);
+
+    expect(loaded.config.mcpServers.paseo).toBeUndefined();
+    expect(loaded.scriptToolIssues).toEqual([
+      expect.stringContaining(`Declared in ${join(home, ".cursor", "mcp.json")}, ${join(home, ".windsurf", "mcp.json")}.`),
+    ]);
+  });
+
+  it("reports an entry that sets more than one transport", async () => {
+    writeJson(globalPath, { mcpServers: { both: { command: "node", url: "https://both.test/mcp" } } });
+
+    const { loadMcpConfigWithSources } = await import("../config.ts");
+    const loaded = loadMcpConfigWithSources(undefined, project);
+
+    expect(loaded.config.mcpServers).toEqual({});
+    expect(loaded.scriptToolIssues).toEqual([
+      `MCP server "both" was not started: it sets more than one of command, url, and socket (command, url). Declared in ${globalPath}. Keep one.`,
+    ]);
+  });
+});

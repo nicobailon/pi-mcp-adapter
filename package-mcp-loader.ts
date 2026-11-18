@@ -20,12 +20,13 @@ export interface PackageServerSource {
 }
 
 export interface LoadedPackageMcpConfig extends McpConfig {
-  serverSources: Map<string, PackageServerSource>;
+  /** `configPath` is the package's MCP config file that defines the server. */
+  serverSources: Map<string, PackageServerSource & { configPath: string }>;
 }
 
 export function loadPackageMcpConfigs(cwd = process.cwd()): LoadedPackageMcpConfig {
   const mcpServers: Record<string, ServerEntry> = {};
-  const serverSources = new Map<string, PackageServerSource>();
+  const serverSources: LoadedPackageMcpConfig["serverSources"] = new Map();
   const seen = new Set<string>();
 
   for (const packageSource of getConfiguredPackageRoots(cwd)) {
@@ -55,7 +56,7 @@ export function loadPackageMcpConfigs(cwd = process.cwd()): LoadedPackageMcpConf
         packageServers.add(normalizedName);
         seen.add(normalizedName);
         mcpServers[normalizedName] = server;
-        serverSources.set(normalizedName, packageSource);
+        serverSources.set(normalizedName, { ...packageSource, configPath });
       }
     }
   }
