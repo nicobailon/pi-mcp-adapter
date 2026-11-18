@@ -481,6 +481,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let scriptToolSurfaceIssues: string[] = [];
   // The script-tool issues this session already showed, so a re-sync never repeats one.
   let deliveredScriptToolIssues = new Set<string>();
+  let sessionStartedOnce = false;
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
@@ -1709,7 +1710,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       : getLegacyMcpMigrationNotices(ctx.cwd, earlyConfigPath);
     // A config file's issues arrive with the session's config load: the deferred snapshot or initialization.
     sessionScriptToolIssues = programmaticConfig ? supplied?.issues ?? [] : [];
-    deliveredScriptToolIssues = new Set(sessionScriptToolIssues);
+    // Load-time initialization already printed its issues, so the first session counts them as shown.
+    deliveredScriptToolIssues = new Set([...sessionScriptToolIssues, ...(sessionStartedOnce ? [] : deliveredScriptToolIssues)]);
+    sessionStartedOnce = true;
     if (ctx.hasUI) {
       for (const notice of [...sessionMigrationNotices, ...sessionScriptToolIssues]) ctx.ui.notify(notice, "warning");
     } else {

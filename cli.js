@@ -527,8 +527,12 @@ async function runDoctor(argv, log, error) {
     error("Pi 0.99 or later wasn't found on PATH, so Pi's own mcp.json files were not checked.");
   }
   const loaded = config.loadMcpConfigWithSources(undefined, cwd);
-  // Entries the loader left out, such as a server without a transport, never reach the report below.
-  for (const issue of loaded.scriptToolIssues ?? []) error(utils.sanitizeTerminalText(issue));
+  const invalidServers = loaded.invalidServers ?? new Map();
+  // Script tools the loader left out never reach the report below; left-out servers get a failed row there.
+  const invalidServerLines = new Set(invalidServers.values());
+  for (const issue of loaded.scriptToolIssues ?? []) {
+    if (!invalidServerLines.has(issue)) error(utils.sanitizeTerminalText(issue));
+  }
   const provenance = config.getServerProvenance(undefined, cwd);
   let projectTrusted = false;
   if (loaded.projectServers.size > 0) {
@@ -621,6 +625,9 @@ async function runDoctor(argv, log, error) {
       ...(ignoredSettings ? { ignoredSettings: utils.sanitizeTerminalText(ignoredSettings) } : {}),
     };
   }));
+  for (const [name, message] of invalidServers) {
+    results.push({ name, state: "failed", tools: null, message: utils.sanitizeTerminalText(message) });
+  }
 
   // Report first: closing waits for timed-out attempts to settle and can fail.
   let closed = true;

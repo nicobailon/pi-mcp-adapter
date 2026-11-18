@@ -3657,6 +3657,28 @@ describe("mcpAdapter session lifecycle", () => {
     expect(staleState.lifecycle.gracefulShutdown).toHaveBeenCalledTimes(1);
   });
 
+  it("does not repeat in the first session a config issue load-time initialization already printed", async () => {
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: { demo: { url: "http://localhost:3999/mcp", lifecycle: "eager" } } });
+    const issue = 'MCP server "paseo" was not started: it has no command, url, or socket. Declared in /home/.pi/agent/mcp-adapter.json. Add one, or set "disabled": true.';
+    const loadState = createState();
+    loadState.scriptToolLoadIssues = [issue];
+    const sessionState = createState();
+    sessionState.scriptToolLoadIssues = [issue];
+    mocks.initializeMcp.mockResolvedValueOnce(loadState).mockResolvedValueOnce(sessionState);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { handlers } = await loadAdapter();
+    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(`MCP: ${issue}`));
+
+    const ui = { notify: vi.fn() };
+    await handlers.get("session_start")?.({}, { hasUI: true, ui, cwd: "/project" });
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(sessionState));
+    expect(ui.notify).not.toHaveBeenCalledWith(issue, "warning");
+    expect(warn.mock.calls.filter(([line]) => line === `MCP: ${issue}`)).toHaveLength(1);
+    warn.mockRestore();
+  });
+
   it("skips load-time initialization when session_start fires first", async () => {
     mocks.loadMcpConfig.mockReturnValue({
       mcpServers: {

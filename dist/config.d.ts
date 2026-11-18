@@ -120,6 +120,8 @@ export interface LoadedMcpConfig {
      * Kept apart from the migration notices, which also reach `mcp({})`. Always set by loadMcpConfigWithSources.
      */
     scriptToolIssues?: string[];
+    /** Enabled servers left out for not having exactly one transport, with the issue line also in `scriptToolIssues`. */
+    invalidServers?: Map<string, string>;
     projectServerPolicy: "ask" | "allow";
 }
 export declare const MCP_CONFIG_SOURCE_METADATA: unique symbol;

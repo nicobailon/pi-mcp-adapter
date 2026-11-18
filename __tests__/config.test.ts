@@ -2959,6 +2959,20 @@ describe("servers without exactly one transport", () => {
     expect(loaded.scriptToolIssues).toEqual([expect.stringContaining(`Declared in ${join(packageRoot, "mcp.json")}.`)]);
   });
 
+  it("names every discovered host file that defined the server", async () => {
+    writeJson(globalPath, { settings: { hostConfigDiscovery: "on" }, mcpServers: {} });
+    writeJson(join(home, ".cursor", "mcp.json"), { mcpServers: { paseo: { env: { A: "1" } } } });
+    writeJson(join(home, ".windsurf", "mcp.json"), { mcpServers: { paseo: { args: ["--x"] } } });
+
+    const { loadMcpConfigWithSources } = await import("../config.ts");
+    const loaded = loadMcpConfigWithSources(undefined, project);
+
+    expect(loaded.config.mcpServers.paseo).toBeUndefined();
+    expect(loaded.scriptToolIssues).toEqual([
+      expect.stringContaining(`Declared in ${join(home, ".cursor", "mcp.json")}, ${join(home, ".windsurf", "mcp.json")}.`),
+    ]);
+  });
+
   it("reports an entry that sets more than one transport", async () => {
     writeJson(globalPath, { mcpServers: { both: { command: "node", url: "https://both.test/mcp" } } });
 
