@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   BearerCredentialStoreError,
   getBearerTokenForUrl,
@@ -67,6 +69,22 @@ describe("bearer token credential store", () => {
 
     expect(() => getBearerTokenForUrl("remote", "https://example.test/mcp")).toThrow(BearerCredentialStoreError);
     expect(inspectBearerTokenForUrl("remote", "https://example.test/mcp")).toMatchObject({ status: "unavailable" });
+  });
+
+  it("says the macOS keychain refuses a read because the running Node binary was removed", () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const execPath = process.execPath;
+    Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
+    process.execPath = join(tmpdir(), "pi-mcp-removed-node", "bin", "node");
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+    try {
+      expect(() => getBearerTokenForUrl("remote", "https://example.test/mcp")).toThrow(/^Failed to read bearer token for remote from the OS secure credential store\. .*Homebrew upgrade.*restart Pi\.$/);
+      const status = inspectBearerTokenForUrl("remote", "https://example.test/mcp");
+      expect(status.status === "unavailable" && status.message).toMatch(/Homebrew upgrade.*credentials are intact: restart Pi\.$/);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      process.execPath = execPath;
+    }
   });
 
   it("chunks large records and reads them back from a size-limited store", () => {

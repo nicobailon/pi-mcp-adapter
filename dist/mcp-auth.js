@@ -17,6 +17,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { getAgentPath } from "./agent-dir.js";
 import { resolveConfiguredOAuthDir } from "./config.js";
+import { removedNodeBinaryKeychainHint } from "./secure-keyring.js";
 const require = createRequire(import.meta.url);
 const AUTH_SECRET_SERVICE = 'pi-mcp-adapter.oauth';
 const TEST_AUTH_STORE_ENV = 'PI_MCP_ADAPTER_TEST_AUTH_STORE';
@@ -81,7 +82,8 @@ export class OAuthCredentialStoreError extends Error {
     backend;
     code = 'OAUTH_CREDENTIAL_STORE_UNAVAILABLE';
     constructor(message, operation, cause, backend) {
-        super(message, { cause });
+        const keychainHint = operation === 'read' && backend !== 'encrypted-file' ? removedNodeBinaryKeychainHint() : undefined;
+        super(keychainHint ? `${message}. ${keychainHint}` : message, { cause });
         this.operation = operation;
         this.backend = backend;
         this.name = 'OAuthCredentialStoreError';
@@ -115,6 +117,9 @@ export function formatOAuthCredentialStoreUnavailable(error) {
     if (causeChainContains(error, /ERROR_NO_SUCH_LOGON_SESSION|\b1312\b/i)) {
         return 'OAuth credential store unavailable: Windows Credential Manager is unavailable from this network logon. To opt in to encrypted file storage for OpenSSH/headless use, set settings.oauthCredentialStore to "encrypted-file" and provide PI_MCP_ADAPTER_OAUTH_FILE_KEY.';
     }
+    const keychainHint = error.operation === 'read' ? removedNodeBinaryKeychainHint() : undefined;
+    if (keychainHint)
+        return `OAuth credential store unavailable. ${keychainHint}`;
     return 'OAuth credential store unavailable. Configure or unlock the OS credential store and retry.';
 }
 function authSecretStoreLabel(store) {
