@@ -241,6 +241,15 @@ function optionalNumber(options: { minimum?: number; description: string }): TSc
     : ({ type: "number", ...options } as TSchema);
 }
 
+// The `mcp` actions the gateway handles, as the schema describes them and an unknown action's error lists them.
+function gatewayActionList(allowScriptToolSave: boolean): string {
+  const actions = ["'install'", "'ui-messages'", "'auth-start'", "'auth-complete'"];
+  if (allowScriptToolSave) actions.push("'save-script'");
+  // `reload` is a fork feature: re-read the watched config and restart the adapter.
+  actions.push("'reload' (re-read the watched config and restart the adapter to apply post-startup changes)");
+  return `${actions.slice(0, -1).join(", ")}, or ${actions[actions.length - 1]}`;
+}
+
 function parseEnvDirectToolOverride(raw: string | undefined): string[] | undefined {
   return raw?.split(",").map(s => s.trim()).filter(Boolean);
 }
@@ -474,6 +483,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let scriptToolSurfaceIssues: string[] = [];
   // The script-tool issues this session already showed, so a re-sync never repeats one.
   let deliveredScriptToolIssues = new Set<string>();
+  let sessionStartedOnce = false;
   // Session/runtime scoped server registrations from other extensions. They
   // survive session restarts within this install and die with the process.
   const runtimeServers = new Map<string, { definition: ServerEntry; entry: ServerEntry }>();
@@ -490,6 +500,20 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const idleOverride = definition.idleTimeout ?? (persistsAfterFirstSpawn ? 0 : undefined);
     targetState.lifecycle.registerServer(name, definition, idleOverride !== undefined ? { idleTimeout: idleOverride } : undefined);
     if (lifecycleMode === "keep-alive") targetState.lifecycle.markKeepAlive(name, definition);
+  }
+
+  // Startup loads configured servers' tool metadata; a runtime server joins later, so it loads its own.
+  function loadRuntimeServerMetadata(targetState: McpExtensionState, name: string, entry: ServerEntry): void {
+    const guard = captureRuntimeGuard(targetState);
+    void loadForRuntime(loadCoreRuntime, guard)
+      .then((core) => {
+        if (targetState.config.mcpServers[name] === entry) return core.loadAddedServerMetadata(targetState, name);
+      })
+      .catch((error) => {
+        if (!isAbortError(error, guard.owner?.signal)) {
+          logger.debug(`MCP: could not load tools of runtime server ${name}: ${formatTerminalError(error)}`);
+        }
+      });
   }
 
   function directToolFingerprint(spec: DirectToolSpec): string {
@@ -1063,8 +1087,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (ctx && state) deliverScriptToolIssues(ctx, scriptToolIssuesOf(state));
   }
 
-  // Shows each script-tool issue once per session, whichever sync found it.
+  // Shows each script-tool or server config issue once per session, whichever sync found it.
+  // Load-time initialization has no session to show them in; the session's own config load delivers them.
   function deliverScriptToolIssues(ctx: ExtensionContext, issues: readonly string[]): void {
+    if (!sessionStartedOnce) return;
     for (const issue of issues) {
       if (deliveredScriptToolIssues.has(issue)) continue;
       deliveredScriptToolIssues.add(issue);
@@ -1201,6 +1227,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       registeredState.config.mcpServers[name] = entry;
       attachRuntimeServerLifecycle(registeredState, name, entry);
       syncToolSurface();
+      loadRuntimeServerMetadata(registeredState, name, entry);
       const guard = captureRuntimeGuard(registeredState);
       void loadForRuntime(loadCoreRuntime, guard)
         .then(({ updateStatusBar }) => updateStatusBar(registeredState))
@@ -1220,6 +1247,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         if (!currentState || currentState.config.mcpServers[name] !== entry) return;
         delete currentState.config.mcpServers[name];
         currentState.lifecycle.unregisterServer(name);
+        // Search and list read these maps, not the config, so a disposed server's tools would stay findable.
+        currentState.toolMetadata.delete(name);
+        currentState.resourceCounts?.delete(name);
+        currentState.promptMetadata?.delete(name);
+        currentState.promptMetadataLive?.delete(name);
+        currentState.serverInstructions?.delete(name);
         const guard = captureRuntimeGuard(currentState);
         await currentState.manager.close(name);
         assertRuntimeGuard(guard);
@@ -1521,6 +1554,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           nextState.config.mcpServers[name] = entry;
           guard();
           callReentrant(() => attachRuntimeServerLifecycle(nextState, name, entry));
+          loadRuntimeServerMetadata(nextState, name, entry);
         }
         guard();
         void callReentrant(() => applyPiMcpServers(nextState, ctx));
@@ -1681,6 +1715,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     // A config file's issues arrive with the session's config load: the deferred snapshot or initialization.
     sessionScriptToolIssues = programmaticConfig ? supplied?.issues ?? [] : [];
     deliveredScriptToolIssues = new Set(sessionScriptToolIssues);
+    sessionStartedOnce = true;
     if (ctx.hasUI) {
       for (const notice of [...sessionMigrationNotices, ...sessionScriptToolIssues]) ctx.ui.notify(notice, "warning");
     } else {
@@ -2754,7 +2789,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         limit: optionalNumber({ minimum: 1, description: "Maximum search results to return (default: 12)" }),
         offset: optionalNumber({ minimum: 0, description: "Search result offset (default: 0)" }),
         server: Type.Optional(Type.String({ description: "Server name: filters searches, disambiguates calls and describe operations, and optionally names an install" })),
-        action: Type.Optional(Type.String({ description: `Action: 'install', 'ui-messages', 'auth-start', 'auth-complete',${allowScriptToolSave ? " 'save-script'," : ""} or 'reload' (re-read the watched config and restart the adapter to apply post-startup changes)` })),
+        action: Type.Optional(Type.String({ description: `Action: ${gatewayActionList(allowScriptToolSave)}` })),
         url: Type.Optional(Type.String({ description: "MCP endpoint URL for action: 'install'" })),
         target: Type.Optional(Type.String({ description: "Install target: 'global' (default) or 'project'" })),
         cancelTask: Type.Optional(Type.String({ description: "Stop a background MCP task by its <server>/<taskId> key" })),
@@ -2899,6 +2934,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return signal
             ? proxyModes.executeAuthComplete(proxyState, params.server, input, signal)
             : proxyModes.executeAuthComplete(proxyState, params.server, input);
+        }
+        // Any other action would otherwise fall through to a lower-priority mode and look like success.
+        if (params.action !== undefined) {
+          const actions = gatewayActionList(proxyState.config.settings?.allowScriptToolSave !== false);
+          return {
+            content: [{ type: "text" as const, text: `Unknown action ${JSON.stringify(params.action)}. Valid actions: ${actions}.` }],
+            details: { mode: "action", error: "unknown_action", action: params.action },
+          };
         }
         if (params.cancelTask !== undefined) {
           return proxyModes.executeCancelTask(proxyState, params.cancelTask);

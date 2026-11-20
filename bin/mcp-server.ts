@@ -38,6 +38,8 @@
  * This file is fork-only (upstream has no bin/ directory).
  */
 
+import { readFileSync } from "node:fs";
+
 import { createMcpAdapter } from "../index.ts";
 import { UniversalMcpHost } from "../adapters/universal-host.ts";
 import { ProtocolSamplingForwarder } from "../adapters/protocol-sampling-forwarder.ts";
@@ -54,7 +56,14 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 const SERVER_NAME = "mcp-adapter";
-const SERVER_VERSION = "5.2.0-0.0.6";
+// Injected at bundle time by scripts/build-mcp-server.mjs via esbuild `define`
+// from package.json's `version`. Running directly with tsx (dev) falls back to
+// reading package.json, so --version can never drift from the package version.
+declare const __SERVER_VERSION__: string | undefined;
+const SERVER_VERSION: string =
+	typeof __SERVER_VERSION__ !== "undefined"
+		? __SERVER_VERSION__
+		: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")).version;
 const GENERIC_GLOBAL_CONFIG_PATH = createUniversalResolver().globalConfigPath();
 
 // Build metadata injected at bundle time by scripts/build-mcp-server.mjs via

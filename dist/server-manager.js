@@ -7,7 +7,7 @@ import { Client, SdkError, SdkErrorCode, SdkHttpError, SseError, SSEClientTransp
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { UnixSocketClientTransport } from "./unix-socket-transport.js";
 import { probeMcpEndpoint } from "./mcp-probe.js";
-import { isServerDisabled, SERVER_STREAM_RESULT_PATCH_METHOD, serverStreamResultPatchNotificationSchema, } from "./types.js";
+import { configuredTransports, isServerDisabled, SERVER_STREAM_RESULT_PATCH_METHOD, serverStreamResultPatchNotificationSchema, } from "./types.js";
 import { resolveNpxBinary } from "./npx-resolver.js";
 import { createJsonSchemaValidator } from "./json-schema-validator.js";
 import { logger } from "./logger.js";
@@ -361,8 +361,10 @@ export class McpServerManager {
         if (!existingPromise)
             return undefined;
         const existingAuthority = authorities.get(name);
-        let reusable = oauthAuthority === undefined && existingAuthority === undefined;
-        if (oauthAuthority && existingAuthority) {
+        // close() aborts an attempt before its promise settles; a caller that joined it would get "was closed".
+        const aborted = attempts.get(name)?.signal.aborted === true;
+        let reusable = !aborted && oauthAuthority === undefined && existingAuthority === undefined;
+        if (!aborted && oauthAuthority && existingAuthority) {
             try {
                 existingAuthority();
                 reusable = true;
@@ -911,9 +913,7 @@ export class McpServerManager {
         let invalidated = credentialsInvalidated;
         let transportAlreadyTraced = false;
         let stderrTail = Buffer.alloc(0);
-        const configuredTransports = [definition.command, definition.url, definition.socket]
-            .filter(value => typeof value === "string" && value.length > 0);
-        if (configuredTransports.length !== 1) {
+        if (configuredTransports(definition).length !== 1) {
             throw new Error(`Server ${name} must configure exactly one of command, url, or socket`);
         }
         const requestOptions = this.buildRequestOptions(definition, requestSignal);

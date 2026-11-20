@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createSecureKeyringStore, getTestSecureKeyringEntries, getTestSecureKeyringReadCount, removeTestSecureKeyringEntry, resetTestSecureKeyring, setTestSecureKeyringEntry } from "./secure-keyring.ts";
+import { createSecureKeyringStore, getTestSecureKeyringEntries, getTestSecureKeyringReadCount, removedNodeBinaryKeychainHint, removeTestSecureKeyringEntry, resetTestSecureKeyring, setTestSecureKeyringEntry } from "./secure-keyring.ts";
 
 type BearerSecretStore = {
   read(account: string): string | undefined;
@@ -26,7 +26,8 @@ export class BearerCredentialStoreError extends Error {
   readonly operation: "read" | "write" | "remove";
 
   constructor(message: string, operation: "read" | "write" | "remove", cause: unknown) {
-    super(message, { cause });
+    const keychainHint = operation === "read" ? removedNodeBinaryKeychainHint() : undefined;
+    super(keychainHint ? `${message}. ${keychainHint}` : message, { cause });
     this.name = "BearerCredentialStoreError";
     this.operation = operation;
   }
@@ -225,7 +226,8 @@ export function inspectBearerTokenForUrl(serverName: string, serverUrl: string):
     return { status: "present" };
   } catch (error) {
     if (!(error instanceof BearerCredentialStoreError)) throw error;
-    return { status: "unavailable", message: "Bearer token secure credential store unavailable. Configure or unlock the OS credential store and retry." };
+    const keychainHint = removedNodeBinaryKeychainHint();
+    return { status: "unavailable", message: `Bearer token secure credential store unavailable. ${keychainHint ?? "Configure or unlock the OS credential store and retry."}` };
   }
 }
 

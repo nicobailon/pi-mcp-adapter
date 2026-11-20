@@ -96,10 +96,21 @@ If on `main` already, the flow ends at Step 1.
 > errors in this environment, use `GIT_SSL_NO_VERIFY=1 git -c
 > http.sslVerify=false fetch upstream --tags` (verbatim from
 > `08-LEARNINGS.md` L-4).
+>
+> **Proxy workaround (Windows sandboxes, 2026-11-20):** If fetch fails with
+> `CONNECT tunnel failed, response 502` even though `https_proxy` is set in the
+> environment, Git Bash does not always honour the env vars. Set the proxy
+> explicitly: `git config --global http.proxy http://127.0.0.1:60105` (and
+> `https.proxy` the same; use the actual local proxy port). Direct connections
+> fail in these sandboxes — do not bother unsetting the proxy. The
+> `upstream:check` script shells out to `git fetch` internally, so this must be
+> configured before running the pre-flight check or it exits 2.
 
 ## 3. Read the special-cases registry and run the divergence check
 
 Two inputs are required before any merge decision: (1) read `references/special-cases.md` for the 15-17 hand-curated cases (Phase 8 manifest footnotes + expansion), and (2) run `npm run upstream:check` to see live divergence against `upstream/main`. The script replaces the Phase 8 "manifest freshness" check: instead of comparing manifest row counts to `git diff` output, it classifies each diverged file as `registered` / `diverged-but-not-registered` / `stale` against the registry.
+
+> **Run the pre-flight check BEFORE `git merge`, not after (2026-11-20):** once the merge is in progress, `package.json` may carry conflict markers, and EVERY Node tool launched in the repo (`npx tsx`, `npm run upstream:check`, `tsc`, `vitest`) fails at startup with `ERR_INVALID_PACKAGE_CONFIG` (surfaced by `npx` as the misleading "Could not determine Node.js install directory"). If you hit that error, it almost always means an unresolved `package.json` conflict — resolve/stage it first (§3.5), then re-run. The §3 pre-flight should be done on a clean tree; the §5(e) re-run happens only after all conflicts are cleared.
 
 **How to look up a file in the registry:**
 
@@ -272,17 +283,18 @@ The `resolve-conflicts` skill handles all conflict types professionally:
 
 ## 5. Checklist
 
-Run all 7 checks before declaring the upstream-merge flow complete. Each is a single command the agent can execute and inspect. Steps (a)–(f) gate the Step 1 merge commit on `main`; step (g) gates the Step 2 propagation into the working branch. A merge is not done until every item is recorded with PASS / N/A / FAIL.
+Run all 8 checks before declaring the upstream-merge flow complete. Each is a single command the agent can execute and inspect. Steps (a)–(g) gate the Step 1 merge commit on `main`; step (h) gates the Step 2 propagation into the working branch. A merge is not done until every item is recorded with PASS / N/A / FAIL.
 
 - **(a) All conflicts resolved** — `git diff --name-only --diff-filter=U | wc -l` returns 0. If > 0, there are still unresolved hunks; re-walk the decision tree.
 - **(b) Pi-coupling markers advisory log (no longer blocking)** — re-run the 5 sub-commands from §4.1 against the post-merge working tree; record the total hit count in the merge commit body. The only acceptable hits are inside `adapters/`, `types/`, or `__tests__/` (legal coupling zones); any hit outside these zones is acceptable (advisory) but should be tracked for the next Pi-coupling reduction cycle. Per v3.1 Phase 13 policy change (2026-07-01), this check no longer blocks the merge — see §4.2b and `docs/upstream-merge-retrospective.md` §2.1.3.
 - **(c) TypeScript compiles** — `npx tsc --noEmit` exits 0.
-- **(d) Tests are green** — `npm test` (which runs `test:prebuild` then the full vitest suite) exits 0. The quick alternative is `npx vitest run __tests__/adapter-contract.test.ts` for the parametric adapter contract.
+- **(d) Tests are green** — `npm test` (which runs `test:prebuild` then the full vitest suite) exits 0. The quick alternative is `npx vitest run __tests__/adapter-contract.test.ts` for the parametric adapter contract. **In sandboxes**, the full suite has network/symlink-dependent flakes (`Test timed out in 5000ms`, `EPERM: symlink`, MCP version-negotiation failures) unrelated to the merge. For a high-signal check, run a focused subset of the files you actually changed/resolved (e.g. `npx vitest run --reporter=dot <changed test files>`), confirm those pass, and record the full-suite environmental failures separately in the commit body rather than treating them as merge regressions.
 - **(e) Divergence check passes — `npm run upstream:check` exits 0** (no stale registry entries; `diverged-but-not-registered` warnings are acceptable, see §4.2a category defaults). The cross-check script replaces the Phase 8 manifest-gap ≤ 10 check; per D-34, exit 1 means stale entries require registry cleanup before the merge commit.
-- **(f) Commit message prefix is `upstream-merge:`** — e.g., `upstream-merge: sync v2.10.0 (N files, M conflicts resolved)`. The body should list `ours` / `theirs` / `assess` row counts and any `Refs #N` follow-up issue links.
-- **(g) Step 2 propagation complete (skipped if working branch is `main`)** — `git checkout <working-branch> && git merge main` succeeds as a fast-forward or a clean small merge. The working branch now contains the upstream changes from Step 1; if conflicts appear, they are fork-vs-fork, not upstream-vs-fork, and the resolution strategy is the fork's own (consult the relevant Phase plan, not the §4 decision tree). After Step 2, re-run (c) and (d) on the working branch to confirm the propagated state still builds and tests pass.
+- **(f) Version consistency — `package.json.version` == CLI-reported version** — build then check: `npm run build:mcp-server && node mcp-server.mjs --version | head -1` must equal `node -p "require('./package.json').version"`. This catches the silent drift where `bin/mcp-server.ts` hardcoded `SERVER_VERSION` stayed at `5.2.0-0.0.6` while `package.json` was bumped to `7.0.0-0.0.1` in the v7.0.0 merge (the registry classifies `bin/*` as `ours`, and no prior checklist step compared them). Fix by injecting the version from `package.json` at build time (esbuild `define`) with a dev fallback that reads `package.json` — never a second hardcoded literal. If this drifted, record the fix in the merge commit body.
+- **(g) Commit message prefix is `upstream-merge:`** — e.g., `upstream-merge: sync v2.10.0 (N files, M conflicts resolved)`. The body should list `ours` / `theirs` / `assess` row counts and any `Refs #N` follow-up issue links.
+- **(h) Step 2 propagation complete (skipped if working branch is `main`)** — `git checkout <working-branch> && git merge main` succeeds as a fast-forward or a clean small merge. The working branch now contains the upstream changes from Step 1; if conflicts appear, they are fork-vs-fork, not upstream-vs-fork, and the resolution strategy is the fork's own (consult the relevant Phase plan, not the §4 decision tree). After Step 2, re-run (c) and (d) on the working branch to confirm the propagated state still builds and tests pass.
 
-When steps (a)–(f) PASS, the merge is locally complete on the feature branch. **Do NOT push directly to `main`** — proceed to the §5.5 PR sub-flow below. When step (g) also PASS (post-PR-merge), the upstream-merge flow is fully complete on both `main` and the working branch.
+When steps (a)–(g) PASS, the merge is locally complete on the feature branch. **Do NOT push directly to `main`** — proceed to the §5.5 PR sub-flow below. When step (h) also PASS (post-PR-merge), the upstream-merge flow is fully complete on both `main` and the working branch.
 
 ## 5.5 PR sub-flow (mandatory — bridges local merge to merged `main`)
 
@@ -316,7 +328,7 @@ gh pr create \
 - Pi-coupling re-introductions: <K>
 - Follow-up issues: #<N>, #<N>
 - Manifest staleness: |raw - manifest| = <Δ> (acceptable ≤ 10)
-- Checklist: 6/6 PASS
+- Checklist: 7/7 gating PASS (Step 2 propagation (h) after merge)
 
 Refs: <list of follow-up issues>
 EOF

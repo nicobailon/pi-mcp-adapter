@@ -13,7 +13,7 @@ import { loadPackageMcpConfigs } from "./package-mcp-loader.js";
 import { validateExtractionSettings } from "./extraction-settings.js";
 import { validateSemanticSearchSettings } from "./semantic-settings.js";
 import { parseScriptTools } from "./script-tools.js";
-import { formatServerNamespace, isServerDisabled } from "./types.js";
+import { configuredTransports, formatServerNamespace, isServerDisabled } from "./types.js";
 import { interpolateEnvVars, parseJsonWithComments, providerAuthUrlError, stripUtf8Bom, toStringRecord } from "./utils.js";
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [
@@ -457,6 +457,7 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
     const projectServers = new Map();
     const projectScriptTools = new Map();
     const scriptToolIssues = [];
+    const invalidServers = new Map();
     let projectServerPolicy = "ask";
     let projectAgentPluginSource;
     let projectClaudePluginSource;
@@ -467,10 +468,21 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
         ? loadDiscoveredHostConfigs(cwd)
         : { config: { mcpServers: {} }, serverSources: new Map() };
     let config = discoveredHost.config;
+    // Every file that declared each server, lowest precedence first, to name in a config issue.
+    const serverFiles = new Map();
+    const addServerFile = (name, path) => {
+        const files = serverFiles.get(name) ?? [];
+        if (!files.includes(path))
+            files.push(path);
+        serverFiles.set(name, files);
+    };
     for (const [name, source] of discoveredHost.serverSources) {
         if (source.scope === "project")
             projectServers.set(name, { path: source.path });
     }
+    for (const [name, files] of discoveredHost.serverFiles ?? [])
+        for (const path of files)
+            addServerFile(name, path);
     const piProjectSource = sourceSpecs.find((source) => source.id === "pi-mcp-project");
     const piProjectNames = Object.keys((piProjectSource && readPiMcpConfig(piProjectSource.readPath))?.mcpServers ?? {});
     for (const source of sourceSpecs) {
@@ -486,6 +498,10 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
         }
         const expandedImport = expandImports(loaded, cwd);
         const expanded = expandedImport.config;
+        for (const [name, importedSource] of expandedImport.serverSources)
+            addServerFile(name, importedSource.path);
+        for (const name of Object.keys(loaded.mcpServers))
+            addServerFile(name, source.readPath);
         const sourceRef = { path: source.readPath };
         if (Object.hasOwn(expanded.settings ?? {}, "agentPluginPaths")) {
             projectAgentPluginSource = source.scope === "project" ? sourceRef : undefined;
@@ -520,7 +536,9 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
         config = mergeConfigs(config, expanded);
     }
     if (isExclusiveConfigMode()) {
-        return { config: stripProjectProviderAuth(resolveConfiguredClaudePluginMcp(config, cwd), projectServers), projectServers, projectScriptTools, scriptToolIssues, projectServerPolicy };
+        const exclusiveConfig = stripProjectProviderAuth(resolveConfiguredClaudePluginMcp(config, cwd), projectServers);
+        const valid = dropServersWithoutOneTransport(exclusiveConfig, projectServers, serverFiles, invalidServers);
+        return { config: valid, projectServers, projectScriptTools, scriptToolIssues: [...scriptToolIssues, ...invalidServers.values()], invalidServers, projectServerPolicy };
     }
     const packageConfig = loadPackageMcpConfigs(cwd);
     const pluginConfig = loadAgentPluginConfigs(config.settings?.agentPluginPaths, cwd);
@@ -531,6 +549,8 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
     const packageServers = Object.fromEntries(Object.entries(packageConfig.mcpServers).filter(([name]) => !Object.hasOwn(pluginConfig.mcpServers, name)));
     for (const name of Object.keys(packageServers)) {
         const source = packageConfig.serverSources.get(name);
+        if (source)
+            serverFiles.set(name, [source.configPath, ...serverFiles.get(name) ?? []]);
         if (source?.scope === "project")
             projectServers.set(name, { path: source.settingsPath });
     }
@@ -542,10 +562,11 @@ export function loadMcpConfigWithSources(overridePath, cwd = process.cwd()) {
             projectServers.set(name, projectClaudePluginSource);
     }
     return {
-        config: stripProjectProviderAuth(mergedConfig, projectServers),
+        config: dropServersWithoutOneTransport(stripProjectProviderAuth(mergedConfig, projectServers), projectServers, serverFiles, invalidServers),
         projectServers,
         projectScriptTools,
-        scriptToolIssues,
+        scriptToolIssues: [...scriptToolIssues, ...invalidServers.values()],
+        invalidServers,
         projectServerPolicy,
     };
 }
@@ -560,6 +581,28 @@ function stripProjectProviderAuth(config, projectServers) {
         projectServers.delete(name);
     }
     console.warn(`Ignoring MCP servers ${stripped.map((name) => `"${name}"`).join(", ")}: auth.provider is only allowed in user-global config, and project config defines or overrides them`);
+    return { ...config, mcpServers };
+}
+/**
+ * Layers merge field by field, so only the merged entry shows whether a server has exactly one
+ * transport. Leaving a bad entry out reports it once, naming its files, instead of on every connect.
+ */
+function dropServersWithoutOneTransport(config, projectServers, serverFiles, invalidServers) {
+    const dropped = Object.entries(config.mcpServers)
+        .filter(([, definition]) => !isServerDisabled(definition) && configuredTransports(definition).length !== 1);
+    if (dropped.length === 0)
+        return config;
+    const mcpServers = { ...config.mcpServers };
+    for (const [name, definition] of dropped) {
+        delete mcpServers[name];
+        projectServers.delete(name);
+        const transports = configuredTransports(definition);
+        const files = serverFiles.get(name);
+        const declared = files?.length ? ` Declared in ${files.join(", ")}.` : "";
+        invalidServers.set(name, transports.length === 0
+            ? `MCP server "${name}" was not started: it has no command, url, or socket.${declared} Add one, or set "disabled": true.`
+            : `MCP server "${name}" was not started: it sets more than one of command, url, and socket (${transports.join(", ")}).${declared} Keep one.`);
+    }
     return { ...config, mcpServers };
 }
 export function resolveConfiguredClaudePluginMcp(config, cwd = process.cwd()) {
@@ -606,6 +649,7 @@ function getConfiguredHostConfigDiscovery(overridePath, cwd = process.cwd()) {
 function loadDiscoveredHostConfigs(cwd) {
     let config = { mcpServers: {} };
     const serverSources = new Map();
+    const serverFiles = new Map();
     for (const importKind of Object.keys(IMPORT_PATHS)) {
         const imported = loadImportedConfig(importKind, cwd, `Failed to discover imported MCP config from ${importKind}:`);
         if (!imported)
@@ -618,9 +662,10 @@ function loadDiscoveredHostConfigs(cwd) {
             const source = imported.serverSources.get(name);
             if (source?.scope === "project" || !serverSources.has(name))
                 serverSources.set(name, source ?? imported.source);
+            serverFiles.set(name, [...serverFiles.get(name) ?? [], (source ?? imported.source).path]);
         }
     }
-    return { config, serverSources };
+    return { config, serverSources, serverFiles };
 }
 function getConfigConflicts(sourceSpecs, imports, cwd) {
     const seen = new Map();

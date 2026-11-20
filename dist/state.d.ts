@@ -26,7 +26,12 @@ export type SendMessageFn = (message: {
 }, options?: {
     triggerTurn?: boolean;
     deliverAs?: "steer" | "followUp" | "nextTurn";
-}) => void;
+}, 
+/** Keeps a delayed send with its task owner; `onSent` runs synchronously after Pi accepts it. */
+delivery?: {
+    isCurrent: () => boolean;
+    onSent: () => void;
+}) => void | Promise<void>;
 export interface McpExtensionState {
     owner: McpRuntimeOwner;
     manager: McpServerManager;
@@ -45,7 +50,7 @@ export interface McpExtensionState {
     programmaticConfig?: boolean;
     /** Session-scoped notices for legacy mcp.json files the adapter ignores. */
     migrationNotices?: string[];
-    /** Script tools a config file defines but that were not loaded, with the reason. Shown to the operator, never in `mcp({})`. */
+    /** Script tools and servers a config file defines but that were not loaded, with the reason. Shown to the operator, never in `mcp({})`. */
     scriptToolIssues?: string[];
     /** The script-tool issues of the config files this state loaded; unset for a supplied config. */
     scriptToolLoadIssues?: string[];

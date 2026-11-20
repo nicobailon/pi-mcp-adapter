@@ -363,6 +363,8 @@ export interface ServerEntry {
 }
 /** Only the literal boolean `true` disables a server. */
 export declare function isServerDisabled(definition: ServerEntry | undefined): boolean;
+/** The transports an entry sets; a server needs exactly one. An empty string counts as unset. */
+export declare function configuredTransports(definition: ServerEntry): Array<"command" | "url" | "socket">;
 export interface McpOutputGuardSettings {
     /** Maximum inline MCP text output bytes before truncation/spill-to-disk. Defaults to 51200 (50 KiB). */
     maxBytes?: number;
@@ -709,7 +711,8 @@ export interface McpPanelResult {
 }
 export declare function getServerPrefix(serverName: string, mode: ToolPrefix): string;
 /**
- * Format a tool name with server prefix.
+ * Format a tool name with server prefix. A name over 64 characters is cut and gets a hash of the
+ * full name.
  */
 export declare function formatToolName(toolName: string, serverName: string, prefix: ToolPrefix): string;
 export declare function resolveToolPrefix(definition?: Pick<ServerEntry, "toolPrefix">, globalPrefix?: ToolPrefix): ToolPrefix;

@@ -440,30 +440,17 @@ describe("project MCP server trust", () => {
       expect(Object.keys(both.config.scriptTools ?? {})).toEqual(["close_stale"]);
     });
 
-    it("never lets a server approval stand in for a script tool's, nor the reverse", async () => {
+    it("never lets a server approval stand in for a script tool's", async () => {
       const definition = { description: "Close stale issues", file: "/abs/close.js" };
-      writeJson(projectPath(), {
-        mcpServers: { "scriptTools/close_stale": { ...definition } },
-        scriptTools: { close_stale: { ...definition } },
-      });
-      // Allow the server, deny the script tool.
-      const select = vi.fn(async (title: string) => title.startsWith("Allow project MCP server") ? "Allow" : "Don't allow");
-      const first = await gate(tui(select));
-      expect(first.blockedScriptTools?.get("close_stale")?.reason).toBe("denied");
+      writeJson(projectPath(), { scriptTools: { close_stale: { ...definition } } });
+      // Older versions loaded a server without a transport, so a saved approval for a server named
+      // like the script tool's approval key can hash-equal its definition; only the approval kind tells them apart.
+      const { config, trust } = await load();
+      trust.approveProjectServer(cwd, "scriptTools/close_stale", config.loadMcpConfig(undefined, cwd).scriptTools!.close_stale);
 
-      vi.resetModules();
-      const second = await gate(context());
-      expect(Object.keys(second.config.scriptTools ?? {})).toEqual([]);
-      expect(second.blockedScriptTools?.get("close_stale")?.reason).toBe("approval-required");
-
-      // Now allow only the script tool: the server stays unapproved.
-      rmSync(join(home, ".pi", "agent", "mcp-project-approvals.json"));
-      vi.resetModules();
-      await gate(tui(vi.fn(async (title: string) => title.startsWith("Allow project script tool") ? "Allow" : "Don't allow")));
-      vi.resetModules();
-      const third = await gate(context());
-      expect(Object.keys(third.config.scriptTools ?? {})).toEqual(["close_stale"]);
-      expect(third.blockedServers.get("scriptTools/close_stale")?.reason).toBe("approval-required");
+      const result = await gate(context());
+      expect(Object.keys(result.config.scriptTools ?? {})).toEqual([]);
+      expect(result.blockedScriptTools?.get("close_stale")?.reason).toBe("approval-required");
     });
   });
 });

@@ -38,6 +38,8 @@ const result = await build({
   banner: { js: requireShim },
   define: {
     __BUILD_INFO__: JSON.stringify({ tag: buildTag, hash: buildHash, date: buildDate }),
+    // Keep --version in lockstep with package.json so it can never drift.
+    __SERVER_VERSION__: JSON.stringify(pkg.version),
   },
   outfile: "mcp-server.mjs",
   logLevel: "info",

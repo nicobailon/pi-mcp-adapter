@@ -51,6 +51,7 @@
   },
   "scripts": {
     "build:public": "tsc -p tsconfig.public.json",
+    "build:app-bridge": "node scripts/build-app-bridge.mjs",
     "prepack": "npm run build:public",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings",
@@ -247,6 +248,7 @@
     "@earendil-works/pi-coding-agent": "1.0.0",
     "@earendil-works/pi-tui": "1.0.0",
     "@modelcontextprotocol/conformance": "0.1.16",
+    "@modelcontextprotocol/ext-apps": "2.0.4",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@oxlint/plugins": "1.89.0",
     "@types/bun": "^1.0.0",

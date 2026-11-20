@@ -6,6 +6,7 @@ import {
   formatToolName,
   isServerDisabled,
   isToolAllowed,
+  joinToolName,
   resolveToolPrefix,
   resolveUniqueNameOwnership,
   type CachedTool,
@@ -190,7 +191,8 @@ function directNameEntries(
     const name = directToolName(toolName, serverName, definition, prefix, selectorIndex);
     if (!name) return;
     if (BUILTIN_NAMES.has(name)) return;
-    if (onlyTool !== undefined && toolName !== onlyTool && name !== onlyTool) return;
+    // A name cut to the length limit still answers to its full name.
+    if (onlyTool !== undefined && toolName !== onlyTool && name !== onlyTool && joinToolName(toolName, serverName, prefix) !== onlyTool) return;
     names.push({ name, originalName: toolName });
   };
 
@@ -224,7 +226,7 @@ function hasAllowedProxyTool(
   if (toolName === undefined) return true;
   const matchesAllowedName = (baseName: string) => {
     if (!isToolAllowed(baseName, serverName, prefix, definition.includeTools, definition.excludeTools, selectorIndex)) return false;
-    return toolName === formatToolName(baseName, serverName, prefix);
+    return toolName === formatToolName(baseName, serverName, prefix) || toolName === joinToolName(baseName, serverName, prefix);
   };
   if (entry.tools.some((tool: CachedTool) =>
     isUiToolVisibleToModel(tool.uiVisibility) &&

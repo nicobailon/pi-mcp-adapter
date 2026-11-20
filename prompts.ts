@@ -392,12 +392,10 @@ export function createPromptCommand(
         return;
       }
       const dispatchMetadata = refreshed ?? live;
+      resolved = resolvePromptArgs(dispatchMetadata, parsed);
       if (!resolved.ok) {
-        resolved = resolvePromptArgs(dispatchMetadata, parsed);
-        if (!resolved.ok) {
-          if (ctx.hasUI) ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
-          return;
-        }
+        if (ctx.hasUI) ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
+        return;
       }
       const promptArgs = resolved.args ?? {};
       let result: GetPromptResult;

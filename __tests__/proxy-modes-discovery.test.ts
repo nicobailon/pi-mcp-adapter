@@ -426,6 +426,26 @@ describe("proxy discovery", () => {
     expect(call.details).toMatchObject({ error: "tool_not_found", suggestions: [] });
   });
 
+  it("describes and regex-finds a tool cut to 64 characters by its full name", () => {
+    const definition: ServerEntry = { command: "ha" };
+    const resources = [{ name: "home-assistant-best-practices/references/triggers-and-conditions.md", uri: "skill://triggers" }];
+    const { metadata } = buildToolMetadata([], resources as any, definition, "home-assistant", "server");
+    const state = {
+      config: { mcpServers: { "home-assistant": definition } },
+      toolMetadata: new Map([["home-assistant", metadata]]),
+      manager: { getConnection: () => undefined },
+      failureTracker: new Map(),
+    } as unknown as McpExtensionState;
+    const fullName = "home-assistant_read_home_assistant_best_practices_references_triggers_and_conditions_md";
+
+    for (const name of [fullName, fullName.replace(/-/g, "_")]) {
+      for (const server of [undefined, "home-assistant"]) {
+        expect(executeDescribe(state, name, server).details).toMatchObject({ server: "home-assistant", tool: { name: metadata[0]!.name } });
+      }
+    }
+    expect(executeSearch(state, "^home-assistant_read_.*conditions_md$", true).details).toMatchObject({ count: 1, matches: [{ tool: metadata[0]!.name }] });
+  });
+
   it("prefers an exact describe name over an earlier normalized fallback", () => {
     const state = {
       config: { mcpServers: { "demo-a": { command: "fallback" }, demo: { command: "exact" } } },

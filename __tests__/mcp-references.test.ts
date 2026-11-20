@@ -142,6 +142,19 @@ describe("resolveMcpToolReferences", () => {
     expect(result).toEqual({ names: ["mcp__demo"], diagnostics: [] });
   });
 
+  it("resolves server/tool references that use the full name of a tool cut to 64 characters", () => {
+    const resources = [{ name: "home-assistant-best-practices/references/triggers-and-conditions.md", uri: "skill://triggers" }];
+    const fullName = "home-assistant_read_home_assistant_best_practices_references_triggers_and_conditions_md";
+    const direct: ServerEntry = { command: "ha", directTools: true };
+    const proxy: ServerEntry = { command: "ha" };
+    const ref = `mcp:home-assistant/${fullName}`;
+
+    expect(resolveMcpToolReferences([ref], configFor({ "home-assistant": direct }), cacheWithResources([["home-assistant", { definition: direct, tools: [], resources }]])).names)
+      .toEqual(["home-assistant_read_home_assistant_best_practices_refer_9d32fc37"]);
+    expect(resolveMcpToolReferences([ref], configFor({ "home-assistant": proxy }), cacheWithResources([["home-assistant", { definition: proxy, tools: [], resources }]])))
+      .toEqual({ names: ["mcp__home_assistant"], diagnostics: [] });
+  });
+
   it("resolves proxy-only resource references when the server has no tools", () => {
     const definition: ServerEntry = { command: "demo" };
     const result = resolveMcpToolReferences(

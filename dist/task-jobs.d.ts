@@ -75,6 +75,8 @@ export declare class BackgroundTaskRegistry {
     /** Records a task handed off by a stopping session. Without it, stopping the session cancels its tasks. */
     private readonly persistHandedOff?;
     private readonly running;
+    /** Settled tasks hidden from the running list, but not yet forwarded to Pi. */
+    private readonly pendingDelivery;
     /** Restores still waiting on `resumeTask`, which aren't in `running` yet but a replacement hands over too. */
     private readonly resuming;
     /** Set once a session that persists its tasks starts stopping; see the ownership note below. */
@@ -88,7 +90,7 @@ export declare class BackgroundTaskRegistry {
     stop(key: string, by: "the user" | "the agent"): Promise<boolean>;
     /**
      * Takes over the call's in-flight count. Resolves once the outcome is
-     * delivered and the count released.
+     * forwarded to Pi and the count released. Pi may queue it for a later turn.
      */
     start(task: BackgroundTaskStart): Promise<void>;
     /**
@@ -110,6 +112,7 @@ export declare class BackgroundTaskRegistry {
      */
     handOffForShutdown(): Promise<void>;
     private persistOnStop;
+    private persistReference;
     private takeOver;
     private owns;
     private relinquish;

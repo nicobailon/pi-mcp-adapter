@@ -96,6 +96,8 @@ Prefer `.mcp.json` for project-local shared MCP config and `~/.config/mcp/mcp.js
 
 Entries for the same server merge field by field, but credentials (`headers`, bearer tokens, `oauth`, and the other auth fields) stay with the `url` they were written for: when a higher-precedence file sets a different `url`, the lower file's credentials are not sent, and the adapter says so at startup, naming both files. The notice covers config files and their imports; a url change between two files of the same host (such as global and project `opencode.json`), or for a server from a package or plugin, drops credentials the same way without a notice.
 
+One file may set only `lifecycle` or other settings for a server whose `command`, `url`, or `socket` comes from another file. After merging, an enabled server needs exactly one of the three. One with none, or with more than one, is not started, and the adapter says so once at startup, naming the files that declared it.
+
 ## Import Existing Configs
 
 Shared MCP files are loaded automatically. Use `imports` only for host-specific config formats that are not already covered by `.mcp.json` or `~/.config/mcp/mcp.json`.
@@ -192,7 +194,7 @@ A `lazy` [Executor](prompts-and-ui.md#executor-app-tools) server stays connected
 
 | Setting | Description |
 |---------|-------------|
-| `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. |
+| `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. A prefixed name over 64 characters, the limit most providers set, is cut and ends in an 8-character hash of the full name; selectors may still use the full name. |
 | `allowInstall` | Allow URL installation through the `mcp` tool (default: `true`). Set to `false` to block it. |
 | `allowScriptToolSave` | Allow the `mcp` tool to save a script as a script tool after you approve it (default: `true`). Set to `false` to block it and remove its line from the `mcp` tool description. |
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |

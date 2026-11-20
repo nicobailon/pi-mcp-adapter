@@ -2598,6 +2598,28 @@ describe("mcpAdapter session lifecycle", () => {
     );
   });
 
+  it("rejects an unknown proxy action instead of running another mode", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { api, handlers } = await loadAdapter();
+
+    const sessionStart = handlers.get("session_start");
+    await sessionStart?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    const result = await proxyTool.execute("call-1", { server: "wiki", action: "stale-key", args: '{"page":"home"}' });
+
+    expect(result.content[0].text).toBe(
+      "Unknown action \"stale-key\". Valid actions: 'install', 'ui-messages', 'auth-start', 'auth-complete', 'save-script', or 'reload' (re-read the watched config and restart the adapter to apply post-startup changes).",
+    );
+    expect(result.details).toEqual({ mode: "action", error: "unknown_action", action: "stale-key" });
+    expect(mocks.executeList).not.toHaveBeenCalled();
+    expect(mocks.executeStatus).not.toHaveBeenCalled();
+  });
+
   it("forwards the proxy tool AbortSignal into executeCall", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
@@ -3633,6 +3655,33 @@ describe("mcpAdapter session lifecycle", () => {
     await vi.waitFor(() => expect(mocks.flushMetadataCache).toHaveBeenCalledWith(staleState));
     expect(mocks.updateStatusBar).not.toHaveBeenCalledWith(staleState);
     expect(staleState.lifecycle.gracefulShutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { mode: "a TUI session as a notification", hasUI: true },
+    { mode: "a print session on stderr", hasUI: false },
+  ])("delivers a config issue once, in $mode, when load-time initialization ran first", async ({ hasUI }) => {
+    mocks.loadMcpConfig.mockReturnValue({ mcpServers: { demo: { url: "http://localhost:3999/mcp", lifecycle: "eager" } } });
+    const issue = 'MCP server "paseo" was not started: it has no command, url, or socket. Declared in /home/.pi/agent/mcp-adapter.json. Add one, or set "disabled": true.';
+    const loadState = createState();
+    loadState.scriptToolLoadIssues = [issue];
+    const sessionState = createState();
+    sessionState.scriptToolLoadIssues = [issue];
+    mocks.initializeMcp.mockResolvedValueOnce(loadState).mockResolvedValueOnce(sessionState);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { handlers } = await loadAdapter();
+    await new Promise((resolve) => setImmediate(resolve));
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(loadState));
+
+    const ui = { notify: vi.fn() };
+    await handlers.get("session_start")?.({}, { hasUI, ui, cwd: "/project" });
+    await vi.waitFor(() => expect(mocks.updateStatusBar).toHaveBeenCalledWith(sessionState));
+    const notified = ui.notify.mock.calls.filter(([line]) => line === issue);
+    const warned = warn.mock.calls.filter(([line]) => line === `MCP: ${issue}`);
+    expect([notified.length, warned.length]).toEqual(hasUI ? [1, 0] : [0, 1]);
+    if (hasUI) expect(ui.notify).toHaveBeenCalledWith(issue, "warning");
+    warn.mockRestore();
   });
 
   it("skips load-time initialization when session_start fires first", async () => {

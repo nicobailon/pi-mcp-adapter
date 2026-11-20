@@ -69,6 +69,14 @@ describe("resolveServerFromToolName", () => {
 				resolveServerFromToolName(tool, ["searxng", "searxng-extra"], "server"),
 			).toBe("searxng-extra");
 		});
+
+		it("never names another server for a tool whose server prefix was cut to the length limit", () => {
+			const longServer = `alpha_${"a".repeat(55)}`;
+			const tool = formatToolName("run", longServer, "server");
+			expect(tool).toHaveLength(64);
+			expect(resolveServerFromToolName(tool, [longServer], "server")).toBe(longServer);
+			expect(resolveServerFromToolName(tool, ["alpha", longServer], "server")).toBeUndefined();
+		});
 	});
 
 	describe("short prefix mode", () => {
