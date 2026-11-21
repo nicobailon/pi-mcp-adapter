@@ -64,7 +64,7 @@ describe("turning off Pi's built-in MCP", () => {
 
     const notify = await startSession();
 
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringContaining("Turned off Pi's built-in MCP"), "info"));
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringContaining("Pi's `builtin:mcp` warning about `/mcp` needs no action"), "warning"));
     expect(readSettings()).toEqual({ theme: "dark", extensions: ["./mine.ts", "-builtin:mcp"] });
     expect(handledVersion()).toBe(VERSION);
 

@@ -1761,7 +1761,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       void import("./pi-builtin-mcp.ts")
         .then(({ turnOffPiBuiltinMcp }) => turnOffPiBuiltinMcp())
         .then((turnedOff) => {
-          if (turnedOff) report("Turned off Pi's built-in MCP so it doesn't run next to pi-mcp-adapter. If you remove the adapter, turn it back on in `pi config` → Built-in.", "info");
+          // "warning", not "info": Pi renders info dim, and this line sits between two copies of Pi's own warning.
+          if (turnedOff) report("Turned off Pi's built-in MCP so it doesn't run next to pi-mcp-adapter. Pi's `builtin:mcp` warning about `/mcp` needs no action and won't show next start. To go back to Pi's built-in MCP, remove the adapter (for example `pi remove npm:pi-mcp-adapter`), then turn `mcp` back on in `pi config` → Built-in extensions.", "warning");
         })
         .catch((error) => report(`MCP: could not turn off Pi's built-in MCP: ${formatTerminalError(error)}`, "warning"));
     }
