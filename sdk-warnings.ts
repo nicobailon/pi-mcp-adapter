@@ -4,27 +4,36 @@ import { appendServerLogMessage } from "./server-log.ts";
 
 const PREFIX = "[mcp-sdk] ";
 // A global key, not module state: each Pi session can load its own copy of this module.
-const PREVIOUS = Symbol.for("pi-mcp-adapter.sdkWarnings.previous");
+const ROUTE = Symbol.for("pi-mcp-adapter.sdkWarnings");
 
-type Warn = typeof console.warn & { [PREVIOUS]?: typeof console.warn };
+type Route = { sessions: number; previous: typeof console.warn; wrapper: typeof console.warn };
+const holder = globalThis as { [ROUTE]?: Route };
 
 /**
  * Sends the MCP SDK's `console.warn` lines to `<agent dir>/mcp.log` instead of the terminal, where they
  * would draw over Pi's TUI. The SDK has no logger option, so `console.warn` itself is wrapped.
+ * The wrapper stays while any session that asked for it is alive; call the returned function once when
+ * that session ends.
  */
-export function routeSdkWarningsToLog(): void {
-  if ((console.warn as Warn)[PREVIOUS]) return;
-  const previous = console.warn;
-  const wrapper: Warn = (...args: unknown[]) => {
-    if (typeof args[0] !== "string" || !args[0].startsWith(PREFIX)) return previous(...args);
-    appendServerLogMessage(getAgentPath("mcp.log"), "mcp-sdk", { level: "warning", data: format(...args).slice(PREFIX.length) });
+export function routeSdkWarningsToLog(): () => void {
+  let route = holder[ROUTE];
+  if (!route) {
+    const previous = console.warn;
+    const wrapper = (...args: unknown[]) => {
+      if (typeof args[0] !== "string" || !args[0].startsWith(PREFIX)) return previous(...args);
+      appendServerLogMessage(getAgentPath("mcp.log"), "mcp-sdk", { level: "warning", data: format(...args).slice(PREFIX.length) });
+    };
+    route = holder[ROUTE] = { sessions: 0, previous, wrapper };
+    console.warn = wrapper;
+  }
+  route.sessions++;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (--route.sessions > 0) return;
+    delete holder[ROUTE];
+    // Leave a wrapper someone else installed on top of ours in place.
+    if (console.warn === route.wrapper) console.warn = route.previous;
   };
-  wrapper[PREVIOUS] = previous;
-  console.warn = wrapper;
-}
-
-/** Undoes `routeSdkWarningsToLog`, unless something else has wrapped `console.warn` since. */
-export function restoreSdkWarnings(): void {
-  const previous = (console.warn as Warn)[PREVIOUS];
-  if (previous) console.warn = previous;
 }

@@ -21,6 +21,7 @@ describe("MCP SDK warnings in the TUI", () => {
 
   afterEach(() => {
     console.warn = originalWarn;
+    delete (globalThis as Record<symbol, unknown>)[Symbol.for("pi-mcp-adapter.sdkWarnings")];
     vi.unstubAllEnvs();
     rmSync(root, { recursive: true, force: true });
   });
@@ -66,6 +67,27 @@ describe("MCP SDK warnings in the TUI", () => {
     expect(lines[0]).toMatch(/^\S+ \[mcp-sdk\] warning OAuth "invalid_grant" — invalidating the stored tokens/);
 
     await session.stop();
+    expect(console.warn).toBe(terminal);
+  }, 20_000);
+
+  it("keeps routing until the last TUI session that asked for it shuts down", async () => {
+    const terminal = vi.fn();
+    console.warn = terminal;
+    const first = await loadSession("tui");
+    const second = await loadSession("tui");
+    const headless = await loadSession("rpc");
+    await first.start();
+    await second.start();
+    await headless.start();
+
+    await headless.stop();
+    await first.stop();
+    await first.stop();
+    console.warn(sdkLine);
+    expect(terminal).not.toHaveBeenCalled();
+    expect(readFileSync(logPath(), "utf-8")).toContain("[mcp-sdk] warning OAuth");
+
+    await second.stop();
     expect(console.warn).toBe(terminal);
   }, 20_000);
 
