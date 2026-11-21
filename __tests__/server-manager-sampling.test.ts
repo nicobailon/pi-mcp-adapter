@@ -99,7 +99,6 @@ describe("McpServerManager sampling", () => {
     const manager = new McpServerManager();
     manager.setElicitationConfig({
       allowUrl: true,
-      openUrl: mocks.open,
       ui: {} as any,
     });
 
@@ -123,7 +122,7 @@ describe("McpServerManager sampling", () => {
   it("advertises form-only elicitation when URL navigation is unavailable", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
-    manager.setElicitationConfig({ allowUrl: false, openUrl: mocks.open, ui: {} as any });
+    manager.setElicitationConfig({ allowUrl: false, ui: {} as any });
 
     await manager.connect("demo", { command: "node", args: ["server.js"] });
 
@@ -199,7 +198,6 @@ describe("McpServerManager sampling", () => {
     });
     manager.setElicitationConfig({
       allowUrl: true,
-      openUrl: mocks.open,
       ui: {} as any,
     });
 

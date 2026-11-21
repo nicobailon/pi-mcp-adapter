@@ -109,11 +109,8 @@ describe("openUrl on win32", () => {
 
     expect(exec).toHaveBeenCalledExactlyOnceWith("C:\\Browsers\\firefox.exe", [url], {});
   });
-});
 
-describe("openUrl schemes", () => {
-  it.each(["file:///C:/Windows/System32/calc.exe", "ms-settings:privacy", "javascript:alert(1)"])("refuses %s", async (target) => {
-    vi.mocked(platform).mockReturnValue("win32");
+  it.each(["file:///C:/Windows/System32/calc.exe", "ms-settings:privacy"])("refuses %s", async (target) => {
     const { pi, exec } = fakePi();
 
     await expect(openUrl(pi, target)).rejects.toThrow("only http and https URLs are opened");

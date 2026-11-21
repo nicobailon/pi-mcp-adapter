@@ -72,15 +72,10 @@ async function execOpen(pi: ExtensionAPI, target: string, browser?: string, sign
     }
     return pi.exec("open", [target], signal ? { signal } : {});
   }
-  if (os === "win32") {
-    // Never `cmd /c start`: cmd.exe re-parses &, | and ^ in the target before `start` runs,
-    // so a server-supplied URL could run commands. rundll32 hands it to the protocol handler.
-    return browser
-      ? pi.exec(browser, [target], signal ? { signal } : {})
-      : pi.exec("rundll32", ["url.dll,FileProtocolHandler", target], signal ? { signal } : {});
-  }
-  return browser
-    ? pi.exec(browser, [target], signal ? { signal } : {})
+  if (browser) return pi.exec(browser, [target], signal ? { signal } : {});
+  // Not `cmd /c start`: cmd.exe re-parses &, | and ^ in a server-supplied URL as commands.
+  return os === "win32"
+    ? pi.exec("rundll32", ["url.dll,FileProtocolHandler", target], signal ? { signal } : {})
     : pi.exec("xdg-open", [target], signal ? { signal } : {});
 }
 
