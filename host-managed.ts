@@ -17,6 +17,7 @@ import {
   type ReadResourceResult,
   type Tool,
   type Transport,
+  type VersionNegotiationOptions,
 } from "@modelcontextprotocol/client";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
 import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
@@ -25,7 +26,7 @@ import { abortable } from "./abort.ts";
 import { approvalBlockedResult, requestBrokerApproval, sanitizeDenyReason } from "./tool-approval.ts";
 import { toToolParameters } from "./tool-parameters.ts";
 import { cleanupMaterializedBinaryResources, resolveMcpResultContent } from "./tool-registrar.ts";
-import { formatToolName, type McpToolApprovalHandlerResult } from "./types.ts";
+import { formatToolName, type ServerDefinition, type McpToolApprovalHandlerResult } from "./types.ts";
 import { normalizeDirectToolInputSchema, normalizeToolArguments, stableStringify, truncateAtWord, withToolCallIdMeta } from "./utils.ts";
 
 const CLOSE_TIMEOUT_MS = 5_000;
@@ -39,6 +40,8 @@ export interface HostManagedMcpServer {
   createTransport(context: { server: string; signal: AbortSignal }): Transport | Promise<Transport>;
   /** MCP tool names to expose. Omit to expose every tool the server lists. */
   tools?: readonly string[];
+  /** Omitted/legacy uses initialize; auto negotiates; 2026-07-28 pins modern MCP with no legacy fallback. */
+  protocolVersion?: ServerDefinition["protocolVersion"];
 }
 
 export interface HostManagedMcpToolCall {
@@ -227,6 +230,20 @@ function dispatchFailureResult(tool: CatalogTool, error: HostManagedMcpError, ca
   }
 }
 
+function versionNegotiationForServer(protocolVersion: HostManagedMcpServer["protocolVersion"]): VersionNegotiationOptions | undefined {
+  switch (protocolVersion) {
+    case undefined:
+    case "legacy":
+      return undefined;
+    case "auto":
+      return { mode: "auto" };
+    case "2026-07-28":
+      return { mode: { pin: "2026-07-28" } };
+    default:
+      throw new Error("Unsupported host-managed MCP protocolVersion");
+  }
+}
+
 export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOptions): HostManagedMcpAdapter {
   const servers = Object.entries(options.servers);
   const timeout = options.requestTimeoutMs !== undefined && options.requestTimeoutMs > 0 ? options.requestTimeoutMs : undefined;
@@ -278,6 +295,7 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
     let connection: Connection;
     let listed: Tool[];
     try {
+      const versionNegotiation = versionNegotiationForServer(definition.protocolVersion);
       const pending = Promise.resolve().then(() => definition.createTransport({ server, signal: lifetime.signal }));
       // A factory that ignores the abort must not hold ready() open after
       // close(); a transport it delivers late is closed, never adopted.
@@ -287,7 +305,10 @@ export function createHostManagedMcpAdapter(options: HostManagedMcpAdapterOption
         { name: `pi-mcp-${server}`, version: "1.0.0" },
         // No client capabilities, and no multi-round-trip auto-fulfilment: that
         // driver would resend the original tools/call with collected input.
-        { capabilities: {}, jsonSchemaValidator: validators, inputRequired: { autoFulfill: false } },
+        {
+          capabilities: {}, jsonSchemaValidator: validators, inputRequired: { autoFulfill: false },
+          ...(versionNegotiation ? { versionNegotiation } : {}),
+        },
       );
       // Raw transport errors can carry credentials; the adapter never logs them.
       client.onerror = () => {};
