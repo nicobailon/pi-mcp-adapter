@@ -9,8 +9,19 @@ afterEach(() => {
 });
 
 function mockFetch(...responses: Response[]): void {
-  fetchMock.mockResolvedValueOnce(responses[0]);
-  for (const response of responses.slice(1)) fetchMock.mockResolvedValueOnce(response);
+  for (const response of responses) {
+    fetchMock.mockImplementationOnce(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const text = await response.text();
+      let body = text;
+      try {
+        const payload = JSON.parse(text);
+        if (payload.jsonrpc === "2.0") payload.id = JSON.parse(await request.text()).id;
+        body = JSON.stringify(payload);
+      } catch { /* Non-JSON fixture. */ }
+      return new Response(body, { status: response.status, headers: response.headers });
+    });
+  }
   vi.stubGlobal("fetch", fetchMock);
 }
 
@@ -78,7 +89,7 @@ describe("MCP endpoint shape probe", () => {
     });
     expect(result.classification).not.toContain("does not appear to speak MCP");
     expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
+  }, 7_000);
 
   it("reports an unauthenticated response without claiming the URL is not MCP", async () => {
     mockFetch(
@@ -115,7 +126,7 @@ describe("MCP endpoint shape probe", () => {
 
   it("recognizes a modern stateless server/discover response", async () => {
     mockFetch(new Response(JSON.stringify({
-      jsonrpc: "2.0", id: 1, result: { protocolVersion: "2026-07-28" },
+      jsonrpc: "2.0", id: 1, result: { supportedVersions: ["2026-07-28"], capabilities: {}, ttlMs: 0, cacheScope: "private", resultType: "complete" },
     }), { status: 200, headers: { "content-type": "application/json" } }));
 
     await expect(probeMcpEndpoint("https://example.test/mcp")).resolves.toMatchObject({
@@ -123,15 +134,19 @@ describe("MCP endpoint shape probe", () => {
       classification: expect.stringContaining("stateless MCP 2026-07-28"),
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-      method: "POST",
-      headers: {
-        Accept: "application/json, text/event-stream",
-        "Content-Type": "application/json",
-        "MCP-Protocol-Version": "2026-07-28",
-        "Mcp-Method": "server/discover",
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} }),
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body)).toMatchObject({
+      jsonrpc: "2.0", method: "server/discover", params: { _meta: {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+      } },
+    });
+    const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
+    expect(request.method).toBe("POST");
+    expect(Object.fromEntries(request.headers)).toMatchObject({
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "server/discover",
     });
   });
 

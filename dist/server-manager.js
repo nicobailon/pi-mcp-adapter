@@ -962,7 +962,7 @@ export class McpServerManager {
         }
         else if (definition.url) {
             // Only a failure before initialize completes says anything about the endpoint, so only it is probed.
-            const httpConnection = await this.connectHttpClient(definition, name, requestOptions, signal, traceObserver, invalidated, oauthAuthority, attemptOwner).catch(async (error) => { throw await this.enrichHttpConnectionError(definition, error); });
+            const httpConnection = await this.connectHttpClient(definition, name, requestOptions, signal, traceObserver, invalidated, oauthAuthority, attemptOwner).catch(async (error) => { throw await this.enrichHttpConnectionError(definition, error, signal); });
             client = httpConnection.client;
             transport = httpConnection.transport;
             invalidated = httpConnection.credentialsInvalidated;
@@ -1149,7 +1149,9 @@ export class McpServerManager {
             throw reportedError;
         }
     }
-    async enrichHttpConnectionError(definition, error) {
+    async enrichHttpConnectionError(definition, error, signal) {
+        if (signal?.aborted)
+            return error instanceof Error ? error : new Error(String(error));
         // The transport's OAuth provider can register a client during connect, bypassing startAuth.
         if (error instanceof RegistrationRejectedError)
             return explainRegistrationRejection(error, resolveServerUrl(definition));
@@ -1168,7 +1170,7 @@ export class McpServerManager {
             return new Error(`${originalMessage} — endpoint is temporarily unavailable (HTTP 503)`, { cause: error });
         }
         try {
-            const probe = await probeMcpEndpoint(resolveServerUrl(definition));
+            const probe = await probeMcpEndpoint(resolveServerUrl(definition), { protocolVersion: definition.protocolVersion ?? "legacy", signal });
             return new Error(`${originalMessage} — probe: ${probe.classification}`, { cause: error });
         }
         catch {
