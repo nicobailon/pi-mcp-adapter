@@ -12,7 +12,7 @@ import {
 import { MCP_TOOL_APPROVAL_REQUEST_EVENT, type McpToolApprovalRequest } from "../types.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
-type Receipt = { method?: string; name?: string; arguments?: Record<string, unknown> };
+type Receipt = { method?: string; name?: string; arguments?: Record<string, unknown>; served?: string };
 type Pi = {
   session: Session;
   call: (name: string, input: Record<string, unknown>) => Promise<any>;
@@ -41,6 +41,8 @@ async function receipts(root: string): Promise<Receipt[]> {
 
 // Every catalog in these tests fits on one page, so one `search` is one pass.
 const passes = async (root: string) => (await receipts(root)).filter(entry => entry.name === "search").length;
+// A search receipt lands when the request arrives, before the fixture reads its catalog; a served page is the catalog it answered with.
+const served = async (root: string) => (await receipts(root)).filter(entry => entry.served === "search").length;
 const textOf = (result: { content: Array<{ type: string; text?: string }> }) => result.content.map(block => block.text ?? "").join("");
 const deferredAppTools = (session: Session) => session.getAllTools()
   .filter(tool => tool.exposure === "deferred" && /^mcp__executor__(alpha|beta|gamma|zeta)/.test(tool.name)).map(tool => tool.name);
@@ -176,7 +178,7 @@ describe("Executor app catalog refresh", () => {
       await call("mcp", { connect: "executor" });
       await vi.waitFor(async () => expect(await passes(root)).toBe(2), { timeout: 10_000 });
       await command("reconnect executor");
-      await vi.waitFor(async () => expect(await passes(root)).toBe(3), { timeout: 10_000 });
+      await vi.waitFor(async () => expect(await served(root)).toBe(3), { timeout: 10_000 });
 
       await writeFile(change, "");
       await vi.waitFor(() => expect(deferredAppTools(session)).toContain("mcp__executor__zeta_tool_000"), { timeout: 10_000 });
