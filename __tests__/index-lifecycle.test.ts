@@ -3999,6 +3999,9 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.writeProjectServerDisabledOverride).toHaveBeenCalledWith(undefined, "/tmp/project", "global", true);
     await commandDef.handler("disable missing", { hasUI: true, cwd: "/tmp/project", ui });
     expect(ui.notify).toHaveBeenCalledWith("Server \"missing\" not found in effective config", "error");
+    mocks.writeProjectServerDisabledOverride.mockImplementationOnce(() => { throw new Error("not read in this mode"); });
+    await commandDef.handler("enable global", { hasUI: true, cwd: "/tmp/project", ui });
+    expect(ui.notify).toHaveBeenCalledWith("Failed to enable server \"global\": not read in this mode", "error");
   });
 
   it("shows usage for `/mcp logout` without a server", async () => {

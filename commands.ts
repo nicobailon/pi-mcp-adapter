@@ -13,6 +13,8 @@ import {
   type KnownServerPreset,
   type SharedConfigTarget,
   getServerProvenance,
+  getProjectPiConfigPath,
+  getProjectServerDisabledOverrideRefusal,
   loadMcpConfig,
   previewCompatibilityImports,
   previewSharedServerEntry,
@@ -851,6 +853,10 @@ export async function openMcpPanel(
   const configPath = pi.getFlag("mcp-config") as string | undefined ?? configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
   const { lines: noticeLines, fingerprint } = buildSharedConfigNoticeLines(configPath, ctx.cwd);
+  const disabledRefusal = getProjectServerDisabledOverrideRefusal(configPath, ctx.cwd);
+  const disabledSaveNote = disabledRefusal
+    ? `Save can't enable or disable servers here: ${disabledRefusal}`
+    : `Save writes enable/disable to ${getProjectPiConfigPath(ctx.cwd)}`;
 
   let overlayHandle: OverlayHandle | undefined;
   const callbacks = buildMcpPanelCallbacks(state, config, ctx, () => overlayHandle);
@@ -918,7 +924,7 @@ export async function openMcpPanel(
             done(undefined);
             resolve();
           });
-        }, { noticeLines, keybindings, theme });
+        }, { noticeLines, disabledSaveNote, keybindings, theme });
       },
       {
         overlay: true,
