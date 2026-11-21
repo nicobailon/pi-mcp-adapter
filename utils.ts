@@ -1,5 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -59,7 +58,7 @@ export function stableStringify(value: unknown): string {
   return `{${Object.keys(object).sort().map(key => `${JSON.stringify(key)}:${stableStringify(object[key])}`).join(",")}}`;
 }
 
-async function execOpen(pi: ExtensionAPI, target: string, browser?: string, signal?: AbortSignal) {
+function openCommand(target: string, browser?: string): [string, string[]] {
   const os = platform();
 
   if (os === "darwin") {
@@ -67,34 +66,39 @@ async function execOpen(pi: ExtensionAPI, target: string, browser?: string, sign
       // An absolute executable path (e.g. from $BROWSER) names a launcher
       // binary. App bundles still go through `open -a`, which handles them.
       return isAbsolute(browser) && extname(browser).toLowerCase() !== ".app"
-        ? pi.exec(browser, [target], signal ? { signal } : {})
-        : pi.exec("open", ["-a", browser, target], signal ? { signal } : {});
+        ? [browser, [target]]
+        : ["open", ["-a", browser, target]];
     }
-    return pi.exec("open", [target], signal ? { signal } : {});
+    return ["open", [target]];
   }
-  if (browser) return pi.exec(browser, [target], signal ? { signal } : {});
+  if (browser) return [browser, [target]];
   // Not `cmd /c start`: cmd.exe re-parses &, | and ^ in a server-supplied URL as commands.
-  return os === "win32"
-    ? pi.exec("rundll32", ["url.dll,FileProtocolHandler", target], signal ? { signal } : {})
-    : pi.exec("xdg-open", [target], signal ? { signal } : {});
+  return os === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", target]] : ["xdg-open", [target]];
 }
 
-export async function openUrl(pi: ExtensionAPI, url: string, browser?: string, signal?: AbortSignal): Promise<void> {
+/** Resolves once the launcher has started: a browser launcher can run until the browser quits. */
+function launch(target: string, browser?: string): Promise<void> {
+  const [command, args] = openCommand(target, browser);
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: "ignore", detached: true });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
+export async function openUrl(url: string, browser?: string): Promise<void> {
   const { protocol } = new URL(url);
   if (protocol !== "http:" && protocol !== "https:") {
     throw new Error(`Refusing to open a ${protocol} URL; only http and https URLs are opened`);
   }
-  const result = await execOpen(pi, url, browser, signal);
-  if (result.code !== 0) {
-    throw new Error(result.stderr || `Failed to open browser (exit code ${result.code})`);
-  }
+  await launch(url, browser);
 }
 
-export async function openPath(pi: ExtensionAPI, targetPath: string): Promise<void> {
-  const result = await execOpen(pi, targetPath);
-  if (result.code !== 0) {
-    throw new Error(result.stderr || `Failed to open path (exit code ${result.code})`);
-  }
+export async function openPath(targetPath: string): Promise<void> {
+  await launch(targetPath);
 }
 
 export async function parallelLimit<T, R>(

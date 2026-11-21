@@ -1,17 +1,34 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { platform } from "node:os";
+import { spawn, type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { platform, tmpdir } from "node:os";
+import { join } from "node:path";
 import { getConfigPathFromArgv, openUrl } from "../utils.ts";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:os")>();
   return { ...actual, platform: vi.fn() };
 });
 
-function fakePi(): { pi: ExtensionAPI; exec: ReturnType<typeof vi.fn> } {
-  const exec = vi.fn().mockResolvedValue({ code: 0, stdout: "", stderr: "" });
-  return { pi: { exec } as unknown as ExtensionAPI, exec };
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
+
+const launcher = { stdio: "ignore", detached: true };
+
+function fakeSpawn(): void {
+  vi.mocked(spawn).mockImplementationOnce(() => {
+    const child = Object.assign(new EventEmitter(), { unref: () => {} });
+    queueMicrotask(() => child.emit("spawn"));
+    return child as unknown as ChildProcess;
+  });
 }
+
+beforeEach(() => {
+  vi.mocked(spawn).mockClear();
+});
 
 describe("getConfigPathFromArgv", () => {
   it.each([
@@ -35,55 +52,37 @@ describe("getConfigPathFromArgv", () => {
 describe("openUrl on darwin", () => {
   beforeEach(() => {
     vi.mocked(platform).mockReturnValue("darwin");
+    fakeSpawn();
   });
 
   it("execs an absolute-path browser override directly", async () => {
-    const { pi, exec } = fakePi();
+    await openUrl("https://example.com", "/usr/bin/open");
 
-    await openUrl(pi, "https://example.com", "/usr/bin/open");
-
-    expect(exec).toHaveBeenCalledWith("/usr/bin/open", ["https://example.com"], {});
+    expect(spawn).toHaveBeenCalledWith("/usr/bin/open", ["https://example.com"], launcher);
   });
 
   it("still uses `open -a <name>` for a non-path browser override", async () => {
-    const { pi, exec } = fakePi();
+    await openUrl("https://example.com", "Google Chrome");
 
-    await openUrl(pi, "https://example.com", "Google Chrome");
-
-    expect(exec).toHaveBeenCalledWith("open", ["-a", "Google Chrome", "https://example.com"], {});
+    expect(spawn).toHaveBeenCalledWith("open", ["-a", "Google Chrome", "https://example.com"], launcher);
   });
 
   it("still uses `open -a <path>` for an absolute app bundle override", async () => {
-    const { pi, exec } = fakePi();
+    await openUrl("https://example.com", "/Applications/Google Chrome.app");
 
-    await openUrl(pi, "https://example.com", "/Applications/Google Chrome.app");
-
-    expect(exec).toHaveBeenCalledWith("open", ["-a", "/Applications/Google Chrome.app", "https://example.com"], {});
+    expect(spawn).toHaveBeenCalledWith("open", ["-a", "/Applications/Google Chrome.app", "https://example.com"], launcher);
   });
 
   it("treats app bundle extensions case-insensitively", async () => {
-    const { pi, exec } = fakePi();
+    await openUrl("https://example.com", "/Applications/Custom Browser.APP");
 
-    await openUrl(pi, "https://example.com", "/Applications/Custom Browser.APP");
-
-    expect(exec).toHaveBeenCalledWith("open", ["-a", "/Applications/Custom Browser.APP", "https://example.com"], {});
+    expect(spawn).toHaveBeenCalledWith("open", ["-a", "/Applications/Custom Browser.APP", "https://example.com"], launcher);
   });
 
   it("falls back to bare `open` with no browser override", async () => {
-    const { pi, exec } = fakePi();
+    await openUrl("https://example.com");
 
-    await openUrl(pi, "https://example.com");
-
-    expect(exec).toHaveBeenCalledWith("open", ["https://example.com"], {});
-  });
-
-  it("forwards an AbortSignal for an absolute-path browser override", async () => {
-    const { pi, exec } = fakePi();
-    const controller = new AbortController();
-
-    await openUrl(pi, "https://example.com", "/usr/bin/open", controller.signal);
-
-    expect(exec).toHaveBeenCalledWith("/usr/bin/open", ["https://example.com"], { signal: controller.signal });
+    expect(spawn).toHaveBeenCalledWith("open", ["https://example.com"], launcher);
   });
 });
 
@@ -95,25 +94,39 @@ describe("openUrl on win32", () => {
   const url = "https://mcp.evil.example/a&notepad&b/$(notepad)/authorize";
 
   it("hands the URL to the protocol handler without cmd.exe", async () => {
-    const { pi, exec } = fakePi();
+    fakeSpawn();
 
-    await openUrl(pi, url);
+    await openUrl(url);
 
-    expect(exec).toHaveBeenCalledExactlyOnceWith("rundll32", ["url.dll,FileProtocolHandler", url], {});
+    expect(spawn).toHaveBeenCalledExactlyOnceWith("rundll32", ["url.dll,FileProtocolHandler", url], launcher);
   });
 
   it("runs a browser override directly", async () => {
-    const { pi, exec } = fakePi();
+    fakeSpawn();
 
-    await openUrl(pi, url, "C:\\Browsers\\firefox.exe");
+    await openUrl(url, "C:\\Browsers\\firefox.exe");
 
-    expect(exec).toHaveBeenCalledExactlyOnceWith("C:\\Browsers\\firefox.exe", [url], {});
+    expect(spawn).toHaveBeenCalledExactlyOnceWith("C:\\Browsers\\firefox.exe", [url], launcher);
   });
 
   it.each(["file:///C:/Windows/System32/calc.exe", "ms-settings:privacy"])("refuses %s", async (target) => {
-    const { pi, exec } = fakePi();
-
-    await expect(openUrl(pi, target)).rejects.toThrow("only http and https URLs are opened");
-    expect(exec).not.toHaveBeenCalled();
+    await expect(openUrl(target)).rejects.toThrow("only http and https URLs are opened");
+    expect(spawn).not.toHaveBeenCalled();
   });
+});
+
+it.skipIf(process.platform === "win32")("returns while a browser launcher is still running", async () => {
+  vi.mocked(platform).mockReturnValue("linux");
+  const dir = await mkdtemp(join(tmpdir(), "pi-mcp-open-"));
+  const browser = join(dir, "browser");
+  await writeFile(browser, '#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 30\n', { mode: 0o755 });
+  let pid: number | undefined;
+  try {
+    await openUrl("https://example.com/authorize", browser);
+    pid = Number(await vi.waitFor(() => readFile(`${browser}.pid`, "utf8")));
+    expect(() => process.kill(pid!, 0)).not.toThrow();
+  } finally {
+    if (pid) process.kill(pid);
+    await rm(dir, { recursive: true, force: true });
+  }
 });

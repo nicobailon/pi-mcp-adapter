@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -58,40 +58,44 @@ export function stableStringify(value) {
     const object = value;
     return `{${Object.keys(object).sort().map(key => `${JSON.stringify(key)}:${stableStringify(object[key])}`).join(",")}}`;
 }
-async function execOpen(pi, target, browser, signal) {
+function openCommand(target, browser) {
     const os = platform();
     if (os === "darwin") {
         if (browser) {
             // An absolute executable path (e.g. from $BROWSER) names a launcher
             // binary. App bundles still go through `open -a`, which handles them.
             return isAbsolute(browser) && extname(browser).toLowerCase() !== ".app"
-                ? pi.exec(browser, [target], signal ? { signal } : {})
-                : pi.exec("open", ["-a", browser, target], signal ? { signal } : {});
+                ? [browser, [target]]
+                : ["open", ["-a", browser, target]];
         }
-        return pi.exec("open", [target], signal ? { signal } : {});
+        return ["open", [target]];
     }
     if (browser)
-        return pi.exec(browser, [target], signal ? { signal } : {});
+        return [browser, [target]];
     // Not `cmd /c start`: cmd.exe re-parses &, | and ^ in a server-supplied URL as commands.
-    return os === "win32"
-        ? pi.exec("rundll32", ["url.dll,FileProtocolHandler", target], signal ? { signal } : {})
-        : pi.exec("xdg-open", [target], signal ? { signal } : {});
+    return os === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", target]] : ["xdg-open", [target]];
 }
-export async function openUrl(pi, url, browser, signal) {
+/** Resolves once the launcher has started: a browser launcher can run until the browser quits. */
+function launch(target, browser) {
+    const [command, args] = openCommand(target, browser);
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, { stdio: "ignore", detached: true });
+        child.once("error", reject);
+        child.once("spawn", () => {
+            child.unref();
+            resolve();
+        });
+    });
+}
+export async function openUrl(url, browser) {
     const { protocol } = new URL(url);
     if (protocol !== "http:" && protocol !== "https:") {
         throw new Error(`Refusing to open a ${protocol} URL; only http and https URLs are opened`);
     }
-    const result = await execOpen(pi, url, browser, signal);
-    if (result.code !== 0) {
-        throw new Error(result.stderr || `Failed to open browser (exit code ${result.code})`);
-    }
+    await launch(url, browser);
 }
-export async function openPath(pi, targetPath) {
-    const result = await execOpen(pi, targetPath);
-    if (result.code !== 0) {
-        throw new Error(result.stderr || `Failed to open path (exit code ${result.code})`);
-    }
+export async function openPath(targetPath) {
+    await launch(targetPath);
 }
 export async function parallelLimit(items, limit, fn) {
     const results = [];

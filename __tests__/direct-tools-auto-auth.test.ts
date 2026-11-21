@@ -69,6 +69,7 @@ describe("direct tools auto auth", () => {
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],
+      openBrowser: vi.fn(),
     } as any;
 
     const { metadata } = buildToolMetadata(
@@ -98,7 +99,7 @@ describe("direct tools auto auth", () => {
       "demo",
       "https://api.example.com/mcp",
       state.config.mcpServers.demo,
-      { signal: controller.signal },
+      { signal: controller.signal, openAuthorizationUrl: state.openBrowser },
     );
     expect(state.manager.close).toHaveBeenCalledWith("demo");
     expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);

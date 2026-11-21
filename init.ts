@@ -197,7 +197,7 @@ export async function initializeMcp(
   const elicitationEnabled = config.settings?.elicitation !== false && hasUI;
   const openBrowser = async (url: string) => {
     owner.throwIfInactive();
-    await openUrl(pi, url, process.env.BROWSER, owner.signal);
+    await openUrl(url, process.env.BROWSER);
     owner.throwIfInactive();
   };
   if (elicitationEnabled && ui) {

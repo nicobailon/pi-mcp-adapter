@@ -738,7 +738,7 @@ export async function openMcpSetup(
       return { ...result, reachable: await isLocalServerReachable(preset.entry.url!) };
     },
     openPath: async (targetPath: string) => {
-      await openPath(pi, targetPath);
+      await openPath(targetPath);
     },
     markSetupCompleted: () => {
       persistSetupCompleted(discovery.fingerprint);

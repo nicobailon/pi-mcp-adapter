@@ -1,4 +1,3 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { McpConfig, McpToolAnnotations, ServerEntry } from "./types.ts";
 /** Check whether an HTTP server configuration permits OAuth. */
 export declare function supportsOAuth(definition: ServerEntry): boolean;
@@ -8,8 +7,8 @@ export declare function parseJsonWithComments(raw: string): unknown;
 export declare function resolveRealContainedPath(root: string, candidate: string, allowMissing?: boolean): string | null;
 export declare function resolveContainedPath(root: string, candidate: string): string | null;
 export declare function stableStringify(value: unknown): string;
-export declare function openUrl(pi: ExtensionAPI, url: string, browser?: string, signal?: AbortSignal): Promise<void>;
-export declare function openPath(pi: ExtensionAPI, targetPath: string): Promise<void>;
+export declare function openUrl(url: string, browser?: string): Promise<void>;
+export declare function openPath(targetPath: string): Promise<void>;
 export declare function parallelLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]>;
 export declare function getConfigPathFromArgv(): string | undefined;
 export declare function interpolateEnvVars(value: string): string;
