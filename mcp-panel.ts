@@ -1,4 +1,4 @@
-import { Container, Text, matchesKey, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { Container, Text, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { copyToClipboard, type Theme } from "@earendil-works/pi-coding-agent";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import { createMcpPanelTheme, McpPanelFrame, type McpPanelTheme } from "./mcp-panel-theme.ts";
@@ -124,6 +124,7 @@ interface McpPanelViewState {
   authOnly: boolean;
   saveLabel: string | null;
   canImportPiSignIns: boolean;
+  disabledSaveNote: string | null;
 }
 
 /**
@@ -265,6 +266,11 @@ class McpPanelView implements Component {
         this.theme.description(stats + (state.dirty ? this.theme.needsAuth("  (unsaved)") : "")),
         innerWidth,
       );
+      if (state.disabledSaveNote) {
+        for (const line of wrapTextWithAnsi(sanitizeDisplayText(state.disabledSaveNote), innerWidth - 1)) {
+          this.addRow(this.theme.hint(line), innerWidth);
+        }
+      }
     }
 
     this.addRow("", innerWidth);
@@ -451,6 +457,7 @@ class McpPanelView implements Component {
 
 class McpPanel {
   private noticeLines: string[];
+  private disabledSaveNote: string | undefined;
   private prefix: ToolPrefix;
   private servers: ServerState[] = [];
   private cursorIndex = 0;
@@ -481,10 +488,11 @@ class McpPanel {
     private callbacks: McpPanelCallbacks,
     tui: { requestRender(): void },
     private done: (result: McpPanelResult) => void,
-    options: { noticeLines?: string[]; authOnly?: boolean; keybindings?: PanelKeybindings; theme?: Theme } = {},
+    options: { noticeLines?: string[]; disabledSaveNote?: string; authOnly?: boolean; keybindings?: PanelKeybindings; theme?: Theme } = {},
   ) {
     this.tui = tui;
     this.noticeLines = options.noticeLines ?? [];
+    this.disabledSaveNote = options.disabledSaveNote;
     this.authOnly = options.authOnly === true;
     this.keys = createPanelKeys(options.keybindings);
     this.view = new McpPanelView(() => this.getViewState(), createMcpPanelTheme(options.theme));
@@ -1122,6 +1130,7 @@ class McpPanel {
       authOnly: this.authOnly,
       saveLabel: this.keys.saveLabel(),
       canImportPiSignIns: !this.authOnly && !this.piSignInsImported && this.callbacks.importPiSignIns !== undefined,
+      disabledSaveNote: this.servers.some((s) => s.disabled !== s.wasDisabled) ? this.disabledSaveNote ?? null : null,
     };
   }
 
@@ -1145,7 +1154,7 @@ export function createMcpPanel(
   callbacks: McpPanelCallbacks,
   tui: { requestRender(): void },
   done: (result: McpPanelResult) => void,
-  options?: { noticeLines?: string[]; authOnly?: boolean; keybindings?: PanelKeybindings; theme?: Theme },
+  options?: { noticeLines?: string[]; disabledSaveNote?: string; authOnly?: boolean; keybindings?: PanelKeybindings; theme?: Theme },
 ): McpPanel & { dispose(): void } {
   return new McpPanel(config, cache, provenance, callbacks, tui, done, options ?? {});
 }

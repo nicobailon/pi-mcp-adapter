@@ -1849,6 +1849,13 @@ function setServersObject(raw, servers) {
     delete raw["mcp-servers"];
     raw.mcpServers = servers;
 }
+/** Why a disabled override in the project Pi layer would never be read, or undefined when it would be. */
+export function getProjectServerDisabledOverrideRefusal(overridePath, cwd) {
+    const exclusivePath = getPiGlobalConfigPath(overridePath);
+    if (!isExclusiveConfigMode() || getProjectPiConfigPath(cwd) === exclusivePath)
+        return undefined;
+    return `Project overrides are unavailable in exclusive config mode, which reads only ${exclusivePath}; edit that file instead`;
+}
 /**
  * Persist only the disabled field in the project Pi layer. Enabling writes an
  * explicit false only when a lower-precedence source is itself disabled; this
@@ -1856,10 +1863,9 @@ function setServersObject(raw, servers) {
  */
 export function writeProjectServerDisabledOverride(overridePath, cwd, serverName, disabled) {
     const filePath = getProjectPiConfigPath(cwd);
-    const exclusivePath = getPiGlobalConfigPath(overridePath);
-    if (isExclusiveConfigMode() && filePath !== exclusivePath) {
-        throw new Error(`Project overrides are unavailable in exclusive config mode, which reads only ${exclusivePath}; edit that file instead`);
-    }
+    const refusal = getProjectServerDisabledOverrideRefusal(overridePath, cwd);
+    if (refusal)
+        throw new Error(refusal);
     const raw = readRawConfigObject(filePath);
     const serverKey = raw.mcpServers !== undefined ? "mcpServers" : raw["mcp-servers"] !== undefined ? "mcp-servers" : "mcpServers";
     const rawServers = raw[serverKey];

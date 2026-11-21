@@ -151,6 +151,8 @@ export interface ServerDisabledOverrideResult {
     path: string;
     changed: boolean;
 }
+/** Why a disabled override in the project Pi layer would never be read, or undefined when it would be. */
+export declare function getProjectServerDisabledOverrideRefusal(overridePath: string | undefined, cwd: string): string | undefined;
 /**
  * Persist only the disabled field in the project Pi layer. Enabling writes an
  * explicit false only when a lower-precedence source is itself disabled; this
