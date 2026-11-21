@@ -435,6 +435,7 @@ export async function authenticateServer(
   serverName: string,
   config: McpConfig,
   ctx: ExtensionContext,
+  openBrowser: (url: string) => Promise<void>,
   signal?: AbortSignal,
   runtime?: McpOAuthRuntime,
 ): Promise<McpAuthResult> {
@@ -483,6 +484,7 @@ export async function authenticateServer(
     const status = await authenticate(serverName, serverUrl, definition, {
       ...(Object.keys(authStorageOptions).length > 0 ? { authStorageOptions } : {}),
       onAuthorizationUrl: () => {},
+      openAuthorizationUrl: openBrowser,
       onAuthorizationInput: async (authorizationUrl, inputSignal) => {
         if (inputSignal.aborted) return undefined;
         return ui.input(
@@ -778,7 +780,7 @@ function buildMcpPanelCallbacks(
       const overlay = getOverlayHandle?.();
       overlay?.setHidden(true);
       try {
-        return await authenticateServer(serverName, config, ctx, state.owner?.signal, state.oauthRuntime);
+        return await authenticateServer(serverName, config, ctx, state.openBrowser, state.owner?.signal, state.oauthRuntime);
       } finally {
         overlay?.setHidden(false);
         overlay?.focus();

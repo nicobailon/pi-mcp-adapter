@@ -9,8 +9,6 @@ import type { McpExtensionState } from "../state.ts";
 import { startUiServer, type UiServerHandle } from "../ui-server.ts";
 import type { ConsentManager } from "../consent-manager.ts";
 
-vi.mock("open", () => ({ default: vi.fn(async () => undefined) }));
-
 const fixture = fileURLToPath(new URL("./fixtures/tools-only-server.mjs", import.meta.url));
 const IDLE_MS = 10 * 60 * 1000;
 
@@ -161,7 +159,7 @@ describe("idle shutdown never closes a server that is in use", () => {
 
   it("gives an accepted URL elicitation one more idle timeout", async () => {
     const ui = { select: vi.fn().mockResolvedValue("Open"), input: vi.fn(), notify: vi.fn() };
-    manager.setElicitationConfig({ allowUrl: true, ui: ui as never });
+    manager.setElicitationConfig({ allowUrl: true, openUrl: vi.fn(async () => undefined), ui: ui as never });
     advance(IDLE_MS - 1000);
     await expect(manager.handleUrlElicitationRequired("demo", new UrlElicitationRequiredError([
       { mode: "url", message: "Sign in", elicitationId: "sign-in", url: "https://example.com/sign-in" },

@@ -13,7 +13,6 @@ import {
   validateClientMetadataUrl,
   type AuthOptions,
 } from "@modelcontextprotocol/client"
-import open from "open"
 import {
   getOAuthCallbackPort,
   McpOAuthProvider,
@@ -59,6 +58,7 @@ export interface McpOAuthRuntime {
 
 export interface AuthenticateOptions {
   onAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>
+  /** Opens the authorization URL in a browser; without it the URL is only surfaced. */
   openAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>
   onAuthorizationInput?: (
     authorizationUrl: string,
@@ -1063,15 +1063,13 @@ export async function authenticate(
       } else {
         console.log(`MCP Auth: Open this URL to authenticate ${serverName}:\n${authorizationUrl}`)
       }
-      try {
-        await abortable(Promise.resolve(
-          options.openAuthorizationUrl
-            ? options.openAuthorizationUrl(authorizationUrl)
-            : open(authorizationUrl),
-        ), signal)
-      } catch (error) {
-        if (isAbortError(error, signal)) throw error
-        console.warn(`MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`, { error })
+      if (options.openAuthorizationUrl) {
+        try {
+          await abortable(Promise.resolve(options.openAuthorizationUrl(authorizationUrl)), signal)
+        } catch (error) {
+          if (isAbortError(error, signal)) throw error
+          console.warn(`MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`, { error })
+        }
       }
 
       const authorizationResponse = await waitForAuthorizationResponse(

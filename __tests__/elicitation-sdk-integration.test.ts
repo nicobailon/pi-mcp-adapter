@@ -10,7 +10,6 @@ import type { DirectToolSpec, ToolMetadata } from "../types.ts";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 
 const mocks = vi.hoisted(() => ({ open: vi.fn(async () => undefined) }));
-vi.mock("open", () => ({ default: mocks.open }));
 
 const fixture = fileURLToPath(new URL("./fixtures/elicitation-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
@@ -34,6 +33,7 @@ async function createConnectedManager(mode: ExtensionMode, answers: string[] = [
   manager.setElicitationConfig({
     ui,
     allowUrl: isTuiMode({ hasUI: true, mode }),
+    openUrl: mocks.open,
   });
   await manager.connect("real", definition);
   // Set after connecting so a slow CI runner's spawn and handshake do not use up the call's timeout.

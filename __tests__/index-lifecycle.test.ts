@@ -4103,6 +4103,7 @@ describe("mcpAdapter session lifecycle", () => {
       "github",
       state.config,
       expect.any(Object),
+      state.openBrowser,
       expect.any(AbortSignal),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
@@ -4130,6 +4131,7 @@ describe("mcpAdapter session lifecycle", () => {
       "github",
       state.config,
       expect.any(Object),
+      state.openBrowser,
       expect.any(AbortSignal),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );

@@ -73,9 +73,11 @@ async function execOpen(pi: ExtensionAPI, target: string, browser?: string, sign
     return pi.exec("open", [target], signal ? { signal } : {});
   }
   if (os === "win32") {
+    // Never `cmd /c start`: cmd.exe re-parses &, | and ^ in the target before `start` runs,
+    // so a server-supplied URL could run commands. rundll32 hands it to the protocol handler.
     return browser
-      ? pi.exec("cmd", ["/c", "start", "", browser, target], signal ? { signal } : {})
-      : pi.exec("cmd", ["/c", "start", "", target], signal ? { signal } : {});
+      ? pi.exec(browser, [target], signal ? { signal } : {})
+      : pi.exec("rundll32", ["url.dll,FileProtocolHandler", target], signal ? { signal } : {});
   }
   return browser
     ? pi.exec(browser, [target], signal ? { signal } : {})
@@ -83,6 +85,10 @@ async function execOpen(pi: ExtensionAPI, target: string, browser?: string, sign
 }
 
 export async function openUrl(pi: ExtensionAPI, url: string, browser?: string, signal?: AbortSignal): Promise<void> {
+  const { protocol } = new URL(url);
+  if (protocol !== "http:" && protocol !== "https:") {
+    throw new Error(`Refusing to open a ${protocol} URL; only http and https URLs are opened`);
+  }
   const result = await execOpen(pi, url, browser, signal);
   if (result.code !== 0) {
     throw new Error(result.stderr || `Failed to open browser (exit code ${result.code})`);

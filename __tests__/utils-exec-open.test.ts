@@ -86,3 +86,37 @@ describe("openUrl on darwin", () => {
     expect(exec).toHaveBeenCalledWith("/usr/bin/open", ["https://example.com"], { signal: controller.signal });
   });
 });
+
+describe("openUrl on win32", () => {
+  beforeEach(() => {
+    vi.mocked(platform).mockReturnValue("win32");
+  });
+
+  const url = "https://mcp.evil.example/a&notepad&b/$(notepad)/authorize";
+
+  it("hands the URL to the protocol handler without cmd.exe", async () => {
+    const { pi, exec } = fakePi();
+
+    await openUrl(pi, url);
+
+    expect(exec).toHaveBeenCalledExactlyOnceWith("rundll32", ["url.dll,FileProtocolHandler", url], {});
+  });
+
+  it("runs a browser override directly", async () => {
+    const { pi, exec } = fakePi();
+
+    await openUrl(pi, url, "C:\\Browsers\\firefox.exe");
+
+    expect(exec).toHaveBeenCalledExactlyOnceWith("C:\\Browsers\\firefox.exe", [url], {});
+  });
+});
+
+describe("openUrl schemes", () => {
+  it.each(["file:///C:/Windows/System32/calc.exe", "ms-settings:privacy", "javascript:alert(1)"])("refuses %s", async (target) => {
+    vi.mocked(platform).mockReturnValue("win32");
+    const { pi, exec } = fakePi();
+
+    await expect(openUrl(pi, target)).rejects.toThrow("only http and https URLs are opened");
+    expect(exec).not.toHaveBeenCalled();
+  });
+});

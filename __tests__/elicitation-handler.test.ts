@@ -7,8 +7,6 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(async () => undefined),
 }));
 
-vi.mock("open", () => ({ default: mocks.open }));
-
 function request(params: ElicitRequest["params"]): ElicitRequest {
   return { method: "elicitation/create", params } as ElicitRequest;
 }
@@ -41,7 +39,7 @@ describe("MCP elicitation", () => {
       select: vi.fn(() => new Promise<string>(resolve => { resolveSelection = resolve; })),
     });
     const controller = new AbortController();
-    const pending = handleElicitationRequest({ serverName: "demo", ui, allowUrl: true }, request({
+    const pending = handleElicitationRequest({ serverName: "demo", ui, allowUrl: true, openUrl: mocks.open }, request({
       mode: "form",
       message: "Confirm",
       requestedSchema: { type: "object", properties: {} },
@@ -59,7 +57,7 @@ describe("MCP elicitation", () => {
     const onUrlAccepted = vi.fn();
     const ui = createUi({ select: vi.fn().mockResolvedValue("Open") });
     const controller = new AbortController();
-    const pending = handleElicitationRequest({ serverName: "demo", ui, allowUrl: true, onUrlAccepted }, request({
+    const pending = handleElicitationRequest({ serverName: "demo", ui, allowUrl: true, openUrl: mocks.open, onUrlAccepted }, request({
       mode: "url",
       message: "Authorize",
       elicitationId: "auth-cancelled",
@@ -87,7 +85,7 @@ describe("MCP elicitation", () => {
     });
 
     const result = await handleElicitationRequest(
-      { serverName: "github", ui, allowUrl: true },
+      { serverName: "github", ui, allowUrl: true, openUrl: mocks.open },
       request({
         mode: "form",
         message: "Please provide your GitHub username",
@@ -125,7 +123,7 @@ describe("MCP elicitation", () => {
     });
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui, allowUrl: true },
+      { serverName: "demo", ui, allowUrl: true, openUrl: mocks.open },
       request({
         mode: "form",
         message: "Choose a name",
@@ -155,7 +153,7 @@ describe("MCP elicitation", () => {
     });
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui, allowUrl: true },
+      { serverName: "demo", ui, allowUrl: true, openUrl: mocks.open },
       request({
         mode: "form",
         message: "Contact details",
@@ -191,7 +189,7 @@ describe("MCP elicitation", () => {
     });
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui, allowUrl: false },
+      { serverName: "demo", ui, allowUrl: false, openUrl: mocks.open },
       request({
         mode: "form",
         message: "Choose a quantity",
@@ -226,6 +224,7 @@ describe("MCP elicitation", () => {
         serverName: "demo",
         ui: createUi({ select }),
         allowUrl: true,
+        openUrl: mocks.open,
       }, params)).resolves.toEqual(expected);
       expect(select).toHaveBeenCalledOnce();
       expect(select).toHaveBeenCalledWith(
@@ -248,11 +247,13 @@ describe("MCP elicitation", () => {
       serverName: "demo",
       ui: createUi({ select: vi.fn().mockResolvedValue("Decline") }),
       allowUrl: true,
+      openUrl: mocks.open,
     }, params)).resolves.toEqual({ action: "decline" });
     await expect(handleElicitationRequest({
       serverName: "demo",
       ui: createUi({ select: vi.fn().mockResolvedValue(undefined) }),
       allowUrl: true,
+      openUrl: mocks.open,
     }, params)).resolves.toEqual({ action: "cancel" });
     expect(mocks.open).not.toHaveBeenCalled();
   });
@@ -268,7 +269,7 @@ describe("MCP elicitation", () => {
     const url = `https://checkout.example.com/authorize?state=a%2Fb&scope=${"a".repeat(100)}`;
 
     const result = await handleElicitationRequest(
-      { serverName: "payments", ui, allowUrl: true, onUrlAccepted },
+      { serverName: "payments", ui, allowUrl: true, openUrl: mocks.open, onUrlAccepted },
       request({
         mode: "url",
         message: "Authorize the payment provider",
@@ -304,7 +305,7 @@ describe("MCP elicitation", () => {
     const url = `https://auth.example.com/authorize?request_uri=urn%3Aietf%3Aparams%3Aoauth%3Arequest_uri%3A${"a".repeat(100)}`;
     const ui = createUi({ select: vi.fn().mockResolvedValue("Decline") });
 
-    await handleElicitationRequest({ serverName: "demo", ui, allowUrl: true }, request({
+    await handleElicitationRequest({ serverName: "demo", ui, allowUrl: true, openUrl: mocks.open }, request({
       mode: "url",
       message: `Sign in at ${url}\nOr visit ${url} to continue.`,
       elicitationId: "auth-1",
@@ -347,7 +348,7 @@ describe("MCP elicitation", () => {
     const longerUrl = `${url}${suffix}`;
     const ui = createUi({ select: vi.fn().mockResolvedValue("Decline") });
 
-    await handleElicitationRequest({ serverName: "demo", ui, allowUrl: true }, request({
+    await handleElicitationRequest({ serverName: "demo", ui, allowUrl: true, openUrl: mocks.open }, request({
       mode: "url",
       message: `Longer URL: ${longerUrl}\nExact URL: ${url}`,
       elicitationId: "auth-1",
@@ -377,7 +378,7 @@ describe("MCP elicitation", () => {
     const url = "https://example.com/authorize";
     const ui = createUi({ select: vi.fn().mockResolvedValue("Decline") });
 
-    await handleElicitationRequest({ serverName: "demo", ui, allowUrl: true }, request({
+    await handleElicitationRequest({ serverName: "demo", ui, allowUrl: true, openUrl: mocks.open }, request({
       mode: "url",
       message: `${prefix}${url}${suffix}`,
       elicitationId: "auth-1",
@@ -404,7 +405,7 @@ describe("MCP elicitation", () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = createUi({ select: vi.fn().mockResolvedValue("Decline") });
 
-    await handleElicitationRequest({ serverName: "demo", ui, allowUrl: true }, request({
+    await handleElicitationRequest({ serverName: "demo", ui, allowUrl: true, openUrl: mocks.open }, request({
       mode: "url",
       message: `Continue at (${url}). Then use \`${url}\`.`,
       elicitationId: "auth-1",
@@ -421,7 +422,7 @@ describe("MCP elicitation", () => {
     const ui = createUi();
 
     await expect(handleElicitationRequest(
-      { serverName: "demo", ui, allowUrl: false },
+      { serverName: "demo", ui, allowUrl: false, openUrl: mocks.open },
       request({
         mode: "url",
         message: "Authorize",
@@ -437,7 +438,7 @@ describe("MCP elicitation", () => {
     const ui = createUi();
 
     await expect(handleElicitationRequest(
-      { serverName: "demo", ui, allowUrl: true },
+      { serverName: "demo", ui, allowUrl: true, openUrl: mocks.open },
       request({
         mode: "url",
         message: "Open a file",
@@ -459,7 +460,7 @@ describe("MCP elicitation", () => {
     });
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui, allowUrl: true },
+      { serverName: "demo", ui, allowUrl: true, openUrl: mocks.open },
       request({
         mode: "url",
         message: "Authorize",
@@ -491,7 +492,7 @@ describe("MCP elicitation", () => {
     });
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui, allowUrl: true },
+      { serverName: "demo", ui, allowUrl: true, openUrl: mocks.open },
       request({
         mode: "form",
         message: "Configure the operation",
