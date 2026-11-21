@@ -37,6 +37,7 @@ import { createRetryableLoader } from "./lazy-loader.ts";
 import { toToolParameters } from "./tool-parameters.ts";
 import { readPanelOpenKeys } from "./panel-keys.ts";
 import { getAgentPath } from "./agent-dir.ts";
+import { restoreSdkWarnings, routeSdkWarningsToLog } from "./sdk-warnings.ts";
 import { showUpgradeNotice } from "./upgrade-notice.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
@@ -1703,6 +1704,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   pi.on("session_start", async (_event, ctx) => {
     sessionCtx = null;
+    if (ctx.mode === "tui") routeSdkWarningsToLog();
     // A host that embeds the adapter with its own config ships it inside another package; its users never installed this one.
     if (options.config === undefined && options.configPath === undefined) {
       void showUpgradeNotice(ctx).catch((error) => console.error(`MCP: failed to show the upgrade notice: ${formatTerminalError(error)}`));
@@ -1875,6 +1877,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   pi.on("session_shutdown", async () => {
     sessionCtx = null;
+    restoreSdkWarnings();
     ++lifecycleGeneration;
     const currentState = state;
     const owner = currentOwner;
