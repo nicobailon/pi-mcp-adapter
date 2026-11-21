@@ -195,10 +195,16 @@ export async function initializeMcp(
     });
   }
   const elicitationEnabled = config.settings?.elicitation !== false && hasUI;
+  const openBrowser = async (url: string) => {
+    owner.throwIfInactive();
+    await openUrl(url, process.env.BROWSER);
+    owner.throwIfInactive();
+  };
   if (elicitationEnabled && ui) {
     manager.setElicitationConfig({
       ui,
       allowUrl: mode === "tui",
+      openUrl: openBrowser,
     });
   }
   const lifecycle = new McpLifecycleManager(manager, (serverName) => hasPendingAuth(serverName, undefined, oauthRuntime));
@@ -251,11 +257,7 @@ export async function initializeMcp(
     consentManager,
     uiServer: null,
     completedUiSessions: [],
-    openBrowser: async (url: string) => {
-      owner.throwIfInactive();
-      await openUrl(pi, url, process.env.BROWSER, owner.signal);
-      owner.throwIfInactive();
-    },
+    openBrowser,
     ...(ui !== undefined ? { ui } : {}),
     sendMessage: (message, options, delivery) => {
       const deliver = () => {

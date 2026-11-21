@@ -7,6 +7,7 @@ export interface ElicitationHandlerOptions {
     serverName: string;
     ui: ElicitationUIContext;
     allowUrl: boolean;
+    openUrl: (url: string) => Promise<void>;
     onUrlAccepted?: (elicitationId: string) => void;
 }
 export type ServerElicitationConfig = Omit<ElicitationHandlerOptions, "serverName" | "onUrlAccepted">;

@@ -2366,7 +2366,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         return;
       }
 
-      const result = await commands.authenticateServer(serverName, state.config, commandCtx, commandCtx.signal, state.oauthRuntime);
+      const result = await commands.authenticateServer(serverName, state.config, commandCtx, state.openBrowser, commandCtx.signal, state.oauthRuntime);
       if (result.ok) {
         commandOwner?.throwIfInactive();
         await commands.reconnectServer(state, commandCtx, serverName);

@@ -2,14 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import open from "open";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { connectProgram, findAccountGap } from "../executor-accounts.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 
-vi.mock("open", () => ({ default: vi.fn(async () => undefined) }));
+const open = vi.fn(async (_url: string) => undefined);
 
 type Calls = { path: string; input: unknown } | Array<{ path: string; input: unknown }>;
 
@@ -186,7 +185,7 @@ async function connectAccountExecutor({ mode = "local", select = [], env = {}, s
   };
   const manager = new McpServerManager();
   manager.setDefaultRequestTimeoutMs(2_000);
-  if (session !== "headless") manager.setElicitationConfig({ ui, allowUrl: session === "tui" });
+  if (session !== "headless") manager.setElicitationConfig({ ui, allowUrl: session === "tui", openUrl: open });
   await manager.connect("executor", definition);
   managers.push(manager);
   const state = {
@@ -235,7 +234,7 @@ function visible(result: { content?: Array<{ type: string; text?: string }>; det
 
 afterEach(async () => {
   handOffs = 0;
-  vi.mocked(open).mockClear();
+  open.mockClear();
   await Promise.all(managers.splice(0).map(manager => manager.closeAll()));
   await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
 });

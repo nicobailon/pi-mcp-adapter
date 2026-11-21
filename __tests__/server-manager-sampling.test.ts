@@ -9,8 +9,6 @@ const mocks = vi.hoisted(() => ({
   attachTaskSession: vi.fn(async (_options: any) => undefined),
 }));
 
-vi.mock("open", () => ({ default: mocks.open }));
-
 vi.mock("../mcp-tasks.ts", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   attachTaskSession: mocks.attachTaskSession,
@@ -141,7 +139,7 @@ describe("McpServerManager sampling", () => {
       notify: vi.fn(),
     };
     const manager = new McpServerManager();
-    manager.setElicitationConfig({ allowUrl: true, ui: ui as any });
+    manager.setElicitationConfig({ allowUrl: true, openUrl: mocks.open, ui: ui as any });
     await manager.connect("demo", { command: "node", args: ["server.js"] });
 
     const client = mocks.clients[0];
@@ -178,7 +176,7 @@ describe("McpServerManager sampling", () => {
       notify: vi.fn(),
     };
     const manager = new McpServerManager();
-    manager.setElicitationConfig({ allowUrl: true, ui: ui as any });
+    manager.setElicitationConfig({ allowUrl: true, openUrl: mocks.open, ui: ui as any });
     const result = await manager.handleUrlElicitationRequired("demo", new UrlElicitationRequiredError([
       { mode: "url", message: "First", elicitationId: "one", url: "https://example.com/one" },
       { mode: "url", message: "Second", elicitationId: "two", url: "https://example.com/two" },

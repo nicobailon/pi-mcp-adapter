@@ -4,7 +4,6 @@
  * High-level OAuth flow management using the MCP SDK's built-in auth functions.
  */
 import { auth as runSdkAuth, extractWWWAuthenticateParams, LATEST_PROTOCOL_VERSION, RegistrationRejectedError, UnauthorizedError, validateClientMetadataUrl, } from "@modelcontextprotocol/client";
-import open from "open";
 import { getOAuthCallbackPort, McpOAuthProvider, } from "./mcp-oauth-provider.js";
 import { ensureCallbackServer, waitForCallback, cancelPendingCallback, stopCallbackServer, stopCallbackServerIfIdle, releaseCallbackServer, } from "./mcp-callback-server.js";
 import { getAuthForUrl, getAuthEntry, clearAllCredentials, clearClientInfo, clearCodeVerifier, getOAuthState, clearOAuthState, getAuthBaseDir, beginOAuthRevocation, captureOAuthAuthority, OAuthCredentialStoreError, } from "./mcp-auth.js";
@@ -877,15 +876,15 @@ export async function authenticate(serverName, serverUrl, definition, options = 
             else {
                 console.log(`MCP Auth: Open this URL to authenticate ${serverName}:\n${authorizationUrl}`);
             }
-            try {
-                await abortable(Promise.resolve(options.openAuthorizationUrl
-                    ? options.openAuthorizationUrl(authorizationUrl)
-                    : open(authorizationUrl)), signal);
-            }
-            catch (error) {
-                if (isAbortError(error, signal))
-                    throw error;
-                console.warn(`MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`, { error });
+            if (options.openAuthorizationUrl) {
+                try {
+                    await abortable(Promise.resolve(options.openAuthorizationUrl(authorizationUrl)), signal);
+                }
+                catch (error) {
+                    if (isAbortError(error, signal))
+                        throw error;
+                    console.warn(`MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`, { error });
+                }
             }
             const authorizationResponse = await waitForAuthorizationResponse(callbackPromise, authorizationUrl, oauthState, options.onAuthorizationInput, signal);
             if (authorizationResponse.source === "manual") {

@@ -14,7 +14,6 @@ import {
 } from "@modelcontextprotocol/client";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type { JsonSchemaType } from "@modelcontextprotocol/client";
-import open from "open";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { terminalHyperlink } from "./utils.ts";
@@ -29,6 +28,7 @@ export interface ElicitationHandlerOptions {
   serverName: string;
   ui: ElicitationUIContext;
   allowUrl: boolean;
+  openUrl: (url: string) => Promise<void>;
   onUrlAccepted?: (elicitationId: string) => void;
 }
 
@@ -449,7 +449,7 @@ export async function handleUrlElicitation(
   if (decision === "Decline") return { action: "decline" };
 
   try {
-    await abortable(open(params.url), signal);
+    await abortable(options.openUrl(params.url), signal);
   } catch (error) {
     throwIfAborted(signal);
     options.ui.notify(`Could not open MCP elicitation URL: ${error instanceof Error ? error.message : String(error)}`, "error");

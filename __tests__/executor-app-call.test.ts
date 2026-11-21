@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import open from "open";
 import { showTools } from "../commands.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { unwrapExecutorCallResult } from "../executor-app-tools.ts";
@@ -13,7 +12,7 @@ import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { ServerCacheEntry, ServerEntry } from "../types.ts";
 
-vi.mock("open", () => ({ default: vi.fn(async () => undefined) }));
+const open = vi.fn(async (_url: string) => undefined);
 
 const catalogFixture = fileURLToPath(new URL("./fixtures/executor-catalog-server.mjs", import.meta.url));
 const accountFixture = fileURLToPath(new URL("./fixtures/executor-server.mjs", import.meta.url));
@@ -24,7 +23,7 @@ type Leg = "direct" | "script" | "proxy";
 type Result = { content?: Array<{ type: string; text?: string }>; details?: Record<string, unknown>; structuredContent?: unknown; isError?: boolean };
 
 afterEach(async () => {
-  vi.mocked(open).mockClear();
+  open.mockClear();
   await Promise.all(managers.splice(0).map(manager => manager.closeAll()));
   await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
 });
@@ -55,7 +54,7 @@ async function connectExecutor({ fixture = catalogFixture, paths = ["tools.alpha
   };
   const manager = new McpServerManager();
   manager.setDefaultRequestTimeoutMs(2_000);
-  manager.setElicitationConfig({ ui, allowUrl: true });
+  manager.setElicitationConfig({ ui, allowUrl: true, openUrl: open });
   await manager.connect("executor", definition);
   managers.push(manager);
   const entry: ServerCacheEntry = {

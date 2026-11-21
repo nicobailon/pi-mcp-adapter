@@ -136,7 +136,7 @@ if (scenario.startsWith("auth/client-credentials")) {
 const oauthRuntime = await initializeOAuth()
 const manager = new McpServerManager(process.cwd())
 manager.setOAuthRuntime(oauthRuntime)
-manager.setElicitationConfig({ allowUrl: false, ui: scriptedUi })
+manager.setElicitationConfig({ allowUrl: false, openUrl: async () => {}, ui: scriptedUi })
 manager.setDefaultRequestTimeoutMs(60_000)
 
 /**

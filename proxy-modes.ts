@@ -424,22 +424,12 @@ async function attemptAutoAuth(
   }
 
   try {
-    if (state.authStorageOptions) {
-      await authenticate(
-        serverName,
-        serverUrl,
-        definition,
-        signal
-          ? { authStorageOptions: state.authStorageOptions, signal, runtime: state.oauthRuntime }
-          : { authStorageOptions: state.authStorageOptions, runtime: state.oauthRuntime },
-      );
-    } else {
-      if (signal) {
-        await authenticate(serverName, serverUrl, definition, { signal, runtime: state.oauthRuntime });
-      } else {
-        await authenticate(serverName, serverUrl, definition, { runtime: state.oauthRuntime });
-      }
-    }
+    await authenticate(serverName, serverUrl, definition, {
+      ...(state.authStorageOptions ? { authStorageOptions: state.authStorageOptions } : {}),
+      ...(signal ? { signal } : {}),
+      runtime: state.oauthRuntime,
+      openAuthorizationUrl: state.openBrowser,
+    });
     return { status: "success" };
   } catch (error) {
     if (isAbortError(error, signal)) throw error;

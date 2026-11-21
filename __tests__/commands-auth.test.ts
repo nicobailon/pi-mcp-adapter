@@ -119,13 +119,14 @@ describe("authenticateServer", () => {
     process.env.MCP_AUTH_URL = "https://mcp.sentry.dev/mcp";
     mocks.authenticate.mockResolvedValueOnce("authenticated");
     const ui = { notify: vi.fn(), setStatus: vi.fn() };
+    const openBrowser = vi.fn(async () => undefined);
     const { authenticateServer } = await import("../commands.ts");
 
     try {
       const definition = { url: "${MCP_AUTH_URL}", auth: "oauth" as const };
       const result = await authenticateServer("sentry", {
         mcpServers: { sentry: definition },
-      }, { hasUI: true, mode: "tui", ui } as any);
+      }, { hasUI: true, mode: "tui", ui } as any, openBrowser);
 
       expect(result.ok).toBe(true);
       expect(mocks.authenticate).toHaveBeenCalledWith(
@@ -134,6 +135,7 @@ describe("authenticateServer", () => {
         definition,
         {
           onAuthorizationUrl: expect.any(Function),
+          openAuthorizationUrl: openBrowser,
           onAuthorizationInput: expect.any(Function),
         },
       );
@@ -153,7 +155,7 @@ describe("authenticateServer", () => {
     try {
       const result = await authenticateServer("sentry", {
         mcpServers: { sentry: { url: "https://${MCP_AUTH_URL}/mcp", auth: "oauth" } },
-      }, { hasUI: true, mode: "tui", ui } as any);
+      }, { hasUI: true, mode: "tui", ui } as any, vi.fn());
 
       expect(result.ok).toBe(false);
       expect(result.message).toBe("Missing environment variable in MCP server URL: MCP_AUTH_URL");
@@ -241,12 +243,13 @@ describe("authenticateServer", () => {
       input: vi.fn(async (_title: string) => callbackUrl),
     };
     const { authenticateServer } = await import("../commands.ts");
+    const openBrowser = vi.fn(async () => undefined);
 
     const result = await authenticateServer("sentry", {
       mcpServers: {
         sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" },
       },
-    }, { hasUI: true, mode: "tui", ui } as any);
+    }, { hasUI: true, mode: "tui", ui } as any, openBrowser);
 
     expect(result.ok).toBe(true);
     expect(mocks.authenticate).toHaveBeenCalledWith(
@@ -255,6 +258,7 @@ describe("authenticateServer", () => {
       { url: "https://mcp.sentry.dev/mcp", auth: "oauth" },
       {
         onAuthorizationUrl: expect.any(Function),
+        openAuthorizationUrl: openBrowser,
         onAuthorizationInput: expect.any(Function),
       },
     );
@@ -288,7 +292,7 @@ describe("authenticateServer", () => {
 
     await authenticateServer("sentry", {
       mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } },
-    }, { hasUI: true, mode: "tui", ui } as any);
+    }, { hasUI: true, mode: "tui", ui } as any, vi.fn());
 
     expect(ui.input).not.toHaveBeenCalled();
     expect(ui.confirm).not.toHaveBeenCalled();
