@@ -76,15 +76,25 @@ function openCommand(target: string, browser?: string): [string, string[]] {
   return os === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", target]] : ["xdg-open", [target]];
 }
 
-/** Resolves once the launcher has started: a browser launcher can run until the browser quits. */
-function launch(target: string, browser?: string): Promise<void> {
+// A launcher that cannot open the target (no such app, no URL handler) exits within this time;
+// one still running is a browser that may stay up until the user quits it.
+const LAUNCH_EXIT_WINDOW_MS = 1000;
+
+function launch(target: string, browser: string | undefined, failure: string): Promise<void> {
   const [command, args] = openCommand(target, browser);
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: "ignore", detached: true });
-    child.once("error", reject);
-    child.once("spawn", () => {
-      child.unref();
-      resolve();
+    child.unref();
+    const exitWindow = setTimeout(resolve, LAUNCH_EXIT_WINDOW_MS);
+    exitWindow.unref();
+    child.once("error", (error) => {
+      clearTimeout(exitWindow);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(exitWindow);
+      if (code === 0) resolve();
+      else reject(new Error(`${failure} (${signal ? `signal ${signal}` : `exit code ${code}`})`));
     });
   });
 }
@@ -94,11 +104,11 @@ export async function openUrl(url: string, browser?: string): Promise<void> {
   if (protocol !== "http:" && protocol !== "https:") {
     throw new Error(`Refusing to open a ${protocol} URL; only http and https URLs are opened`);
   }
-  await launch(url, browser);
+  await launch(url, browser, "Failed to open browser");
 }
 
 export async function openPath(targetPath: string): Promise<void> {
-  await launch(targetPath);
+  await launch(targetPath, undefined, "Failed to open path");
 }
 
 export async function parallelLimit<T, R>(

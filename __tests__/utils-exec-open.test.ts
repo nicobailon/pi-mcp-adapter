@@ -21,7 +21,7 @@ const launcher = { stdio: "ignore", detached: true };
 function fakeSpawn(): void {
   vi.mocked(spawn).mockImplementationOnce(() => {
     const child = Object.assign(new EventEmitter(), { unref: () => {} });
-    queueMicrotask(() => child.emit("spawn"));
+    queueMicrotask(() => child.emit("exit", 0, null));
     return child as unknown as ChildProcess;
   });
 }
@@ -115,18 +115,41 @@ describe("openUrl on win32", () => {
   });
 });
 
-it.skipIf(process.platform === "win32")("returns while a browser launcher is still running", async () => {
-  vi.mocked(platform).mockReturnValue("linux");
-  const dir = await mkdtemp(join(tmpdir(), "pi-mcp-open-"));
-  const browser = join(dir, "browser");
-  await writeFile(browser, '#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 30\n', { mode: 0o755 });
-  let pid: number | undefined;
-  try {
-    await openUrl("https://example.com/authorize", browser);
-    pid = Number(await vi.waitFor(() => readFile(`${browser}.pid`, "utf8")));
-    expect(() => process.kill(pid!, 0)).not.toThrow();
-  } finally {
-    if (pid) process.kill(pid);
-    await rm(dir, { recursive: true, force: true });
+describe.skipIf(process.platform === "win32")("openUrl with a real launcher", () => {
+  async function withBrowser(script: string, run: (browser: string) => Promise<void>): Promise<void> {
+    vi.mocked(platform).mockReturnValue("linux");
+    const dir = await mkdtemp(join(tmpdir(), "pi-mcp-open-"));
+    const browser = join(dir, "browser");
+    await writeFile(browser, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+    try {
+      await run(browser);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   }
+
+  it("returns while a browser launcher is still running", async () => {
+    await withBrowser('echo $$ > "$0.pid"\nexec sleep 30', async (browser) => {
+      let pid = 0;
+      try {
+        const started = Date.now();
+        await openUrl("https://example.com/authorize", browser);
+        expect(Date.now() - started).toBeLessThan(3000);
+        pid = await vi.waitFor(async () => {
+          const value = Number(await readFile(`${browser}.pid`, "utf8"));
+          if (!(value > 0)) throw new Error("pid not written yet");
+          return value;
+        });
+        expect(() => process.kill(pid, 0)).not.toThrow();
+      } finally {
+        if (pid > 0) process.kill(pid);
+      }
+    });
+  });
+
+  it("rejects with the exit code of a launcher that fails at once", async () => {
+    await withBrowser("exit 3", async (browser) => {
+      await expect(openUrl("https://example.com/authorize", browser)).rejects.toThrow("Failed to open browser (exit code 3)");
+    });
+  });
 });
