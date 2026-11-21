@@ -2259,7 +2259,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             break;
           }
           commandOwner?.throwIfInactive();
-          const result = writeProjectServerDisabledOverride(earlyConfigPath, commandCtx.cwd, serverName, subcommand === "disable");
+          let result: ReturnType<typeof writeProjectServerDisabledOverride>;
+          try {
+            result = writeProjectServerDisabledOverride(earlyConfigPath, commandCtx.cwd, serverName, subcommand === "disable");
+          } catch (error) {
+            commandCtx.ui?.notify(`Failed to ${subcommand} server "${serverName}": ${error instanceof Error ? error.message : String(error)}`, "error");
+            break;
+          }
           if (result.changed) {
             commandCtx.ui?.notify(`${subcommand === "disable" ? "Disabled" : "Enabled"} server "${serverName}" in ${result.path} — run /reload to apply`, "info");
           } else {

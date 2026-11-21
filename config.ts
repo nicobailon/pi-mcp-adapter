@@ -2057,6 +2057,10 @@ export function writeProjectServerDisabledOverride(
   disabled: boolean,
 ): ServerDisabledOverrideResult {
   const filePath = getProjectPiConfigPath(cwd);
+  const exclusivePath = getPiGlobalConfigPath(overridePath);
+  if (isExclusiveConfigMode() && filePath !== exclusivePath) {
+    throw new Error(`Project overrides are unavailable in exclusive config mode, which reads only ${exclusivePath}; edit that file instead`);
+  }
   const raw = readRawConfigObject(filePath);
 
   const serverKey = raw.mcpServers !== undefined ? "mcpServers" : raw["mcp-servers"] !== undefined ? "mcp-servers" : "mcpServers";

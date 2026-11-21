@@ -881,16 +881,24 @@ export async function openMcpPanel(
           let directToolsFileWritten = false;
           void (async () => {
             if (!result.cancelled && result.disabledChanges.size > 0) {
+              const written = { path: "", disabled: [] as string[], enabled: [] as string[] };
               for (const [serverName, disabled] of result.disabledChanges) {
                 try {
                   const override = writeProjectServerDisabledOverride(configPath, ctx.cwd, serverName, disabled);
                   if (override.changed) {
                     configChanged = true;
+                    written.path = override.path;
+                    (disabled ? written.disabled : written.enabled).push(`"${serverName}"`);
                   }
                 } catch (error) {
                   ctx.ui.notify(`Failed to ${disabled ? "disable" : "enable"} server "${serverName}": ${error instanceof Error ? error.message : String(error)}`, "error");
                 }
               }
+              const toggled = [
+                ...(written.disabled.length > 0 ? [`disabled ${written.disabled.join(", ")}`] : []),
+                ...(written.enabled.length > 0 ? [`enabled ${written.enabled.join(", ")}`] : []),
+              ].join("; ");
+              if (toggled) ctx.ui.notify(`Saved to ${written.path}: ${toggled}`, "info");
             }
             if (!result.cancelled && result.changes.size > 0) {
               const before = loadMcpConfig(configPath, ctx.cwd);
