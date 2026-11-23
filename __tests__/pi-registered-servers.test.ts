@@ -133,6 +133,23 @@ describe("servers registered with pi.registerMcpServer()", () => {
     );
   });
 
+  it("serves an exposure: deferred registration through the proxy without a warning", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers, ctx, notify } = createPi([
+      { name: "dash", config: { url: "https://dash.test/mcp", exposure: "deferred" } },
+    ]);
+    mcpAdapter(api);
+
+    await handlers.get("session_start")?.({}, ctx);
+    await settle();
+
+    expect((await callThroughMcp(api, ctx, "dash")).content[0].text)
+      .toBe(JSON.stringify({ url: "https://dash.test/mcp", directTools: false }));
+    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining("ignored settings"), "warning");
+  });
+
   it("keeps a configured server of the same name until a later session's config drops it", async () => {
     // The startup config leaves out project servers; the session's config has the approved .pi/mcp.json entry.
     mocks.initializeMcp
