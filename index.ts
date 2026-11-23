@@ -1419,12 +1419,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         report(`${label} is overridden by the server registered earlier with pi-mcp-adapter's registerMcpServer().`);
       } else {
         // Runtime servers are proxy-only, so exposure settings that map to direct tools don't apply.
+        // `deferred` (directTools "search") asks for search-discovered tools, which the proxy already provides.
         const { directTools, ...entry } = translated.entry;
         const ignored = [
           ...translated.ignored,
           ...(Array.isArray(directTools)
             ? directTools.map((tool) => `toolExposure ${JSON.stringify(tool)}: direct`)
-            : directTools !== undefined ? [`exposure: ${config.exposure}`] : []),
+            : directTools !== undefined && directTools !== "search" ? [`exposure: ${config.exposure}`] : []),
         ];
         if (ignored.length > 0) report(`${label}: ignored settings ${ignored.join(", ")}.`);
         registration = registerRuntimeServer(name, entry);
