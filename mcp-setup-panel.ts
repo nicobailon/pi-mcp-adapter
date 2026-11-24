@@ -264,7 +264,7 @@ class McpSetupPanelView implements Component {
     this.addFrame("├", "┤");
     this.addRow(this.renderFooter(state, contentWidth, this.maxDetailScroll > 0), innerWidth);
     this.addFrame("╰", "╯");
-    return this.container.render(panelWidth);
+    return [...this.container.render(panelWidth)];
   }
 
   invalidate(): void {

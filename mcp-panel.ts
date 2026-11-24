@@ -316,7 +316,7 @@ class McpPanelView implements Component {
     if (currentLine) this.addRow(this.theme.hint(currentLine), innerWidth);
 
     this.addRule("╰", "╯");
-    return this.container.render(panelWidth);
+    return [...this.container.render(panelWidth)];
   }
 
   invalidate(): void {
