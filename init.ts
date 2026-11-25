@@ -398,7 +398,9 @@ export async function initializeMcp(
         const error = typeof definition.auth === "object"
           ? providerSignInMessage(name, definition.auth.provider)
           : `OAuth authentication required. Run /mcp-auth ${name}.`;
-        return { name, definition, resident, connection: null, error, transient: false };
+        // With autoAuth, the first tool call opens the sign-in, so startup only needs to say so.
+        const signInOnUse = typeof definition.auth !== "object" && config.settings?.autoAuth === true;
+        return { name, definition, resident, connection: null, error, transient: false, signInOnUse };
       }
       // Capture before closing; the closed connection keeps its catalog for publication below.
       captureMetadata(state, name, connection, () => cache);
@@ -465,7 +467,7 @@ export async function initializeMcp(
     startupKnownMetadata.set(name, metadata);
   }
 
-  for (const { name, definition, connection, error, transient } of results) {
+  for (const { name, definition, connection, error, transient, signInOnUse } of results) {
     owner.throwIfInactive();
     if (error || !connection) {
       if (initialSignal?.aborted) continue;
@@ -479,6 +481,12 @@ export async function initializeMcp(
         const notice = `MCP: ${name} temporarily unavailable (HTTP 503); retry later`;
         logger.debug(`MCP: startup connect hit transient upstream outage for ${name}; will retry`);
         if (ui) ui.notify(notice, "warning");
+        else console.error(notice);
+        continue;
+      }
+      if (signInOnUse) {
+        const notice = `MCP: ${name} signs in on first use`;
+        if (ui) ui.notify(notice, "info");
         else console.error(notice);
         continue;
       }

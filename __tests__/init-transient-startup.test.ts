@@ -154,3 +154,54 @@ describe("startup transient-503 handling", () => {
     expect(callsFor("lazyOne")).toBe(1);
   });
 });
+
+describe("startup sign-in with autoAuth", () => {
+  let notify: ReturnType<typeof vi.fn>;
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    notify = vi.fn();
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.cache = null;
+  });
+
+  afterEach(async () => {
+    await Promise.all(mocks.states.splice(0).map(state => state.owner.stop("test cleanup")));
+    for (const dir of mocks.tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  async function bootWith(settings: Record<string, unknown>) {
+    const cwd = mkdtempSync(join(tmpdir(), "pi-mcp-auto-auth-init-"));
+    mocks.tempDirs.push(cwd);
+    const state = await initializeMcp({ getFlag: vi.fn() } as any, {
+      cwd, hasUI: true, mode: "tui", ui: { notify, setStatus: vi.fn() }, signal: new AbortController().signal,
+    } as any, undefined, {
+      config: { settings, mcpServers: { rovo: { url: "http://127.0.0.1:8787/rovo/mcp", auth: "oauth" } } },
+    });
+    mocks.states.push(state);
+    return state;
+  }
+
+  it("says an OAuth server signs in on first use instead of reporting a failure", async () => {
+    vi.spyOn(McpServerManager.prototype, "connect").mockResolvedValue({ status: "needs-auth" } as any);
+
+    const state = await bootWith({ autoAuth: true });
+
+    expect(notify).toHaveBeenCalledWith("MCP: rovo signs in on first use", "info");
+    expect([...notify.mock.calls].filter(([message]) => String(message).includes("Failed to connect"))).toEqual([]);
+    expect(consoleError.mock.calls.some(args => String(args[0]).includes("Failed to connect"))).toBe(false);
+    expect(state.failureTracker.has("rovo")).toBe(true);
+  });
+
+  it("keeps the /mcp-auth error without autoAuth", async () => {
+    vi.spyOn(McpServerManager.prototype, "connect").mockResolvedValue({ status: "needs-auth" } as any);
+
+    await bootWith({});
+
+    expect(notify).toHaveBeenCalledWith(
+      "MCP: Failed to connect to rovo: OAuth authentication required. Run /mcp-auth rovo.",
+      "error",
+    );
+  });
+});
