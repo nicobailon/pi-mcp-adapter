@@ -398,8 +398,11 @@ export async function initializeMcp(
         const error = typeof definition.auth === "object"
           ? providerSignInMessage(name, definition.auth.provider)
           : `OAuth authentication required. Run /mcp-auth ${name}.`;
-        // With autoAuth, the first tool call opens the sign-in, so startup only needs to say so.
-        const signInOnUse = typeof definition.auth !== "object" && config.settings?.autoAuth === true;
+        // With autoAuth, the first tool call signs in, so startup only needs to say so. Without a UI only
+        // client_credentials can sign in on its own; authorization_code keeps the actionable error.
+        const grantType = definition.oauth ? definition.oauth.grantType ?? "authorization_code" : "authorization_code";
+        const signInOnUse = typeof definition.auth !== "object" && config.settings?.autoAuth === true
+          && (ui !== undefined || grantType === "client_credentials");
         return { name, definition, resident, connection: null, error, transient: false, signInOnUse };
       }
       // Capture before closing; the closed connection keeps its catalog for publication below.
