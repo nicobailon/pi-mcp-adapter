@@ -371,6 +371,18 @@ type OAuthRedirectTarget =
   }
   | { mode: "manual" }
 
+/** True when the redirect URI needs the user to paste the callback, which automatic sign-in cannot do. */
+export function usesManualRedirect(definition: ServerEntry): boolean {
+  try {
+    // Same expansion as sign-in, so "${VAR}" is checked as the URI it resolves to.
+    const { redirectUri } = extractOAuthConfig(definition)
+    return redirectUri !== undefined && parseOAuthRedirectUri(redirectUri).mode === "manual"
+  } catch {
+    // An invalid OAuth config fails sign-in too, so callers keep the actionable error.
+    return true
+  }
+}
+
 function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
   const dynamicPortPlaceholder = "{port}"
   const placeholderCount = redirectUri.split(dynamicPortPlaceholder).length - 1

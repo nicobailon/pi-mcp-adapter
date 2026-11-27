@@ -34,7 +34,7 @@ import { formatMcpFooterStatus, formatMcpStatus, openUrl, parallelLimit, provide
 import { logger } from "./logger.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { getAuthStorageOptions } from "./mcp-auth.ts";
-import { createOAuthRuntime, hasPendingAuth, shutdownOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import { createOAuthRuntime, hasPendingAuth, shutdownOAuth, usesManualRedirect, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import {
   combineAbortSignals,
   createMcpRuntimeOwner,
@@ -398,7 +398,13 @@ export async function initializeMcp(
         const error = typeof definition.auth === "object"
           ? providerSignInMessage(name, definition.auth.provider)
           : `OAuth authentication required. Run /mcp-auth ${name}.`;
-        return { name, definition, resident, connection: null, error, transient: false };
+        // With autoAuth, the first tool call signs in, so startup only needs to say so. Without a UI only
+        // client_credentials can sign in on its own; authorization_code keeps the actionable error, and so does
+        // a remote redirect URI, whose callback the user must paste in /mcp-auth.
+        const grantType = definition.oauth ? definition.oauth.grantType ?? "authorization_code" : "authorization_code";
+        const signInOnUse = typeof definition.auth !== "object" && config.settings?.autoAuth === true
+          && (grantType === "client_credentials" || (ui !== undefined && !usesManualRedirect(definition)));
+        return { name, definition, resident, connection: null, error, transient: false, signInOnUse };
       }
       // Capture before closing; the closed connection keeps its catalog for publication below.
       captureMetadata(state, name, connection, () => cache);
@@ -465,7 +471,7 @@ export async function initializeMcp(
     startupKnownMetadata.set(name, metadata);
   }
 
-  for (const { name, definition, connection, error, transient } of results) {
+  for (const { name, definition, connection, error, transient, signInOnUse } of results) {
     owner.throwIfInactive();
     if (error || !connection) {
       if (initialSignal?.aborted) continue;
@@ -479,6 +485,12 @@ export async function initializeMcp(
         const notice = `MCP: ${name} temporarily unavailable (HTTP 503); retry later`;
         logger.debug(`MCP: startup connect hit transient upstream outage for ${name}; will retry`);
         if (ui) ui.notify(notice, "warning");
+        else console.error(notice);
+        continue;
+      }
+      if (signInOnUse) {
+        const notice = `MCP: ${name} signs in on first use`;
+        if (ui) ui.notify(notice, "info");
         else console.error(notice);
         continue;
       }
