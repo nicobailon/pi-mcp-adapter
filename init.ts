@@ -402,10 +402,8 @@ export async function initializeMcp(
         // client_credentials can sign in on its own; authorization_code keeps the actionable error, and so does
         // a remote redirect URI, whose callback the user must paste in /mcp-auth.
         const grantType = definition.oauth ? definition.oauth.grantType ?? "authorization_code" : "authorization_code";
-        const redirectUri = definition.oauth ? definition.oauth.redirectUri : undefined;
         const signInOnUse = typeof definition.auth !== "object" && config.settings?.autoAuth === true
-          && (grantType === "client_credentials"
-            || (ui !== undefined && !(redirectUri !== undefined && usesManualRedirect(redirectUri))));
+          && (grantType === "client_credentials" || (ui !== undefined && !usesManualRedirect(definition)));
         return { name, definition, resident, connection: null, error, transient: false, signInOnUse };
       }
       // Capture before closing; the closed connection keeps its catalog for publication below.

@@ -169,6 +169,7 @@ describe("startup sign-in with autoAuth", () => {
     await Promise.all(mocks.states.splice(0).map(state => state.owner.stop("test cleanup")));
     for (const dir of mocks.tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   async function bootWith(settings: Record<string, unknown>, withUi = true, oauth?: Record<string, unknown>) {
@@ -214,6 +215,15 @@ describe("startup sign-in with autoAuth", () => {
       "error",
     );
     expect(notify).not.toHaveBeenCalledWith("MCP: rovo signs in on first use", "info");
+  });
+
+  it("checks a redirect URI after expanding environment variables, as sign-in does", async () => {
+    vi.spyOn(McpServerManager.prototype, "connect").mockResolvedValue({ status: "needs-auth" } as any);
+    vi.stubEnv("MCP_TEST_CALLBACK_URI", "http://localhost:3118/callback");
+
+    await bootWith({ autoAuth: true }, true, { redirectUri: "${MCP_TEST_CALLBACK_URI}" });
+
+    expect(notify).toHaveBeenCalledWith("MCP: rovo signs in on first use", "info");
   });
 
   it("keeps the /mcp-auth error without autoAuth", async () => {
