@@ -34,7 +34,7 @@ import { formatMcpFooterStatus, formatMcpStatus, openUrl, parallelLimit, provide
 import { logger } from "./logger.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { getAuthStorageOptions } from "./mcp-auth.ts";
-import { createOAuthRuntime, hasPendingAuth, shutdownOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import { createOAuthRuntime, hasPendingAuth, shutdownOAuth, usesManualRedirect, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import {
   combineAbortSignals,
   createMcpRuntimeOwner,
@@ -399,10 +399,13 @@ export async function initializeMcp(
           ? providerSignInMessage(name, definition.auth.provider)
           : `OAuth authentication required. Run /mcp-auth ${name}.`;
         // With autoAuth, the first tool call signs in, so startup only needs to say so. Without a UI only
-        // client_credentials can sign in on its own; authorization_code keeps the actionable error.
+        // client_credentials can sign in on its own; authorization_code keeps the actionable error, and so does
+        // a remote redirect URI, whose callback the user must paste in /mcp-auth.
         const grantType = definition.oauth ? definition.oauth.grantType ?? "authorization_code" : "authorization_code";
+        const redirectUri = definition.oauth ? definition.oauth.redirectUri : undefined;
         const signInOnUse = typeof definition.auth !== "object" && config.settings?.autoAuth === true
-          && (ui !== undefined || grantType === "client_credentials");
+          && (grantType === "client_credentials"
+            || (ui !== undefined && !(redirectUri !== undefined && usesManualRedirect(redirectUri))));
         return { name, definition, resident, connection: null, error, transient: false, signInOnUse };
       }
       // Capture before closing; the closed connection keeps its catalog for publication below.

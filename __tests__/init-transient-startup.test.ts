@@ -171,14 +171,14 @@ describe("startup sign-in with autoAuth", () => {
     vi.restoreAllMocks();
   });
 
-  async function bootWith(settings: Record<string, unknown>, withUi = true) {
+  async function bootWith(settings: Record<string, unknown>, withUi = true, oauth?: Record<string, unknown>) {
     const cwd = mkdtempSync(join(tmpdir(), "pi-mcp-auto-auth-init-"));
     mocks.tempDirs.push(cwd);
     const ctx = withUi
       ? { cwd, hasUI: true, mode: "tui", ui: { notify, setStatus: vi.fn() }, signal: new AbortController().signal }
       : { cwd, hasUI: false, mode: "print", signal: new AbortController().signal };
     const state = await initializeMcp({ getFlag: vi.fn() } as any, ctx as any, undefined, {
-      config: { settings, mcpServers: { rovo: { url: "http://127.0.0.1:8787/rovo/mcp", auth: "oauth" } } },
+      config: { settings, mcpServers: { rovo: { url: "http://127.0.0.1:8787/rovo/mcp", auth: "oauth", ...(oauth ? { oauth } : {}) } } },
     });
     mocks.states.push(state);
     return state;
@@ -202,6 +202,18 @@ describe("startup sign-in with autoAuth", () => {
 
     expect(consoleError.mock.calls.some(args => String(args[0]).includes("OAuth authentication required. Run /mcp-auth rovo."))).toBe(true);
     expect(consoleError.mock.calls.some(args => String(args[0]).includes("signs in on first use"))).toBe(false);
+  });
+
+  it("keeps the /mcp-auth error for a remote redirect URI, whose callback the user must paste", async () => {
+    vi.spyOn(McpServerManager.prototype, "connect").mockResolvedValue({ status: "needs-auth" } as any);
+
+    await bootWith({ autoAuth: true }, true, { redirectUri: "https://callback.example.test/callback" });
+
+    expect(notify).toHaveBeenCalledWith(
+      "MCP: Failed to connect to rovo: OAuth authentication required. Run /mcp-auth rovo.",
+      "error",
+    );
+    expect(notify).not.toHaveBeenCalledWith("MCP: rovo signs in on first use", "info");
   });
 
   it("keeps the /mcp-auth error without autoAuth", async () => {

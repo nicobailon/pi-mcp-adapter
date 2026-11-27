@@ -371,6 +371,16 @@ type OAuthRedirectTarget =
   }
   | { mode: "manual" }
 
+/** True when the redirect URI needs the user to paste the callback, which automatic sign-in cannot do. */
+export function usesManualRedirect(redirectUri: string): boolean {
+  try {
+    return parseOAuthRedirectUri(redirectUri).mode === "manual"
+  } catch {
+    // An invalid URI fails sign-in too, so callers keep the actionable error.
+    return true
+  }
+}
+
 function parseOAuthRedirectUri(redirectUri: string): OAuthRedirectTarget {
   const dynamicPortPlaceholder = "{port}"
   const placeholderCount = redirectUri.split(dynamicPortPlaceholder).length - 1
